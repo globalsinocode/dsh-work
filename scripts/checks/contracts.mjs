@@ -4,7 +4,7 @@ const requiredPaths = {
     '/runs/{runId}/events', '/runs/{runId}/cancel', '/artifacts/{artifactId}/versions/{versionId}/download',
   ],
   admin: [
-    '/agents', '/agents/{agentId}/draft', '/agents/{agentId}/status', '/agents/{agentId}/rollback',
+    '/agents', '/agents/draft', '/agents/status', '/agents/rollback',
     '/agents/{agentId}', '/agents/{agentId}/workspaces', '/agents/{agentId}/versions',
     '/agents/{agentId}/test-cases', '/agents/{agentId}/validations', '/agents/{agentId}/validations/{validationId}',
     '/agents/{agentId}/publish', '/agent-versions', '/skills', '/skills/test', '/skills/status',

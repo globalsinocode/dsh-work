@@ -55,6 +55,8 @@ export function registerToolRoutes(router: Router, service: PostgresToolConnecto
   })
   router.get(`${basePath}/tools/bindings`, async () => envelope('admin', { items: await service.listToolBindings() }, 'postgres'))
   router.get(`${basePath}/connectors`, async () => envelope('admin', await service.getMcpConnectors(), 'postgres'))
+  router.get(`${basePath}/runtimes/builtin-tools`, async () =>
+    envelope('admin', await service.getBuiltinToolStatus(), 'postgres'))
   router.get(`${basePath}/runtimes/dsh-tool-connector`, async () =>
     envelope('admin', await service.getDshRuntimeToolConnectorStatus(), 'postgres'))
   router.post(`${basePath}/runtimes/dsh-tool-connector/check`, async (_request, context) =>

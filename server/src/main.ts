@@ -18,6 +18,10 @@ import { registerWorkspaceUsageRoutes } from './http/workbench/workspace-usage-r
 import { registerWorkspaceMemberRoutes } from './http/workbench/workspace-member-routes.ts'
 import { registerWorkspaceAgentMemberRoutes } from './http/workbench/workspace-agent-member-routes.ts'
 import { registerWorkbenchAgentRoutes } from './http/workbench/agent-routes.ts'
+import { registerProjectRoutes } from './http/workbench/project-routes.ts'
+import { registerUserPreferenceRoutes } from './http/workbench/preference-routes.ts'
+import { registerConversationTargetRoutes } from './http/workbench/conversation-target-routes.ts'
+import { registerWorkspaceTimelineRoutes } from './http/workbench/workspace-timeline-routes.ts'
 import { registerOidcRoutes } from './http/auth-routes.ts'
 import { registerLocalAuthRoutes } from './http/local-auth-routes.ts'
 import { registerAuthConfigurationRoutes, registerSessionRoutes } from './http/session-routes.ts'
@@ -69,6 +73,14 @@ import { PostgresSkillService } from './modules/skill/postgres-skill-service.ts'
 import { SkillArtifactStore } from './modules/skill/skill-artifact-store.ts'
 import { migrateSkillFilesToFileSystem } from './modules/skill/skill-file-storage-migration.ts'
 import { PostgresToolConnectorService } from './modules/tool/postgres-tool-connector-service.ts'
+import { PostgresMcpConnectorService } from './modules/tool/postgres-mcp-connector-service.ts'
+import { PostgresProjectArchiveService } from './modules/workbench/application/postgres-project-archive-service.ts'
+import { PostgresProjectService } from './modules/workbench/application/postgres-project-service.ts'
+import { ProjectTaskTools, mapProjectTaskToolError } from './modules/workbench/application/project-task-tools.ts'
+import { PostgresUserPreferenceService } from './modules/workbench/application/postgres-user-preference-service.ts'
+import { PostgresConversationTargetService } from './modules/workbench/application/postgres-conversation-target-service.ts'
+import { PostgresWorkspaceTimelineService } from './modules/workbench/application/postgres-workspace-timeline-service.ts'
+import { resolvePlatformTimezone } from './domain/execution-time.ts'
 import { PostgresEncryptedCredentialStore } from './modules/tool/postgres-encrypted-credential-store.ts'
 import { McpUserCredentialStore } from './modules/tool/mcp-user-credential-store.ts'
 import { McpUserGrantService } from './modules/tool/mcp-user-grant-service.ts'
@@ -187,9 +199,12 @@ async function start() {
   const taskQueries = new PostgresTaskQueryService(database, tasks, runs)
   const delegation = new PostgresAgentDelegationService(database, runs, tasks, authorization, taskQueries)
   const toolServiceRef: { current?: PostgresToolConnectorService } = {}
+  const mcpServiceRef: { current?: PostgresMcpConnectorService } = {}
   const persistentWaitRef: { current?: PostgresPersistentWaitService } = {}
   const controlledMemoryRef: { current?: PostgresControlledMemoryService } = {}
   const agentDataRef: { current?: PostgresAgentDataService } = {}
+  const projectTaskToolsRef: { current?: ProjectTaskTools } = {}
+  const operationsRef: { current?: PostgresOperationsService } = {}
   const dshAdapter: AgentRuntimePort = dshInstallation ? new DshAcpRuntimeAdapter({
     runtimeId: 'runtime-local-01',
     runtimeRoot: resolve(dataRoot, 'dsh-attempts'),
@@ -203,15 +218,28 @@ async function start() {
       if (!orchestration) throw new Error('运行授权服务尚未就绪')
       await orchestration.assertCurrentRunAuthorization(manifest)
     },
+    disabledBuiltinTools: async () => {
+      if (!operationsRef.current) return []
+      return (await operationsRef.current.getRuntimePolicy('runtime-local-01')).disabledTools ?? []
+    },
     resolveMcpConnections: async manifest => {
+      if (mcpServiceRef.current) return mcpServiceRef.current.resolveRuntimeConnections(manifest)
       if (!toolServiceRef.current) throw new Error('MCP Connector 服务尚未就绪')
       return toolServiceRef.current.resolveMcpRuntimeConnections(manifest)
     },
     recordMcpInvocation: async (manifest, invocation) => {
+      if (mcpServiceRef.current) {
+        await mcpServiceRef.current.recordMcpInvocation(manifest, invocation)
+        return
+      }
       if (!toolServiceRef.current) throw new Error('MCP Connector 审计服务尚未就绪')
       await toolServiceRef.current.recordMcpInvocation(manifest, invocation)
     },
     finalizeMcpInvocationAudit: async manifest => {
+      if (mcpServiceRef.current) {
+        await mcpServiceRef.current.finalizeMcpInvocationAudit(manifest)
+        return
+      }
       if (!toolServiceRef.current) throw new Error('MCP Connector 审计服务尚未就绪')
       await toolServiceRef.current.finalizeMcpInvocationAudit(manifest)
     },
@@ -220,6 +248,18 @@ async function start() {
       return persistentWaitRef.current.decidePermission(manifest, context)
     },
     delegateAgent: (input, manifest, signal) => delegation.delegate(input, manifest, signal),
+    projectTaskTool: async (name, input, manifest, signal) => {
+      if (!projectTaskToolsRef.current) throw new Error('项目任务工具尚未就绪')
+      try {
+        const tools = projectTaskToolsRef.current
+        if (name === 'project_tasks_list') return await tools.list(input, manifest, signal)
+        if (name === 'project_task_get') return await tools.get(input, manifest, signal)
+        if (name === 'project_task_create') return await tools.create(input, manifest, signal)
+        return await tools.update(input, manifest, signal)
+      } catch (error) {
+        mapProjectTaskToolError(error)
+      }
+    },
     proposeMemory: (input, manifest, signal) => {
       if (!controlledMemoryRef.current) throw new Error('经验迭代服务尚未就绪')
       return controlledMemoryRef.current.proposeFromAttempt(input as { kind: 'preference' | 'experience'; title: string; content: string }, manifest, signal)
@@ -282,6 +322,7 @@ async function start() {
     authorization,
     identityConfiguration.mode === 'oidc' ? 'ai-hub-oidc' : identityConfiguration.mode === 'local' ? 'local-password' : 'mock',
   )
+  operationsRef.current = operations
   const runtimePolicy = await operations.getRuntimePolicy('runtime-local-01')
   await runtime.configureScheduling(runtimePolicy.schedulingStatus)
   const credentialSecrets = process.env.DSH_CREDENTIAL_MASTER_KEY
@@ -296,6 +337,8 @@ async function start() {
   const mcpUserGrantService = userCredentialStore
     ? new McpUserGrantService(database, userCredentialStore, credentialSecrets)
     : undefined
+  const mcpService = new PostgresMcpConnectorService(database, runtime, operations, credentialSecrets)
+  mcpServiceRef.current = mcpService
   const toolService = new PostgresToolConnectorService(database, runtime, operations, credentialSecrets, mcpUserGrantService)
   toolServiceRef.current = toolService
   // Management-plane inventory refresh is best effort: execution capability
@@ -304,7 +347,7 @@ async function start() {
   void toolService.syncToolCatalog({ actor: 'U00008' }).catch(error => {
     console.warn('DSH tool catalog startup sync skipped:', error)
   })
-  const skills = new PostgresSkillService(database, operations, toolService, skillArtifacts)
+  const skills = new PostgresSkillService(database, operations, skillArtifacts)
   // C7 only inspects execution capability; it never starts a Worker/model call.
   const checkInstallationRuntime = async (references: string[], requiredPackages: string[]) => {
     await runtime.assertAvailable()
@@ -357,6 +400,9 @@ async function start() {
   }, 60 * 1000)
   workspaceObjectGcSweep.unref()
   const workspaceAgentMembers = new PostgresWorkspaceAgentMemberService(database, authorization, agents)
+  const projectArchive = new PostgresProjectArchiveService(database)
+  const projects = new PostgresProjectService(database, workspaceAgentMembers, projectArchive)
+  projectTaskToolsRef.current = new ProjectTaskTools(projects, database)
   // AG-03：仓库先建，orchestration 的执行前复核用它反查任务状态（暂停/停用兜底）。
   const automationRepository = new PostgresAutomationRepository(database)
   orchestration = new RunOrchestrationService(
@@ -373,12 +419,19 @@ async function start() {
     {
       agentMembers: workspaceAgentMembers,
       automationStatusLookup: runId => automationRepository.automationStatusForRun(runId),
+      toolChecks: {
+        assertPinnedConnections: pins => mcpService.assertPinnedConnections(pins),
+      },
       // B-03/I-04：Attempt 固定绑定修订在领取后/桥接调用时复核当前有效性与语义摘要。
       toolBindings: toolService,
       tasks,
       memory: controlledMemory,
+      projectTasks: projects,
+      projectArchive,
+      timezone: resolvePlatformTimezone(process.env.DSH_WORK_TIMEZONE),
     },
   )
+  projects.attachRunStarter(orchestration)
   persistentWait = new PostgresPersistentWaitService(database, runs, {
     reauthorize: manifest => orchestration!.assertWaitingRunAuthorization(manifest),
     enqueue: (run, manifest) => orchestration!.enqueueResumedAttempt(run, manifest),
@@ -392,7 +445,7 @@ async function start() {
   })
   persistentWait.start()
   const pythonPackages = (process.env.DSH_WORK_PYTHON_PACKAGES ?? '').split(',').map(value => value.trim()).filter(Boolean)
-  const installationService: AdminSkillInstallationService = new AdminSkillInstallationService(database, orchestration, authorization, toolService, acquireSkillSource, Boolean(pythonRunner), pythonPackages, skillArtifacts, checkInstallationRuntime)
+  const installationService: AdminSkillInstallationService = new AdminSkillInstallationService(database, orchestration, authorization, acquireSkillSource, Boolean(pythonRunner), pythonPackages, skillArtifacts, checkInstallationRuntime)
   const assistantService = new AdminAssistantService(database, orchestration, authorization, installationService, skills, agents, operations)
   skills.setPackageTester((userId, skill, prompt) => installationService.testPackage(userId, skill, prompt))
   skills.setPackageTestLifecycle({
@@ -404,6 +457,14 @@ async function start() {
   const restartRecovery = await orchestration.recoverAfterServiceRestart()
   const delegationRecovery = await delegation.reconcileAfterRestart()
   await persistentWait.reconcileOrphans()
+  const archiveRecovery = await projectArchive.recoverInterruptedUpdates()
+    .catch(error => {
+      console.error('project archive recovery failed', error)
+      return { finished: 0, abandoned: 0 }
+    })
+  if (archiveRecovery.finished > 0 || archiveRecovery.abandoned > 0) {
+    console.warn('project archive recovery completed', archiveRecovery)
+  }
   // EX-02：为旧成果补写原文解析，使其可在后续对话中“继续修改”；失败只记录，不阻断启动。
   await content.backfillArtifactExtractions()
     .then(result => { if (result.extracted > 0) console.warn('artifact extraction backfill completed', result) })
@@ -439,7 +500,7 @@ async function start() {
     database, authorization, runs, orchestration, conversations, operations,
   )
   automationSweep = new AutomationTriggerSweep(
-    database, automationRepository, automationService, defaultAutomationConfig, agentRoutineService,
+    database, automationRepository, automationService, defaultAutomationConfig, agentRoutineService, projects,
   )
   await automationSweep.start()
   registerAutomationRoutes(router, automationService)
@@ -457,7 +518,11 @@ async function start() {
   registerWorkspaceMemberRoutes(router, workspaceMembers, authorization)
   registerWorkspaceLifecycleRoutes(router, workspaceLifecycle, authorization)
   registerWorkspaceActivityRoutes(router, workspaceActivity, authorization)
+  registerUserPreferenceRoutes(router, new PostgresUserPreferenceService(database))
+  registerConversationTargetRoutes(router, new PostgresConversationTargetService(database, agents), authorization)
+  registerWorkspaceTimelineRoutes(router, new PostgresWorkspaceTimelineService(database, new PostgresWorkspaceService(database)), authorization)
   registerWorkspaceUsageRoutes(router, workspaceUsage, authorization)
+  registerProjectRoutes(router, projects, authorization, projectArchive)
   registerWorkspaceAgentMemberRoutes(router, workspaceAgentMembers, authorization)
   registerOperationsRoutes(router, operations, new PostgresGrantReconciliationService(database, operations))
   registerAgentRoutes(router, agents)

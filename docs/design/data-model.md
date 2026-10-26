@@ -77,6 +77,9 @@ Task 创建时由触发器写入发起 Principal：员工请求为本人，系�
 | `workspace_revocation_events` | 成员移除、角色变化、Agent 停用等收权事件 | 去重后持久排队，由撤权扫描取消已失权的运行，可重放 |
 | `workspace_activity_events` | 团队动态（成员、Agent、文件、归档） | 按去重键幂等；元数据不含文件正文；会话附件不进入动态 |
 | `workspace_notification_states` | 每位成员的已读位置与静音 | 已读时间只前进不回拨 |
+| `workspace_notification_deliveries` | 通知投递记录 | 按成员与事件去重；不含消息正文 |
+| `workspace_notification_account_states` | 账号级通知汇总状态 | 与空间级已读位置配合 |
+| `workspace_object_gc_candidates` | 待回收的空间对象候选 | 逻辑移除后的延迟清理队列 |
 | `conversation_read_states` | 协作模式对话列表按对话对象（单聊的 AI 同事 / 群组）的已读位置（迁移 0096） | 按账号 + 对话对象唯一；已读时间只前进不回拨；与 `workspace_notification_states` 分开保存；迁移时已有对话对象记为已读 |
 
 ## 4. 会话、Task 与运行
@@ -114,6 +117,24 @@ flowchart LR
 | `agent_validations` | 一次验证 | 绑定一个冻结的待发布版本（`candidate`）；每个 Agent 只有一个有效验证（`running`/`completed`），开始新验证时旧验证标为 `superseded`；发布后标为 `published` |
 | `agent_validation_cases` | 验证案例及结果 | 开始验证时快照示例问题、主动任务输入与自定义问题；记录 Run/Attempt、运行次数、三项机器检查与判定；判为不通过必须有原因；服务重启时未完成的案例标为中断 |
 | `agent_version_skills` | 早期的版本—Skill 关联表 | 当前引用保存在 `agent_versions` 上，该表未被读写 |
+| `agent_version_tools` | 版本装配的平台 Tool Version | 精确版本引用；发布与验证路径校验可用性与权限 |
+| `agent_test_runs` | 早期的 Agent 测试记录 | 只保留历史；现行验证使用 `agent_validations` |
+| `agent_release_records` | 发布、启用、停用与回滚审计 | 只追加 |
+| `agent_packages` | 导入的 Agent 包快照 | 内容寻址存储；与版本/发布流程关联 |
+| `agent_release_submissions` | 发布候选与封存修订 | 与试运行证据、工具绑定修订对齐后方可发布 |
+| `agent_trial_runs` | 发布前试运行 | 按候选与修订隔离；证据进入发布门禁 |
+| `agent_version_evidence` | 版本级证据摘要 | 与候选、验证或发布记录关联 |
+| `agent_installations` | Agent 数据平面安装实例 | 每个 Agent 一条；命名空间与集合元数据 |
+| `agent_state` | Agent 级私有状态键值 | 经受控工具读写；不执行包内 SQL |
+| `agent_data_collections` | 数据平面集合定义 | AgentSpec 声明经发布检查后生效 |
+| `agent_data_collection_grants` | 集合授权 | 管理员治理可见范围与角色 |
+| `agent_data_collection_schema_versions` | 集合 Schema 版本 | 不可变；记录演进 |
+| `agent_data_records` | 结构化记录主键 | 租户 + Agent 安装实例隔离 |
+| `agent_data_record_versions` | 记录不可变版本 | 追加版本；保留期删除写墓碑 |
+| `agent_data_record_operations` | 记录写入操作审计 | 与 Attempt 关联 |
+| `agent_data_write_counters` | 写入计数与配额 | 防止失控写入 |
+| `agent_data_proposals` | 待审核的数据变更提案 | 人工批准后落库 |
+| `agent_data_record_deletions` | 保留期删除墓碑 | 引用仍可在历史 Run 结果中解析 |
 
 ## 6. Skill
 
@@ -131,10 +152,18 @@ flowchart LR
 
 | 表 | 作用 | 关键不变量 |
 | --- | --- | --- |
-| （无表） | 内置工具 | 随代码发布，见 [内置工具注册表](../../server/src/modules/runtime/builtin-tools.ts)；迁移 `0096` 删除了原工具治理表 |
+| `tools`、`tool_versions` | 平台 Tool 与不可变版本 | DSH 内置工具与 MCP 发现工具均登记；已发布版本不可修改 |
+| `agent_version_tools` | Agent 版本装配的 Tool | 见第 5 节 |
+| `tool_binding_revisions` | Connector 侧 Tool Binding 修订 | 活动修订与 Manifest 快照对齐 |
+| （代码注册表） | DSH 内置工具 | 随代码发布，见 [内置工具注册表](../../server/src/modules/runtime/builtin-tools.ts)；`runtime_configurations.disabled_tools` 可紧急停用 |
 | `tool_audit_logs` | 内置与平台工具调用审计 | 直接记录工具名称（`tool_name`） |
 | `connectors`、`connector_health_checks` | 连接器与健康检查 | 健康状态与配置分离 |
 | `mcp_connector_profiles` | MCP 连接器的发现清单与生效清单 | 只支持 Streamable HTTP；新增或输入 Schema 变化的 Tool 须确认后进入生效清单 |
+| `mcp_connector_oauth` | MCP Connector OAuth 客户端登记 | 与连接器一对一；不含明文密钥 |
+| `mcp_user_grants` | 员工对 MCP Connector 的授权 | 精确连接器；可撤回 |
+| `mcp_user_credential_secrets` | 用户级 MCP 凭据密文 | AES-256-GCM；接口不回显正文 |
+| `mcp_oauth_transactions` | MCP OAuth 授权事务 | 短期状态；完成后写入凭据 |
+| `mcp_oauth_probe_secrets` | OAuth 探测临时密文 | 仅用于连通性探测 |
 | `credential_refs`、`credential_secrets` | 凭据引用与加密密文 | 密文为 AES-256-GCM；接口不回显、不导出密钥正文 |
 
 ## 8. 模型与 Runtime
@@ -225,12 +254,12 @@ Run 和 Attempt 的普通状态转换不能从终态回退。只有失败或取�
 - [Agent 发布治理](../../server/migrations/0039_agent_release_governance.sql)、[自动任务](../../server/migrations/0040_agent_automations.sql)、[工具绑定修订](../../server/migrations/0047_tool_binding_revisions.sql)、[MCP 治理](../../server/migrations/0053_mcp_connector_governance.sql)。
 - [PF-01 Task 与外部操作基础](../../server/migrations/0050_task_operation_foundation.sql)、[无 Session 执行与 Task Artifact](../../server/migrations/0051_session_neutral_task_execution.sql)、[累计预算](../../server/migrations/0052_task_cumulative_budgets.sql)。
 - [持久化等待与审批](../../server/migrations/0061_persistent_wait_and_approval.sql)、[受控记忆](../../server/migrations/0062_controlled_memory.sql)、[执行身份](../../server/migrations/0064_execution_principals.sql)。
-- [Agent 数据平面](../../server/migrations/0072_agent_data_plane.sql)（已由 0087 删除）、[Agent 主动任务](../../server/migrations/0074_agent_owned_routines.sql)、[负责人错误码](../../server/migrations/0080_workspace_owner_errcode.sql)、[知识分段检索](../../server/migrations/0081_knowledge_chunks.sql)。
-- [删除 Agent 委派](../../server/migrations/0083_remove_agent_delegation.sql)：移除 `task_delegations` 与版本上的委派策略；历史子任务仍保留 `delegation` 来源类型，但不能重试。
-- [Agent 级岗位权限](../../server/migrations/0084_agent_level_access.sql)：可见角色从版本迁到 Agent（取当前发布版本，未发布取草稿），删除版本上的可见角色与数据范围上限。
-- [Agent 验证与发布](../../server/migrations/0085_agent_validations.sql)：版本增加待发布状态并冻结不可变；新增自定义测试问题、验证与验证案例；发布记录转为审计事件后删除候选、试运行、版本证据、Agent 包、早期测试与发布记录六张表。
-- [Agent 运行记录索引](../../server/migrations/0086_agent_run_history_index.sql)：详情页按 Task 的执行身份读取最近 Run。
-- [删除 Agent 数据平面](../../server/migrations/0087_remove_agent_data_plane.sql)：删除工作数据（集合、记录、提案、私有状态、安装实例）共 11 张表；旧版本定义中的 `data` 声明不再读取。
+- [Agent 数据平面](../../server/migrations/0072_agent_data_plane.sql)、[Agent 主动任务](../../server/migrations/0074_agent_owned_routines.sql)、[负责人错误码](../../server/migrations/0080_workspace_owner_errcode.sql)、[知识分段检索](../../server/migrations/0081_knowledge_chunks.sql)。
+- [文件解析附件](../../server/migrations/0083_file_extraction_attachments.sql)、[MCP 用户授权](../../server/migrations/0084_mcp_user_grants.sql)、[会话草稿](../../server/migrations/0085_session_drafts.sql)、[空间对象 GC](../../server/migrations/0086_workspace_object_gc.sql)、[空间通知](../../server/migrations/0087_workspace_notifications.sql)。
+- [Agent 级岗位权限](../../server/migrations/0090_agent_level_access.sql)：可见角色复制到 Agent 级并立即生效，版本列保留以兼容历史读取。
+- [Agent 验证与发布](../../server/migrations/0091_agent_validations.sql)：待发布版本冻结、自定义测试问题与验证案例；与既有发布候选/试运行表并存。
+- [Agent 运行记录索引](../../server/migrations/0092_agent_run_history_index.sql)：详情页按 Task 的执行身份读取最近 Run。
+- [PF-06 委派](../../server/migrations/0063_controlled_agent_delegation.sql) 保留 `task_delegations`；三方合并不引入删除委派或数据平面的破坏性迁移。
 
 新增变更使用新的顺序迁移，保留已应用迁移；迁移运行器以咨询锁串行执行并校验已执行迁移的 SHA-256，修改已执行迁移会拒绝启动。应用回滚不会自动降低 Schema，至少保持上一版本兼容；破坏性清理需独立安排。操作流程见 [部署手册](../release/mac-mini-deployment-runbook.md)。
 

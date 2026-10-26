@@ -224,7 +224,10 @@ export class AdminQueryService {
       ...configuration,
       webSearchEnabled: configuration.webSearchEnabled === true,
       projectTasksEnabled: configuration.projectTasksEnabled === true,
-      roleIds: visibleRoleIds ?? [],
+      roleIds: visibleRoleIds ?? configuration.roleIds ?? [],
+      dataScopes: configuration.dataScopes ?? [],
+      tools: configuration.tools ?? [],
+      skills: configuration.skills ?? [],
       visibility: visibleRoleIds?.length ? `指定 ${visibleRoleIds.length} 个角色` : '未设置',
       status: 'draft',
       version,
@@ -705,6 +708,9 @@ function unique(values: string[]) {
 
 function agentVersionSnapshot(agent: AgentDefinition) {
   return {
+    visibility: agent.visibility,
+    roleIds: [...agent.roleIds],
+    dataScopes: [...agent.dataScopes],
     welcomeMessage: agent.welcomeMessage,
     examplePrompts: [...agent.examplePrompts],
     systemPrompt: agent.systemPrompt,
@@ -714,6 +720,7 @@ function agentVersionSnapshot(agent: AgentDefinition) {
     maxToolCalls: agent.maxToolCalls,
     timeoutSeconds: agent.timeoutSeconds,
     skills: [...agent.skills],
+    tools: [...agent.tools],
     webSearchEnabled: agent.webSearchEnabled,
     projectTasksEnabled: agent.projectTasksEnabled,
   }

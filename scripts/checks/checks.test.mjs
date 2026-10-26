@@ -12,9 +12,9 @@ function fixture(t) {
   const root = mkdtempSync(join(tmpdir(), 'dsh-work-checks-'))
   t.after(() => rmSync(root, { recursive: true, force: true }))
   for (const path of [
-    'AGENTS.md', 'README.md', 'package.json', '.env.example', '.github/workflows/ci.yml', 'docs',
+    'AGENTS.md', 'README.md', 'package.json', '.env.example', '.github/workflows/ci.yml', 'docs', 'e2e/TEST-CATALOG.md',
     'config/target-environment/2026-10-17.json',
-    'server/package.json', 'server/config', 'server/src', 'server/migrations',
+    'server/package.json', 'server/config', 'server/src', 'server/migrations', 'server/scripts/convert-agency-agents.mjs', 'server/scripts/package-agency-agent-fixtures.mjs',
     'deploy/runtime.env.example', 'scripts/deploy/preflight.sh', 'scripts/runtime/probe.ts', 'scripts/runtime/run-timings.ts',
     'scripts/checks/contracts.mjs', 'scripts/testing/p0-smoke-server.ts',
     'apps/workbench-web/vitest.config.ts', 'apps/admin-web/vitest.config.ts', 'playwright.config.ts',
@@ -23,7 +23,8 @@ function fixture(t) {
     // 文档会链接到员工端与共享包的具体文件，
     // 夹具必须提供这些路径，否则 project 检查会把真实存在的链接报成悬空。
     'apps/workbench-web/src/stores/content.ts', 'apps/workbench-web/src/stores/tasks.ts',
-    'apps/admin-web/src/views/AdminAssistantView.vue', 'apps/admin-web/src/stores/admin-assistant.ts',
+    'apps/admin-web/src/views/AdminAssistantView.vue', 'apps/admin-web/src/views/AgentManagementView.vue', 'apps/admin-web/src/views/AgentDraftView.vue',
+    'apps/admin-web/src/stores/admin-assistant.ts',
     'apps/admin-web/src/components/SkillInstallationPanel.vue', 'apps/admin-web/src/components/SkillPackagePreview.vue',
     'apps/admin-web/src/types/domain.ts',
     'apps/workbench-web/src/views/WorkspacesView.vue', 'apps/workbench-web/src/views/WorkspaceDetailView.vue',
@@ -48,9 +49,9 @@ test('current project passes every static group', () => {
 
 test('contract checks reject missing API paths and required error fields', t => {
   const root = fixture(t)
-  editJson(root, 'docs/development/openapi-admin.json', api => { delete api.paths['/agents/{agentId}/rollback'] })
+  editJson(root, 'docs/development/openapi-admin.json', api => { delete api.paths['/agents/rollback'] })
   editJson(root, 'docs/development/openapi-workbench.json', api => { api.components.schemas.ErrorEnvelope.properties.error.required = [] })
-  assert.match(failures(root, 'contracts'), /缺少路径 \/agents\/\{agentId\}\/rollback/)
+  assert.match(failures(root, 'contracts'), /缺少路径 \/agents\/rollback/)
   assert.match(failures(root, 'contracts'), /错误契约缺少 traceId/)
 })
 

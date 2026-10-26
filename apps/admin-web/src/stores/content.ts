@@ -23,6 +23,8 @@ import type {
   SkillDefinition,
   SkillReleaseRecord,
   SkillVersionRecord,
+  ToolCatalogCandidate,
+  ToolDefinition,
   UpdateRuntimeConfigurationInput,
   UsagePoint,
 } from '../types/domain'
@@ -37,6 +39,8 @@ export const useContentStore = defineStore('admin-content', () => {
   const skills = ref<SkillDefinition[]>([])
   const skillVersions = ref<SkillVersionRecord[]>([])
   const skillReleaseRecords = ref<SkillReleaseRecord[]>([])
+  const tools = ref<ToolDefinition[]>([])
+  const toolCatalog = ref<ToolCatalogCandidate[]>([])
   const connectors = ref<ConnectorDefinition[]>([])
   const builtinTools = ref<BuiltinToolStatus | null>(null)
   const auditEvents = ref<AuditEvent[]>([])
@@ -89,6 +93,7 @@ export const useContentStore = defineStore('admin-content', () => {
       skillData,
       skillVersionData,
       skillReleaseData,
+      toolData,
       connectorData,
       builtinToolData,
       healthData,
@@ -103,6 +108,7 @@ export const useContentStore = defineStore('admin-content', () => {
       adminApi.getSkills(),
       adminApi.getSkillVersions(),
       adminApi.getSkillReleaseRecords(),
+      adminApi.getTools(),
       adminApi.getMcpConnectors(),
       adminApi.getBuiltinTools(),
       adminApi.getHealth(),
@@ -117,6 +123,7 @@ export const useContentStore = defineStore('admin-content', () => {
     skills.value = skillData
     skillVersions.value = skillVersionData
     skillReleaseRecords.value = skillReleaseData
+    tools.value = toolData
     connectors.value = connectorData
     builtinTools.value = builtinToolData
     health.value = healthData
@@ -203,6 +210,51 @@ export const useContentStore = defineStore('admin-content', () => {
     return result
   }
 
+  async function updateToolPermissions(input: {
+    toolId: string
+    allowedRoles: string[]
+    dataScopes: string[]
+    approvalPolicy: ToolDefinition['approvalPolicy']
+  }) {
+    const tool = await adminApi.updateToolPermissions(input)
+    replaceById(tools.value, tool)
+    return tool
+  }
+
+  async function addTool(input: {
+    catalogId: string
+    allowedRoles: string[]
+    dataScopes: string[]
+    approvalPolicy: ToolDefinition['approvalPolicy']
+  }) {
+    const tool = await adminApi.addTool(input)
+    replaceById(tools.value, tool)
+    const candidate = toolCatalog.value.find(item => item.id === input.catalogId)
+    if (candidate) {
+      candidate.status = 'installed'
+      candidate.availabilityMessage = '已添加到工具目录'
+    }
+    return tool
+  }
+
+  async function refreshToolCatalog() {
+    const candidates = await adminApi.getToolCatalog()
+    toolCatalog.value = candidates
+    return candidates
+  }
+
+  async function syncDshTools() {
+    const result = await adminApi.syncDshTools()
+    tools.value = result.tools
+    return result
+  }
+
+  async function setToolStatus(toolId: string, status: 'available' | 'disabled') {
+    const tool = await adminApi.setToolStatus({ toolId, status })
+    replaceById(tools.value, tool)
+    return tool
+  }
+
   async function createSkill(input: Omit<SkillConfiguration, 'id'>) {
     const result = await adminApi.createSkill(input)
     skills.value.unshift(result.skill)
@@ -276,6 +328,10 @@ export const useContentStore = defineStore('admin-content', () => {
     return adminApi.testMcpConnection(input)
   }
 
+  function beginMcpProbeAuthorization(input: Parameters<typeof adminApi.beginMcpProbeAuthorization>[0]) {
+    return adminApi.beginMcpProbeAuthorization(input)
+  }
+
   async function deleteMcpConnector(connectorId: string) {
     const result = await adminApi.deleteMcpConnector(connectorId)
     const index = connectors.value.findIndex(connector => connector.id === connectorId)
@@ -327,6 +383,8 @@ export const useContentStore = defineStore('admin-content', () => {
     skills,
     skillVersions,
     skillReleaseRecords,
+    tools,
+    toolCatalog,
     connectors,
     builtinTools,
     auditEvents,
@@ -355,8 +413,14 @@ export const useContentStore = defineStore('admin-content', () => {
     startSkillTestRun,
     getSkillTestRun,
     rollbackSkill,
+    setToolStatus,
+    syncDshTools,
+    updateToolPermissions,
+    addTool,
+    refreshToolCatalog,
     checkConnector,
     testMcpConnection,
+    beginMcpProbeAuthorization,
     registerMcpConnector,
     deleteMcpConnector,
     rotateMcpCredential,

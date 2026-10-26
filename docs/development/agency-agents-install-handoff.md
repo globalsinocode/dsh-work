@@ -49,7 +49,7 @@ pnpm test:agency-agent-fixtures
 ### 方式 A：管理端 UI（推荐）
 
 1. 使用**平台管理员**登录管理端。
-2. 打开 Agent 治理 / ZIP 导入入口（组件 [`AgentZipImportPanel.vue`](../../apps/admin-web/src/components/AgentZipImportPanel.vue)）。
+2. 打开 Agent 治理列表与草稿编辑（[`AgentManagementView.vue`](../../apps/admin-web/src/views/AgentManagementView.vue)、[`AgentDraftView.vue`](../../apps/admin-web/src/views/AgentDraftView.vue)）；ZIP 导入走管理端 API（见方式 B）。
 3. **每次选择一个** `dist/agency-agent-packages/<id>.zip` 上传。
 4. 导入成功后得到该 Agent 的**草稿**；按需配置负责人、试运行与发布。
 

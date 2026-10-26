@@ -52,6 +52,7 @@ watch(
   ([visible, workspaceId]) => {
     if (visible && workspaceId) void loadPage()
   },
+  { immediate: true },
 )
 
 function selectFile(file: WorkspaceFile) {

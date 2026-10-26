@@ -22,6 +22,10 @@ export type WorkspaceActivityKind =
   | 'file_version_added'
   | 'workspace_archived'
   | 'workspace_restored'
+  | 'discussion_posted'
+  | 'member_mentioned'
+  | 'run_completed'
+  | 'run_failed'
   | 'brief_updated'
   | 'project_task_created'
   | 'project_task_completed'
@@ -117,6 +121,14 @@ export function describeWorkspaceActivity(input: WorkspaceActivityDescriptor): s
       return `${actor} 归档了空间`
     case 'workspace_restored':
       return `${actor} 恢复了空间`
+    case 'discussion_posted':
+      return `${actor} 在讨论区发布了消息`
+    case 'member_mentioned':
+      return `${actor} 在讨论中提及了成员`
+    case 'run_completed':
+      return `${actor} 完成了一次协作运行`
+    case 'run_failed':
+      return `${actor} 的协作运行未成功结束`
     case 'brief_updated': {
       const version = versionLabel(metadata['versionNo'])
       return version ? `${actor} 更新了项目简报（${version}）` : `${actor} 更新了项目简报`

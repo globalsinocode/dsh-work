@@ -8,6 +8,11 @@ import { isNotFoundError } from '../utils/request-error'
 
 const intentRegistry = createIntentRegistry()
 
+/** 单测用：清空幂等意图槽，避免 `session:new` 等 slot 跨用例残留。 */
+export function resetTaskIntentRegistryForTests() {
+  intentRegistry.clearAll()
+}
+
 interface RuntimeEvent {
   event_id: string
   run_id: string
@@ -28,7 +33,7 @@ const sessionStreams = new Map<string, { source: EventSource; refs: number }>()
 let sessionEventSeq = 0
 const runtimeEventTypes = [
   'run.queued', 'run.started', 'assistant.delta', 'assistant.completed',
-  'tool.completed', 'approval.required', 'approval.resolved', 'run.waiting', 'run.cancel_requested',
+  'tool.started', 'tool.completed', 'approval.required', 'approval.resolved', 'run.waiting', 'run.cancel_requested',
   'run.cancelled', 'run.failed', 'run.completed',
 ]
 
@@ -517,14 +522,18 @@ export const useTaskStore = defineStore('tasks', () => {
       scheduleRunReconciliation(event.run_id)
     }
 
-    if (!['assistant.delta', 'assistant.completed'].includes(event.event_type)) {
+    if (event.event_type === 'tool.started' || event.event_type === 'tool.completed') {
+      applyToolEvent(task, event)
+    } else if (!['assistant.delta', 'assistant.completed'].includes(event.event_type)) {
       const step = task.steps.find((item) => item.id === event.event_id)
-      if (!step) task.steps.push(event.event_type === 'tool.completed' ? toolStep(event) : {
-        id: event.event_id,
-        title: eventTitle(event.event_type),
-        detail: event.display_message ?? '执行状态已更新。',
-        status: eventStepStatus(event.event_type),
-      })
+      if (!step) {
+        task.steps.push({
+          id: event.event_id,
+          title: eventTitle(event.event_type),
+          detail: event.display_message ?? '执行状态已更新。',
+          status: eventStepStatus(event.event_type),
+        })
+      }
     }
 
     if (isTerminal(task.status)) {
@@ -632,12 +641,48 @@ function eventTitle(eventType: string) {
 function toolStep(event: { event_id: string; display_message: string | null; safe_metadata: Record<string, unknown> }) {
   const outcome = event.safe_metadata['status']
   const toolName = typeof event.safe_metadata['tool_name'] === 'string' ? event.safe_metadata['tool_name'] : undefined
+  const callId = typeof event.safe_metadata['call_id'] === 'string' ? event.safe_metadata['call_id'] : undefined
   return {
     id: event.event_id,
     title: outcome === 'failed' ? '工具调用失败' : outcome === 'unknown' ? '工具结果未返回' : '调用工具',
     detail: event.display_message ?? '工具调用已结束。',
     status: outcome === 'failed' ? 'failed' as const : outcome === 'unknown' ? 'pending' as const : 'succeeded' as const,
     ...(toolName ? { tool: toolName } : {}),
+    ...(callId ? { callId } : {}),
+  }
+}
+
+function applyToolEvent(task: TaskRun, event: RuntimeEvent) {
+  const callId = typeof event.safe_metadata['call_id'] === 'string' ? event.safe_metadata['call_id'] : undefined
+  const live = event.safe_metadata['live'] === true
+  const toolName = typeof event.safe_metadata['tool_name'] === 'string' ? event.safe_metadata['tool_name'] : undefined
+  if (event.event_type === 'tool.started') {
+    if (!callId || !live) return
+    if (task.steps.some(step => step.callId === callId)) return
+    task.steps.push({
+      id: `tool-call-${callId}`,
+      title: '正在调用工具',
+      detail: event.display_message ?? '',
+      status: 'running',
+      ...(toolName ? { tool: toolName } : {}),
+      callId,
+    })
+    return
+  }
+  if (event.event_type !== 'tool.completed') return
+  const mapped = toolStep(event)
+  if (callId) {
+    const existing = task.steps.find(step => step.callId === callId)
+    if (existing) {
+      existing.title = mapped.title
+      existing.detail = mapped.detail
+      existing.status = mapped.status
+      if (mapped.tool) existing.tool = mapped.tool
+      return
+    }
+  }
+  if (!task.steps.some(step => step.id === event.event_id)) {
+    task.steps.push(mapped)
   }
 }
 

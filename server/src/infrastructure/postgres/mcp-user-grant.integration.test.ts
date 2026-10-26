@@ -59,6 +59,16 @@ async function mockFetch(_url: string, init?: RequestInit) {
 before(async () => {
   throwaway = await createThrowawayDatabase({ namePrefix: 'dsh_work_mcp_user_grant', maxConnections: 3 })
   database = throwaway.client
+  await database`
+    insert into users (id, tenant_id, external_subject, display_name, status, identity_provider, business_user)
+    values ('U00002', 'tenant-dsh-work', 'directory:mcp-user-grant-U00002', '周衡', 'active', 'ai-hub', true)
+    on conflict (id) do nothing
+  `
+  await database`
+    insert into user_roles (tenant_id, user_id, role_id, source_key)
+    values ('tenant-dsh-work', 'U00002', 'role-employee', 'local')
+    on conflict do nothing
+  `
   const connectorCredentials = new PostgresEncryptedCredentialStore(database, { masterKeyBase64: masterKey, keyId: 'integration-v1' })
   const userCredentials = new McpUserCredentialStore(masterKey, 'integration-v1')
   grantService = new McpUserGrantService(database, userCredentials, connectorCredentials, mockFetch as typeof fetch)

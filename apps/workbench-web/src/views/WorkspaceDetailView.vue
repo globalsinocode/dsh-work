@@ -1124,8 +1124,7 @@ const chatScope = computed(() => ({
             <slot v-else-if="collab" name="chat" v-bind="chatScope" />
             <template v-else>
               <ConversationStarter
-                v-if="showConversationStarter"
-                v-show="conversationView === 'new'"
+                v-if="showConversationStarter && conversationView === 'new'"
                 ref="starterRef"
                 embedded
                 :workspace-id="workspace.id"
@@ -1138,14 +1137,19 @@ const chatScope = computed(() => ({
                 :mention-options="isTeam ? startableMentionOptions : []"
               />
 
-              <WorkspaceSessionHistory
+              <div
                 v-if="showSessionHistory"
-                :workspace-id="workspace.id"
-                :workspace-name="workspace.name"
-                :can-start-conversation="!isArchived && canWriteTeamContent"
-                :archived="isArchived"
-                @start-new="setConversationView('new')"
-              />
+                class="workspace-conversation-history-layout"
+                data-testid="workspace-conversation-history-layout"
+              >
+                <WorkspaceSessionHistory
+                  :workspace-id="workspace.id"
+                  :workspace-name="workspace.name"
+                  :can-start-conversation="!isArchived && canWriteTeamContent"
+                  :archived="isArchived"
+                  @start-new="setConversationView('new')"
+                />
+              </div>
             </template>
           </div>
         </section>

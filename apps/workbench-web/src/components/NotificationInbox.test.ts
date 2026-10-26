@@ -44,7 +44,7 @@ describe('NotificationInbox', () => {
         stubs: { RouterLink: true },
       },
     })
-    await wrapper.getByRole('button', { name: '打开通知' }).click()
+    await wrapper.find('[aria-label="打开通知"]').trigger('click')
     await flushPromises()
     expect(api.listNotifications).toHaveBeenCalled()
     expect(wrapper.text()).toContain('工作空间通知')

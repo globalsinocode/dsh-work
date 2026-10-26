@@ -97,8 +97,10 @@ const baseTask: TaskRun = {
 }
 
 describe('task store', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.clearAllMocks()
+    const { resetTaskIntentRegistryForTests } = await import('./tasks')
+    resetTaskIntentRegistryForTests()
     setActivePinia(createPinia())
     FakeEventSource.instances = []
     vi.stubGlobal('EventSource', FakeEventSource)

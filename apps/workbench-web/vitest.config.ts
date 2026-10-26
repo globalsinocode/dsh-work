@@ -1,10 +1,11 @@
 import { fileURLToPath, URL } from 'node:url'
 
 import vue from '@vitejs/plugin-vue'
+import * as vueCompiler from 'vue/compiler-sfc'
 import { defineConfig } from 'vitest/config'
 
 export default defineConfig({
-  plugins: [vue()],
+  plugins: [vue({ compiler: vueCompiler })],
   resolve: {
     alias: {
       '@': fileURLToPath(new URL('./src', import.meta.url)),

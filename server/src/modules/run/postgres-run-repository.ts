@@ -470,7 +470,28 @@ export class PostgresRunRepository implements RunRepository {
          where tenant_id = ${tenantId} and runtime_id = ${runtimeId}
            and status in ('running', 'cancel_requested')
       `
-      if ((usage?.active ?? 0) >= runtime.capacity) return false
+      const activeCount = usage?.active ?? 0
+      if (activeCount >= runtime.capacity) return false
+      const [delegationSlot] = await transaction<{ reserved: number; isReservedChild: boolean }[]>`
+        select (select count(*)::integer from task_delegations d
+                 join runs child on child.tenant_id = d.tenant_id and child.id = d.child_run_id
+                 left join run_attempts child_attempt
+                   on child_attempt.tenant_id = child.tenant_id and child_attempt.id = child.current_attempt_id
+                where d.tenant_id = ${tenantId} and d.status in ('accepted', 'running')
+                  and (child.current_attempt_id is null or child_attempt.status = 'queued')) as reserved,
+               exists (
+                 select 1 from task_delegations d
+                   join runs child on child.tenant_id = d.tenant_id and child.id = d.child_run_id
+                   join run_attempts child_attempt
+                     on child_attempt.tenant_id = child.tenant_id and child_attempt.id = child.current_attempt_id
+                  where d.tenant_id = ${tenantId} and d.status in ('accepted', 'running')
+                    and child_attempt.status = 'queued' and child_attempt.id = ${attemptId}
+               ) as "isReservedChild"
+      `
+      const reserved = delegationSlot?.reserved ?? 0
+      if (!delegationSlot?.isReservedChild && reserved > 0 && activeCount + reserved >= runtime.capacity) {
+        return false
+      }
       // AG-03：自动任务并发车道——计数与领取在同一 Runtime 行锁内完成。
       // 有效上限 = min(配置上限, capacity - 1)：始终为交互执行保留一路 Worker；
       // capacity ≤ 1 时车道为 0，超限返回 false 由调度泵区分「车道满跳过」
@@ -520,6 +541,25 @@ export class PostgresRunRepository implements RunRepository {
       `
       return true
     })
+  }
+
+  async isBlockedByDelegationReservation(tenantIdValue: string, runtimeIdValue: string): Promise<boolean> {
+    const [row] = await this.database<{ active: number; reserved: number; capacity: number }[]>`
+      select r.capacity,
+             (select count(*)::integer from run_attempts a
+               where a.tenant_id = r.tenant_id and a.runtime_id = r.id
+                 and a.status in ('running', 'cancel_requested')) as active,
+             (select count(*)::integer from task_delegations d
+               join runs child on child.tenant_id = d.tenant_id and child.id = d.child_run_id
+               left join run_attempts child_attempt
+                 on child_attempt.tenant_id = child.tenant_id and child_attempt.id = child.current_attempt_id
+              where d.tenant_id = r.tenant_id and d.status in ('accepted', 'running')
+                and (child.current_attempt_id is null or child_attempt.status = 'queued')) as reserved
+        from runtimes r
+       where r.tenant_id = ${tenantIdValue} and r.id = ${runtimeIdValue}
+    `
+    if (!row) return false
+    return row.reserved > 0 && row.active + row.reserved >= row.capacity && row.active < row.capacity
   }
 
   /**

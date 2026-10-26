@@ -48,6 +48,11 @@ import type {
   SkillReleaseRecord,
   SkillTestRunProgress,
   SkillVersionRecord,
+  ToolCatalogCandidate,
+  ToolCatalogSyncResult,
+  ToolDefinition,
+  ToolBindingRecord,
+  DshRuntimeToolConnectorStatus,
   UpdateAgentDraftInput,
   UpdateRuntimeConfigurationInput,
   UpdateSkillInput,
@@ -298,7 +303,27 @@ export const adminApi = {
     request<{ skill: SkillDefinition; release: SkillReleaseRecord }>('/skills/status', { method: 'PATCH', body: JSON.stringify(input) }),
   rollbackSkill: (input: { skillId: string; version: string }) =>
     request<{ skill: SkillDefinition; release: SkillReleaseRecord }>('/skills/rollback', { method: 'POST', body: JSON.stringify(input) }),
+  getTools: () => request<ToolDefinition[]>('/tools'),
+  getToolBindings: () => request<{ items: ToolBindingRecord[] }>('/tools/bindings'),
+  getToolCatalog: () => request<ToolCatalogCandidate[]>('/tools/catalog'),
+  syncDshTools: () => request<ToolCatalogSyncResult>('/tools/sync', { method: 'POST' }),
+  addTool: (input: {
+    catalogId: string
+    allowedRoles: string[]
+    dataScopes: string[]
+    approvalPolicy: ToolDefinition['approvalPolicy']
+  }) => request<ToolDefinition>('/tools', { method: 'POST', body: JSON.stringify(input) }),
+  setToolStatus: (input: { toolId: string; status: 'available' | 'disabled' }) =>
+    request<ToolDefinition>('/tools/status', { method: 'PATCH', body: JSON.stringify(input) }),
+  updateToolPermissions: (input: {
+    toolId: string
+    allowedRoles: string[]
+    dataScopes: string[]
+    approvalPolicy: ToolDefinition['approvalPolicy']
+  }) => request<ToolDefinition>('/tools/permissions', { method: 'PATCH', body: JSON.stringify(input) }),
   getMcpConnectors: () => request<ConnectorDefinition[]>('/connectors'),
+  getDshRuntimeToolConnector: () => request<DshRuntimeToolConnectorStatus>('/runtimes/dsh-tool-connector'),
+  checkDshRuntimeToolConnector: () => request<DshRuntimeToolConnectorStatus>('/runtimes/dsh-tool-connector/check', { method: 'POST' }),
   getBuiltinTools: () => request<BuiltinToolStatus>('/runtimes/builtin-tools'),
   getMcpInvocationAudits: (connectorId: string) =>
     request<McpInvocationAudit[]>(`/connectors/mcp/invocations?connector_id=${encodeURIComponent(connectorId)}`),

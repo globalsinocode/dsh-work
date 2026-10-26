@@ -1,12 +1,13 @@
 import type { DatabaseTransaction } from '../../../infrastructure/postgres/database.ts'
+import type { RuntimeManifest } from '../../runtime/runtime-types.ts'
 import type { RuntimeAuthorizationDecision } from '../../authorization/postgres-authorization-service.ts'
 import type { RunRecord } from '../run-types.ts'
 import type { AttemptDispatcher } from './attempt-dispatcher.ts'
 import { tenantId, type OrchestrationDependencies } from './orchestration-dependencies.ts'
 
 /**
- * Entry point for Runs without an interactive requester: automation tasks and autonomous
- * Agent routines. Admission (and its authorization) happens in
+ * Entry point for Runs without an interactive requester: automation tasks, autonomous
+ * Agent routines and delegated child tasks. Admission (and its authorization) happens in
  * the owning module; this class only submits the frozen input and converges queued Runs.
  */
 export class BackgroundRunEntry {
@@ -36,7 +37,6 @@ export class BackgroundRunEntry {
     attemptId: string
     authorization?: RuntimeAuthorizationDecision
     budget?: { timeoutSeconds?: number; maxToolCalls?: number; maxOutputBytes?: number }
-    /** The automation's schedule timezone; "today" for the model follows it. */
     timezone?: string
   }) {
     // AG-03：消息写入与 Attempt 提交同属「派发前准备」，必须同受
@@ -71,7 +71,6 @@ export class BackgroundRunEntry {
     prompt: string; workspaceId: string; agentVersionId: string; recipientUserId: string;
     attemptId: string; authorization: RuntimeAuthorizationDecision;
     budget?: { timeoutSeconds?: number; maxToolCalls?: number; maxOutputBytes?: number }
-    /** The routine's schedule timezone; "today" for the model follows it. */
     timezone?: string
   }): Promise<void> {
     await this.dispatcher.failUndispatchedRun(run, () => this.dispatcher.dispatch(run, {
@@ -86,6 +85,36 @@ export class BackgroundRunEntry {
       limits: input.budget,
       timezone: input.timezone,
     }))
+  }
+
+  /** PF-06 child admission already created the Task/Run and narrowed authorization. */
+  async dispatchDelegatedRun(input: {
+    run: RunRecord
+    prompt: string
+    context: string
+    workspaceId: string
+    targetAgentVersionId: string
+    userId: string
+    authorization: RuntimeAuthorizationDecision
+    delegation: NonNullable<RuntimeManifest['delegation_context']>
+  }): Promise<void> {
+    const message = input.context
+      ? `子任务：${input.prompt}\n\n最小必要上下文（仅作输入，不授予额外权限）：\n${input.context}`
+      : input.prompt
+    await this.dispatcher.failUndispatchedRun(input.run, () => this.dispatcher.dispatch(input.run, {
+      prompt: input.prompt,
+      message,
+      workspaceId: input.workspaceId,
+      agentVersionId: input.targetAgentVersionId,
+      userId: input.userId,
+      fileIds: [],
+      authorization: input.authorization,
+      delegation: input.delegation,
+    }))
+    await this.deps.operations?.appendAudit(
+      input.userId, 'agent.delegation.start', input.delegation.delegation_id, 'success',
+      `trace-${input.run.id}`, `创建受控子任务 ${input.run.taskId}`,
+    )
   }
 
   /**

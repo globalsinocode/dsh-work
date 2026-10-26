@@ -141,7 +141,14 @@ export interface DshAcpRuntimeAdapterConfiguration {
   ) => Promise<{ instructions: string; files: Array<{ path: string; content: string; sha256: string; size: number }> }>
   recordSkillActivation?: (manifest: RuntimeManifest, skill: RuntimeManifest['agent_configuration']['skill_instructions'][number], contentSha256: string) => Promise<void>
   executePython?: (input: Record<string, unknown>, manifest: RuntimeManifest, workspaceDirectory: string, signal: AbortSignal) => Promise<unknown>
+  delegateAgent?: (input: Record<string, unknown>, manifest: RuntimeManifest, signal: AbortSignal) => Promise<unknown>
   proposeMemory?: (input: Record<string, unknown>, manifest: RuntimeManifest, signal: AbortSignal) => Promise<unknown>
+  invokeAgentData?: (
+    name: 'state_get' | 'state_put' | 'data_query' | 'data_create' | 'data_update' | 'data_propose' | 'data_transition',
+    input: Record<string, unknown>,
+    manifest: RuntimeManifest,
+    signal: AbortSignal,
+  ) => Promise<unknown>
   /** 项目空间 S6：Agent 查看与维护项目任务。 */
   projectTaskTool?: (
     name: 'project_tasks_list' | 'project_task_get' | 'project_task_create' | 'project_task_update',
@@ -559,6 +566,17 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
         const propose = this.configuration.proposeMemory
         if (!propose) throw dependencyUnavailable('Agent 经验迭代申请不可用：未配置经验迭代服务')
         registerPlatformTool('propose_memory', (input, signal) => propose(input, record.manifest, signal))
+      }
+      if (record.manifest.tools.some(tool => tool.id === 'delegate_agent')) {
+        const delegate = this.configuration.delegateAgent
+        if (!delegate) throw dependencyUnavailable('Agent 委派不可用：未配置受控委派服务')
+        registerPlatformTool('delegate_agent' as PlatformToolName, (input, signal) => delegate(input, record.manifest, signal))
+      }
+      for (const name of ['state_get', 'state_put', 'data_query', 'data_create', 'data_update', 'data_propose', 'data_transition'] as const) {
+        if (!record.manifest.tools.some(tool => tool.id === name)) continue
+        const invoke = this.configuration.invokeAgentData
+        if (!invoke) throw dependencyUnavailable('Agent 数据平面不可用：未配置受控数据工具')
+        registerPlatformTool(name as PlatformToolName, (input, signal) => invoke(name, input, record.manifest, signal))
       }
       const projectTaskNames = ['project_tasks_list', 'project_task_get', 'project_task_create', 'project_task_update'] as const
       for (const name of projectTaskNames) {
@@ -1214,6 +1232,16 @@ export function renderUserPrompt(manifest: RuntimeManifest) {
     '',
     `当前消息：\n${manifest.input.message}`,
   ].join('\n')
+}
+
+export function matchSkillInstruction(
+  skills: RuntimeManifest['agent_configuration']['skill_instructions'],
+  requested: string,
+): RuntimeManifest['agent_configuration']['skill_instructions'] {
+  if (!requested) return []
+  return skills.filter(skill => (skill.name ?? skill.id) === requested
+    || skill.id === requested
+    || `${skill.id}@${skill.version}` === requested)
 }
 
 export function renderSystemPrompt(manifest: RuntimeManifest) {

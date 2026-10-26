@@ -146,10 +146,10 @@ describe('团队动态文案（design §2.9 / TW-08）', () => {
 })
 
 describe('团队动态 kind 集合与服务端契约一致', () => {
-  it('前端 kind 集合与最新迁移（0088）的 CHECK 约束逐一相等', () => {
+  it('前端 kind 集合与最新迁移（0093）的 CHECK 约束逐一相等', () => {
     // 判别性：任何一侧加了新 kind 而另一侧没跟上，这条用例都会红——避免只靠
     // 「两处联合类型长得一样」这种人工同步。
-    const sql = readFileSync(findMigration('0088_project_space.sql'), 'utf8')
+    const sql = readFileSync(findMigration('0093_project_space.sql'), 'utf8')
     const check = sql.match(/workspace_activity_events_kind_check\s+check\s*\(kind\s+in\s*\(([\s\S]*?)\)\)/i)
     expect(check).not.toBeNull()
     const serverKinds = [...check![1]!.matchAll(/'([a-z_]+)'/g)].map(match => match[1]!).sort()

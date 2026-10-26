@@ -153,6 +153,8 @@ export interface TaskResultEvidence {
   }>
   /** Current Attempt's write operations whose effect is still unknown. */
   unknownOperations?: Array<{ id: string; actionRef: string }>
+  /** Agent 数据平面：当前 Attempt 写入或删除的记录版本引用。 */
+  recordVersions?: Array<{ id: string; attemptId: string; runId: string; deleted: boolean }>
   sources: TaskSource[]
   /**
    * 当前 Attempt 的平台工具审计记录。`decision` 非空的行为授权决定记录
@@ -318,6 +320,25 @@ export function deriveTaskResult(evidence: TaskResultEvidence): TaskResult {
       message: `工具 ${operation.actionRef} 的实际效果未知；须查询权威系统回执后才能确认目标。` })
   }
 
+  const recordVersionEvidence = evidence.recordVersions ?? []
+  const dataRecordVersions = recordVersionEvidence.filter(version => !version.deleted)
+  for (const version of dataRecordVersions) {
+    receipts.push({
+      kind: 'artifact',
+      status: 'completed',
+      ref: version.id,
+      label: 'Agent 数据记录版本已登记',
+    })
+  }
+  for (const tombstone of recordVersionEvidence.filter(version => version.deleted)) {
+    receipts.push({
+      kind: 'artifact',
+      status: 'completed',
+      ref: tombstone.id,
+      label: 'Agent 数据记录版本已登记（保留期清理后仅存删除证明）',
+    })
+  }
+
   if (outputTruncated) {
     pendingItems.push({
       kind: 'output_truncated',
@@ -343,6 +364,7 @@ export function deriveTaskResult(evidence: TaskResultEvidence): TaskResult {
   const hasVerifiedDeliverable = receipts.some(
     receipt => receipt.status === 'completed' && receipt.kind === 'artifact',
   ) || toolAudits.some(audit => audit.decision === null && audit.result === 'success')
+    || recordVersionEvidence.length > 0
   let outcome: TaskResultOutcome
   if (!terminal) {
     outcome = 'pending'

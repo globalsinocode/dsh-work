@@ -5,7 +5,6 @@ import { after, before, test } from 'node:test'
 
 import type { ApiAudience, RequestIdentity } from '../modules/identity/types.ts'
 import { PostgresAgentService } from '../modules/agent/postgres-agent-service.ts'
-import { PostgresAgentAccessService } from '../modules/agent/agent-access-service.ts'
 import { PostgresAuthorizationService } from '../modules/authorization/postgres-authorization-service.ts'
 import { AuthorizationDeniedError } from '../domain/authorization-errors.ts'
 import { PostgresOperationsService } from '../modules/admin/application/postgres-operations-service.ts'
@@ -49,7 +48,7 @@ before(async () => {
 
   const router = new Router({ authenticateApi: testApiAuthenticator })
   registerWorkspaceAgentMemberRoutes(router, agentMembers, authorization)
-  registerAgentRoutes(router, agents, new PostgresAgentAccessService(database))
+  registerAgentRoutes(router, agents)
   registerOperationsRoutes(router, operations, reconciliation)
   server = createServer((request, response) => void router.handle(request, response))
   await new Promise<void>((resolve, reject) => {

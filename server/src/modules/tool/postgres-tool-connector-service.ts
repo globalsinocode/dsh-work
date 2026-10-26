@@ -19,6 +19,7 @@ import { normalizeAgentMcpScope } from './agent-mcp-scope.ts'
 import type { McpUserGrantService, McpOAuthProbeRegistrationInput } from './mcp-user-grant-service.ts'
 import { probeFingerprint } from './mcp-user-grant-service.ts'
 import { RequestError, accessDenied, dependencyUnavailable, invalidRequest, notFound, stateConflict } from '../../domain/request-errors.ts'
+import { builtinTools, missingDshBuiltinTools, normalizeDisabledTools, type BuiltinToolStatus } from '../runtime/builtin-tools.ts'
 
 const tenantId = 'tenant-dsh-work'
 /** 平台拥有的绑定记录在非管理员上下文首次物化时归属到 bootstrap 平台管理员。 */
@@ -507,6 +508,33 @@ export class PostgresToolConnectorService {
 
   async getMcpConnectors(): Promise<ConnectorDefinition[]> {
     return (await this.getConnectors()).filter(connector => connector.protocol === 'mcp')
+  }
+
+  async getBuiltinToolStatus(): Promise<BuiltinToolStatus> {
+    const [configuration] = await this.database<{ disabledTools: unknown }[]>`
+      select coalesce(disabled_tools, '[]'::jsonb) as "disabledTools"
+        from runtime_configurations
+       where tenant_id = ${tenantId}
+       order by revision desc
+       limit 1
+    `
+    const disabledTools = normalizeDisabledTools(configuration?.disabledTools ?? [])
+    let catalog: BuiltinToolStatus['catalog'] = null
+    try {
+      const descriptors = await this.runtime?.listTools?.()
+      if (descriptors) {
+        catalog = {
+          checkedAt: new Date().toISOString(),
+          missingTools: missingDshBuiltinTools(descriptors.map(tool => tool.id)),
+        }
+      }
+    } catch (error) {
+      catalog = {
+        checkedAt: new Date().toISOString(),
+        error: error instanceof Error ? error.message : '无法读取 Runtime 工具目录',
+      }
+    }
+    return { tools: builtinTools, disabledTools, catalog }
   }
 
   async getDshRuntimeToolConnectorStatus(): Promise<DshRuntimeToolConnectorStatus> {
@@ -1840,6 +1868,7 @@ function toConnectorDefinition(row: ConnectorRow, profile?: McpProfileRow): Conn
       approvedDigest: profile.approvedDigest,
       capabilityCount: profile.capabilitySnapshot.length,
       capabilities: profile.capabilitySnapshot,
+      pendingCapabilities: [],
       discoveredAt: profile.discoveredAt?.toISOString() ?? null,
       reviewedAt: profile.reviewedAt?.toISOString() ?? null,
       reviewedBy: profile.reviewedBy,

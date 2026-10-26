@@ -4,8 +4,10 @@ import { createMemoryHistory, createRouter } from 'vue-router'
 
 import SessionResumeView from './SessionResumeView.vue'
 
-const getConversationSession = vi.fn()
-const replace = vi.fn()
+const { getConversationSession, replace } = vi.hoisted(() => ({
+  getConversationSession: vi.fn(),
+  replace: vi.fn(),
+}))
 
 vi.mock('@/api/client', () => ({
   workbenchApi: { getConversationSession },

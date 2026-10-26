@@ -21,6 +21,9 @@
 
 - 旧实现文件可以被新实现替换，但业务契约和测试证据必须保留或迁移。
 - `0083_remove_agent_delegation.sql` 与 `0087_remove_agent_data_plane.sql` **不进入**最终迁移序列。
+- `0104_builtin_tools_in_code.sql` **不得**删除 `tools` / 绑定修订表；只增加 `web_search_enabled` 与 Runtime `disabled_tools`。
+- `0090_agent_level_access.sql` 增加 Agent 级 `visible_role_ids`，**不得**删除 `agent_versions` 上的可见角色与数据范围列。
+- `0091_agent_validations.sql` 可新增 `agent_validations` 表，**不得**删除 `agent_release_submissions` 与发布证据表。
 - 若新实现无法在不删除受保护能力的前提下工作，按停止条件暂停集成。
 
 ## 验收映射（摘要）

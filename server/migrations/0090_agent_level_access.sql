@@ -24,6 +24,5 @@ update agents a
        where av.tenant_id = a.tenant_id and av.id = a.draft_version_id),
      '[]'::jsonb);
 
-alter table agent_versions
-  drop column visible_role_ids,
-  drop column data_scopes;
+-- 版本上的 visible_role_ids / data_scopes 仍是发布封存快照（globalsinocode 发布治理）。
+-- Agent 级 visible_role_ids 立即生效；不得删除版本列。

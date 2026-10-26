@@ -160,6 +160,10 @@ export class AttemptScheduler {
               continue
             }
           }
+          if (await this.deps.runs.isBlockedByDelegationReservation(tenantId, runtimeId)) {
+            index += 1
+            continue
+          }
           this.schedulePump()
           break
         }

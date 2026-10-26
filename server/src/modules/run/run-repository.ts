@@ -50,6 +50,8 @@ export interface RunRepository {
     runtimeId: string,
     options?: { automationMaxConcurrent?: number },
   ): Promise<boolean>
+  /** PF-06：存在同步委派预留席位时，普通排队 Attempt 不得抢占预留槽。 */
+  isBlockedByDelegationReservation(tenantId: string, runtimeId: string): Promise<boolean>
   /**
    * AG-03 车道占用读数：自动任务有效并发上限（min(配置, capacity-1)，
    * 为交互保留一路）与当前占用（含 cancel_requested 未释放的 Worker）。

@@ -19,7 +19,12 @@ import type {
   RuntimeManifest,
 } from '../../modules/runtime/runtime-types.ts'
 import { PostgresSkillService } from '../../modules/skill/postgres-skill-service.ts'
+import { SkillArtifactStore } from '../../modules/skill/skill-artifact-store.ts'
+import { LocalObjectStorage } from '../../infrastructure/storage/local-object-storage.ts'
 import { PostgresToolConnectorService } from '../../modules/tool/postgres-tool-connector-service.ts'
+import { mkdtempSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { PostgresConversationRepository } from '../../modules/workbench/application/postgres-conversation-repository.ts'
 import { PostgresWorkspaceAgentMemberService } from '../../modules/workbench/application/postgres-workspace-agent-member-service.ts'
 import type { DatabaseClient } from './database.ts'
@@ -42,7 +47,7 @@ before(async () => {
   database = throwaway.client
   authorization = new PostgresAuthorizationService(database)
   const tools = new PostgresToolConnectorService(database)
-  const skills = new PostgresSkillService(database, undefined, tools)
+  const skills = new PostgresSkillService(database, undefined, new SkillArtifactStore(new LocalObjectStorage(mkdtempSync(join(tmpdir(), 'm4-auth-artifacts-')), { fileMode: 0o400 })))
   agents = new PostgresAgentService(database, undefined, skills, tools)
   conversations = new PostgresConversationRepository(database)
   runtime = new CapturingAuthorizationRuntime()

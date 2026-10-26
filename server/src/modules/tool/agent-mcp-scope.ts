@@ -15,12 +15,15 @@ export function normalizeAgentMcpScope(value: unknown): AgentMcpScope {
   const candidate = value as Record<string, unknown>
   if (Object.keys(candidate).some(key => key !== 'mode' && key !== 'connectorIds')) invalid('MCP 使用范围存在未知字段')
   const { mode, connectorIds } = candidate
-  if (mode === 'all') invalid('MCP 使用范围不再支持“全部”，请选择具体连接器或不使用 MCP')
-  if (!['selected', 'none'].includes(mode as string) || !Array.isArray(connectorIds)
+  if (!['all', 'selected', 'none'].includes(mode as string) || !Array.isArray(connectorIds)
     || connectorIds.some(id => typeof id !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(id))) {
     invalid('MCP 模式或连接器标识无效')
   }
   const ids = [...new Set(connectorIds as string[])].sort()
+  if (mode === 'all') {
+    if (ids.length) invalid('全部 MCP 范围不能同时指定连接器清单')
+    return { mode: 'all', connectorIds: [] }
+  }
   if (mode === 'selected') {
     if (!ids.length || ids.length > MAX_MCP_CONNECTIONS_PER_ATTEMPT) {
       invalid(`选定模式必须选择 1～${MAX_MCP_CONNECTIONS_PER_ATTEMPT} 个 MCP Connector`)

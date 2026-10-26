@@ -1,4 +1,5 @@
 import type { SkillTestScenario } from '../../domain/skill-test-scenario.ts'
+import type { ManifestToolBinding } from '../../domain/tool-binding.ts'
 
 export type RuntimeRunStatus =
   | 'queued'
@@ -102,12 +103,21 @@ export interface RuntimeManifest {
   }
   skills: CapabilityReference[]
   tools: CapabilityReference[]
+  /**
+   * B-03/I-04：本 Attempt 固定的平台工具绑定修订（tool = id@version 平台引用）。
+   * 执行边界复核据此验证绑定仍 active 且语义未漂移；无平台工具的清单省略该字段。
+   */
+  tool_bindings?: ManifestToolBinding[]
   /** PF-03 Attempt snapshot. Grants remain live and are rechecked before and during execution. */
   mcp_connections?: McpConnectionSnapshot[]
   data_scopes: string[]
   knowledge_context: RuntimeKnowledgeDocument[]
   /** PF-05 reviewed, ACL-filtered memory versions fixed for this Attempt. */
   memory_context?: RuntimeControlledMemory[]
+  /** PF-06 platform-owned delegation allow-list fixed with the Agent Version. */
+  delegation_policy?: RuntimeDelegationPolicy
+  /** PF-06 immutable parent/root lineage for a delegated child Attempt. */
+  delegation_context?: RuntimeDelegationContext
   /**
    * 项目空间 S1/S2：项目任务线程的执行固定当时的项目简报与项目档案版本，至少携带其一。参考资料，不是操作授权。
    */
@@ -216,6 +226,25 @@ export interface RuntimeControlledMemory {
   visibility: 'private' | 'workspace' | 'organization'
   contentDigest: string
   excerpt: string
+}
+
+export interface RuntimeDelegationPolicy {
+  allowed_agent_version_ids: string[]
+  max_depth: number
+  max_parallel: number
+  timeout_seconds: number
+}
+
+export interface RuntimeDelegationContext {
+  delegation_id: string
+  root_task_id: string
+  parent_task_id: string
+  parent_run_id: string
+  parent_attempt_id: string
+  depth: number
+  max_depth: number
+  role_ceiling: string[]
+  data_scope_ceiling: string[]
 }
 
 export interface McpConnectionSnapshot {

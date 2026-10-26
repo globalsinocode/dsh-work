@@ -20,6 +20,17 @@ export interface AgentSpecLimits {
   maxOutputBytes: number
 }
 
+export type AgentDataAction = 'query' | 'propose' | 'create' | 'update' | 'transition'
+
+export interface AgentDataCollectionRequirement {
+  key: string
+  scope: 'installation' | 'workspace' | 'tenant'
+  schemaVersion: number
+  actions: AgentDataAction[]
+  /** Optional author proposal; the platform-published collection remains authoritative. */
+  schema: { path: string; sha256: string; body: Record<string, unknown> } | null
+}
+
 export interface AgentSpec {
   apiVersion: typeof AGENT_SPEC_API_VERSION
   metadata: { id: string; name: string; version: string; description: string }
@@ -27,8 +38,8 @@ export interface AgentSpec {
   instructions: { path: string; body: string }
   /** 可选的包根目录工作规程；由平台显式装配，不扫描宿主目录。 */
   workProcedures?: { path: 'AGENTS.md'; body: string } | null
-  /** 能力依赖：Skill 为规范化 `id@x.y.z` 精确引用；内置工具由平台装配，联网搜索与项目任务管理需显式开启。 */
-  capabilities: { skills: string[]; webSearch: boolean; projectTasks: boolean }
+  /** 能力依赖：Skill 为规范化 `id@x.y.z` 精确引用；平台工具绑定与内置能力开关一并固化。 */
+  capabilities: { skills: string[]; tools: string[]; webSearch: boolean; projectTasks: boolean }
   input: { type: 'text' }
   output: { type: 'text' }
   context: { conversationHistory: 'recent' }
@@ -38,6 +49,8 @@ export interface AgentSpec {
   evaluation: { cases: string | null }
   /** 模型能力要求；准备及队列恢复时校验，路由与凭据由平台管理。 */
   model: { requirements: AgentModelRequirement[] }
+  /** Requests only; platform-owned collection ACLs and schemas are never granted by this declaration. */
+  data: { collections: AgentDataCollectionRequirement[]; state: boolean }
 }
 
 export type AgentModelRequirement = 'long-context' | 'structured-output'
@@ -108,6 +121,25 @@ export function assertAgentSpecContent(spec: AgentSpec) {
     throw stateConflict('欢迎语不能超过 120 个字符')
   }
   assertAgentSpecLimits(spec.limits)
+  assertAgentDataDefinition(spec.data)
+}
+
+export function assertAgentDataDefinition(data: AgentSpec['data']): void {
+  if (!data || typeof data.state !== 'boolean' || !Array.isArray(data.collections) || data.collections.length > 12) {
+    throw invalidRequest('Agent 数据声明格式或集合数量无效')
+  }
+  const keys = new Set<string>()
+  const actions = new Set<AgentDataAction>(['query', 'propose', 'create', 'update', 'transition'])
+  for (const item of data.collections) {
+    if (!item || typeof item.key !== 'string' || !/^[a-z][a-z0-9_]{2,79}$/.test(item.key)
+      || keys.has(item.key) || !['installation', 'workspace', 'tenant'].includes(item.scope)
+      || !Number.isInteger(item.schemaVersion) || item.schemaVersion < 1
+      || !Array.isArray(item.actions) || !item.actions.length || item.actions.length > 5
+      || item.actions.some(action => !actions.has(action)) || new Set(item.actions).size !== item.actions.length) {
+      throw invalidRequest('Agent 集合声明中的 key、范围、版本或动作无效')
+    }
+    keys.add(item.key)
+  }
 }
 
 export function assertAgentSpecLimits(limits: AgentSpecLimits) {
@@ -134,15 +166,19 @@ export interface AgentSpecConfiguration {
   welcomeMessage: string
   examplePrompts: string[]
   skills: string[]
-  webSearchEnabled: boolean
-  projectTasksEnabled: boolean
+  tools: string[]
+  webSearchEnabled?: boolean
+  projectTasksEnabled?: boolean
   timeoutSeconds: number
+  data?: { state: boolean; collections: Array<Omit<AgentDataCollectionRequirement, 'schema'>> }
   maxToolCalls: number
   maxOutputBytes: number
 }
 
 /** 配置新建时展开默认值；编辑/分叉时保留表单未提供的定义，统一生成 SOUL.md。 */
 export function agentSpecFromConfiguration(input: AgentSpecConfiguration, version: string, existing?: AgentSpec | null): AgentSpec {
+  if (input.data !== undefined && (!input.data || typeof input.data.state !== 'boolean'
+    || !Array.isArray(input.data.collections))) throw invalidRequest('Agent 数据声明格式无效')
   return {
     apiVersion: AGENT_SPEC_API_VERSION,
     metadata: { id: input.id, name: input.name, version, description: input.description },
@@ -153,8 +189,9 @@ export function agentSpecFromConfiguration(input: AgentSpecConfiguration, versio
       : null,
     capabilities: {
       skills: [...input.skills],
-      webSearch: input.webSearchEnabled,
-      projectTasks: input.projectTasksEnabled,
+      tools: [...input.tools],
+      webSearch: input.webSearchEnabled ?? existing?.capabilities.webSearch ?? false,
+      projectTasks: input.projectTasksEnabled ?? existing?.capabilities.projectTasks ?? false,
     },
     input: existing ? { ...existing.input } : { type: 'text' },
     output: existing ? { ...existing.output } : { type: 'text' },
@@ -167,5 +204,8 @@ export function agentSpecFromConfiguration(input: AgentSpecConfiguration, versio
     },
     evaluation: { cases: existing?.evaluation.cases ?? null },
     model: { requirements: [...(existing?.model.requirements ?? [])] },
+    data: input.data ? { state: input.data.state,
+      collections: input.data.collections.map(item => ({ ...item, actions: [...item.actions], schema: null })) }
+      : { collections: [...(existing?.data?.collections ?? [])], state: existing?.data?.state ?? false },
   }
 }

@@ -450,6 +450,7 @@ defineExpose({ useWorkspaceFile, focusComposer, submitWorkspaceTask: submitTask 
     :class="{
       'conversation-starter--embedded': embedded,
     }"
+    :data-testid="embedded ? 'workspace-composer-strip' : undefined"
   >
     <main class="workbench-stage">
       <section class="workbench-welcome" aria-labelledby="conversation-starter-title">

@@ -152,6 +152,8 @@ describe('ConversationStarter', () => {
       [],
       undefined,
       undefined,
+      undefined,
+      undefined,
     )
   })
 
@@ -192,6 +194,8 @@ describe('ConversationStarter', () => {
       [],
       undefined,
       'wam-001',
+      undefined,
+      undefined,
     )
   })
 
@@ -219,7 +223,7 @@ describe('ConversationStarter', () => {
     await flushPromises()
 
     expect(createTask).toHaveBeenCalledWith(
-      '分析订单波动', [], 'ws-team', '供应链团队', undefined, [], undefined, 'wam-1',
+      '分析订单波动', [], 'ws-team', '供应链团队', undefined, [], undefined, 'wam-1', undefined, undefined,
     )
   })
 
@@ -274,6 +278,8 @@ describe('ConversationStarter', () => {
       '',
       undefined,
       [],
+      undefined,
+      undefined,
       undefined,
       undefined,
     )
@@ -358,6 +364,8 @@ describe('ConversationStarter', () => {
       [],
       undefined,
       'wam-9',
+      undefined,
+      undefined,
     )
   })
 

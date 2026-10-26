@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage, ElMessageBox, type ElMessageBoxOptions } from 'element-plus'
+import type { CSSProperties } from 'vue'
 import { Plus, Search } from '@element-plus/icons-vue'
 
 import { workbenchApi } from '@/api/client'
@@ -225,10 +226,16 @@ async function addEmployee(candidateUserId: string) {
     if (impacts.length) {
       const lines = impacts.map(item => `“${item.name}”将不能再使用：${item.lostDataScopes.join('、')}`)
       try {
+        const confirmOptions: ElMessageBoxOptions = {
+          confirmButtonText: '仍然添加',
+          cancelButtonText: '取消',
+          type: 'warning',
+          customStyle: { whiteSpace: 'pre-line' } as CSSProperties,
+        }
         await ElMessageBox.confirm(
           `Agent 在本空间只能使用全体成员共同拥有的数据范围。加入后：\n${lines.join('\n')}`,
           '加入后 Agent 的可用数据范围会缩小',
-          { confirmButtonText: '仍然添加', cancelButtonText: '取消', type: 'warning', customStyle: { whiteSpace: 'pre-line' } },
+          confirmOptions,
         )
       } catch {
         return

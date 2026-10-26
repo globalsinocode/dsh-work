@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage, ElMessageBox, type ElMessageBoxOptions } from 'element-plus'
+import type { CSSProperties } from 'vue'
 
 import { workbenchApi } from '@/api/client'
 import MemberPicker, { type MemberPickerItem, type MemberPickerLoader } from '@/components/MemberPicker.vue'
@@ -65,10 +66,16 @@ async function confirmDisclosureImpact(userIds: string[]) {
   if (!merged.size) return true
   const lines = [...merged.values()].map(item => `“${item.name}”将不能再使用：${[...item.scopes].join('、')}`)
   try {
+    const confirmOptions: ElMessageBoxOptions = {
+      confirmButtonText: '仍然添加',
+      cancelButtonText: '返回修改',
+      type: 'warning',
+      customStyle: { whiteSpace: 'pre-line' } as CSSProperties,
+    }
     await ElMessageBox.confirm(
       `Agent 在本空间只能使用全体成员共同拥有的数据范围。加入所选同事后：\n${lines.join('\n')}`,
       '加入后 Agent 的可用数据范围会缩小',
-      { confirmButtonText: '仍然添加', cancelButtonText: '返回修改', type: 'warning', customStyle: { whiteSpace: 'pre-line' } },
+      confirmOptions,
     )
     return true
   } catch {

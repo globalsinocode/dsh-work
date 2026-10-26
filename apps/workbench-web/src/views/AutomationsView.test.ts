@@ -83,7 +83,7 @@ describe('AutomationsView lifecycle UI', () => {
     await wrapper.get('[aria-label="任务状态筛选"]').setValue('archived')
     await flushPromises()
     expect(workbenchApi.getAutomations).toHaveBeenCalledWith({ status: 'archived' })
-    await wrapper.getByRole('button', { name: '恢复' }).trigger('click')
+    await wrapper.findAll('button').find(button => button.text() === '恢复')!.trigger('click')
     expect(workbenchApi.restoreAutomation).toHaveBeenCalledWith('automation-1')
   })
 
@@ -113,7 +113,7 @@ describe('AutomationsView lifecycle UI', () => {
       .mockResolvedValueOnce(executionPage([running]))
       .mockResolvedValueOnce(executionPage([completed]))
     const wrapper = await mountView()
-    await wrapper.getByRole('button', { name: '执行记录' }).trigger('click')
+    await wrapper.findAll('button').find(button => button.text().includes('执行记录'))!.trigger('click')
     await flushPromises()
     expect(workbenchApi.listAutomationExecutions).toHaveBeenCalledTimes(1)
     await vi.advanceTimersByTimeAsync(5_000)

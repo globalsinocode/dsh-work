@@ -35,26 +35,26 @@ test('personal checks exact Agent and extra Skill references without mutating th
 test('team-specific membership gate is preserved', async () => {
   await assert.rejects(assertCurrentExecutionAuthorization(ports({ async workspaceTypeOf() { return 'team' },
     async authorizeTeamRunExecution() { throw authorizationDenied('removed') },
-  }), undefined, manifest), { code: 'permission_denied' })
+  }), undefined, manifest), { code: 'authorization_denied' })
 })
 test('pinned scopes cannot survive revoked grants', async () => {
   const auth = ports()
   await assert.rejects(assertCurrentExecutionAuthorization(ports({ async authorizeRuntime(input) {
     return { ...await auth.authorizeRuntime(input), dataScopes: [] }
-  } }), undefined, manifest), { code: 'permission_denied' })
+  } }), undefined, manifest), { code: 'authorization_denied' })
 })
 test('pinned Agent Principal cannot be replaced by a different live executor', async () => {
   const pinned = { ...manifest, principal_context: {
     initiated_by: 'principal-human-u1', executed_as: 'principal-agent-other',
     disclosure_user_id: 'u1', executor_authorization_version: 1,
   } } as RuntimeManifest
-  await assert.rejects(assertCurrentExecutionAuthorization(ports(), undefined, pinned), { code: 'permission_denied' })
+  await assert.rejects(assertCurrentExecutionAuthorization(ports(), undefined, pinned), { code: 'authorization_denied' })
 })
 test('missing space, removed files and missing input checker all fail closed', async () => {
-  await assert.rejects(assertCurrentExecutionAuthorization(ports({ async workspaceTypeOf() { return null } }), undefined, manifest), { code: 'permission_denied' })
+  await assert.rejects(assertCurrentExecutionAuthorization(ports({ async workspaceTypeOf() { return null } }), undefined, manifest), { code: 'authorization_denied' })
   const input = { ...manifest, input: { ...manifest.input, file_mounts: [{ file_id: 'file-1' }] as RuntimeManifest['input']['file_mounts'] } }
   await assert.rejects(assertCurrentExecutionAuthorization(ports(), undefined, input), AuthorizationCheckUnavailableError)
-  await assert.rejects(assertCurrentExecutionAuthorization(ports(), { async recheckRuntimeFiles() { throw authorizationDenied('removed') } }, input), { code: 'permission_denied' })
+  await assert.rejects(assertCurrentExecutionAuthorization(ports(), { async recheckRuntimeFiles() { throw authorizationDenied('removed') } }, input), { code: 'authorization_denied' })
 })
 test('infrastructure outage is distinguishable and never treated as a grant', async () => {
   await assert.rejects(assertCurrentExecutionAuthorization(ports({ async authorizeRuntime() { throw new Error('database unavailable') } }), undefined, manifest), AuthorizationCheckUnavailableError)
@@ -70,9 +70,9 @@ test('agent-release-trial is admin-side: platform-admin check, never workspace c
 })
 test('disabled Agent principal blocks both ordinary and admin trial Attempts', async () => {
   const disabled = ports({ async requireActiveAgentPrincipal() { throw authorizationDenied('Agent 执行身份已停用') } })
-  await assert.rejects(assertCurrentExecutionAuthorization(disabled, undefined, manifest), { code: 'permission_denied' })
+  await assert.rejects(assertCurrentExecutionAuthorization(disabled, undefined, manifest), { code: 'authorization_denied' })
   const trial = { ...manifest, purpose: 'agent-release-trial', workspace_id: '' } as RuntimeManifest
-  await assert.rejects(assertCurrentExecutionAuthorization(disabled, undefined, trial), { code: 'permission_denied' })
+  await assert.rejects(assertCurrentExecutionAuthorization(disabled, undefined, trial), { code: 'authorization_denied' })
 })
 test('automation purpose is workspace-bound: never reaches the admin branch', async () => {
   const automation = { ...manifest, purpose: 'automation' } as RuntimeManifest
@@ -96,13 +96,14 @@ test('PF-03: pinned MCP Connectors require current connector availability before
   )
   let checked = 0
   await assertCurrentExecutionAuthorization(ports(), undefined, pinned, {
-    async assertPinnedConnections(pins) {
+    async assertActiveMcpConnections(pins, agentVersionId) {
       checked += 1
       assert.deepEqual(pins, [pin])
+      assert.equal(agentVersionId, 'agent-v1')
     },
   })
   assert.equal(checked, 1)
   await assert.rejects(assertCurrentExecutionAuthorization(ports(), undefined, pinned, {
-    async assertPinnedConnections() { throw authorizationDenied('MCP connector unavailable') },
-  }), { code: 'permission_denied' })
+    async assertActiveMcpConnections() { throw authorizationDenied('MCP connector unavailable') },
+  }), { code: 'authorization_denied' })
 })

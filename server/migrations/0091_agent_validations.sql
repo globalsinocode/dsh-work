@@ -116,8 +116,9 @@ create table agent_validation_cases (
 );
 create index agent_validation_cases_by_run on agent_validation_cases (tenant_id, run_id);
 
--- 5. Release records become audit events (the published version keeps its
---    publication time and publisher); the old governance tables go.
+-- 5. Copy historical release records into audit_events. Do not drop
+--    agent_release_submissions / evidence / packages / records: globasino
+--    发布治理仍以这些表为契约（三方合并能力决策）。
 insert into audit_events (id, tenant_id, actor_type, actor_id, action, object_type, object_id,
                           result, trace_id, safe_context, occurred_at)
 select 'audit-' || r.id, r.tenant_id, 'user', r.actor_id,
@@ -132,10 +133,3 @@ select 'audit-' || r.id, r.tenant_id, 'user', r.actor_id,
        r.created_at
   from agent_release_records r
 on conflict (id) do nothing;
-
-drop table agent_trial_runs;
-drop table agent_version_evidence;
-drop table agent_release_submissions;
-drop table agent_packages;
-drop table agent_test_runs;
-drop table agent_release_records;

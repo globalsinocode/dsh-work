@@ -443,9 +443,9 @@ export class PostgresMcpConnectorService implements McpScopePort {
   async resolveConnections(value: AgentMcpScope | null | undefined): Promise<McpConnectionSnapshot[]> {
     const scope = normalizeAgentMcpScope(value)
     if (scope.mode === 'none') return []
-    const rows = await this.loadRuntimeRows(scope.connectorIds)
+    const rows = await this.loadRuntimeRows(scope.mode === 'all' ? null : scope.connectorIds)
     const usable = rows.filter(isUsable)
-    if (usable.length !== scope.connectorIds.length) {
+    if (scope.mode === 'selected' && usable.length !== scope.connectorIds.length) {
       const available = new Set(usable.map(row => row.connectorId))
       throw authorizationDenied(`已选 MCP Connector 不可用：${scope.connectorIds.filter(id => !available.has(id)).join('、')}`)
     }
@@ -515,7 +515,8 @@ export class PostgresMcpConnectorService implements McpScopePort {
 
   /* ---------- 内部 ---------- */
 
-  private async loadRuntimeRows(connectorIds: readonly string[]): Promise<RuntimeConnectionRow[]> {
+  private async loadRuntimeRows(connectorIds: readonly string[] | null): Promise<RuntimeConnectionRow[]> {
+    const idFilter = connectorIds === null ? this.database`` : this.database`and c.id = any(${[...connectorIds]})`
     return this.database<RuntimeConnectionRow[]>`
       select c.id as "connectorId", p.server_name as "serverName", c.endpoint, c.auth_type as "authType",
              p.approved_digest as "approvedDigest", p.approved_snapshot as "approvedSnapshot",
@@ -526,7 +527,7 @@ export class PostgresMcpConnectorService implements McpScopePort {
         left join credential_refs cr on cr.tenant_id = c.tenant_id and cr.id = c.credential_ref_id
         left join credential_secrets cs on cs.tenant_id = c.tenant_id and cs.credential_ref_id = c.credential_ref_id
        where c.tenant_id = ${tenantId} and c.protocol = 'mcp' and c.deleted_at is null
-         and c.id = any(${[...connectorIds]})
+         ${idFilter}
        order by p.server_name
     `
   }

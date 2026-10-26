@@ -42,7 +42,13 @@ const route = vi.hoisted(() => ({
 vi.mock('vue-router', () => ({
   useRouter: () => router,
   useRoute: () => route,
-  RouterView: { template: '<div data-testid="router-view" />' },
+  RouterView: defineComponent({
+    setup() {
+      return () => (route.name === 'workspace-conversation'
+        ? h('div', { 'data-testid': 'team-space-composer-dock' })
+        : h('div', { 'data-testid': 'router-view' }))
+    },
+  }),
   RouterLink: { props: ['to'], template: '<a :href="String(to)"><slot /></a>' },
 }))
 
@@ -867,12 +873,16 @@ describe('WorkspaceDetailView 文件版本 UI（TW-07 / 3-T9）', () => {
       id: 'file-4',
       logicalFileId: 'wfile-1',
       versionNo: 4,
+      versionCount: 4,
       name: '库存明细.xlsx',
-      type: 'XLSX',
-      size: '13 KB',
-      uploadedBy: '林岚',
-      uploadedAt: '刚刚',
-      extractionStatus: 'succeeded',
+      source: 'workspace',
+      sizeLabel: '13 KB',
+      parseStatus: 'succeeded',
+      parseErrorCode: null,
+      canReference: true,
+      canDownload: true,
+      createdAt: '2026-09-10T08:00:00.000Z',
+      updatedAt: '2026-09-10T08:00:00.000Z',
     })
     vi.spyOn(workbenchApi, 'downloadWorkspaceFileVersion').mockResolvedValue(new Blob(['x']))
   })

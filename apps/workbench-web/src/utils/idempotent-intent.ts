@@ -16,9 +16,11 @@ export interface IntentRegistry {
   markUncertain(slot: string, key: string): void
   complete(slot: string, key: string): void
   clear(slot: string): void
+  /** 单测隔离：清空全部 slot，避免跨用例指纹冲突。 */
+  clearAll(): void
 }
 
-export function createIntentRegistry(generate = () => crypto.randomUUID()): IntentRegistry {
+export function createIntentRegistry(generate: () => string = () => crypto.randomUUID()): IntentRegistry {
   const slots = new Map<string, IntentSlotState>()
 
   return {
@@ -45,6 +47,9 @@ export function createIntentRegistry(generate = () => crypto.randomUUID()): Inte
     },
     clear(slot) {
       slots.delete(slot)
+    },
+    clearAll() {
+      slots.clear()
     },
   }
 }

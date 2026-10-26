@@ -2,7 +2,7 @@
   <TaskComposer
     ref="composerRef"
     class="workbench-composer"
-    :data-testid="placement === 'stage' ? 'team-space-composer-stage' : undefined"
+    :data-testid="placement === 'stage' ? 'team-space-composer-stage' : placement === 'dock' ? 'team-space-composer-dock' : undefined"
     :compact="placement === 'dock'"
     :initial-prompt="initialPrompt"
     :initial-workspace-id="workspaceId"

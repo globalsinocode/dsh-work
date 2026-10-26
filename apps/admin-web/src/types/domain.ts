@@ -289,6 +289,8 @@ export interface AgentDefinition {
   maxToolCalls: number
   timeoutSeconds: number
   skills: string[]
+  /** 平台工具引用（id@version）；旧数据或未返回时视为空。 */
+  tools?: string[]
   /** 是否允许联网搜索（web_search）；其他内置工具由平台统一装配。 */
   webSearchEnabled: boolean
   /** 是否允许项目任务管理（project_task_*）。 */
@@ -458,9 +460,97 @@ export interface AgentVersionRecord {
   maxToolCalls: number
   timeoutSeconds: number
   skills: string[]
+  tools?: string[]
   webSearchEnabled: boolean
   projectTasksEnabled: boolean
   mcpScope?: AgentMcpScope
+}
+
+export interface ToolBindingRecord {
+  tool: string
+  bindingId: string
+  revision: number
+  digest: string
+  connectorId: string
+  executor: string
+  endpoint: string
+  credentialRef: string | null
+  identityPolicy: string
+  environment: string
+  approvalPolicy: string
+  status: 'active' | 'superseded' | 'revoked'
+  sealedAt: string
+}
+
+export interface ToolDefinition {
+  id: string
+  version?: string
+  name: string
+  system: string
+  description: string
+  connectorId: string
+  risk: 'low' | 'medium' | 'high'
+  mode: 'read' | 'write'
+  status: 'available' | 'degraded' | 'disabled'
+  admissionStatus?: 'approved' | 'unavailable'
+  admissionMessage?: string
+  inputSchema: string
+  outputSchema: string
+  outputValidation: 'runtime' | 'platform' | 'unavailable'
+  retryPolicy: 'safe' | 'never' | 'verify-first'
+  concurrencyPolicy: 'concurrent' | 'serialized'
+  completionSemantics: 'completed' | 'accepted'
+  timeoutSeconds: number
+  allowedRoleIds: string[]
+  allowedRoles: string[]
+  dataScopes: string[]
+  agentRunLocalDefault?: boolean
+  approvalPolicy: 'none' | 'sensitive' | 'always'
+  lastCheckedAt: string
+}
+
+export interface ToolCatalogSyncResult {
+  tools: ToolDefinition[]
+  discoveredCount: number
+  admittedCount: number
+  unavailableCount: number
+  synchronizedAt: string
+}
+
+export interface ToolCatalogCandidate {
+  id: string
+  version: string
+  name: string
+  system: string
+  description: string
+  connectorId: string
+  risk: ToolDefinition['risk']
+  mode: ToolDefinition['mode']
+  timeoutSeconds: number
+  defaultAllowedRoles: string[]
+  defaultDataScopes: string[]
+  defaultApprovalPolicy: ToolDefinition['approvalPolicy']
+  requirements: string[]
+  outputValidation: ToolDefinition['outputValidation']
+  retryPolicy: ToolDefinition['retryPolicy']
+  concurrencyPolicy: ToolDefinition['concurrencyPolicy']
+  completionSemantics: ToolDefinition['completionSemantics']
+  status: 'ready' | 'installed' | 'unavailable'
+  availabilityMessage: string
+}
+
+export interface DshRuntimeToolConnectorStatus {
+  runtimeId: string | null
+  connectorId: string
+  name: string
+  status: 'healthy' | 'degraded' | 'offline' | 'disabled'
+  endpoint: string
+  toolCount: number
+  activeBindingCount: number
+  latestBindingRevision: number | null
+  catalogDigest: string
+  lastCheckedAt: string
+  lastHealthMessage: string
 }
 
 export interface SkillDefinition {

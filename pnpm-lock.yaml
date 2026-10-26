@@ -4,6 +4,8 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+packageExtensionsChecksum: sha256-seNW6WwM7edP4Pz1dmXgC+bFAQBrBzgHE1Vem+5WxO8=
+
 importers:
 
   .:
@@ -41,6 +43,9 @@ importers:
       vitest:
         specifier: ^4.1.11
         version: 4.1.11(@types/node@24.13.3)(happy-dom@20.11.15)(vite@7.3.6(@types/node@24.13.3)(yaml@2.9.0))
+      vue:
+        specifier: ^3.5.41
+        version: 3.5.41(typescript@5.9.3)
       vue-eslint-parser:
         specifier: ^10.2.0
         version: 10.4.1(eslint@9.39.5)
@@ -105,6 +110,9 @@ importers:
       vite:
         specifier: ^7.1.10
         version: 7.3.6(@types/node@24.13.3)(yaml@2.9.0)
+      vitest:
+        specifier: ^4.1.11
+        version: 4.1.11(@types/node@24.13.3)(happy-dom@20.11.15)(vite@7.3.6(@types/node@24.13.3)(yaml@2.9.0))
       vue-eslint-parser:
         specifier: ^10.2.0
         version: 10.4.1(eslint@9.39.5)
@@ -169,6 +177,9 @@ importers:
       vite:
         specifier: ^7.1.10
         version: 7.3.6(@types/node@24.13.3)(yaml@2.9.0)
+      vitest:
+        specifier: ^4.1.11
+        version: 4.1.11(@types/node@24.13.3)(happy-dom@20.11.15)(vite@7.3.6(@types/node@24.13.3)(yaml@2.9.0))
       vue-eslint-parser:
         specifier: ^10.2.0
         version: 10.4.1(eslint@9.39.5)

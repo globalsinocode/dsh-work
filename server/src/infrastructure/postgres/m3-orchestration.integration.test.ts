@@ -804,7 +804,7 @@ test('compilation failure converges the Run instead of leaving it queued without
     versionId: session.agentVersionId, systemPrompt: 'Read the selected Skill resources and answer the employee faithfully.',
     skills: ['first@1.0.0', 'second@1.0.0'],
     skillInstructions: ['first', 'second'].map(id => ({ id, version: '1.0.0', instructions: 'Read the packaged resources and summarize their contents.', tools: [], files: [resource('x'.repeat(600 * 1024))] })),
-    runtimeTools: [], projectTasksEnabled: false, mcpConnections: [], approvalMode: 'risk_based', roleIds: [], maxOutputBytes: 65536, maxToolCalls: 20, timeoutSeconds: 300,
+    runtimeTools: [], tools: [], toolBindings: [], dataScopes: ['enterprise:authorized'], projectTasksEnabled: false, mcpConnections: [], approvalMode: 'risk_based', roleIds: [], maxOutputBytes: 65536, maxToolCalls: 20, timeoutSeconds: 300,
   }
   snapshot.skillInstructions[0]!.files = [resource('x'.repeat(1024 * 1024 + 1))]
   const failing = new RunOrchestrationService(runs, conversations, models, runtime, undefined, undefined, {
@@ -843,7 +843,8 @@ test('model admission rejects employee, automation and release trial preparation
           const snapshot: RuntimeAgentSnapshot = {
             versionId: session.agentVersionId, modelRequirements: ['structured-output'],
             systemPrompt: '请根据当前授权范围内的信息回答用户问题，并标注结论依据。',
-            skills: [], skillInstructions: [], runtimeTools: [], projectTasksEnabled: false, mcpConnections: [],
+            skills: [], skillInstructions: [], runtimeTools: [], tools: [], toolBindings: [], dataScopes: ['enterprise:authorized'],
+            projectTasksEnabled: false, mcpConnections: [],
             approvalMode: 'risk_based', roleIds: [],
             maxOutputBytes: 65536, maxToolCalls: 20, timeoutSeconds: 300,
           }
