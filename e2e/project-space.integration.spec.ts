@@ -427,7 +427,7 @@ test.describe('MODE-E2E-13 协作模式未读（S5e）', () => {
     // 读者回到对话页（重新加载列表）后出现未读；预览为他人的新发言。
     await page.reload()
     await expect(row()).toContainText('周衡：MODE-13 新进展')
-    await expect(row()).toHaveAccessibleName(/ 1 条未读$/)
+    await expect(row()).toHaveAccessibleName(/，1 条未读$/)
 
     await row().click()
     await expect(page).toHaveURL(new RegExp(`/c/chats/group/${seed.workspaceId}$`))
