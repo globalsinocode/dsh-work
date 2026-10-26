@@ -44,14 +44,20 @@ export interface CapabilityState {
 
 /** Only use for optional execution dependencies, NEVER database/identity initialization. */
 export async function probeExecutionCapability<T>(
-  capability: 'dsh' | 'python',
+  capability: 'dsh' | 'python' | 'execution-container',
   initialize: (() => Promise<T>) | null,
+  /** Server-log only; health never carries the reason. */
+  onFailure?: (error: unknown) => void,
 ): Promise<{ value: T | null; state: CapabilityState }> {
   if (!initialize) return { value: null, state: { status: 'not-configured' } }
   try { return { value: await initialize(), state: { status: 'available' } } }
-  catch {
+  catch (error) {
+    onFailure?.(error)
     // Do not expose subprocess stderr, credentials or local paths through health.
-    return { value: null, state: { status: 'unavailable', code: new ExecutionCapabilityUnavailableError(capability).code } }
+    const code = capability === 'execution-container'
+      ? 'EXECUTION_CONTAINER_UNAVAILABLE'
+      : new ExecutionCapabilityUnavailableError(capability).code
+    return { value: null, state: { status: 'unavailable', code } }
   }
 }
 

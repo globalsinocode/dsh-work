@@ -207,6 +207,36 @@ async function writeDeploymentOverlay(
   return target
 }
 
+/**
+ * Execution container mode: append the overlay that swaps DSH's local `ctx.subprocess`
+ * for the remote one, to every DSH process of this installation (Attempts, catalog
+ * inspection, MCP discovery and preflight), so the tool catalog stays consistent.
+ */
+export async function withExecutionContainerOverlay(
+  installation: DshRuntimeInstallation,
+  options: ResolveDshRuntimeInstallationOptions,
+): Promise<DshRuntimeInstallation> {
+  if (installation.adapter !== 'official-acp-profile' || !installation.process.args.includes('--profile')) {
+    throw new Error('执行容器模式需要官方 acp Profile 启动方式')
+  }
+  const env = options.env ?? process.env
+  const template = resolve(options.projectRoot, 'server/config/dsh/execution-container.cordis.patch.yml')
+  const pluginModule = resolve(dirname(template), 'dsh-work-remote-subprocess.js')
+  await access(template, constants.R_OK)
+  await access(pluginModule, constants.R_OK)
+  const source = await readFile(template, 'utf8')
+  const rendered = source.replace('__DSH_WORK_REMOTE_SUBPROCESS_MODULE__', JSON.stringify(pluginModule))
+  if (rendered === source) throw new Error(`执行容器叠加层缺少插件占位符：${template}`)
+  const directory = resolve(resolve(options.projectRoot, env['DSH_WORK_DATA_ROOT'] ?? '.runtime'), 'dsh-config')
+  const overlay = resolve(directory, basename(template))
+  await mkdir(directory, { recursive: true })
+  await writeFile(overlay, rendered, { mode: 0o600 })
+  return {
+    ...installation,
+    process: { ...installation.process, args: [...installation.process.args, '--patch', overlay] },
+  }
+}
+
 /** Start a short-lived ACP process and fail unless negotiation and Session creation both work. */
 export async function preflightDshRuntime(
   installation: DshRuntimeInstallation,

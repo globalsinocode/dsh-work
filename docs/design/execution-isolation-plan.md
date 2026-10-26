@@ -1,6 +1,6 @@
 # 执行隔离与受控 Shell 方案
 
-**状态：** 阶段 1a 已实施（2026-10-26，单元、集成与本机真实 Docker 用例通过；Mac mini 验收未执行）；1b 前提探针已完成：remote subprocess 可行性、acp Profile 替换方式与 Office 工具链镜像（冷启动、LibreOffice、`rg` 一致性）均已在本机验证（3.5）；1b 起尚未实施。可执行能力已定以 **C 档**（单次 `bash` 与 Office 工具链）为目标，D 档（后台任务）暂缓（第 6 节）；在阶段 1a–2 实施并通过第 9 节验收前均不可用。<br>
+**状态：** 阶段 1a 已实施（2026-10-26）；阶段 1b 的 subprocess 部分已实施（2026-10-26，开关 `DSH_WORK_EXECUTION_CONTAINER` 默认关闭；单元、集成、本机真实 Docker 与真实 DSH 端到端用例通过），`python_execute` 并入执行容器另作 1b②，待确定脚本路径契约（4.4）；Mac mini 验收均未执行。可执行能力已定以 **C 档**（单次 `bash` 与 Office 工具链）为目标，D 档（后台任务）暂缓（第 6 节）；在阶段 1a–2 实施并通过第 9 节验收前均不可用。<br>
 **更新日期：** 2026-10-26（按 KnowWork 源码复核修订：执行通道经平台中转、阶段重排、容器粒度与并发、产品决策新增中间选项；评审修订：审批保留在工具层、路径一致与可执行文件映射、宿主侧符号链接防护、阶段 1 拆分、档位按隔离要求重评；决定以 C 档为目标；简化：执行器改为服务内模块、只实现 docker 后端、容器按一次性容器管理、文件工具审计复用工具层记录、容器环境变量固定、非 C 档内容移至第 10 节后续方向）<br>
 **依据：** 当前 Runtime Adapter、Platform Tool Bridge、DSH 工具策略与 Python 执行代码；DSH `0.1.2-rc.1`（`76fda72979`）的 `dsh-sandbox*`、`dsh-fs*`、`dsh-subprocess*`、`dsh-shell*`、`dsh-e2b` 系列源码与 README；KnowWork v0.0.2（`83c763e`）runtime-host 与会话沙箱实现（对照参考）；2026-10-25 两次本地探针（第 3 节）。<br>
 **执行基线：** 每个 Attempt 一个独立 DSH ACP Worker，不改变进程模型；不新增执行循环。
@@ -144,6 +144,12 @@ patch 不能替换已有条目的包名（`name mismatch … skipping`），替�
 
 真实文档的转换耗时会更高（KnowWork 实测 2–5 秒），以上只说明工具链在 4.2 姿态下可用及启动开销量级。
 
+**1b① 实施中的发现（2026-10-26）：**
+
+- DSH 交给 subprocess 的 `cwd` 可能是未解析的路径（`glob` 送 `/var/…`，`bash` 送 `/private/var/…`）。平台按解析后的真实路径校验工作区边界，执行容器同时按给定路径与真实路径挂载工作区。
+- `tool-fs-search` 申请的输出上限大于平台上限；平台按平台上限截断（`truncated` 标记），而不是拒绝。
+- 执行镜像也可用本地镜像 ID（`sha256:…`）锁定，与仓库摘要同样不可变。
+
 ### 3.6 未覆盖
 
 - **正式执行镜像**：中文字体、工具链显式清单与 `rg` 版本是否与 DSH 依赖对齐（探针为 14.1.1，DSH 自带 15.0.0）；真实业务文档的转换耗时与内存；多 Attempt 并发时的总内存。
@@ -181,7 +187,7 @@ DSH Worker（每 Attempt 一个，宿主进程）
 - **可执行能力放开时文件操作必须同步改为远程。** 执行容器能运行代码后，可在共享工作区创建指向外部的符号链接，或在检查与使用之间替换路径；DSH 文件工具若仍在宿主执行，`realpath` 校验存在检查与使用之间的竞态。remote fs 的实现方式（宿主侧安全文件访问或容器内 `exec`）视 3.6 的验证结果确定。
 - **宿主侧读取工作区逐级不跟随符号链接。** 产物收集、检查点复制、输入挂载、平台工具读写工作区等所有宿主侧操作，逐级不跟随符号链接（或改为在执行容器内读取后交付），只接受普通文件，并防检查与使用之间被替换。KnowWork 在容器内读取，最后一级不跟随即可；dsh-work 在宿主读取，要求更严。
 - **remote 插件**按官方 `SubprocessRuntime`、`FileSystem` 接口实现，参照 KnowWork 的 `remote-subprocess`、`remote-fs`；DSH 官方 bash、文件工具与 `present` 原样使用。路径只认本 Attempt 工作区。
-- **acp Profile 调整（3.5 已验证可装配）：** 停用 `subprocess`、`bash-sandbox`、`permission`、`tool-jobs`；插入 remote subprocess 与 `dsh-bash-local`；`tool-bash` 配置 `enableRunInBackground: false`。1c 时再以 remote fs 替换 `fs-sandbox`。patch 不能替换已有条目的包名，只能停用后插入。
+- **acp Profile 调整：** 1b 停用 `subprocess`、`tool-jobs`，插入 remote subprocess，`tool-bash` 配置 `enableRunInBackground: false`（[执行容器叠加层](../../server/config/dsh/execution-container.cordis.patch.yml)，追加在部署 patch 之后，作用于 Attempt、工具目录探测、MCP 发现与预检的所有 DSH 进程）。停用 `bash-sandbox`、`permission` 并改挂 `dsh-bash-local` 只在放开 bash 时才需要，留到阶段 2（3.5 已验证可装配）。1c 时再以 remote fs 替换 `fs-sandbox`。patch 不能替换已有条目的包名，只能停用后插入。插件以 `ctx.provide('subprocess', …)` 注册，不引用 DSH 包，与工具策略插件一样以绝对路径装配。
 - **执行器模块**：业务服务内唯一调用容器运行时的代码，由现有 [python-skill-runner.ts](../../server/src/modules/runtime/python-skill-runner.ts) 重构而来；只暴露固定参数的接口（固定姿态、白名单镜像、本 Attempt 工作区挂载），其他代码不再直接拼接 `docker` 命令。它与业务服务同进程、同账号，提供的是代码边界而非账号隔离：业务服务被攻破即可控制容器运行时，须在总览中如实标注。独立账号的执行器组件见第 10 节。
 
 ### 4.2 执行容器
@@ -216,11 +222,11 @@ DSH Worker（每 Attempt 一个，宿主进程）
 | **每 Attempt（采用）** | 回收简单、隔离清洁，同时存在的容器数 ≈ 活跃 Attempt 数 |
 | 每会话常驻 | 不减少并发容器数，空闲期也占资源，需要找回、收养与空闲清扫逻辑；不采用 |
 
-**生命周期：** 容器以唯一名称和 label（组件、Attempt）创建，Attempt 终态时删除；服务启动时与周期性按 label 删除孤儿容器（服务崩溃后遗留）。容器从不复用，因此不需要按名称找回、收养核对或姿态摘要重建。预热池不纳入本方案；若 3.5、3.6 的冷启动实测不可接受，另行评审。
+**生命周期：** 容器以唯一名称和 label（组件、Attempt）创建，Attempt 终态时删除；服务启动时与周期性按 label 删除孤儿容器（服务崩溃后遗留）。容器从不复用，因此不需要按名称找回、收养核对或姿态摘要重建。某个 Attempt 的容器启动失败后，该 Attempt 后续的命令都返回同一失败，不在 Attempt 内重试启动。预热池不纳入本方案；若 3.5、3.6 的冷启动实测不可接受，另行评审。
 
-`python_execute` 并入执行容器后（阶段 1b），同一 Attempt 内的多次调用共用该执行容器，不再是每次调用一个干净环境，可看到此前命令留下的文件；激活 Skill 的目录改为只读挂入执行容器。两点均须同步修改[功能规则第 6 节](../development/feature-rules.md#6-skill-python-执行)。
+`python_execute` 并入执行容器（阶段 1b②，未实施）会改变脚本路径契约：现有 Skill 脚本依赖每次调用的固定挂载（`/skill` 为当前 Skill 目录并作为工作目录、`/input` 只读、`/output` 为本 Skill 的输出目录），而每 Attempt 一个的执行容器无法按调用重新挂载。须先确定新契约（例如改用工作区内的固定路径并提供兼容方案），并同步修改[功能规则第 6 节](../development/feature-rules.md#6-skill-python-执行)。并入后同一 Attempt 内的调用不再各自使用干净容器，可看到此前命令留下的文件。在此之前 Python 仍为每次调用一个容器。
 
-**并发：** 上限由平台全局槽位控制（同时运行的 Attempt 与执行容器数），与[功能规则第 6 节](../development/feature-rules.md#6-skill-python-执行)未完成项“全局并发槽位”合并实施。
+**并发：** 执行容器每 Attempt 一个，数量受 Runtime 并发上限（`runtimes.capacity`）约束，不占全局槽位，因而不会等待槽位；Python 每次调用的容器仍占用全局槽位（`DSH_WORK_EXECUTION_MAX_CONTAINERS`）。两类容器分开计数，不会出现执行容器占着槽位等待 Python 槽位的死锁；1b② 并入后 Python 直接使用所在 Attempt 的执行容器，不再单独占槽位。
 
 ### 4.5 执行后端
 
@@ -231,8 +237,9 @@ DSH Worker（每 Attempt 一个，宿主进程）
 | 阶段 | 内容 | 收益 | 前提 |
 | --- | --- | --- | --- |
 | 1a（已实施） | 执行器模块与 `ExecutionBackend` 端口（`docker` 实现），由 `python-skill-runner` 重构；`python_execute` 改经执行器（仍为每次调用一个容器）；孤儿清扫（启动时全量清扫，运行中只重试本进程删除失败的容器）；全局并发槽位（`DSH_WORK_EXECUTION_MAX_CONTAINERS`，按服务实例计算，删除确认前占用） | 容器参数集中在一处、经固定接口调用，业务代码不再直接拼接 `docker` 命令 | 不改 DSH |
-| 1b | 执行容器；remote subprocess 经工具桥与平台中转（含可执行文件映射，`glob`、`grep` 在容器内运行）；`python_execute` 并入执行容器（4.4）；固定环境变量；命令逐条审计 | 命令类工具进入执行容器 | 1a；前提探针已由 3.5 完成（remote subprocess、acp Profile 替换、Office 镜像冷启动与 `rg` 一致性） |
-| 1c | remote fs（实现方式视 3.6 宿主侧安全文件访问的验证结果）；宿主侧读取逐级不跟随符号链接 | 文件工具从应用层边界升级为隔离边界 | 1b；3.6 宿主侧安全文件访问验证；remote fs 在 `0.1.2-rc.1` 上验证 |
+| 1b①（已实施） | 执行容器模式开关（默认关闭，启动时确定，失败则本次启动退回宿主执行并在健康状态报告不可用）；执行容器（每 Attempt 惰性创建、Attempt 结束删除、启动清扫）；remote subprocess 经工具桥 `/subprocess/exec` 与平台中转（`rg` 映射，`glob`、`grep` 在容器内运行）；固定环境变量；命令逐条审计（`run.container.command`）；进程组终止与容器内看门狗 | 命令类工具进入执行容器 | 1a；3.5 探针 |
+| 1b② | `python_execute` 并入执行容器（4.4） | 同一 Attempt 只有一个执行容器 | 1b①；确定脚本路径契约 |
+| 1c | remote fs（实现方式视 3.6 宿主侧安全文件访问的验证结果）；宿主侧读取逐级不跟随符号链接 | 文件工具从应用层边界升级为隔离边界 | 1b①；3.6 宿主侧安全文件访问验证；remote fs 在 `0.1.2-rc.1` 上验证 |
 | 2 | 放开 C 档：单次 `bash`（关闭后台运行）与 Office 工具链；同步修改总览、功能规则与内置工具注册表（第 6 节） | 模型可“写代码 → 运行 → 看结果 → 修正”，覆盖数据处理、准确计算、Office 文件生成与转换 | 1a–1c 完成（文件操作必须先改为远程，见 4.1）；第 6 节待定事项定案 |
 
 已定以 C 档为目标，1c 是阶段 2 的必要前提，不推迟。1c 单独看安全收益有限（只防 DSH 文件工具自身漏洞），并可能给每次文件操作增加中转延迟，须在 1c 实测并控制。

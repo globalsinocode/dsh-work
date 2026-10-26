@@ -54,6 +54,11 @@ export async function createPlatformToolBridge(
   operations?: PlatformToolOperationLifecycle,
   /** Runtime 紧急停用的内置工具：只拒绝这一次调用，不终止 Attempt。 */
   toolDisabled?: (toolName: string) => Promise<boolean>,
+  /**
+   * 执行容器模式：DSH 的 remote `ctx.subprocess` 经此执行命令。不是 Agent 工具，
+   * 不计入工具调用次数；每次都复核当前授权，DSH 断开时中止命令。
+   */
+  subprocess?: (body: Record<string, unknown>, signal: AbortSignal) => Promise<unknown>,
 ) {
   const prepared = Object.fromEntries(Object.entries(tools).map(([name, registration]) => [
     name,
@@ -96,6 +101,23 @@ export async function createPlatformToolBridge(
           response.writeHead(revoked ? 403 : 503).end(JSON.stringify({
             error: revoked ? '当前执行授权已撤销' : '当前执行授权检查暂不可用',
           }))
+        }
+        return
+      }
+      if (request.url === '/subprocess/exec') {
+        if (request.method !== 'POST' || !subprocess || controller.signal.aborted) {
+          writeError(response, new PlatformToolError({ status: 403, code: 'SUBPROCESS_DENIED', message: '执行容器不可用或 Attempt 已结束' }))
+          return
+        }
+        const disconnected = new AbortController()
+        response.once('close', () => { if (!response.writableFinished) disconnected.abort() })
+        try {
+          const body = await readBody(request)
+          await authorizeTool(authorize)
+          const result = await subprocess(body, AbortSignal.any([controller.signal, disconnected.signal]))
+          response.end(JSON.stringify(result))
+        } catch (error) {
+          writeError(response, subprocessError(error))
         }
         return
       }
@@ -340,6 +362,14 @@ async function executeWithTimeout(
     if (graceTimer !== undefined) clearTimeout(graceTimer)
     removeAbortListener()
   }
+}
+
+function subprocessError(error: unknown): PlatformToolError {
+  if (error instanceof PlatformToolError) return error
+  if (isHandlerAbort(error)) return new PlatformToolError({ status: 499, code: 'SUBPROCESS_ABORTED', message: '命令已取消' })
+  const status = typeof error === 'object' && error !== null && 'status' in error && typeof error.status === 'number' ? error.status : 500
+  const message = error instanceof Error ? error.message : '命令执行失败'
+  return new PlatformToolError({ status: status >= 400 && status < 600 ? status : 500, code: 'SUBPROCESS_FAILED', message })
 }
 
 function isHandlerAbort(error: unknown): boolean {

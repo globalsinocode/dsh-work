@@ -48,9 +48,12 @@ import type { AgentRuntimePort } from './modules/runtime/runtime-types.ts'
 import { PythonSkillRunner } from './modules/runtime/python-skill-runner.ts'
 import { ContainerExecutor, parseMaxContainers } from './modules/runtime/container-executor.ts'
 import { DockerExecutionBackend } from './modules/runtime/docker-execution-backend.ts'
+import { AttemptExecutionContainers, resolveExecutionContainerUser } from './modules/runtime/attempt-execution-containers.ts'
+import { redactSensitiveText } from './security/safe-observability.ts'
 import {
   preflightDshRuntime,
   resolveDshRuntimeInstallation,
+  withExecutionContainerOverlay,
   type DshRuntimeInstallation,
 } from './modules/runtime/dsh-runtime-installation.ts'
 import { PostgresContentService } from './modules/workbench/application/postgres-content-service.ts'
@@ -149,6 +152,8 @@ async function start() {
   let dshCapability: CapabilityState = { status: 'not-configured' }
   let pythonCapability: CapabilityState = { status: 'not-configured' }
   let containerExecutor: ContainerExecutor | null = null
+  let attemptContainers: AttemptExecutionContainers | null = null
+  let executionContainerCapability: CapabilityState = { status: 'not-configured' }
   const projectRoot = fileURLToPath(new URL('../..', import.meta.url))
   const dataRoot = resolve(projectRoot, process.env.DSH_WORK_DATA_ROOT ?? '.runtime')
   const skillArtifacts = new SkillArtifactStore(new LocalObjectStorage(resolve(dataRoot, 'skills'), { fileMode: 0o400 }))
@@ -162,6 +167,34 @@ async function start() {
   })
   dshInstallation = dsh.value
   dshCapability = dsh.state
+  // 执行隔离 1b：开关默认关闭。打开但启动检查失败时，本次启动的 DSH 子进程仍在宿主执行，
+  // 健康状态如实显示执行容器不可用；运行中途不切换模式。
+  const executionContainerSwitch = process.env.DSH_WORK_EXECUTION_CONTAINER?.trim()
+  if (dshInstallation && executionContainerSwitch && executionContainerSwitch !== 'off') {
+    const baseInstallation = dshInstallation
+    const probed = await probeExecutionCapability('execution-container', async () => {
+      if (executionContainerSwitch !== 'on') throw new Error('DSH_WORK_EXECUTION_CONTAINER 只能是 on 或 off')
+      const containers = new AttemptExecutionContainers(new DockerExecutionBackend(), {
+        image: process.env.DSH_WORK_EXECUTION_IMAGE ?? '',
+        user: resolveExecutionContainerUser(),
+      })
+      await containers.preflight()
+      const installation = await withExecutionContainerOverlay(baseInstallation, { projectRoot })
+      await preflightDshRuntime(installation)
+      return { containers, installation }
+    }, error => {
+      console.warn(`execution container unavailable; DSH subprocesses stay on the host for this run: ${redactSensitiveText(error instanceof Error ? error.message : String(error)).slice(0, 500)}`)
+    })
+    if (probed.value) {
+      dshInstallation = probed.value.installation
+      attemptContainers = probed.value.containers
+      attemptContainers.startMaintenance()
+    }
+    executionContainerCapability = probed.state
+  } else if (!dshInstallation && executionContainerSwitch && executionContainerSwitch !== 'off') {
+    // 开关已打开但 DSH 本身不可用：如实报告不可用，而不是“未配置”。
+    executionContainerCapability = { status: 'unavailable', code: 'EXECUTION_CONTAINER_UNAVAILABLE' }
+  }
   const python = await probeExecutionCapability('python', process.env.DSH_WORK_PYTHON_IMAGE ? async () => {
     const executor = new ContainerExecutor(new DockerExecutionBackend(), {
       pythonImage: process.env.DSH_WORK_PYTHON_IMAGE!,
@@ -279,6 +312,19 @@ async function start() {
       },
     }),
     ...(pythonRunner ? { executePython: (input, manifest, workspace, signal) => pythonRunner.execute(input, manifest, workspace, signal) } : {}),
+    ...(attemptContainers ? {
+      remoteExecution: attemptContainers,
+      recordContainerCommand: async (manifest, audit) => {
+        await operations.appendAudit(
+          'system',
+          'run.container.command',
+          manifest.run_id,
+          audit.exitCode === 0 || audit.exitCode === 1 ? 'success' : 'failed',
+          manifest.trace_id ?? manifest.run_id,
+          `${audit.executable} · 退出码 ${audit.exitCode ?? (audit.timedOut ? '超时' : audit.aborted ? '已取消' : '无')} · ${audit.durationMs} ms · 输出 ${audit.stdoutBytes}/${audit.stderrBytes} 字节${audit.truncated ? '（已截断）' : ''} · ${audit.summary}`,
+        )
+      },
+    } : {}),
   }) : new UnavailableRuntime('runtime-local-01')
   const runtime = new CapabilityGuardedRuntime(dshAdapter, pythonCapability)
   executionRuntime = runtime
@@ -479,7 +525,7 @@ async function start() {
     // is intentionally separate; a DB outage never reports core readiness.
     try {
       await checkDatabase(database)
-      return { status: 'ready', core: true, executionCapabilities: { dsh: dshCapability, python: pythonCapability } }
+      return { status: 'ready', core: true, executionCapabilities: { dsh: dshCapability, python: pythonCapability, executionContainer: executionContainerCapability } }
     } catch {
       return httpResult(503, { status: 'not-ready', core: false, code: 'DATABASE_UNAVAILABLE' })
     }
@@ -491,7 +537,7 @@ async function start() {
     envelope('system', {
       service: 'dsh-work-server',
       status: 'ok',
-      executionCapabilities: { dsh: { status: dshCapability.status }, python: { status: pythonCapability.status } },
+      executionCapabilities: { dsh: { status: dshCapability.status }, python: { status: pythonCapability.status }, executionContainer: { status: executionContainerCapability.status } },
       dshRuntime: {
         status: executionRuntime ? (await executionRuntime.health()).status : dshInstallation ? 'connected' : 'not-configured',
       },
@@ -514,6 +560,7 @@ async function start() {
         persistentWait?.close()
         if (orchestration) await orchestration.close()
         containerExecutor?.close()
+        attemptContainers?.close()
         await database.end()
         process.exit(0)
       })()

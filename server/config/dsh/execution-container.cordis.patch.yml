@@ -1,0 +1,19 @@
+# dsh-work 执行容器模式叠加层（DSH_WORK_EXECUTION_CONTAINER=on 且启动检查通过时，追加在部署 patch 之后）。
+# 子进程改经平台工具桥落到每 Attempt 的执行容器：停用本机 subprocess，插入 remote 实现。
+# patch 不能替换已有条目的包名，只能停用原条目再插入新条目。
+# 1b 只放开容器内的 rg（glob/grep）；bash 仍被 dsh-work 工具策略拒绝。
+# bash-sandbox 与 permission 的替换留到阶段 2（放开 bash 时一并处理）。
+- id: subprocess
+  disabled: true
+
+# C 档不含后台任务（执行隔离方案第 6 节）
+- id: tool-jobs
+  disabled: true
+- id: tool-bash
+  config:
+    enableRunInBackground: false
+
+- insert:
+    - id: dsh-work-remote-subprocess
+      # Replaced with an absolute path when the overlay is generated.
+      name: __DSH_WORK_REMOTE_SUBPROCESS_MODULE__

@@ -699,6 +699,36 @@ describe('DSH ACP Runtime Adapter', () => {
     assert.equal((await adapter.health()).acceptingRuns, false)
   })
 
+  it('execution container mode routes DSH subprocesses into the Attempt container, audits them and releases it', async () => {
+    const events: string[] = []
+    const execs: Array<{ attemptId: string; workspace: string; argv: string[]; cwd: string }> = []
+    const audits: Array<{ runId: string; executable: string; exitCode: number | null }> = []
+    const adapter = await createAdapter(500, undefined, undefined, {
+      remoteExecution: {
+        exec: async (attemptId, workspace, command) => {
+          events.push('exec')
+          execs.push({ attemptId, workspace, argv: command.argv, cwd: command.cwd })
+          return { exitCode: 0, stdout: 'a.txt\n', stderr: '', truncated: false, timedOut: false }
+        },
+        release: async () => { events.push('release') },
+      },
+      recordContainerCommand: async (manifest, audit) => {
+        audits.push({ runId: manifest.run_id, executable: audit.executable, exitCode: audit.exitCode })
+      },
+    })
+    const handle = await adapter.execute(manifest('run-execution-container', 'attempt-exec-1', '[remote-exec]'))
+    const result = await handle.done
+    assert.equal(result.status, 'completed')
+    await waitForCondition(() => events.includes('release'))
+    assert.deepEqual(events, ['exec', 'release'], 'released only after the bridge stopped taking commands')
+    assert.equal(execs.length, 1)
+    assert.equal(execs[0]!.attemptId, 'attempt-exec-1')
+    assert.deepEqual(execs[0]!.argv, ['rg', '--files'], 'DSH-bundled ripgrep is mapped to the image rg')
+    assert.equal(execs[0]!.cwd, execs[0]!.workspace)
+    assert.equal(execs[0]!.workspace, join(result.attemptDirectory, 'workspace'), 'the Adapter passes its own Attempt workspace')
+    assert.deepEqual(audits, [{ runId: 'run-execution-container', executable: 'rg', exitCode: 0 }])
+  })
+
   it('creates an isolated Attempt and emits ordered safe completion events', async () => {
     const adapter = await createAdapter()
     const input = manifest('run-complete', 'attempt-1')
@@ -1566,3 +1596,11 @@ it('user cancellation during an authorization check keeps cancellation semantics
   release()
   assert.equal((await handle.done).status, 'cancelled')
 })
+
+async function waitForCondition(predicate: () => boolean, timeoutMs = 5_000) {
+  const deadline = Date.now() + timeoutMs
+  while (!predicate()) {
+    if (Date.now() > deadline) throw new Error('condition was not reached')
+    await new Promise(resolve => setTimeout(resolve, 10))
+  }
+}

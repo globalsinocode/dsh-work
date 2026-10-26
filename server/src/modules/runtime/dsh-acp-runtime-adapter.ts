@@ -11,6 +11,8 @@ import {
   type AcpSessionUpdate,
 } from './acp-json-rpc-client.ts'
 import { createPlatformToolBridge, type PlatformToolOperationLifecycle } from './platform-tool-bridge.ts'
+import { createRemoteSubprocessGateway, type ContainerCommandAudit } from './remote-subprocess-gateway.ts'
+import type { ContainerCommand, ContainerCommandResult } from './execution-backend.ts'
 import { formatExecutionTime } from '../../domain/execution-time.ts'
 import {
   MAX_TOOL_CALL_EVENTS,
@@ -150,6 +152,16 @@ export interface DshAcpRuntimeAdapterConfiguration {
     signal: AbortSignal,
   ) => Promise<unknown>
   recordPythonExecution?: (manifest: RuntimeManifest, skillId: string, entry: string, succeeded: boolean) => Promise<void>
+  /**
+   * 执行容器模式（执行隔离方案 1b）：DSH 的子进程经工具桥落到本 Attempt 的执行容器。
+   * 未配置时保持现状（DSH 在宿主机起子进程）。
+   */
+  remoteExecution?: {
+    exec(attemptId: string, workspace: string, command: ContainerCommand, signal: AbortSignal): Promise<ContainerCommandResult>
+    release(attemptId: string): Promise<void>
+  }
+  /** 执行容器内每条命令的审计摘要；不含输出正文。 */
+  recordContainerCommand?: (manifest: RuntimeManifest, audit: ContainerCommandAudit) => Promise<void>
   collectArtifacts?: (
     manifest: RuntimeManifest,
     workspaceDirectory: string,
@@ -567,14 +579,23 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
         if (!handle) throw dependencyUnavailable('项目任务工具不可用：未配置项目任务服务')
         registerPlatformTool(name, async (input, signal) => handle(name, input, record.manifest, signal))
       }
-      if (Object.keys(platformTools).length || this.configuration.authorizeExecution) {
+      const remoteExecution = this.configuration.remoteExecution
+      if (Object.keys(platformTools).length || this.configuration.authorizeExecution || remoteExecution) {
         record.bridge = await createPlatformToolBridge(platformTools as Record<string, PlatformToolRegistration>, record.manifest.limits.max_tool_calls,
           this.configuration.authorizeExecution ? () => this.verifyExecutionAuthorization(record) : undefined,
           this.configuration.operationLifecycle?.(record.manifest),
           this.configuration.disabledBuiltinTools ? async (toolName) => {
             const disabled = await this.configuration.disabledBuiltinTools!()
             return isDshBuiltinTool(toolName) && disabled.includes(toolName)
-          } : undefined)
+          } : undefined,
+          remoteExecution ? createRemoteSubprocessGateway({
+            workspace: workspaceDirectory,
+            run: (command, signal) => remoteExecution.exec(record.manifest.attempt_id, workspaceDirectory, command, signal),
+            onCommand: audit => {
+              void Promise.resolve(this.configuration.recordContainerCommand?.(record.manifest, audit))
+                .catch(error => { console.warn('container command audit failed', safeErrorMessage(error)) })
+            },
+          }) : undefined)
       }
       if (record.cancelCause !== undefined) {
         this.finishFromCancellationCause(record)
@@ -735,6 +756,10 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
       if (record.timeout !== undefined) clearTimeout(record.timeout)
       await record.client?.close().catch(() => undefined)
       await record.bridge?.close()
+      // The bridge is closed, so no further command can reach this Attempt's container.
+      await this.configuration.remoteExecution?.release(record.manifest.attempt_id).catch(error => {
+        console.warn('execution container release failed', safeErrorMessage(error))
+      })
       if (record.manifest.mcp_connections?.length) {
         try {
           await this.finalizeMcpAudit(record)

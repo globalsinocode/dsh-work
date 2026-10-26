@@ -171,6 +171,19 @@ lines.on('line', (line) => {
       })().catch(() => failPrompt(pending, 'Artifact write failed', 'tool'))
       return
     }
+    if (text.includes('[remote-exec]')) {
+      // Execution container mode: what the remote ctx.subprocess sends for a DSH glob.
+      void postToBridge('/subprocess/exec', {
+        argv: ['/dsh/node_modules/@vscode/ripgrep-darwin-arm64/bin/rg', '--files'],
+        cwd: process.env.DSH_WORKSPACE_ROOT,
+        maxOutputBytes: 1024,
+        timeoutMs: 5_000,
+      }).then(output => {
+        pending.answer += `\nremote-exec:${output}`
+        finishPrompt(pending, 'end_turn')
+      }, () => failPrompt(pending, 'Remote exec failed', 'tool'))
+      return
+    }
     if (text.includes('[tool-live]')) {
       // EX-01: the ACP tool lifecycle exactly as DSH 0.1.2-rc.1 sends it (packages/acp/acp/src/updates.ts):
       // tool_call (in_progress, rawInput) then tool_call_update (completed/failed, content), by toolCallId.
@@ -418,10 +431,13 @@ function send(message: JsonRpcMessage): void {
 }
 
 function callPlatformTool(name: string, input: Record<string, unknown>): Promise<string> {
+  return postToBridge(name === 'prepare_skill_installation' ? '/prepare-skill' : `/tools/${name}`, input)
+}
+
+function postToBridge(path: string, input: Record<string, unknown>): Promise<string> {
   const socketPath = process.env.DSH_PLATFORM_TOOL_SOCKET!
   const body = JSON.stringify(input)
   return new Promise((resolve, reject) => {
-    const path = name === 'prepare_skill_installation' ? '/prepare-skill' : `/tools/${name}`
     const req = request({ socketPath, path, method: 'POST', headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) } }, response => {
       let output = ''
       response.on('data', chunk => { output += String(chunk) })

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { stateConflict } from '../../domain/request-errors.ts'
 import { ContainerExecutor, DEFAULT_MAX_CONTAINERS, ExecutionSlots, parseMaxContainers, type PythonSandboxRequest } from './container-executor.ts'
-import type { ExecutionBackend, PythonSandboxSpec, RunningSandbox } from './execution-backend.ts'
+import type { ContainerCommandResult, ExecutionBackend, PythonSandboxSpec, RunningSandbox } from './execution-backend.ts'
 
 const image = `python@sha256:${'b'.repeat(64)}`
 
@@ -14,8 +14,11 @@ class FakeBackend implements ExecutionBackend {
   private readonly exits = new Map<string, (code: number) => void>()
 
   async inspectImage() {}
+  async inspectExecutionImage() {}
   async detectFeatures() {}
   async removeOrphans() {}
+  async startExecutionContainer() { throw new Error('not used by these tests') }
+  async exec(): Promise<ContainerCommandResult> { throw new Error('not used by these tests') }
 
   startPythonSandbox(spec: PythonSandboxSpec): RunningSandbox {
     this.started.push(spec)
