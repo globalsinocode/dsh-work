@@ -9,7 +9,7 @@ const fixture = await personalWorkbenchFixture('dsh_b3_browser', { port: Number(
 // 对应真实 Adapter 先 collectArtifacts 再完成 Attempt 的顺序。
 runtime.hooks.registerArtifact = async manifest => {
   if (!manifest.session_id) throw new Error('P1 成果登记需要会话内的 Attempt')
-  const file = await fixture.content.storeSessionFile(manifest.session_id, 'P1-登记成果.txt', 'text/plain', Buffer.from('P1 registered artifact, not a real DSH output'), manifest.user_context.user_id)
+  const file = await fixture.content.storeSessionFile(manifest.session_id, 'P1-登记成果.txt', 'text/plain', Buffer.from(`P1 registered artifact, not a real DSH output: ${manifest.input.message}`), manifest.user_context.user_id)
   const artifact = `artifact-${randomUUID()}`
   await fixture.db.client`insert into artifacts(id,tenant_id,workspace_id,session_id,name,artifact_type,created_by)
     values(${artifact},${testTenant},${manifest.workspace_id},${manifest.session_id},'P1-登记成果.txt','text',${manifest.user_context.user_id})`

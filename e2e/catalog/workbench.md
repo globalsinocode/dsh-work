@@ -117,6 +117,20 @@ P1/P2 的执行结果须单独记录数据库、身份、Runtime/DSH 版本和�
 
 **本地 P2（2026-10-16）：** 已通过两轮 Markdown 修改。V1 按 `artifact_revision` 只读挂载，输入权限为 `0400`；同名成果登记 V2，仅改指定行，附录为独立 V1。V2 完成后重新下载 V1 与原文一致。服务基线、Run/Attempt、成果 ID、SHA-256 与截图见验收记录（Git 历史：提交 `9521be2` 的 `docs/development/runtime-execution-local-p2-2026-10-16.json`）；跨用户拒绝仍以既有 P1 证据为准，本次未复跑。
 
+### EX-ARTIFACT-02 多轮对话中各轮成果留在各自的回复下
+
+**优先级：** P1 · **角色：** 员工 · **运行层级：** 一次性 PostgreSQL、合成 Runtime（不调用模型）、真实 HTTP 接口与浏览器<br>
+**前置数据：** `personalWorkbenchFixture` 一次性库；合成 Runtime 对含 `P1-成果达成` 的 prompt 登记一个文本成果，正文含该轮 prompt<br>
+**spec：** `e2e/personal-integration/thread-artifacts.spec.ts`、`apps/workbench-web/src/components/conversation/conversation-components.test.ts`
+
+1. 员工在个人空间同一对话中先后发送两条会生成成果的任务；两轮完成后重新打开该对话（刷新页面）。
+2. 每轮的成果卡显示在该轮助手回复下方，较早一轮的成果仍可见，不因后续追问而消失。
+3. 「继续修改」只出现在当前（最新一轮）的成果上；较早一轮的成果可下载、可查看正文，不能直接引用续写。
+4. Markdown 与文本成果提供「查看正文」：展开后在回复内显示该版本的完整正文，可收起；读取失败时在原处提示“预览加载失败”，再次展开会重新读取。
+5. 协作模式与 AI 同事的单聊使用同一消息列表，行为一致；团队/项目空间对话不在本条范围内。
+
+**验收：** 刷新后两轮成果分别位于对应回复下，正文与各自一轮的输入对应；「继续修改」仅一处；读取失败可原处提示并重试成功。P2 另需在目标环境用真实 DSH 两轮各生成一份 Markdown，刷新后核对两份正文。
+
 ### EX-CONTEXT-01 长对话保留首条约束并使用对话摘要
 
 **优先级：** P1 · **角色：** 员工 · **运行层级：** 一次性 PostgreSQL、受控 Runtime、Manifest 编译器<br>
