@@ -3,6 +3,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { promisify } from 'node:util'
 import { access, chmod, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { dirname, join, relative, resolve } from 'node:path'
+import { isStrictResolvedPathInside } from './contained-resolved-path.ts'
 import {
   AcpJsonRpcClient,
   AcpProtocolError,
@@ -243,14 +244,14 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
     for (const file of compiled.manifest.resume?.checkpoint_context.workspace_files ?? []) {
       if (!isSafeResumeWorkspacePath(file.path)) throw new Error(`Unsafe checkpoint workspace path: ${file.path}`)
       const target = resolve(workspaceDirectory, file.path)
-      if (!target.startsWith(`${outputDirectory}/`)) throw new Error(`Unsafe checkpoint workspace path: ${file.path}`)
+      if (!isStrictResolvedPathInside(outputDirectory, target)) throw new Error(`Unsafe checkpoint workspace path: ${file.path}`)
       await mkdir(dirname(target), { recursive: true })
       await writeFile(target, file.content, { flag: 'wx', mode: 0o600 })
     }
     for (const mount of compiled.manifest.input.file_mounts) {
       const relativePath = mount.mount_path.slice('/workspace/'.length)
       const target = resolve(workspaceDirectory, relativePath)
-      if (!target.startsWith(`${workspaceDirectory}/`)) throw new Error(`Unsafe file mount path: ${mount.mount_path}`)
+      if (!isStrictResolvedPathInside(workspaceDirectory, target)) throw new Error(`Unsafe file mount path: ${mount.mount_path}`)
       await mkdir(dirname(target), { recursive: true })
       await writeFile(target, mount.content, { flag: 'wx', mode: 0o400 })
       await chmod(target, 0o400)
@@ -271,7 +272,7 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
         if (skill.artifact_ref && (!expected || expected.sha256 !== file.sha256 || expected.size !== file.size)) throw new Error(`Skill 文件索引不匹配：${file.path}`)
         const root = join(workspaceDirectory, 'skills', safeSegment(skill.id))
         const target = resolve(root, file.path)
-        if (!target.startsWith(`${root}/`)) throw new Error('Unsafe Skill resource path')
+        if (!isStrictResolvedPathInside(root, target)) throw new Error('Unsafe Skill resource path')
         await mkdir(dirname(target), { recursive: true })
         await writeFile(target, file.content, { flag: 'wx', mode: 0o400 })
       }

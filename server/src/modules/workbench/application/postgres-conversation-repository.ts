@@ -518,7 +518,7 @@ export class PostgresConversationRepository {
            and w.status = 'active'
          for update of w, s
       `
-      if (!locked || locked.sessionStatus !== 'active') {
+      if (!locked || !['active', 'draft'].includes(locked.sessionStatus)) {
         throw authorizationDenied('Session 不存在或不可访问')
       }
       const [membership] = await transaction<{ role: string }[]>`
@@ -538,11 +538,22 @@ export class PostgresConversationRepository {
         on conflict (id) do nothing
         returning id
       `
+      const activateDraftIfNeeded = async () => {
+        if (locked.sessionStatus === 'draft') {
+          await transaction`
+            update sessions
+               set status = 'active', last_active_at = now()
+             where tenant_id = ${tenantId} and id = ${input.sessionId} and status = 'draft'
+          `
+        } else {
+          await transaction`
+            update sessions set last_active_at = now()
+             where tenant_id = ${tenantId} and id = ${input.sessionId}
+          `
+        }
+      }
       if (inserted) {
-        await transaction`
-          update sessions set last_active_at = now()
-           where tenant_id = ${tenantId} and id = ${input.sessionId}
-        `
+        await activateDraftIfNeeded()
         const mentionTargets = dedupeUserIds(input.mentionedUserIds ?? [])
         for (const mentionedUserId of mentionTargets) {
           const [member] = await transaction<{ exists: boolean }[]>`
@@ -594,6 +605,7 @@ export class PostgresConversationRepository {
         || existing.content !== input.content) {
         throw workspaceStateConflict('幂等键已被其他消息占用，请更换 idempotencyKey 后重试')
       }
+      await activateDraftIfNeeded()
       return { messageId: input.messageId, created: false }
     })
   }
