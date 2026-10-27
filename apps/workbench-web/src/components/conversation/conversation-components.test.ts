@@ -9,8 +9,8 @@ import RunComposer from './RunComposer.vue'
 import RunMessageList from './RunMessageList.vue'
 import SessionDiscussionList from './SessionDiscussionList.vue'
 
-const { downloadArtifact } = vi.hoisted(() => ({ downloadArtifact: vi.fn() }))
-vi.mock('@/api/client', () => ({ workbenchApi: { downloadArtifact } }))
+const { downloadArtifact, getArtifactText } = vi.hoisted(() => ({ downloadArtifact: vi.fn(), getArtifactText: vi.fn() }))
+vi.mock('@/api/client', () => ({ workbenchApi: { downloadArtifact, getArtifactText } }))
 
 // S5b：从 ConversationView 拆出的消息组件，A 的对话详情与 B 的对话页共用。
 
@@ -98,6 +98,7 @@ const global = { plugins: [ElementPlus] }
 beforeEach(() => {
   setActivePinia(createPinia())
   downloadArtifact.mockReset()
+  getArtifactText.mockReset()
 })
 
 describe('ConversationMessageItem', () => {
@@ -175,6 +176,51 @@ describe('RunMessageList', () => {
     await wrapper.get('[data-testid="preview-artifact-artifact-old"]').trigger('click')
     await flushPromises()
     expect(wrapper.get('[data-testid="artifact-body-artifact-old"]').text()).toContain('周会纪要')
+  })
+
+  it('2b-5: Office artifacts open their extracted text; failed or pending ones explain; images show a thumbnail', async () => {
+    const sheet = artifact({ id: 'a-xlsx', name: '营收.xlsx', type: 'xlsx', textPreview: 'available' })
+    const report = artifact({ id: 'a-pdf', name: '报告.pdf', type: 'pdf', textPreview: 'failed', textPreviewError: 'PDF 无法读取' })
+    const notes = artifact({ id: 'a-docx', name: '说明.docx', type: 'docx', textPreview: 'pending' })
+    const chart = artifact({ id: 'a-png', name: '趋势.png', type: 'png' })
+    getArtifactText.mockResolvedValue({
+      status: 'available', type: 'xlsx', pageCount: null, sheetCount: 2, rowCount: 2,
+      text: '# XLSX 文件摘要\n工作表：2\n\n## 营收\n区域\t收入\n华东\t1200\n\n## 明细\n月份\t收入\n7月\t380',
+    })
+    downloadArtifact.mockResolvedValue(new Blob(['png'], { type: 'image/png' }))
+    const create = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:chart')
+    const wrapper = mount(RunMessageList, {
+      global,
+      props: { task: run({ result: result({ artifacts: [sheet, report, notes, chart] }) }), isOwn: m => m.role === 'user', canFollowUp: true },
+    })
+    await flushPromises()
+
+    // 解析失败与尚未解析的不提供“查看正文”，原处说明。
+    expect(wrapper.find('[data-testid="preview-artifact-a-pdf"]').exists()).toBe(false)
+    expect(wrapper.get('[data-testid="artifact-body-unavailable-a-pdf"]').text()).toBe('无法生成正文：PDF 无法读取，请下载查看')
+    expect(wrapper.get('[data-testid="artifact-body-unavailable-a-docx"]').text()).toBe('正文暂未生成，请稍后再看或下载查看')
+    expect(wrapper.find('[data-testid="preview-artifact-a-png"]').exists()).toBe(false)
+
+    // 表格就地展开为表格，工作表可切换。
+    await wrapper.get('[data-testid="preview-artifact-a-xlsx"]').trigger('click')
+    await flushPromises()
+    expect(getArtifactText).toHaveBeenCalledWith('a-xlsx', 1)
+    expect(downloadArtifact).not.toHaveBeenCalledWith('a-xlsx', 1)
+    const body = () => wrapper.get('[data-testid="artifact-body-a-xlsx"]')
+    expect(body().text()).toContain('解析文本 · 只含单元格内容')
+    expect(body().find('table').text()).toContain('华东')
+    const tabs = body().findAll('.artifact-text__tab')
+    expect(tabs.map(tab => tab.text())).toEqual(['营收', '明细'])
+    await tabs[1]!.trigger('click')
+    expect(body().find('table').text()).toContain('7月')
+    expect(body().find('table').text()).not.toContain('华东')
+
+    // 图片经鉴权下载显示缩略图，可放大。
+    expect(downloadArtifact).toHaveBeenCalledWith('a-png', 1)
+    const thumb = wrapper.get('[data-testid="artifact-thumb-a-png"]')
+    expect(thumb.attributes('aria-label')).toBe('放大查看 趋势.png')
+    expect(thumb.get('img').attributes('src')).toBe('blob:chart')
+    create.mockRestore()
   })
 
   it('shows a failed markdown preview inline and reloads when expanded again', async () => {

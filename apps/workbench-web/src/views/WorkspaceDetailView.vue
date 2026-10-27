@@ -30,7 +30,9 @@ import type {
   WorkspaceUsageRange,
   WorkspaceUsageTotals,
 } from '@/types/domain'
+import ArtifactContentDialog from '@/components/ArtifactContentDialog.vue'
 import ArtifactPreviewDialog from '@/components/ArtifactPreviewDialog.vue'
+import { artifactPreview } from '@/utils/artifact-preview'
 import ConversationStarter from '@/components/ConversationStarter.vue'
 import ProjectBriefCard from '@/components/ProjectBriefCard.vue'
 import ProjectArchivePanel from '@/components/ProjectArchivePanel.vue'
@@ -1279,6 +1281,8 @@ const chatScope = computed(() => ({
               :key="artifact.id"
               :artifact="artifact"
               :origin="artifactOrigin(artifact)"
+              :previewable="artifactPreview(artifact).kind !== null"
+              :preview-note="artifactPreview(artifact).note"
               @download="download(artifact)"
               @preview="openArtifactPreview(artifact)"
             />
@@ -1545,7 +1549,12 @@ const chatScope = computed(() => ({
 
     <!-- 成果预览属读取轨，个人空间与归档空间同样可用，因此不放在 isTeam 分支里。 -->
     <ArtifactPreviewDialog
-      v-if="previewArtifact"
+      v-if="previewArtifact?.type === 'html'"
+      v-model:open="previewOpen"
+      :artifact="previewArtifact"
+    />
+    <ArtifactContentDialog
+      v-else-if="previewArtifact"
       v-model:open="previewOpen"
       :artifact="previewArtifact"
     />

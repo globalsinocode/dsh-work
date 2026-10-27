@@ -229,6 +229,17 @@
   background: #f5f8f6;
 }
 
+.answer-artifact__unavailable {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 10px;
+  border: 1px dashed #d5d8d4;
+  border-radius: 10px;
+  color: #5f655f;
+  background: #ffffff;
+  font-size: var(--dsh-font-size-badge);
+}
+
 .answer-artifact__body {
   margin-top: 4px;
   padding: 12px 14px;

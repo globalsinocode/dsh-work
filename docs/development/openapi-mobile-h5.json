@@ -2700,6 +2700,19 @@
           },
           "summary": {
             "type": "string"
+          },
+          "textPreview": {
+            "type": "string",
+            "enum": [
+              "available",
+              "failed",
+              "pending"
+            ],
+            "description": "Office/PDF 成果的解析文本预览状态（2b-5）；其他类型不返回"
+          },
+          "textPreviewError": {
+            "type": "string",
+            "description": "textPreview 为 failed 时的原因"
           }
         }
       },

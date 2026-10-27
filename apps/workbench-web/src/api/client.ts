@@ -7,6 +7,7 @@ import type {
   AgentCandidatePage,
   AgentMemberPatchAction,
   Artifact,
+  ArtifactTextPreview,
   Automation,
   AgentRoutineResult,
   AutomationExecution,
@@ -334,6 +335,10 @@ export const workbenchApi = {
   getArtifacts: () => request<Artifact[]>('/artifacts'),
   downloadArtifact: (artifactId: string, version: number) => requestBlob(
     `/artifacts/${encodeURIComponent(artifactId)}/versions/${version}/download`,
+  ),
+  /** 执行隔离 2b-5：Office/PDF 成果版本的解析文本预览；权限与下载相同。 */
+  getArtifactText: (artifactId: string, version: number) => request<ArtifactTextPreview>(
+    `/artifacts/${encodeURIComponent(artifactId)}/versions/${version}/text`,
   ),
   artifactDownloadUrl: (artifactId: string, version: number) =>
     `${baseUrl}/artifacts/${encodeURIComponent(artifactId)}/versions/${version}/download`,

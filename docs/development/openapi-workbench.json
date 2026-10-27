@@ -1910,6 +1910,42 @@
         }
       }
     },
+    "/artifacts/{artifactId}/versions/{versionId}/text": {
+      "parameters": [
+        {
+          "name": "artifactId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "versionId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "get": {
+        "operationId": "getArtifactVersionText",
+        "summary": "读取 Office/PDF 成果版本的解析文本预览",
+        "description": "执行隔离 2b-5：读取权限与下载相同。返回 status=available（text 为解析文本，另有 pageCount/sheetCount/rowCount）、failed（message 为原因）或 pending（尚未解析）；type 为 xlsx/docx/pptx/pdf。其他类型的成果返回 422，请直接下载。成果列表与对话中的成果对 Office/PDF 另返回 textPreview（available/failed/pending）与失败时的 textPreviewError。",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
     "/workspaces/{workspaceId}/sessions": {
       "parameters": [
         {

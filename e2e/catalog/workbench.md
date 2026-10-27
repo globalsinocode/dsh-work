@@ -137,7 +137,7 @@ P1/P2 的执行结果须单独记录数据库、身份、Runtime/DSH 版本和�
 **前置数据：** 一次成功 Run 的 `output/` 中同时有合规的 xlsx/docx/pptx/pdf/png/jpg、文本类成果，以及不合规的文件（不支持的格式、子目录、隐藏文件、超过 20 MB、扩展名与文件头不符、含宏或脚本等活动内容）<br>
 **spec：** `server/src/modules/workbench/application/artifact-file-policy.test.ts`、`server/src/infrastructure/postgres/m3-orchestration.integration.test.ts`、`server/src/domain/task-result.test.ts`、`server/src/modules/runtime/runtime-adapter.test.ts`、`apps/workbench-web/src/components/conversation/conversation-components.test.ts`
 
-1. 合规文件登记为成果，回答照常提交；二进制成果卡片提供下载，“继续修改”见 EX-ARTIFACT-04，暂不提供“查看正文”（2b-5）。
+1. 合规文件登记为成果，回答照常提交；二进制成果卡片提供下载，“继续修改”见 EX-ARTIFACT-04，“查看正文”与图片预览见 EX-ARTIFACT-07。
 2. 不合规文件不登记、不落盘，其余成果不受影响；该轮回答下方列出未登记的文件及原因（如“格式不支持”“含宏或脚本等活动内容”“超过 20 MB”），结果核验标为未完全达成。
 3. Office 文件允许普通超链接；含宏、ActiveX、嵌入的 OLE 对象、外部数据连接、打开时取远程内容的外部关系，或 PDF 脚本、启动动作、嵌入文件时不登记；无法完整检查的文件按不合规处理。
 4. 单个成果不超过 20 MB、每轮合计不超过 50 MB、最多 20 个；超出部分按文件名顺序跳过并说明。
@@ -182,6 +182,20 @@ P1/P2 的执行结果须单独记录数据库、身份、Runtime/DSH 版本和�
 4. 解析文本中，表格按工作表列出（没有计算结果的公式显示公式本身），演示文稿按页列出文字、表格与备注；容器写出的链接文件或非 UTF-8 内容不被采信。
 
 **验收：** 上述测试通过；真实 Docker 用例用执行镜像生成的真实 Office 文件核对解析文本。P2 另需在目标环境用真实 DSH 生成 xlsx 后，在下一轮只引用它请模型复述其中数字，核对与表格一致。
+
+### EX-ARTIFACT-07 Office/PDF 成果查看解析文本、图片成果直接预览（执行隔离 2b-5）
+
+**优先级：** P1 · **角色：** 员工 · **运行层级：** 一次性 PostgreSQL、合成 Runtime（不调用模型）与测试用解析器替身（不启动容器）、真实 HTTP 接口与浏览器；组件与接口测试<br>
+**前置数据：** `personalWorkbenchFixture` 一次性库；合成 Runtime 对含 `P1-办公成果` 的 prompt 经真实成果发布流程登记 xlsx（两个工作表）、docx、pptx、无法解析的 pdf 与 png，解析文本由测试替身给出<br>
+**spec：** `e2e/personal-integration/artifact-preview.spec.ts`、`apps/workbench-web/src/components/conversation/conversation-components.test.ts`、`apps/workbench-web/src/components/ArtifactContentDialog.test.ts`、`apps/workbench-web/src/components/ArtifactCard.test.ts`、`apps/workbench-web/src/utils/artifact-preview.test.ts`、`server/src/infrastructure/postgres/m3-orchestration.integration.test.ts`
+
+1. 对话回复下，表格、文档、演示稿成果提供“查看正文”：就地展开解析文本，顶部说明不含版式等内容；表格按工作表以表格显示并可切换工作表，演示稿按页列出文字与备注；可收起。
+2. 解析失败的成果（如无法读取的 PDF）不提供“查看正文”，原处说明原因并提示下载；尚未解析的说明正文暂未生成。
+3. 图片成果在回复下直接显示缩略图，点击放大，可下载、可关闭；图片只经鉴权下载取得，不拼接直链。
+4. “我的文件”中，解析成功的表格、文档、演示稿与图片类生成成果提供“预览”：对话框中显示解析文本（表格依次列出全部工作表）或图片；解析失败的不提供（列表已说明“解析失败，原文件仍可下载”）。项目空间的成果卡同样提供“预览”，解析失败的卡片显示“无法预览”与原因；HTML 成果仍在隔离沙箱中渲染。
+5. 解析文本的读取权限与下载相同；读取失败时在原处提示，可重试。
+
+**验收：** 上述测试通过；浏览器中逐项点开核对显示与可访问名称。P2 另需在目标环境用真实 DSH 生成 xlsx/docx/pptx 与图片，核对查看正文与预览的内容与原文件一致。
 
 ### EX-CONTEXT-01 长对话保留首条约束并使用对话摘要
 

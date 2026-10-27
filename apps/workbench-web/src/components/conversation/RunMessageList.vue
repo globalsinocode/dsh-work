@@ -1,12 +1,16 @@
 <script setup lang="ts">
-import { computed, reactive, toRef } from 'vue'
+import { computed, reactive, ref, toRef } from 'vue'
 import { ArrowDown, ArrowUp, Close, CopyDocument, Document, EditPen, Lock, RefreshRight, Share, Warning, View } from '@element-plus/icons-vue'
 import { AssistantMessageContent, StatusTag } from '@dsh-work/ui-core'
 
+import ArtifactImageThumb from './ArtifactImageThumb.vue'
 import ConversationMessageItem from './ConversationMessageItem.vue'
 import { workbenchApi } from '@/api/client'
+import ArtifactContentDialog from '@/components/ArtifactContentDialog.vue'
+import ArtifactTextView from '@/components/ArtifactTextView.vue'
 import { resultOutcomeLabels, useRunProgress } from '@/composables/useRunProgress'
 import type { Artifact, ChatMessage, TaskRun } from '@/types/domain'
+import { isImageArtifact, isOfficeArtifact, unavailableTextNote, type OfficeArtifactType } from '@/utils/artifact-preview'
 import { notifyActionFailure } from '@/utils/feedback'
 import '@/styles/conversation-thread.css'
 
@@ -85,8 +89,30 @@ function messageMeta(message: ChatMessage) {
   return `${resultOutcomeLabels[task.value.result.outcome]}${task.value.duration ? ` · ${task.value.duration}` : ''}`
 }
 
-/** Markdown 成果就地展开预览：气泡内可读完整正文；加载失败时在原处提示，再次展开会重新加载。 */
-const previewState = reactive<Record<string, { open: boolean; loading: boolean; text: string; error: string }>>({})
+/**
+ * 成果就地展开正文：Markdown/文本读原文，Office/PDF 读解析文本（执行隔离 2b-5）。加载失败时在原处
+ * 提示，再次展开会重新加载。
+ */
+const previewState = reactive<Record<string, { open: boolean; loading: boolean; text: string; error: string; officeType?: OfficeArtifactType }>>({})
+
+/** 可展开正文：文本类成果，以及解析文本可用的 Office/PDF 成果。 */
+function canViewBody(artifact: Artifact) {
+  return artifact.type === 'markdown' || artifact.type === 'text'
+    || (isOfficeArtifact(artifact.type) && artifact.textPreview === 'available')
+}
+
+/** Office/PDF 成果没有可用解析文本时，代替“查看正文”的说明。 */
+function bodyUnavailableNote(artifact: Artifact) {
+  return isOfficeArtifact(artifact.type) && artifact.textPreview !== 'available' ? unavailableTextNote(artifact) : ''
+}
+
+/** 图片成果点击缩略图后放大查看。 */
+const imageDialogOpen = ref(false)
+const imageArtifact = ref<Artifact | null>(null)
+function openImage(artifact: Artifact) {
+  imageArtifact.value = artifact
+  imageDialogOpen.value = true
+}
 
 function previewKey(artifact: Artifact) {
   return `${artifact.id}@${artifact.version}`
@@ -96,8 +122,8 @@ function isPreviewOpen(artifact: Artifact) {
   return Boolean(previewState[previewKey(artifact)]?.open)
 }
 
-async function toggleMarkdownPreview(artifact: Artifact) {
-  if (artifact.type !== 'markdown' && artifact.type !== 'text') return
+async function togglePreview(artifact: Artifact) {
+  if (!canViewBody(artifact)) return
   const key = previewKey(artifact)
   const current = previewState[key]
   if (current?.open) {
@@ -110,6 +136,13 @@ async function toggleMarkdownPreview(artifact: Artifact) {
   }
   previewState[key] = { open: true, loading: true, text: '', error: '' }
   try {
+    if (isOfficeArtifact(artifact.type)) {
+      const preview = await workbenchApi.getArtifactText(artifact.id, artifact.version)
+      previewState[key] = preview.status === 'available'
+        ? { open: true, loading: false, text: preview.text, error: '', officeType: artifact.type }
+        : { open: true, loading: false, text: '', error: unavailableTextNote({ textPreview: preview.status, textPreviewError: preview.status === 'failed' ? preview.message : undefined }) }
+      return
+    }
     const blob = await workbenchApi.downloadArtifact(artifact.id, artifact.version)
     const text = await blob.text()
     previewState[key] = { open: true, loading: false, text, error: '' }
@@ -154,17 +187,22 @@ async function toggleMarkdownPreview(artifact: Artifact) {
             <el-icon><ArrowDown /></el-icon>
           </button>
           <button
-            v-if="artifact.type === 'markdown' || artifact.type === 'text'"
+            v-if="canViewBody(artifact)"
             type="button"
             class="answer-artifact__preview"
             :aria-label="isPreviewOpen(artifact) ? `收起 ${artifact.name} 正文` : `展开 ${artifact.name} 正文`"
             :aria-expanded="isPreviewOpen(artifact)"
             :data-testid="`preview-artifact-${artifact.id}`"
-            @click="toggleMarkdownPreview(artifact)"
+            @click="togglePreview(artifact)"
           >
             <el-icon><component :is="isPreviewOpen(artifact) ? ArrowUp : View" /></el-icon>
             {{ isPreviewOpen(artifact) ? '收起正文' : '查看正文' }}
           </button>
+          <span
+            v-else-if="bodyUnavailableNote(artifact)"
+            class="answer-artifact__unavailable"
+            :data-testid="`artifact-body-unavailable-${artifact.id}`"
+          >{{ bodyUnavailableNote(artifact) }}</span>
           <button
             v-if="canFollowUp && artifact.canReference && artifact.fileId && belongsToCurrentRun(message)"
             type="button"
@@ -184,11 +222,17 @@ async function toggleMarkdownPreview(artifact: Artifact) {
         >
           <p v-if="previewState[`${artifact.id}@${artifact.version}`]?.loading" class="answer-artifact__body-status">正在加载正文…</p>
           <p v-else-if="previewState[`${artifact.id}@${artifact.version}`]?.error" class="answer-artifact__body-status">{{ previewState[`${artifact.id}@${artifact.version}`].error }}</p>
+          <ArtifactTextView
+            v-else-if="previewState[`${artifact.id}@${artifact.version}`]?.officeType"
+            :type="previewState[`${artifact.id}@${artifact.version}`]!.officeType!"
+            :text="previewState[`${artifact.id}@${artifact.version}`]?.text || ''"
+          />
           <AssistantMessageContent
             v-else
             :text="previewState[`${artifact.id}@${artifact.version}`]?.text || ''"
           />
         </div>
+        <ArtifactImageThumb v-if="isImageArtifact(artifact.type)" :artifact="artifact" @open="openImage(artifact)" />
       </div>
     </div>
 
@@ -298,4 +342,6 @@ async function toggleMarkdownPreview(artifact: Artifact) {
   <p v-if="task.status === 'cancelled' && task.stoppedBy" class="conversation-stopped-by" data-testid="run-stopped-by">
     本轮执行已由 {{ task.stoppedBy }} 停止
   </p>
+
+  <ArtifactContentDialog v-model:open="imageDialogOpen" :artifact="imageArtifact" />
 </template>

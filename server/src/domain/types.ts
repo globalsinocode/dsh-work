@@ -63,6 +63,12 @@ export interface Artifact {
   /** The artifact version's file; with canReference it can be attached to the next message. */
   fileId?: string
   canReference?: boolean
+  /**
+   * Office/PDF artifacts only (execution isolation 2b-5): whether the version's extracted text can be
+   * previewed (`pending` while it has not been extracted); `textPreviewError` says why it failed.
+   */
+  textPreview?: 'available' | 'failed' | 'pending'
+  textPreviewError?: string
   summary: string
   /**
    * 项目空间成果的来源（团队空间才返回）：所属项目任务、承接 Agent 及版本、发起人。

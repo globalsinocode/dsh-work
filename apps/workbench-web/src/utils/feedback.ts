@@ -26,7 +26,7 @@ export function notifyActionFailure(
   })
 }
 
-export async function downloadArtifactFile(artifact: Artifact) {
+export async function downloadArtifactFile(artifact: Pick<Artifact, 'id' | 'version' | 'name'>) {
   try {
     const blob = await workbenchApi.downloadArtifact(artifact.id, artifact.version)
     const url = URL.createObjectURL(blob)

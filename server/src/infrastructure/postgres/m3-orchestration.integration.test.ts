@@ -1686,6 +1686,23 @@ test('2b-3: binary artifacts get container-extracted text, failures are recorded
   assert.deepEqual(both.manifest.input.file_mounts.map(mount => mount.source_name), ['数据.xlsx'])
   assert.deepEqual(both.manifest.input.original_mounts?.map(mount => mount.source_name), ['数据.xlsx'])
 
+  // 2b-5: artifacts say whether their text can be previewed, and the text reads with download permission.
+  const preview = (items: Array<{ name: string; textPreview?: string; textPreviewError?: string }>) =>
+    Object.fromEntries(items.map(item => [item.name, [item.textPreview ?? null, item.textPreviewError ?? null]]))
+  const expectedPreview = {
+    '数据.xlsx': ['available', null], '说明.docx': ['available', null], '概览.pptx': ['available', null],
+    '报告.pdf': ['failed', 'PDF 无法读取'], '周报.md': [null, null],
+  }
+  assert.deepEqual(preview(artifacts), expectedPreview)
+  assert.deepEqual(preview((await extracting.listArtifacts('U00001')).filter(item => item.runId === first.created.id)), expectedPreview)
+  const sheetText = await extracting.readArtifactText(workbook.id, 1, 'U00001')
+  assert.deepEqual(sheetText, { status: 'available', type: 'xlsx', text: '# xlsx 解析文本\n华东\t1200', pageCount: null, sheetCount: 1, rowCount: 2 })
+  assert.deepEqual(await extracting.readArtifactText(report.id, 1, 'U00001'), { status: 'failed', type: 'pdf', message: 'PDF 无法读取' })
+  const weekly = artifacts.find(item => item.name === '周报.md')!
+  await assert.rejects(extracting.readArtifactText(weekly.id, 1, 'U00001'), /没有解析文本预览/)
+  await assert.rejects(extracting.readArtifactText(workbook.id, 1, 'U00008'), /不存在或不可访问/)
+  await assert.rejects(extracting.readArtifactText(workbook.id, 9, 'U00001'), /不存在或不可访问/)
+
   // The container cannot run: the artifact is published without any extraction, and the backfill adds it later.
   outage = true
   const later = await turn(withoutBash, '再生成一份', [], { '补充.docx': minimalDocx({ 'word/extra.xml': '<x/>' }) })
@@ -1694,6 +1711,9 @@ test('2b-3: binary artifacts get container-extracted text, failures are recorded
     select count(*)::integer as count from file_extractions fe join file_objects f on f.tenant_id = fe.tenant_id and f.id = fe.file_id
      where f.tenant_id = 'tenant-dsh-work' and f.original_name = '补充.docx' and f.session_id = ${session.id}`
   assert.equal(missing?.count, 0)
+  const supplement = (await new PostgresConversationRepository(database).getTask(later.created.id, 'U00001'))!.result.artifacts.find(item => item.name === '补充.docx')!
+  assert.equal(supplement.textPreview, 'pending')
+  assert.deepEqual(await extracting.readArtifactText(supplement.id, 1, 'U00001'), { status: 'pending', type: 'docx' })
   outage = false
   calls.length = 0
   const backfilled = await extracting.backfillBinaryArtifactExtractions()

@@ -15,6 +15,7 @@ import {
   BINARY_TEXT_TYPES, CONTAINER_EXTRACTOR_VERSION,
   type ArtifactTextExtraction, type ArtifactTextExtractorPort, type BinaryTextType,
 } from './container-artifact-text-extractor.ts'
+import { artifactTextPreviewColumns, TEXT_EXTRACTOR_VERSIONS, withTextPreview, type ArtifactTextPreviewState } from './artifact-text-preview.ts'
 import {
   ARTIFACT_LIMITS, artifactFormat, checkArtifactContent, checkArtifactName, displayArtifactName, isTextArtifactType,
   type ArtifactSkipReason,
@@ -22,7 +23,7 @@ import {
 import { PostgresWorkspaceService, readableWorkspacePredicate, type WorkspaceType } from './postgres-workspace-service.ts'
 import { workspaceStateConflict } from './workspace-state-conflict-error.ts'
 import { recordWorkspaceActivity } from './workspace-activity-writer.ts'
-import { invalidRequest } from '../../../domain/request-errors.ts'
+import { invalidRequest, stateConflict } from '../../../domain/request-errors.ts'
 import type { ObjectStorage } from '../../../domain/object-storage.ts'
 import { assertRealWorkspaceDirectory } from '../../../infrastructure/storage/workspace-directory.ts'
 
@@ -113,6 +114,12 @@ export interface UploadedWorkspaceFileVersion {
 }
 
 export type PersonalFileSource = 'material' | 'attachment' | 'artifact'
+/** 2b-5: an Office/PDF artifact version's extracted text for preview, or why there is none. */
+export type ArtifactTextPreview =
+  | { status: 'available'; type: BinaryTextType; text: string; pageCount: number | null; sheetCount: number | null; rowCount: number | null }
+  | { status: 'failed'; type: BinaryTextType; message: string }
+  | { status: 'pending'; type: BinaryTextType }
+
 export interface PersonalFileSummary {
   id: string
   name: string
@@ -210,8 +217,6 @@ interface ArtifactInputText {
   sheetCount?: number | null
 }
 
-/** Extractions whose text can be mounted as a Run input: uploads and text artifacts, and binary artifacts (2b-3). */
-const TEXT_EXTRACTOR_VERSIONS = ['m4-basic-v1', CONTAINER_EXTRACTOR_VERSION]
 /** Most binary artifacts one extraction container parses at once (startup backfill). */
 const BACKFILL_BATCH_FILES = 10
 
@@ -522,8 +527,10 @@ export class PostgresContentService {
       agentName: string | null
       agentVersion: string | null
       initiatedBy: string | null
+      textPreview: ArtifactTextPreviewState | null
+      textPreviewError: string | null
     }[]>`
-      select a.id, a.name, a.artifact_type as "artifactType", av.version_no as version,
+      select a.id, a.name, a.artifact_type as "artifactType", av.version_no as version, ${artifactTextPreviewColumns(this.database)},
              f.size_bytes as "sizeBytes", av.created_at as "createdAt",
              av.source_run_id as "runId", a.workspace_id as "workspaceId",
              w.workspace_type as "workspaceType", s.status as "sourceSessionStatus",
@@ -575,7 +582,7 @@ export class PostgresContentService {
       if (row.workspaceType !== 'team') return null
       return readable.get(row.workspaceId) === true ? row : null
     })
-    return visible.filter((row): row is (typeof rows)[number] => row !== null).map((row) => ({
+    return visible.filter((row): row is (typeof rows)[number] => row !== null).map((row) => withTextPreview({
       id: row.id,
       name: row.name,
       type: row.artifactType,
@@ -590,7 +597,7 @@ export class PostgresContentService {
         agent: row.agentName && row.agentVersion ? { name: row.agentName, version: row.agentVersion } : null,
         initiatedBy: row.initiatedBy,
       } : null,
-    }))
+    }, row))
   }
 
   /** Uses existing file_objects/extractions/Artifact relations; no second catalog.
@@ -2354,6 +2361,50 @@ export class PostgresContentService {
       throw authorizationDenied('Artifact 不存在或不可访问')
     }
     return row.fileId
+  }
+
+  /**
+   * 2b-5：Office/PDF 成果某个版本的解析文本，供“查看正文”与成果预览。读取权限与下载相同
+   * （artifactFileId）；文本按解析记录的摘要校验后返回。其他类型没有解析文本预览。
+   */
+  async readArtifactText(artifactId: string, version: number, actorUserId: string): Promise<ArtifactTextPreview> {
+    const fileId = await this.artifactFileId(artifactId, version, actorUserId)
+    const [row] = await this.database<{
+      artifactType: Artifact['type']
+      status: 'succeeded' | 'failed' | null
+      detectedType: BinaryTextType | null
+      textStorageKey: string | null
+      textSha256: string | null
+      errorMessage: string | null
+      pageCount: number | null
+      sheetCount: number | null
+      rowCount: number | null
+    }[]>`
+      select a.artifact_type as "artifactType", fe.status, fe.detected_type as "detectedType",
+             fe.text_storage_key as "textStorageKey", fe.text_sha256 as "textSha256", fe.error_message as "errorMessage",
+             fe.page_count as "pageCount", fe.sheet_count as "sheetCount", fe.row_count as "rowCount"
+        from artifact_versions av
+        join artifacts a on a.tenant_id = av.tenant_id and a.id = av.artifact_id
+        join file_objects f on f.tenant_id = av.tenant_id and f.id = av.file_object_id
+        left join lateral (
+          select * from file_extractions x
+           where x.tenant_id = f.tenant_id and x.file_id = f.id and x.extractor_version = any(${TEXT_EXTRACTOR_VERSIONS})
+           order by x.created_at desc, x.id desc limit 1
+        ) fe on true
+       where av.tenant_id = ${tenantId} and av.artifact_id = ${artifactId} and av.file_object_id = ${fileId}
+         and f.scan_status = 'clean' and f.removed_at is null
+    `
+    if (!row) throw authorizationDenied('Artifact 不存在或不可访问')
+    if (!BINARY_TEXT_TYPES.some(type => type === row.artifactType)) throw invalidRequest('该成果类型没有解析文本预览，请直接下载或查看原文')
+    const type = row.artifactType as BinaryTextType
+    if (!row.status) return { status: 'pending', type }
+    if (row.status === 'failed' || !row.textStorageKey) return { status: 'failed', type, message: row.errorMessage ?? '文件解析失败' }
+    const text = (await this.storage.get(row.textStorageKey)).toString('utf8')
+    if (createHash('sha256').update(text).digest('hex') !== row.textSha256) throw stateConflict('成果解析文本与记录不一致，请联系管理员')
+    return {
+      status: 'available', type, text,
+      pageCount: row.pageCount, sheetCount: row.sheetCount, rowCount: row.rowCount,
+    }
   }
 
   /**

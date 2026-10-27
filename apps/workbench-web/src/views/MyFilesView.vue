@@ -5,7 +5,9 @@ import { ElMessageBox } from 'element-plus'
 import { workbenchApi } from '@/api/client'
 import { useAuthStore } from '@/stores/auth'
 import { usePagedQuery } from '@/composables/usePagedQuery'
-import type { PersonalFile } from '@/types/domain'
+import ArtifactContentDialog from '@/components/ArtifactContentDialog.vue'
+import type { Artifact, PersonalFile } from '@/types/domain'
+import { personalFilePreview } from '@/utils/artifact-preview'
 import { fileRemovalNotice } from '@/utils/content-lifecycle'
 import { notifyActionFailure } from '@/utils/feedback'
 let mounted = true
@@ -41,6 +43,12 @@ async function download(file: PersonalFile) {
   } catch(cause) { notifyActionFailure('下载文件', file.name, cause) }
   finally { busy.value = '' }
 }
+// 执行隔离 2b-5：生成成果中解析成功的 Office/PDF 与图片可在对话框中预览。
+const previewOpen = ref(false), previewing = ref<Pick<Artifact, 'id' | 'version' | 'name' | 'type'> | null>(null)
+function openPreview(file: PersonalFile) {
+  previewing.value = personalFilePreview(file)
+  previewOpen.value = Boolean(previewing.value)
+}
 async function remove(file: PersonalFile) {
   try { await ElMessageBox.confirm(fileRemovalNotice, '移除文件？', { confirmButtonText: '移除文件', cancelButtonText: '取消' }) }
   catch { return }
@@ -68,10 +76,11 @@ async function remove(file: PersonalFile) {
           <span v-if="file.scanStatus !== 'clean'">文件安全检查未通过</span><span v-else-if="file.parseStatus === 'failed'">解析失败，原文件仍可下载</span><span v-else-if="file.parseStatus !== 'succeeded'">当前未提供可引用解析结果</span>
           <router-link v-if="file.sessionId && file.sourceSessionState === 'active'" :to="`/sessions/${file.sessionId}`">来源对话</router-link><span v-else-if="file.sourceSessionState === 'removed'">原对话已移除，文件独立保留</span>
         </div>
-        <div class="file-actions"><el-button v-if="file.canReference" @click="router.push({path:'/workbench',query:{file:file.id}})">引用到新对话</el-button><el-button v-if="file.canDownload" :disabled="busy === file.id" @click="download(file)">下载</el-button><el-button v-if="file.removable" :disabled="busy === file.id" @click="remove(file)">移除</el-button></div>
+        <div class="file-actions"><el-button v-if="personalFilePreview(file)" :aria-label="`预览 ${file.name}`" @click="openPreview(file)">预览</el-button><el-button v-if="file.canReference" @click="router.push({path:'/workbench',query:{file:file.id}})">引用到新对话</el-button><el-button v-if="file.canDownload" :disabled="busy === file.id" @click="download(file)">下载</el-button><el-button v-if="file.removable" :disabled="busy === file.id" @click="remove(file)">移除</el-button></div>
       </li>
     </ul>
     <el-button v-if="nextCursor" :loading="loading" @click="loadMore">加载更多</el-button>
+    <ArtifactContentDialog v-model:open="previewOpen" :artifact="previewing" />
   </section>
 </template>
 <style scoped>

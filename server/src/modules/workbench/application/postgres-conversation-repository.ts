@@ -7,6 +7,7 @@ import type { JsonObject, RunState } from '../../../domain/run-state.ts'
 import { PostgresWorkspaceService, readableWorkspacePredicate } from './postgres-workspace-service.ts'
 import { authorizationDenied, requestInvalid } from '../../../domain/authorization-errors.ts'
 import { workspaceStateConflict } from './workspace-state-conflict-error.ts'
+import { artifactTextPreviewColumns, withTextPreview, type ArtifactTextPreviewState } from './artifact-text-preview.ts'
 import { stateConflict } from '../../../domain/request-errors.ts'
 import type { ContextMessage, MessagePosition, StoredConversationSummary } from '../../../domain/conversation-context.ts'
 
@@ -159,6 +160,8 @@ interface ArtifactRow {
   workspaceId: string
   fileId: string
   canReference: boolean
+  textPreview: ArtifactTextPreviewState | null
+  textPreviewError: string | null
 }
 
 interface SourceRow {
@@ -1051,7 +1054,7 @@ export class PostgresConversationRepository {
       select a.id, av.id as "artifactVersionId", a.name, a.artifact_type as "artifactType", av.version_no as version,
              f.size_bytes as "sizeBytes", av.created_at as "createdAt", a.workspace_id as "workspaceId",
              f.id as "fileId",
-             ${this.canReferenceSql()} as "canReference",
+             ${this.canReferenceSql()} as "canReference", ${artifactTextPreviewColumns(this.database)},
              av.source_run_id as "sourceRunId", av.source_attempt_id as "sourceAttemptId"
         from artifact_versions av
         join artifacts a on a.tenant_id = av.tenant_id and a.id = av.artifact_id
@@ -1386,7 +1389,7 @@ export class PostgresConversationRepository {
           select a.id, av.id as "artifactVersionId", a.name, a.artifact_type as "artifactType", av.version_no as version,
                  f.size_bytes as "sizeBytes", av.created_at as "createdAt", a.workspace_id as "workspaceId",
                  f.id as "fileId",
-                 ${this.canReferenceSql()} as "canReference"
+                 ${this.canReferenceSql()} as "canReference", ${artifactTextPreviewColumns(this.database)}
             from artifact_versions av
             join artifacts a on a.tenant_id = av.tenant_id and a.id = av.artifact_id
             join file_objects f on f.tenant_id = av.tenant_id and f.id = av.file_object_id
@@ -1461,7 +1464,7 @@ export class PostgresConversationRepository {
       select a.id, av.id as "artifactVersionId", a.name, a.artifact_type as "artifactType", av.version_no as version,
              f.size_bytes as "sizeBytes", av.created_at as "createdAt", a.workspace_id as "workspaceId",
              f.id as "fileId",
-             ${this.canReferenceSql()} as "canReference",
+             ${this.canReferenceSql()} as "canReference", ${artifactTextPreviewColumns(this.database)},
              av.source_run_id as "sourceRunId"
         from artifact_versions av
         join artifacts a on a.tenant_id = av.tenant_id and a.id = av.artifact_id
@@ -1535,7 +1538,7 @@ export class PostgresConversationRepository {
 }
 
 function mapArtifactRow(artifact: ArtifactRow, runId: string) {
-  return {
+  return withTextPreview({
     id: artifact.id,
     name: artifact.name,
     type: artifact.artifactType,
@@ -1547,7 +1550,7 @@ function mapArtifactRow(artifact: ArtifactRow, runId: string) {
     fileId: artifact.fileId,
     canReference: artifact.canReference,
     summary: '由 DSH Runtime 本轮回答发布，保留来源 Run 与不可覆盖版本。',
-  }
+  }, artifact)
 }
 
 function mapArtifactEvidenceRow(artifact: ArtifactRow, runId: string) {

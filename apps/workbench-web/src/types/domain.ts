@@ -44,6 +44,12 @@ export interface TaskSource {
   updatedAt?: string
 }
 
+/** Office/PDF 成果版本的解析文本预览（GET /artifacts/{id}/versions/{v}/text）。 */
+export type ArtifactTextPreview =
+  | { status: 'available'; type: 'xlsx' | 'docx' | 'pptx' | 'pdf'; text: string; pageCount: number | null; sheetCount: number | null; rowCount: number | null }
+  | { status: 'failed'; type: 'xlsx' | 'docx' | 'pptx' | 'pdf'; message: string }
+  | { status: 'pending'; type: 'xlsx' | 'docx' | 'pptx' | 'pdf' }
+
 export interface Artifact {
   id: string
   name: string
@@ -56,6 +62,10 @@ export interface Artifact {
   /** The artifact version's file; with canReference it can be attached to the next message. */
   fileId?: string
   canReference?: boolean
+  /** Office/PDF 成果的解析文本预览状态（执行隔离 2b-5）；其他类型不返回。 */
+  textPreview?: 'available' | 'failed' | 'pending'
+  /** textPreview 为 failed 时的原因，如“PDF 无法读取”。 */
+  textPreviewError?: string
   summary: string
   /** 项目空间成果的来源：所属项目任务、承接 Agent 及版本、发起人；个人空间为 null。 */
   origin?: {
