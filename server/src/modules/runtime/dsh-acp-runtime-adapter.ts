@@ -31,6 +31,7 @@ import {
 import { compileRuntimeManifest } from './manifest-compiler.ts'
 import { canonicalJson, mcpToolSchemaDigest } from './canonical-json.ts'
 import { isSafeResumeWorkspacePath } from './resume-workspace-path.ts'
+import { isResolvedPathInsideDirectory } from './contained-resolved-path.ts'
 import { ExecutionCapabilityUnavailableError } from './execution-capabilities.ts'
 import { redactSensitiveText, sanitizeSafeMetadata } from '../../security/safe-observability.ts'
 import type {
@@ -237,16 +238,28 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
     for (const file of compiled.manifest.resume?.checkpoint_context.workspace_files ?? []) {
       if (!isSafeResumeWorkspacePath(file.path)) throw new Error(`Unsafe checkpoint workspace path: ${file.path}`)
       const target = resolve(workspaceDirectory, file.path)
-      if (!target.startsWith(`${outputDirectory}/`)) throw new Error(`Unsafe checkpoint workspace path: ${file.path}`)
+      if (!isResolvedPathInsideDirectory(outputDirectory, target)) throw new Error(`Unsafe checkpoint workspace path: ${file.path}`)
       await mkdir(dirname(target), { recursive: true })
       await writeFile(target, file.content, { flag: 'wx', mode: 0o600 })
     }
     for (const mount of compiled.manifest.input.file_mounts) {
       const relativePath = mount.mount_path.slice('/workspace/'.length)
       const target = resolve(workspaceDirectory, relativePath)
-      if (!target.startsWith(`${workspaceDirectory}/`)) throw new Error(`Unsafe file mount path: ${mount.mount_path}`)
+      if (!isResolvedPathInsideDirectory(workspaceDirectory, target)) throw new Error(`Unsafe file mount path: ${mount.mount_path}`)
       await mkdir(dirname(target), { recursive: true })
       await writeFile(target, mount.content, { flag: 'wx', mode: 0o400 })
+      await chmod(target, 0o400)
+    }
+    for (const attachment of compiled.manifest.input.attachments ?? []) {
+      const relativePath = attachment.mount_path.slice('/workspace/'.length)
+      const target = resolve(workspaceDirectory, relativePath)
+      if (!isResolvedPathInsideDirectory(workspaceDirectory, target)) throw new Error(`Unsafe attachment path: ${attachment.mount_path}`)
+      const bytes = Buffer.from(attachment.content_base64, 'base64')
+      if (createHash('sha256').update(bytes).digest('hex') !== attachment.content_sha256) {
+        throw new Error(`Attachment checksum mismatch: ${attachment.name}`)
+      }
+      await mkdir(dirname(target), { recursive: true })
+      await writeFile(target, bytes, { flag: 'wx', mode: 0o400 })
       await chmod(target, 0o400)
     }
     const materializedSkills = new Map<string, { instructions: string; files: Array<{ path: string; content: string; sha256: string; size: number }> }>()
@@ -265,7 +278,7 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
         if (skill.artifact_ref && (!expected || expected.sha256 !== file.sha256 || expected.size !== file.size)) throw new Error(`Skill 文件索引不匹配：${file.path}`)
         const root = join(workspaceDirectory, 'skills', safeSegment(skill.id))
         const target = resolve(root, file.path)
-        if (!target.startsWith(`${root}/`)) throw new Error('Unsafe Skill resource path')
+        if (!isResolvedPathInsideDirectory(root, target)) throw new Error('Unsafe Skill resource path')
         await mkdir(dirname(target), { recursive: true })
         await writeFile(target, file.content, { flag: 'wx', mode: 0o400 })
       }
@@ -1278,6 +1291,18 @@ export function renderSystemPrompt(manifest: RuntimeManifest) {
       '继续任务时如动作、参数、资源或数据版本变化，必须重新请求审批。',
     ].join('\n'))
   }
+  const attachments = manifest.input.attachments ?? []
+  if (attachments.length > 0) {
+    sections.push([
+      '# 当前 Run 输入附件（图片）',
+      '这些是原文件里的内嵌图片（照片、截图），已按只读方式放到工作目录，表格文字里看不到它们的内容。需要看图时用 read_image 读取下面给出的路径，不要猜测文件名。',
+      '如果当前模型不支持读图，工具会明确报错：这时只能说明「原文件里有这些图片、但当前模型看不到」，不要凭文件名或上下文猜测图片内容。',
+      ...attachments.map((attachment, index) => [
+        `${index + 1}. ${attachment.name}${attachment.source ? `（原表格位置：${attachment.source}）` : ''}`,
+        `   - 读取路径：${attachment.mount_path.slice('/workspace/'.length)}`,
+      ].join('\n')),
+    ].join('\n'))
+  }
   if (manifest.input.file_mounts.length > 0) {
     sections.push([
       '# 当前 Run 输入文件',
@@ -1300,11 +1325,22 @@ export function renderSystemPrompt(manifest: RuntimeManifest) {
   }
   if (manifest.agent_configuration.skill_instructions.length > 0) {
     const progressive = manifest.tools.some(tool => tool.id === 'activate_skill')
+    const selectedSkill = typeof manifest.selected_skill === 'string'
+      ? manifest.agent_configuration.skill_instructions.find(skill =>
+          `${skill.id}@${skill.version}` === manifest.selected_skill || skill.id === manifest.selected_skill)
+      : undefined
+    if (selectedSkill) {
+      sections.push([
+        '# 本会话指定 Skill',
+        `用户已为本会话指定 Skill：${selectedSkill.name ?? selectedSkill.id}（${selectedSkill.id}@${selectedSkill.version}）。`,
+        '只要该 Skill 的适用范围成立，必须先用 activate_skill 使用它；不要改用目录中的其他 Skill。确实不适用时，先说明理由再换。',
+      ].join('\n'))
+    }
     sections.push(progressive ? [
         '# 可用 Skill 目录',
         '这里只提供目录信息。需要使用某个 Skill 时，先调用 activate_skill 获取当前 Run 锁定版本的完整说明；不要猜测 Skill 正文或直接扫描资源目录。激活后在本次 Attempt 中持续遵循返回的说明。',
         ...manifest.agent_configuration.skill_instructions.filter(skill => !skill.disable_model_invocation).map(skill =>
-          `- ${skill.name ?? skill.id}（${skill.id}@${skill.version}）：${skill.description?.trim() || '由平台提供的已锁定 Skill'}`,
+          `- ${skill.name ?? skill.id}（${skill.id}@${skill.version}）${selectedSkill && skill.id === selectedSkill.id ? '【本会话指定】' : ''}：${skill.description?.trim() || '由平台提供的已锁定 Skill'}`,
         ),
       ].join('\n\n')
       : [
