@@ -3,12 +3,18 @@ import { createPinia, setActivePinia } from 'pinia'
 import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { ref } from 'vue'
 import { useAuthStore } from '@/stores/auth'
 import { useContentStore } from '@/stores/content'
 import { useTaskStore } from '@/stores/tasks'
-import type { SessionThread, TaskResult, TaskRun, Workspace } from '@/types/domain'
+import type { ProjectTask, ProjectTaskEvent, ProjectTaskPage, SessionThread, TaskResult, TaskRun, Workspace } from '@/types/domain'
+import { projectTaskDetailKey, type ProjectTaskDetailBridge } from '@/composables/project-task-detail'
 import { TaskComposer } from '@dsh-work/workbench-components'
 import ConversationView from './ConversationView.vue'
+
+function page(items: ProjectTask[], nextCursor: string | null = null): ProjectTaskPage {
+  return { items, nextCursor, total: items.length }
+}
 
 const router = vi.hoisted(() => ({ push: vi.fn(), replace: vi.fn(), back: vi.fn() }))
 const route = vi.hoisted(() => ({
@@ -23,6 +29,8 @@ const api = vi.hoisted(() => ({
   getSessionThread: vi.fn(),
   postSessionMessage: vi.fn(),
   listWorkspaceAgentMembers: vi.fn(),
+  listProjectTasks: vi.fn(),
+  markSessionAsProjectTask: vi.fn(),
   startRun: vi.fn(),
   cancelRun: vi.fn(),
   retryRun: vi.fn(),
@@ -134,6 +142,34 @@ function workspace(overrides: Partial<Workspace> = {}): Workspace {
   }
 }
 
+function projectTask(overrides: Partial<ProjectTask> = {}): ProjectTask {
+  return {
+    id: 'ptask-1',
+    title: '分析缺货原因',
+    description: '',
+    createdBy: { userId: 'U00002', displayName: '周航' },
+    assignee: { type: 'agent', agentMemberId: 'wam-7', name: '缺货分析助手' },
+    status: 'in_progress',
+    sessionId: 'session-001',
+    latestRunId: 'run-9',
+    latestRunStatus: 'succeeded',
+    latestRunAt: '2026-09-10T10:00:00.000Z',
+    schedule: { kind: 'manual', timezone: 'Asia/Shanghai' },
+    scheduleState: 'active',
+    scheduleReason: null,
+    nextRunAt: null,
+    inputFiles: [],
+    deliverableFiles: [],
+    completionNote: null,
+    completedAt: null,
+    dueDate: null,
+    createdAt: '2026-09-10T09:00:00.000Z',
+    updatedAt: '2026-09-10T10:00:00.000Z',
+    allowedActions: ['edit', 'remove'],
+    ...overrides,
+  }
+}
+
 function sessionThread(overrides: Partial<SessionThread> = {}): SessionThread {
   return {
     sessionId: 'session-001',
@@ -156,8 +192,9 @@ async function mountView(options: {
   item?: TaskRun | null
   workspace?: Workspace
   getRun?: () => Promise<TaskRun>
+  bridge?: ProjectTaskDetailBridge
 } = {}) {
-  if (route.name !== 'workspace-conversation') {
+  if (route.name !== 'workspace-conversation' && route.name !== 'workspace-task-thread') {
     route.name = 'conversation'
   }
   const pinia = createPinia()
@@ -184,6 +221,7 @@ async function mountView(options: {
     global: {
       plugins: [pinia, ElementPlus],
       stubs: { TaskComposer: true, RunTimeline: true, teleport: true },
+      provide: options.bridge ? { [projectTaskDetailKey as symbol]: options.bridge } : {},
     },
   })
   await flushPromises()
@@ -196,6 +234,7 @@ describe('ConversationView 归档只读态（design §2.7 / AC-23）', () => {
     vi.stubGlobal('EventSource', FakeEventSource)
     route.params = { id: 'run-001' }
     api.listWorkspaceAgentMembers.mockResolvedValue([])
+    api.listProjectTasks.mockResolvedValue(page([]))
     api.deleteSessionFile.mockResolvedValue({ id: 'file-001', removed: true })
     api.getRun.mockRejectedValue(new Error('not a run'))
     api.getSessionThread.mockRejectedValue(new Error('not found'))
@@ -871,6 +910,59 @@ describe('ConversationView 归档只读态（design §2.7 / AC-23）', () => {
     expect(wrapper.text()).not.toContain('目标已达成')
   })
 
+  it('routes a task-thread reply to the assigned Agent without @ (项目空间 S1)', async () => {
+    route.params = { id: 'session-001' }
+    api.getSessionThread.mockResolvedValue(sessionThread())
+    api.listProjectTasks.mockResolvedValue(page([projectTask()]))
+    api.startRun.mockResolvedValue(task({ id: 'run-new', sessionId: 'session-001' }))
+    const { wrapper, taskStore } = await mountView({ item: null })
+    vi.spyOn(taskStore, 'subscribe').mockImplementation(() => {})
+
+    expect(api.listProjectTasks).toHaveBeenCalledWith('ws-team', { sessionId: 'session-001', limit: 1 })
+    expect(wrapper.get('[data-testid="task-thread-notice"]').text()).toContain('“缺货分析助手”')
+    expect(wrapper.get('[data-testid="task-thread-badge"]').text()).toContain('分析缺货原因')
+    expect(wrapper.find('[data-testid="mark-as-task"]').exists()).toBe(false)
+    wrapper.getComponent(TaskComposer).vm.$emit('submit', {
+      prompt: '再看看华南', files: [], workspaceId: 'ws-team', mentions: [],
+    })
+    await flushPromises()
+
+    expect(api.startRun).toHaveBeenCalledWith('session-001', expect.objectContaining({ workspaceAgentMemberId: 'wam-7' }))
+    expect(api.postSessionMessage).not.toHaveBeenCalled()
+  })
+
+  it('任务线程信息读取失败时阻止发送，避免静默降级为讨论消息（P2-8）', async () => {
+    route.params = { id: 'session-001' }
+    api.getSessionThread.mockResolvedValue(sessionThread())
+    api.listProjectTasks.mockRejectedValue(new Error('项目任务读取失败'))
+    const { wrapper } = await mountView({ item: null })
+
+    expect(wrapper.get('[data-testid="task-thread-error"]').text()).toContain('项目任务读取失败')
+    wrapper.getComponent(TaskComposer).vm.$emit('submit', {
+      prompt: '再看看华南', files: [], workspaceId: 'ws-team', mentions: [],
+    })
+    await flushPromises()
+
+    expect(api.postSessionMessage).not.toHaveBeenCalled()
+    expect(api.startRun).not.toHaveBeenCalled()
+  })
+
+  it('offers “设为任务” on an Agent-executed shared thread that is not yet a task', async () => {
+    route.params = { id: 'session-001' }
+    api.getSessionThread.mockResolvedValue(sessionThread({
+      runs: [{ runId: 'run-9', status: 'succeeded', requestedBy: 'U00002', requesterName: '周航', createdAt: '2026-09-10T10:00:00.000Z' }],
+    }))
+    api.markSessionAsProjectTask.mockResolvedValue(projectTask({ title: '供应商讨论' }))
+    const { wrapper } = await mountView({ item: null })
+
+    await wrapper.get('[data-testid="mark-as-task"]').trigger('click')
+    await flushPromises()
+    expect(api.markSessionAsProjectTask).toHaveBeenCalledWith('ws-team', 'session-001')
+    expect(router.replace).toHaveBeenCalledWith(`/workspaces/ws-team/tasks/${projectTask({ title: '供应商讨论' }).id}/thread/session-001`)
+    expect(wrapper.find('[data-testid="mark-as-task"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="task-thread-notice"]').exists()).toBe(true)
+  })
+
   it('renders session run statuses as links in the shared discussion thread', async () => {
     route.params = { id: 'session-001' }
     api.getSessionThread.mockResolvedValue(sessionThread({
@@ -899,6 +991,7 @@ describe('ConversationView 空间内嵌套视图（TW-10 导航）', () => {
     route.params = { id: 'run-001' }
     route.query = {}
     api.listWorkspaceAgentMembers.mockResolvedValue([])
+    api.listProjectTasks.mockResolvedValue(page([]))
     api.getRun.mockRejectedValue(new Error('not a run'))
     api.getSessionThread.mockRejectedValue(new Error('not found'))
   })
@@ -925,6 +1018,198 @@ describe('ConversationView 空间内嵌套视图（TW-10 导航）', () => {
     expect(api.getSessionThread).toHaveBeenCalledWith('session-001')
     expect(router.replace).not.toHaveBeenCalled()
     expect(wrapper.text()).toContain('供应商讨论')
+  })
+
+  it('moves a task thread opened in the 对话 tab into its task detail', async () => {
+    route.name = 'workspace-conversation'
+    route.params = { id: 'ws-team', conversationId: 'session-001' }
+    api.getSessionThread.mockResolvedValue(sessionThread())
+    api.listProjectTasks.mockResolvedValue(page([projectTask()]))
+    await mountView({ item: null })
+    expect(router.replace).toHaveBeenCalledWith('/workspaces/ws-team/tasks/ptask-1/thread/session-001')
+  })
+
+  it('keeps task threads in place when already inside the task detail', async () => {
+    route.name = 'workspace-task-thread'
+    route.params = { id: 'ws-team', taskId: 'ptask-1', conversationId: 'session-001' }
+    api.getSessionThread.mockResolvedValue(sessionThread())
+    api.listProjectTasks.mockResolvedValue(page([projectTask()]))
+    const { wrapper } = await mountView({ item: null, bridge: {
+      task: ref(projectTask()),
+      events: ref([]),
+      can: () => true,
+      start: vi.fn().mockResolvedValue(true),
+      openComplete: vi.fn(),
+      refresh: vi.fn().mockResolvedValue(undefined),
+    } })
+    expect(router.replace).not.toHaveBeenCalled()
+    expect(wrapper.find('.conversation-header').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="task-thread-badge"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="task-thread-notice"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="task-send-agent"]').exists()).toBe(true)
+  })
+
+  describe('S3 任务对话', () => {
+    function bridge(overrides: Partial<ProjectTaskDetailBridge> & { taskValue?: ProjectTask; eventValues?: ProjectTaskEvent[] } = {}): ProjectTaskDetailBridge {
+      const { taskValue, eventValues, ...rest } = overrides
+      return {
+        task: ref(taskValue ?? projectTask()),
+        events: ref(eventValues ?? []),
+        can: () => true,
+        start: vi.fn().mockResolvedValue(true),
+        openComplete: vi.fn(),
+        refresh: vi.fn().mockResolvedValue(undefined),
+        ...rest,
+      }
+    }
+
+    beforeEach(() => {
+      route.name = 'workspace-task-thread'
+      route.params = { id: 'ws-team', taskId: 'ptask-1', conversationId: 'session-001' }
+    })
+
+    it('把执行记录放在发起它的消息之后，未交给 Agent 的发言标“评论”，点执行记录进入执行详情', async () => {
+      api.getSessionThread.mockResolvedValue(sessionThread({
+        messages: [
+          { id: 'm1', role: 'user', content: '分析缺货原因', createdAt: '09:00', sentAt: '2026-09-10T09:00:00.000Z', runId: null, senderId: 'U00002', senderName: '周航', runRequesterId: null, runRequesterName: null, agentName: null },
+          { id: 'm2', role: 'user', content: '开始吧', createdAt: '09:05', sentAt: '2026-09-10T09:05:00.000Z', runId: 'run-9', senderId: 'U00002', senderName: '周航', runRequesterId: 'U00002', runRequesterName: '周航', agentName: null },
+          { id: 'm3', role: 'assistant', content: '前三个原因如下', createdAt: '09:06', sentAt: '2026-09-10T09:06:00.000Z', runId: 'run-9', senderId: null, senderName: null, runRequesterId: 'U00002', runRequesterName: '周航', agentName: '缺货分析助手' },
+          { id: 'm4', role: 'user', content: '口径确认一下', createdAt: '09:10', sentAt: '2026-09-10T09:10:00.000Z', runId: null, senderId: 'U00003', senderName: '苏晚', runRequesterId: null, runRequesterName: null, agentName: null },
+        ],
+        runs: [{ runId: 'run-9', status: 'succeeded', requestedBy: 'U00002', requesterName: '周航', createdAt: '2026-09-10T09:05:00.000Z' }],
+      }))
+      const { wrapper } = await mountView({ item: null, bridge: bridge() })
+      const order = wrapper.findAll('[data-testid="task-conversation-message"], [data-testid="task-conversation-run"]')
+        .map(node => node.attributes('data-testid') === 'task-conversation-run' ? 'run'
+          : node.text().includes('前三个原因') ? 'reply'
+            : node.text().includes('开始吧') ? 'ask'
+              : node.text().includes('口径确认') ? 'comment' : 'brief')
+      expect(order).toEqual(['brief', 'ask', 'run', 'reply', 'comment'])
+      expect(wrapper.findAll('[data-testid="task-conversation-tag"]').map(node => node.text())).toEqual(['评论'])
+      expect(wrapper.get('[data-testid="task-conversation-run"]').text()).toContain('周航 交给 缺货分析助手 执行 · 执行完成')
+      await wrapper.get('[data-testid="task-conversation-run"]').trigger('click')
+      expect(router.push).toHaveBeenCalledWith('/workspaces/ws-team/tasks/ptask-1/thread/run-9')
+    })
+
+    it('默认交给 Agent，可切到“仅评论”；发送后停留在任务对话', async () => {
+      api.getSessionThread.mockResolvedValue(sessionThread({
+        runs: [{ runId: 'run-9', status: 'succeeded', requestedBy: 'U00002', requesterName: '周航', createdAt: '2026-09-10T09:05:00.000Z' }],
+      }))
+      api.startRun.mockResolvedValue(task({ id: 'run-new', sessionId: 'session-001' }))
+      api.postSessionMessage.mockResolvedValue({ messageId: 'm9', sessionId: 'session-001' })
+      const detail = bridge()
+      const { wrapper, taskStore } = await mountView({ item: null, bridge: detail })
+      vi.spyOn(taskStore, 'subscribe').mockImplementation(() => {})
+
+      wrapper.getComponent(TaskComposer).vm.$emit('submit', { prompt: '再看看华南', files: [], workspaceId: 'ws-team', mentions: [] })
+      await flushPromises()
+      expect(api.startRun).toHaveBeenCalledWith('session-001', expect.objectContaining({ workspaceAgentMemberId: 'wam-7' }))
+      expect(router.replace).not.toHaveBeenCalled()
+      expect(detail.refresh).toHaveBeenCalled()
+
+      await wrapper.get('[data-testid="task-send-comment"]').trigger('click')
+      wrapper.getComponent(TaskComposer).vm.$emit('submit', { prompt: '口径要和上周一致', files: [], workspaceId: 'ws-team', mentions: [] })
+      await flushPromises()
+      expect(api.postSessionMessage).toHaveBeenCalledWith('session-001', '口径要和上周一致', expect.any(String))
+      expect(api.startRun).toHaveBeenCalledTimes(1)
+    })
+
+    it('S4：定时执行以“定时执行”标注，不显示固定提示，“无变化”回复折叠', async () => {
+      api.getSessionThread.mockResolvedValue(sessionThread({
+        messages: [
+          { id: 'm1', role: 'user', content: '分析缺货原因', createdAt: '09:00', sentAt: '2026-09-10T09:00:00.000Z', runId: null, senderId: 'U00002', senderName: '周航', runRequesterId: null, runRequesterName: null, agentName: null },
+          { id: 'm2', role: 'user', content: '按任务说明执行本期工作', createdAt: '09:00', sentAt: '2026-09-11T01:00:00.000Z', runId: 'run-s1', senderId: 'U00002', senderName: '周航', runRequesterId: 'U00002', runRequesterName: '周航', agentName: null },
+          { id: 'm3', role: 'assistant', content: '无变化：数据与昨日一致', createdAt: '09:01', sentAt: '2026-09-11T01:01:00.000Z', runId: 'run-s1', senderId: null, senderName: null, runRequesterId: 'U00002', runRequesterName: '周航', agentName: '缺货分析助手' },
+        ],
+        runs: [{ runId: 'run-s1', status: 'succeeded', requestedBy: 'U00002', requesterName: '周航', createdAt: '2026-09-11T01:00:00.000Z' }],
+      }))
+      const events: ProjectTaskEvent[] = [
+        { id: 'e1', kind: 'scheduled_run', sessionId: 'session-001', actor: { userId: 'U00002', displayName: '周航' }, metadata: { runId: 'run-s1', slot: '2026-09-11T01:00:00.000Z' }, createdAt: '2026-09-11T01:00:00.100Z' },
+        { id: 'e2', kind: 'schedule_paused', sessionId: 'session-001', actor: { userId: 'U00002', displayName: '周航' }, metadata: { reason: 'consecutive_failures' }, createdAt: '2026-09-12T01:00:00.000Z' },
+      ]
+      const { wrapper } = await mountView({ item: null, bridge: bridge({ eventValues: events }) })
+      expect(wrapper.text()).not.toContain('按任务说明执行本期工作')
+      expect(wrapper.get('[data-testid="task-conversation-run"]').text()).toContain('定时执行 · 执行完成')
+      expect(wrapper.get('[data-testid="task-conversation-quiet"]').text()).toContain('无变化（展开）')
+      expect(wrapper.findAll('[data-testid="task-conversation-event"]').map(node => node.text()).join(' ')).toContain('定时执行已暂停：连续失败 3 次')
+    })
+
+    it('S4：已完成的 Agent 任务只能评论；未完成时可在对话中标记完成', async () => {
+      api.getSessionThread.mockResolvedValue(sessionThread({
+        runs: [{ runId: 'run-9', status: 'succeeded', requestedBy: 'U00002', requesterName: '周航', createdAt: '2026-09-10T09:05:00.000Z' }],
+      }))
+      const open = await mountView({ item: null, bridge: bridge() })
+      expect(open.wrapper.find('[data-testid="task-complete-from-conversation"]').exists()).toBe(true)
+      open.wrapper.unmount()
+      const done = await mountView({ item: null, bridge: bridge({ taskValue: projectTask({ status: 'done' }) }) })
+      expect(done.wrapper.get('[data-testid="task-send-agent"]').attributes('disabled')).toBeDefined()
+      expect(done.wrapper.get('[data-testid="task-send-hint"]').text()).toContain('任务已完成')
+      expect(done.wrapper.find('[data-testid="task-complete-from-conversation"]').exists()).toBe(false)
+    })
+
+    it('执行中只能评论', async () => {
+      api.getSessionThread.mockResolvedValue(sessionThread({
+        runs: [{ runId: 'run-9', status: 'running', requestedBy: 'U00002', requesterName: '周航', createdAt: '2026-09-10T09:05:00.000Z' }],
+      }))
+      api.postSessionMessage.mockResolvedValue({ messageId: 'm9', sessionId: 'session-001' })
+      const { wrapper } = await mountView({ item: null, bridge: bridge({ taskValue: projectTask({ status: 'in_progress' }) }) })
+      expect(wrapper.get('[data-testid="task-send-agent"]').attributes('disabled')).toBeDefined()
+      expect(wrapper.get('[data-testid="task-send-hint"]').text()).toContain('执行中，暂时只能评论')
+      wrapper.getComponent(TaskComposer).vm.$emit('submit', { prompt: '先别发给供应商', files: [], workspaceId: 'ws-team', mentions: [] })
+      await flushPromises()
+      expect(api.postSessionMessage).toHaveBeenCalledWith('session-001', '先别发给供应商', expect.any(String))
+      expect(api.startRun).not.toHaveBeenCalled()
+    })
+
+    it('未开始的 Agent 任务：“交给 Agent”经任务启动并带上补充要求', async () => {
+      api.getSessionThread.mockResolvedValue(sessionThread())
+      const detail = bridge({ taskValue: projectTask({ status: 'todo', latestRunId: null }) })
+      const { wrapper } = await mountView({ item: null, bridge: detail })
+      expect(wrapper.find('[data-testid="task-conversation-start"]').exists()).toBe(true)
+      wrapper.getComponent(TaskComposer).vm.$emit('submit', { prompt: '先看华东', files: [], workspaceId: 'ws-team', mentions: [] })
+      await flushPromises()
+      expect(detail.start).toHaveBeenCalledWith('先看华东')
+      expect(api.startRun).not.toHaveBeenCalled()
+    })
+
+    it('员工任务：只能发言（不触发 Agent），展示状态记录与完成说明，可从输入框旁标记完成', async () => {
+      const employeeTask = projectTask({
+        assignee: { type: 'employee', userId: 'U00002', displayName: '周航' },
+        status: 'in_progress',
+        latestRunId: null,
+      })
+      api.listProjectTasks.mockResolvedValue(page([employeeTask]))
+      api.getSessionThread.mockResolvedValue(sessionThread({
+        messages: [
+          { id: 'm0', role: 'user', content: '核对交付差异', createdAt: '09:00', sentAt: '2026-09-10T09:00:00.000Z', runId: null, senderId: 'U00001', senderName: '林岚', runRequesterId: null, runRequesterName: null, agentName: null },
+          { id: 'm1', role: 'user', content: '已核对前 20 个', createdAt: '10:00', sentAt: '2026-09-10T10:00:00.000Z', runId: null, senderId: 'U00002', senderName: '周航', runRequesterId: null, runRequesterName: null, agentName: null },
+        ],
+      }))
+      api.postSessionMessage.mockResolvedValue({ messageId: 'm9', sessionId: 'session-001' })
+      const detail = bridge({
+        taskValue: employeeTask,
+        eventValues: [
+          { id: 'e1', kind: 'status_changed', sessionId: 'session-001', actor: { userId: 'U00002', displayName: '周航' }, metadata: { from: 'todo', to: 'in_progress', auto: true }, createdAt: '2026-09-10T10:00:01.000Z' },
+          { id: 'e2', kind: 'completed', sessionId: 'session-001', actor: { userId: 'U00002', displayName: '周航' }, metadata: { note: '偏差 4 个 SKU', deliverables: ['差异表.xlsx'] }, createdAt: '2026-09-10T11:00:00.000Z' },
+        ],
+      })
+      const { wrapper } = await mountView({ item: null, bridge: detail })
+      expect(wrapper.find('[data-testid="task-send-agent"]').exists()).toBe(false)
+      expect(wrapper.get('[data-testid="task-conversation-tag"]').text()).toBe('负责人')
+      const events = wrapper.findAll('[data-testid="task-conversation-event"]').map(node => node.text())
+      expect(events[0]).toContain('周航 更新了进度，任务进入进行中')
+      expect(events[1]).toContain('周航 标记完成')
+      expect(events[1]).toContain('偏差 4 个 SKU')
+      expect(events[1]).toContain('差异表.xlsx')
+
+      wrapper.getComponent(TaskComposer).vm.$emit('submit', { prompt: '明天完成剩余部分', files: [], workspaceId: 'ws-team', mentions: [] })
+      await flushPromises()
+      expect(api.postSessionMessage).toHaveBeenCalledWith('session-001', '明天完成剩余部分', expect.any(String))
+      expect(api.startRun).not.toHaveBeenCalled()
+
+      await wrapper.get('[data-testid="task-complete-from-conversation"]').trigger('click')
+      expect(detail.openComplete).toHaveBeenCalled()
+    })
   })
 
   it('opens session runs within the workspace URL when embedded', async () => {
