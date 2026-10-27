@@ -246,23 +246,27 @@ describe('WorkspacesView 归档筛选与归档卡片（design §2.1 / §6）', (
  * 因此按回车会触发浏览器隐式表单提交 → 整页导航/重载 → 弹窗与已输入内容一起丢失。
  * 这里锁定契约：该表单的原生提交必须被拦截。
  */
-describe('WorkspacesView 创建团队工作空间弹窗（回车不得触发原生表单提交）', () => {
+describe('WorkspacesView 创建项目空间弹窗（回车不得触发原生表单提交）', () => {
   beforeEach(() => {
     vi.spyOn(workbenchApi, 'getWorkspaces').mockResolvedValue([])
   })
 
   /**
-   * el-dialog 未开启 append-to-body，teleport 被禁用，弹窗内容原地渲染在组件树内
-   * （与 WorkspaceMemberDialog.test.ts 的同一约定），因此从 wrapper 查询。
+   * 创建项目空间弹窗开启 append-to-body，弹窗内容 teleport 到 document.body，
+   * 因此先查 wrapper，再回落到 body 中最后渲染的表单。
    */
   function dialogForm(wrapper: Awaited<ReturnType<typeof mountView>>['wrapper']) {
     const form = wrapper.find('form.el-form')
-    return form.exists() ? (form.element as HTMLFormElement) : null
+    if (form.exists()) return form.element as HTMLFormElement
+    // 创建项目空间弹窗开启 append-to-body，内容被 teleport 到 document.body。
+    const teleported = document.body.querySelectorAll('form.el-form')
+    const last = teleported[teleported.length - 1]
+    return last instanceof HTMLFormElement ? last : null
   }
 
   it('intercepts the native submit so the dialog and the typed name survive Enter', async () => {
     const { wrapper } = await mountView()
-    const trigger = wrapper.findAll('button').find(button => button.text().includes('创建团队工作空间'))
+    const trigger = wrapper.findAll('button').find(button => button.text() === '创建项目空间')
     expect(trigger).toBeTruthy()
     await trigger?.trigger('click')
     await flushPromises()

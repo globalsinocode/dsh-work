@@ -10,14 +10,18 @@ import type { Workspace, WorkspaceFile } from '@/types/domain'
 import ConversationStarter from './ConversationStarter.vue'
 
 const router = vi.hoisted(() => ({ push: vi.fn(), replace: vi.fn() }))
-const apiMocks = vi.hoisted(() => ({ createSession: vi.fn() }))
+const apiMocks = vi.hoisted(() => ({ createSession: vi.fn(), postSessionMessage: vi.fn() }))
 
 vi.mock('vue-router', () => ({ useRouter: () => router, useRoute: () => ({ query: {} }) }))
 vi.mock('@/api/client', async (importOriginal) => {
   const mod = await importOriginal<typeof import('@/api/client')>()
   return {
     ...mod,
-    workbenchApi: { ...mod.workbenchApi, createSession: apiMocks.createSession },
+    workbenchApi: {
+      ...mod.workbenchApi,
+      createSession: apiMocks.createSession,
+      postSessionMessage: apiMocks.postSessionMessage,
+    },
   }
 })
 
@@ -300,8 +304,9 @@ describe('ConversationStarter', () => {
     })
     const taskStore = useTaskStore(pinia)
     const createTask = vi.spyOn(taskStore, 'createTask')
-    const postSessionMessage = vi.spyOn(taskStore, 'postSessionMessage')
-      .mockResolvedValue({ messageId: 'msg-1', sessionId: 'session-new' })
+    // 讨论发送现在由 store.startTeamDiscussion 内部走 API（带幂等键），
+    // 因此断言 API 层而不是 store 方法。
+    apiMocks.postSessionMessage.mockResolvedValue({ messageId: 'msg-1', sessionId: 'session-new' })
     apiMocks.createSession.mockResolvedValue({
       id: 'session-new',
       workspaceId: 'ws-team',
@@ -321,8 +326,16 @@ describe('ConversationStarter', () => {
       mentions: [],
     })
     await flushPromises()
-    expect(apiMocks.createSession).toHaveBeenCalledWith({ title: '帮我看看库存', workspaceId: 'ws-team' })
-    expect(postSessionMessage).toHaveBeenCalledWith('session-new', '帮我看看库存')
+    // 合并后创建会话带上幂等意图 id；只断言业务字段。
+    expect(apiMocks.createSession).toHaveBeenCalledWith(expect.objectContaining({
+      title: '帮我看看库存',
+      workspaceId: 'ws-team',
+    }))
+    expect(apiMocks.postSessionMessage).toHaveBeenCalledWith(
+      'session-new',
+      '帮我看看库存',
+      expect.any(String),
+    )
     expect(createTask).not.toHaveBeenCalled()
     expect(router.push).toHaveBeenCalledWith('/workspaces/ws-team/conversations/session-new')
   })
@@ -459,6 +472,8 @@ describe('ConversationStarter', () => {
       [],
       undefined,
       'wam-1',
+      undefined,
+      undefined,
     )
   })
 

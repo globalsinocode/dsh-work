@@ -1,5 +1,5 @@
 import ElementPlus from 'element-plus'
-import { mount } from '@vue/test-utils'
+import { flushPromises, mount } from '@vue/test-utils'
 import { describe, expect, it } from 'vitest'
 
 import {
@@ -380,7 +380,13 @@ describe('TaskComposer', () => {
       showWorkspaceContext: true,
     })
     await wrapper.get('[aria-label="添加内容"]').trigger('click')
-    await wrapper.find('.el-dropdown-menu').findAll('.el-dropdown-menu__item').find(item => item.text().includes('引用团队文件'))!.trigger('click')
+    await flushPromises()
+    // el-dropdown 的菜单 teleport 到 body，不在 wrapper 内。
+    const menuItems = [...document.body.querySelectorAll<HTMLElement>('.el-dropdown-menu__item')]
+    const fileItem = menuItems.filter(item => item.textContent?.includes('引用团队文件')).at(-1)
+    expect(fileItem).toBeTruthy()
+    fileItem!.click()
+    await flushPromises()
     expect(wrapper.emitted('open-workspace-files')).toHaveLength(1)
     expect(wrapper.get<HTMLTextAreaElement>('[aria-label="对话输入"]').element.value).not.toContain('@工作空间文件')
   })

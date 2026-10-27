@@ -80,7 +80,11 @@ describe('AutomationsView lifecycle UI', () => {
   it('loads archived tasks and restores to paused', async () => {
     vi.spyOn(workbenchApi, 'restoreAutomation').mockResolvedValue(automation({ status: 'paused' }))
     const wrapper = await mountView()
-    await wrapper.get('[aria-label="任务状态筛选"]').setValue('archived')
+    // Element Plus 的 el-select 把 aria-label 放在外层容器上，直接 setValue 不会
+    // 触发它的 change；这里按组件契约发 update:modelValue + change。
+    const statusSelect = wrapper.findAllComponents({ name: 'ElSelect' })[0]!
+    statusSelect.vm.$emit('update:modelValue', 'archived')
+    statusSelect.vm.$emit('change', 'archived')
     await flushPromises()
     expect(workbenchApi.getAutomations).toHaveBeenCalledWith({ status: 'archived' })
     await wrapper.findAll('button').find(button => button.text() === '恢复')!.trigger('click')

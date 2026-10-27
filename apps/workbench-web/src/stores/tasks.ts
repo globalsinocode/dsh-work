@@ -84,6 +84,8 @@ export const useTaskStore = defineStore('tasks', () => {
     try {
       const loaded = await workbenchApi.getTasks()
       if (current !== generation) return
+      const loadedAt = Date.now()
+      for (const task of loaded) task.lastActivityAt ??= loadedAt
       tasks.value = loaded
       initialized.value = true
       for (const task of activeTasks.value) subscribe(task.id)
@@ -505,6 +507,7 @@ export const useTaskStore = defineStore('tasks', () => {
     }
     if (event.event_type === 'run.completed') task.status = 'succeeded'
     task.updatedAt = '刚刚'
+    task.lastActivityAt = Date.now()
 
     if (event.event_type === 'assistant.delta' && event.display_message) {
       const messageId = `${event.attempt_id}-streaming`
@@ -605,8 +608,13 @@ export const useTaskStore = defineStore('tasks', () => {
     const index = tasks.value.findIndex((item) => item.id === task.id)
     if (index >= 0) {
       const merged = mergeTaskSnapshot(tasks.value[index]!, task)
+      // 刷新服务端快照时保留“最后收到事件”的时刻；首次关注执行中的 Run 以此刻为起点。
+      merged.lastActivityAt = tasks.value[index]?.lastActivityAt ?? task.lastActivityAt ?? Date.now()
       tasks.value.splice(index, 1, merged)
-    } else tasks.value.unshift(task)
+    } else {
+      task.lastActivityAt ??= Date.now()
+      tasks.value.unshift(task)
+    }
   }
 
   function closeStream(runId: string) {

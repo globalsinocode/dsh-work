@@ -183,6 +183,11 @@ function reset() {
 }
 
 function openSession(item: WorkspaceSessionSummary) {
+  // 项目任务的线程直接回到任务详情，不落到「对话」页签。
+  if (item.projectTaskId && item.latestRun?.id) {
+    void router.push(`/workspaces/${props.workspaceId}/tasks/${item.projectTaskId}/thread/${item.latestRun.id}`)
+    return
+  }
   // 服务端兼容 Run ID 链接并解析回 Session；没有 Run 的会话退回 Session 身份。
   // TW-10 空间内对话视图：历史会话在空间外壳内打开，停留在 /workspaces/:id 上下文。
   const target = item.latestRun?.id ?? item.sessionId
@@ -330,6 +335,11 @@ onBeforeUnmount(() => {
           :aria-label="dotLabel(item)"
         ></span>
         <span class="session-history-row__title" :title="item.title">{{ item.title }}</span>
+        <span
+          v-if="item.projectTaskId"
+          class="session-history-row__task"
+          data-testid="session-history-task-badge"
+        >任务</span>
         <span class="session-history-row__creator" data-testid="session-history-creator">{{ item.creatorName }}</span>
         <span class="session-history-row__time">
           <span class="session-history-row__time-full" data-testid="session-history-time">{{ formatActivityTime(item.lastActiveAt) }}</span>

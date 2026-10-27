@@ -14,13 +14,14 @@ export default defineConfig({
     },
     dedupe: ['vue'],
   },
-  server: {
-    deps: {
-      inline: ['vue', 'element-plus'],
-    },
-  },
   test: {
     environment: 'happy-dom',
+    // Vitest 4：依赖内联配置从顶层 server.deps 迁到 test.server.deps。
+    server: {
+      deps: {
+        inline: ['vue', 'element-plus'],
+      },
+    },
     include: ['src/**/*.test.ts'],
     // 重异步组件用例（如 WorkspaceMemberDialog 的 20 个用例，单个通常 0.3–1s）
     // 在整机高负载（load avg 25 / 10 CPU）下曾超过默认 5s 而报
