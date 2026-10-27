@@ -4,7 +4,12 @@ import { dependencyUnavailable, invalidRequest, stateConflict } from '../../doma
 import { builtinTools } from './builtin-tools.ts'
 import type { ContainerCommand, ContainerCommandResult, ExecutionBackend } from './execution-backend.ts'
 import type { ExecutionTool } from './execution-toolchain.ts'
+import { PlatformToolError } from './platform-tool-contract.ts'
 import type { RuntimeToolDescriptor } from './runtime-types.ts'
+import {
+  formatBytes, freeSpace, measureWorkspace, overWorkspaceLimit, WORKSPACE_LIMITS,
+  type FreeSpace, type WorkspaceUsage,
+} from './workspace-usage.ts'
 
 /** A registry digest (`name@sha256:…`) or a local image ID (`sha256:…`); both are immutable. */
 const IMAGE_PATTERN = /^(?:[A-Za-z0-9./:_-]+@)?sha256:[a-f0-9]{64}$/
@@ -15,6 +20,12 @@ export interface AttemptExecutionContainersOptions {
   image: string
   /** Non-root `uid:gid` that can write the Attempt workspaces. */
   user: string
+  /** Workspace and free-space measurement (plan 4.7); tests replace it. */
+  usage?: {
+    measure(workspace: string): Promise<WorkspaceUsage>
+    freeSpace(workspace: string): Promise<FreeSpace>
+    pollMs?: number
+  }
 }
 
 /**
@@ -47,6 +58,8 @@ interface AttemptState {
   inflight: Set<Promise<unknown>>
   /** Quiescence could not be restored and the container could not be removed: no further commands. */
   failed: boolean
+  /** Why the Attempt can run no further commands: quiescence, or the workspace far over its cap (plan 4.7). */
+  failureReason?: 'quiescence' | 'workspace_limit'
 }
 
 export type ExecutionContainerIdleState = 'idle' | 'busy' | 'failed'
@@ -74,12 +87,23 @@ export class AttemptExecutionContainers {
   private readonly pendingRemoval = new Set<string>()
   private retryTimer: NodeJS.Timeout | undefined
   private retrying = false
+  private readonly usage: Required<NonNullable<AttemptExecutionContainersOptions['usage']>>
 
   constructor(backend: ExecutionBackend, options: AttemptExecutionContainersOptions) {
     if (!IMAGE_PATTERN.test(options.image)) throw invalidRequest('DSH_WORK_EXECUTION_IMAGE 必须使用 sha256 摘要锁定容器镜像')
     this.backend = backend
     this.image = options.image
     this.user = options.user
+    this.usage = {
+      measure: options.usage?.measure ?? (workspace => measureWorkspace(workspace)),
+      freeSpace: options.usage?.freeSpace ?? freeSpace,
+      pollMs: options.usage?.pollMs ?? WORKSPACE_LIMITS.pollMs,
+    }
+  }
+
+  /** Why the Attempt was failed, if it was; the Adapter reports it. */
+  failureReason(attemptId: string): AttemptState['failureReason'] {
+    return this.attempts.get(attemptId)?.failureReason
   }
 
   get activeAttempts(): string[] { return [...this.attempts.entries()].filter(([, state]) => state.container).map(([id]) => id) }
@@ -105,7 +129,11 @@ export class AttemptExecutionContainers {
       state = { workspace, inflight: new Set(), failed: false }
       this.attempts.set(attemptId, state)
     }
-    if (state.failed) throw stateConflict('执行容器无法恢复静止，本 Attempt 不能再执行命令')
+    if (state.failed) {
+      throw stateConflict(state.failureReason === 'workspace_limit'
+        ? `工作区超出 ${formatBytes(WORKSPACE_LIMITS.failBytes)}，本 Attempt 不能再执行命令`
+        : '执行容器无法恢复静止，本 Attempt 不能再执行命令')
+    }
     const work = this.runAndSettle(state, command, signal)
     state.inflight.add(work)
     void work.then(() => undefined, () => undefined).finally(() => state!.inflight.delete(work))
@@ -151,21 +179,69 @@ export class AttemptExecutionContainers {
     }
   }
 
+  /**
+   * Plan 4.7: no command starts while the data volume is low on space. While it runs, the workspace
+   * is measured every `pollMs`; growing past the cap, or the volume running low, stops the command
+   * the way a timeout does and tells the model why. Commands that only shrink an over-cap workspace
+   * (deleting files) are not stopped. Far over the cap after a command, the Attempt is failed.
+   */
   private async runAndSettle(state: AttemptState, command: ContainerCommand, signal: AbortSignal): Promise<ContainerCommandResult> {
+    // A failed check does not block commands: the guard protects the volume, it is not an access control.
+    const lowOnSpace = async () => (await this.usage.freeSpace(state.workspace).catch(() => null))?.low === true
+    if (await lowOnSpace()) throw diskLowError()
+    const before = await this.usage.measure(state.workspace).catch((): WorkspaceUsage => ({ bytes: 0, entries: 0, truncated: false }))
     const container = this.containerFor(state)
     const { keeperPid } = await container.ready
+    const limiter = new AbortController()
+    let limit: 'workspace' | 'disk' | undefined
+    let measured: WorkspaceUsage = before
+    let measuring = false
+    const watch = setInterval(() => {
+      if (measuring || limit) return
+      measuring = true
+      void (async () => {
+        measured = await this.usage.measure(state.workspace)
+        if (overWorkspaceLimit(measured) && (measured.bytes > before.bytes || measured.entries > before.entries)) limit = 'workspace'
+        else if (await lowOnSpace()) limit = 'disk'
+        if (limit) limiter.abort()
+      })().catch(() => undefined).finally(() => { measuring = false })
+    }, this.usage.pollMs)
     let result: ContainerCommandResult | undefined
     let failure: unknown
     try {
-      result = await this.backend.exec(container.name, command, signal)
+      result = await this.backend.exec(container.name, command, AbortSignal.any([signal, limiter.signal]))
     } catch (error) {
       failure = error
+    } finally {
+      clearInterval(watch)
     }
-    if (command.mayLeaveProcesses || failure !== undefined || result?.timedOut) {
+    if (command.mayLeaveProcesses || failure !== undefined || result?.timedOut || limit) {
       await this.restoreQuiescence(state, container, keeperPid)
+    }
+    if (limit && !signal.aborted) {
+      // Stopped by the platform, not by the caller: report it as the command's outcome.
+      failure = undefined
+      result = { exitCode: null, stdout: result?.stdout ?? '', stderr: limitNotice(limit, measured), truncated: result?.truncated ?? false, timedOut: false, limit }
+    }
+    if (!state.failed) {
+      const after = await this.usage.measure(state.workspace).catch(() => null)
+      if (after && (after.truncated || after.bytes > WORKSPACE_LIMITS.failBytes)) await this.failForWorkspace(state)
     }
     if (failure !== undefined) throw failure
     return result!
+  }
+
+  /** Far over the cap: no further commands, and the container is removed (plan 4.7, decision 3). */
+  private async failForWorkspace(state: AttemptState) {
+    state.failed = true
+    state.failureReason = 'workspace_limit'
+    const container = state.container
+    state.container = undefined
+    if (!container) return
+    await this.backend.remove(container.name).catch(() => {
+      this.pendingRemoval.add(container.name)
+      console.warn(`execution container removal failed; retrying later: ${container.name}`)
+    })
   }
 
   private containerFor(state: AttemptState): AttemptContainer {
@@ -191,6 +267,7 @@ export class AttemptExecutionContainers {
       await this.backend.remove(container.name)
     } catch {
       state.failed = true
+      state.failureReason ??= 'quiescence'
       this.pendingRemoval.add(container.name)
       console.warn(`execution container could not be made quiescent or removed: ${container.name}`)
     }
@@ -224,6 +301,20 @@ export class AttemptExecutionContainers {
       this.retrying = false
     }
   }
+}
+
+function diskLowError() {
+  return new PlatformToolError({
+    status: 503, code: 'EXECUTION_DISK_LOW',
+    message: '服务器磁盘剩余空间不足，暂时不能运行命令；请稍后重试或联系管理员',
+  })
+}
+
+/** What the model reads when the platform stopped a command (plan 4.7). */
+function limitNotice(limit: 'workspace' | 'disk', usage: WorkspaceUsage) {
+  if (limit === 'disk') return '命令已终止：服务器磁盘剩余空间不足。请停止写入大文件，并联系管理员。'
+  const used = usage.truncated ? `超过 ${WORKSPACE_LIMITS.maxEntries} 个文件和目录` : `已用 ${formatBytes(usage.bytes)}`
+  return `命令已终止：工作区${used}，超过上限 ${formatBytes(WORKSPACE_LIMITS.maxBytes)}。请删除不需要的中间文件（例如 rm -rf work/临时目录）后再继续；删除文件的命令不受影响。`
 }
 
 /** The only registry tools DSH may run alongside others (plan 3.7, 4.1): they read but never start container code. */

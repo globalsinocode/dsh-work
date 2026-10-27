@@ -31,6 +31,8 @@ export interface ContainerCommandAudit {
   truncated: boolean
   timedOut: boolean
   aborted: boolean
+  /** The platform stopped the command: workspace over its cap or the data volume low (plan 4.7). */
+  limit?: 'workspace' | 'disk'
   summary: string
 }
 
@@ -83,6 +85,7 @@ export function createRemoteSubprocessGateway(options: RemoteSubprocessGatewayOp
         truncated: result?.truncated ?? false,
         timedOut: result?.timedOut ?? false,
         aborted: signal.aborted,
+        ...(result?.limit ? { limit: result.limit } : {}),
         summary: redactSensitiveText(command.argv.join(' ')).slice(0, SUMMARY_CHARS),
       })
     }

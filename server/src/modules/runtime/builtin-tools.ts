@@ -50,7 +50,7 @@ export const builtinTools: readonly BuiltinTool[] = [
   { name: 'write', label: '生成文本文件', source: 'dsh', effect: 'write', risk: 'low', assembly: 'always', constraints: [workspace, outputOnly] },
   { name: 'edit', label: '编辑文本文件', source: 'dsh', effect: 'write', risk: 'low', assembly: 'always', constraints: [workspace, outputOnly] },
   { name: 'str_replace_editor', label: '查看与编辑文本文件', source: 'dsh', effect: 'write', risk: 'low', assembly: 'always', constraints: [workspace, outputOnly] },
-  { name: 'bash', label: '运行命令', source: 'dsh', effect: 'write', risk: 'medium', assembly: 'execution-container', constraints: ['只在本次运行的执行容器中执行（断网、限时、限额）', '每次一条前台命令，不支持后台运行', workspace] },
+  { name: 'bash', label: '运行命令', source: 'dsh', effect: 'write', risk: 'medium', assembly: 'execution-container', constraints: ['只在本次运行的执行容器中执行（断网、限时、限额）', '每次一条前台命令，不支持后台运行', workspace, '工作区合计不超过 2 GB，超出时终止命令'] },
   { name: 'todo_write', label: '任务进度清单', source: 'dsh', effect: 'write', risk: 'low', assembly: 'always', constraints: ['只记录本次会话的进度清单'] },
   { name: 'web_search', label: '联网搜索', source: 'dsh', effect: 'read', risk: 'medium', assembly: 'agent-opt-in', constraints: ['每次 1～4 个非空查询', '查询内容会发送到外部搜索服务'] },
   { name: 'activate_skill', label: '激活 Skill', source: 'platform', effect: 'read', risk: 'low', assembly: 'runtime', constraints: ['只读取本次固定版本的 Skill 资源'] },
@@ -170,7 +170,11 @@ export interface BuiltinToolStatus {
   disabledTools: string[]
   catalog: { checkedAt: string; missingTools: string[] } | { checkedAt: string; error: string } | null
   /** 本次启动的执行容器状态：决定 bash 是否装配（执行隔离阶段 2）。原因细节只进服务日志。 */
-  executionContainer: { status: 'available' | 'unavailable' | 'not-configured' }
+  executionContainer: {
+    status: 'available' | 'unavailable' | 'not-configured'
+    /** 执行容器可用而数据卷剩余空间低于阈值：暂不运行命令（方案 4.7）。 */
+    diskLow?: boolean
+  }
 }
 
 /** 启动时比对 DSH 当前工具目录：注册表中的 DSH 工具在目录里缺失时报告。 */

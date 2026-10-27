@@ -49,6 +49,7 @@ import { PythonSkillRunner } from './modules/runtime/python-skill-runner.ts'
 import { ContainerExecutor, parseMaxContainers } from './modules/runtime/container-executor.ts'
 import { DockerExecutionBackend } from './modules/runtime/docker-execution-backend.ts'
 import { AttemptExecutionContainers, assertExclusiveToolScheduling, resolveExecutionContainerUser } from './modules/runtime/attempt-execution-containers.ts'
+import { freeSpace } from './modules/runtime/workspace-usage.ts'
 import { redactSensitiveText } from './security/safe-observability.ts'
 import {
   preflightDshRuntime,
@@ -391,11 +392,15 @@ async function start() {
     builtinCatalog = { checkedAt: new Date().toISOString(), error: error instanceof Error ? error.message : String(error) }
     console.warn('DSH built-in tool catalog check skipped:', error)
   })
+  // 方案 4.7：执行容器可用时报告数据卷剩余空间是否低于阈值（低时不运行命令）。
+  const executionDiskLow = async () => attemptContainers
+    ? (await freeSpace(dataRoot).catch(() => null))?.low ?? false
+    : false
   const builtinToolStatus = async (): Promise<BuiltinToolStatus> => ({
     tools: builtinTools,
     disabledTools: [...(await operations.getRuntimePolicy('runtime-local-01')).disabledTools],
     catalog: builtinCatalog,
-    executionContainer: { status: executionContainerCapability.status },
+    executionContainer: { status: executionContainerCapability.status, ...((await executionDiskLow()) ? { diskLow: true } : {}) },
   })
   const skills = new PostgresSkillService(database, operations, skillArtifacts)
   // C7 only inspects execution capability; it never starts a Worker/model call.
@@ -491,6 +496,17 @@ async function start() {
   void content.backfillBinaryArtifactExtractions()
     .then(result => { if (result.extracted > 0 || result.failed > 0) console.warn('binary artifact extraction backfill completed', result) })
     .catch(error => console.error('binary artifact extraction backfill failed', redactSensitiveText(error instanceof Error ? error.message : String(error)).slice(0, 500)))
+  // 执行隔离 4.7：启动后与每 6 小时按回收规则清扫 Attempt 工作区（含历史目录），不阻塞启动。
+  let workspaceSweep: NodeJS.Timeout | null = null
+  if (dshAdapter instanceof DshAcpRuntimeAdapter) {
+    const adapter = dshAdapter
+    const sweepWorkspaces = () => void adapter.sweepAttemptWorkspaces()
+      .then(result => { if (result.removed > 0) console.warn('attempt workspace sweep completed', result) })
+      .catch(error => console.error('attempt workspace sweep failed', redactSensitiveText(error instanceof Error ? error.message : String(error)).slice(0, 500)))
+    sweepWorkspaces()
+    workspaceSweep = setInterval(sweepWorkspaces, 6 * 60 * 60 * 1000)
+    workspaceSweep.unref()
+  }
   if (restartRecovery.failed > 0 || restartRecovery.resumedQueued > 0) {
     console.warn('service restart recovery completed', restartRecovery)
   }
@@ -576,7 +592,11 @@ async function start() {
     envelope('system', {
       service: 'dsh-work-server',
       status: 'ok',
-      executionCapabilities: { dsh: { status: dshCapability.status }, python: { status: pythonCapability.status }, executionContainer: { status: executionContainerCapability.status } },
+      executionCapabilities: {
+        dsh: { status: dshCapability.status },
+        python: { status: pythonCapability.status },
+        executionContainer: { status: executionContainerCapability.status, ...((await executionDiskLow()) ? { diskLow: true } : {}) },
+      },
       dshRuntime: {
         status: executionRuntime ? (await executionRuntime.health()).status : dshInstallation ? 'connected' : 'not-configured',
       },
@@ -594,6 +614,7 @@ async function start() {
       void (async () => {
         if (directorySyncTimer) clearInterval(directorySyncTimer)
         if (memoryProposalSweep) clearInterval(memoryProposalSweep)
+        if (workspaceSweep) clearInterval(workspaceSweep)
         if (automationSweep) await automationSweep.close()
         if (revocationSweep) revocationSweep.close()
         persistentWait?.close()

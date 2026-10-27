@@ -80,6 +80,9 @@ const catalogAlert = computed(() => {
 /** 执行容器决定 bash 是否装配；不可用的原因只写服务日志，这里说明影响与处理入口。 */
 const executionContainerAlert = computed(() => {
   const status = contentStore.builtinTools?.executionContainer?.status
+  if (status === 'available' && contentStore.builtinTools?.executionContainer?.diskLow) {
+    return { type: 'warning' as const, title: '服务器磁盘剩余空间不足（低于 10 GB 或 10%）：执行容器暂不运行命令，已在运行的命令会被终止；请清理磁盘' }
+  }
   if (status === 'available') return { type: 'success' as const, title: '执行容器已启用：员工侧 Agent 运行装配 bash，命令在每次运行专用的断网容器中执行' }
   if (status === 'unavailable') return { type: 'warning' as const, title: '执行容器启动检查未通过：本次启动不装配 bash，原因见服务日志；修复后需重启服务' }
   if (status === 'not-configured') return { type: 'info' as const, title: '执行容器模式未开启（DSH_WORK_EXECUTION_CONTAINER）：不装配 bash' }

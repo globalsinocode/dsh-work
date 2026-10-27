@@ -96,6 +96,8 @@ export interface ContainerCommandResult {
   stderr: string
   truncated: boolean
   timedOut: boolean
+  /** Stopped by the platform: workspace over its cap, or the data volume low on space (plan 4.7). */
+  limit?: 'workspace' | 'disk'
 }
 
 export interface ExecutionBackend {

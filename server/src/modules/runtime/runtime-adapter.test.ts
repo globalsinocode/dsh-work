@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
+import { cp, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -423,6 +423,7 @@ describe('DSH ACP Runtime Adapter', () => {
     assert.match(withBash, /# 运行命令/)
     assert.match(withBash, /不能联网/)
     assert.match(withBash, /不支持后台运行/)
+    assert.match(withBash, /不能超过 2 GB，超出时命令会被终止/)
     assert.match(withBash, /中间文件放在工作区其他目录/)
     assert.match(withBash, /xlsx、docx、pptx、pdf、png、jpg/)
     assert.doesNotMatch(withBash, /执行镜像中已安装的程序/, 'no list without a startup check result')
@@ -873,6 +874,21 @@ describe('DSH ACP Runtime Adapter', () => {
     assert.equal(execs, 0, 'no tool ran once quiescence could not be restored')
   })
 
+  it('execution container mode reports a workspace far over its cap with its own reason (4.7)', async () => {
+    const adapter = await createAdapter(500, undefined, undefined, {
+      remoteExecution: {
+        exec: async () => { throw new Error('must not run') },
+        waitUntilIdle: async () => 'failed' as const,
+        release: async () => {},
+        failureReason: () => 'workspace_limit' as const,
+      },
+    })
+    const result = await (await adapter.execute(manifest('run-execution-workspace-limit', 'attempt-exec-wl', '[remote-exec]'))).done
+    assert.equal(result.status, 'failed')
+    assert.equal(result.errorCode, 'EXECUTION_WORKSPACE_LIMIT')
+    assert.match(result.errorMessage ?? '', /工作区超出 4 GB/)
+  })
+
   it('execution container mode refuses a tool call while the container is still cleaning up', async () => {
     let execs = 0
     let probes = 0
@@ -956,7 +972,8 @@ describe('DSH ACP Runtime Adapter', () => {
       }]
       return input
     }
-    const collect = async () => ({ published: [], skipped: [], skippedTotal: 0 })
+    const capture = await workspaceCapture()
+    const collect = capture.collect
     const adapter = await createAdapter(500, undefined, collect, {
       remoteExecution,
       authorizeExecution: async () => { order.push('authorize') },
@@ -965,13 +982,31 @@ describe('DSH ACP Runtime Adapter', () => {
     const ok = await (await adapter.execute(withOriginal('run-original-ok'))).done
     assert.equal(ok.status, 'completed', ok.errorMessage ?? undefined)
     assert.deepEqual(order.slice(0, 2), ['authorize', 'load:file-artifact-1'], 'read only after the authorization check')
-    const mounted = join(ok.attemptDirectory, 'workspace', 'input', 'original', '01-data.xlsx')
+    const mounted = join(capture.directory, 'input', 'original', '01-data.xlsx')
     assert.ok((await readFile(mounted)).equals(bytes))
     assert.equal((await stat(mounted)).mode & 0o777, 0o400)
 
     const tampered = await (await adapter.execute(withOriginal('run-original-tampered', 'b'.repeat(64)))).done
     assert.equal(tampered.status, 'failed')
     assert.match(tampered.errorMessage ?? '', /校验失败|输入原始文件/)
+
+    // 4.7: once the Attempt has ended its workspace is removed; a failed one keeps it for diagnosis.
+    const ended = async (attemptDirectory: string) => {
+      const marker = join(attemptDirectory, 'attempt-end.json')
+      const deadline = Date.now() + 5_000
+      while (Date.now() < deadline) {
+        const text = await readFile(marker, 'utf8').catch(() => null)
+        if (text) return JSON.parse(text) as { status: string }
+        await new Promise(resolve => setTimeout(resolve, 20))
+      }
+      throw new Error(`no end record in ${attemptDirectory}`)
+    }
+    const present = (path: string) => stat(path).then(() => true, () => false)
+    assert.equal((await ended(ok.attemptDirectory)).status, 'completed')
+    assert.equal(await present(join(ok.attemptDirectory, 'workspace')), false)
+    assert.equal(await present(join(ok.attemptDirectory, 'manifest.json')), true, 'metadata stays')
+    assert.equal((await ended(tampered.attemptDirectory)).status, 'failed')
+    assert.equal(await present(join(tampered.attemptDirectory, 'workspace')), true)
 
     const noLoader = await createAdapter(500, undefined, collect, { remoteExecution })
     const refused = await (await noLoader.execute(withOriginal('run-original-no-loader'))).done
@@ -1019,8 +1054,10 @@ describe('DSH ACP Runtime Adapter', () => {
   })
 
   it('creates an isolated Attempt and emits ordered safe completion events', async () => {
-    const adapter = await createAdapter()
+    const capture = await workspaceCapture()
+    const adapter = await createAdapter(500, undefined, capture.collect)
     const input = manifest('run-complete', 'attempt-1')
+    input.tools = [...input.tools, { id: 'write', version: '1.0.0' }]
     input.input.file_mounts = [fileMount('/workspace/input/inventory.csv.txt', '物料,库存\nA-01,120')]
     input.memory_context = [{
       memoryVersionId: 'memory-version-approved-1', title: '展示偏好', version: 1,
@@ -1058,18 +1095,18 @@ describe('DSH ACP Runtime Adapter', () => {
     const stored = JSON.parse(await readFile(join(result.attemptDirectory, 'manifest.json'), 'utf8')) as RuntimeManifest
     assert.equal(stored.run_id, input.run_id)
     assert.equal(result.manifestSha256, compileRuntimeManifest(input).sha256)
-    const mountedPath = join(result.attemptDirectory, 'workspace/input/inventory.csv.txt')
+    const mountedPath = join(capture.directory, 'input/inventory.csv.txt')
     assert.equal(await readFile(mountedPath, 'utf8'), '物料,库存\nA-01,120')
     assert.equal((await stat(mountedPath)).mode & 0o777, 0o400)
-    const memoryPath = join(result.attemptDirectory, 'workspace/memory.md')
+    const memoryPath = join(capture.directory, 'memory.md')
     assert.match(await readFile(memoryPath, 'utf8'), /memory-version-approved-1/)
     assert.equal((await stat(memoryPath)).mode & 0o777, 0o400)
     const systemPrompt = renderSystemPrompt(stored)
     assert.match(systemPrompt, /已启用 Skill（兼容模式）/)
     assert.match(systemPrompt, /Read references\/value\.txt/)
-    const [resourceDirectory] = await readdir(join(result.attemptDirectory, 'workspace/skills'))
+    const [resourceDirectory] = await readdir(join(capture.directory, 'skills'))
     assert.ok(resourceDirectory)
-    const resourcePath = join(result.attemptDirectory, 'workspace/skills', resourceDirectory, 'references/value.txt')
+    const resourcePath = join(capture.directory, 'skills', resourceDirectory, 'references/value.txt')
     assert.equal(await readFile(resourcePath, 'utf8'), resource)
     assert.equal((await stat(resourcePath)).mode & 0o777, 0o400)
   })
@@ -1310,8 +1347,10 @@ describe('DSH ACP Runtime Adapter', () => {
       { path: 'SKILL.md', content: skillMarkdown, sha256: createHash('sha256').update(skillMarkdown).digest('hex'), size: Buffer.byteLength(skillMarkdown) },
       { path: 'references/value.txt', content: resource, sha256: createHash('sha256').update(resource).digest('hex'), size: Buffer.byteLength(resource) },
     ]
-    const adapter = await createAdapter(500, async () => ({ instructions, files }))
+    const capture = await workspaceCapture()
+    const adapter = await createAdapter(500, async () => ({ instructions, files }), capture.collect)
     const input = manifest('run-externalized-skill', 'attempt-1')
+    input.tools = [...input.tools, { id: 'write', version: '1.0.0' }]
     input.skills = [{ id: 'skill-externalized', version: '1.0.0' }]
     input.agent_configuration.skill_instructions = [{
       id: 'skill-externalized', name: 'externalized-skill', description: 'Verify filesystem-backed Skill loading.', version: '1.0.0',
@@ -1324,9 +1363,9 @@ describe('DSH ACP Runtime Adapter', () => {
     const persisted = await readFile(join(result.attemptDirectory, 'manifest.json'), 'utf8')
     assert.equal(persisted.includes(resource), false)
     assert.equal(persisted.includes(instructions), false)
-    const [skillDirectory] = await readdir(join(result.attemptDirectory, 'workspace/skills'))
+    const [skillDirectory] = await readdir(join(capture.directory, 'skills'))
     assert.ok(skillDirectory)
-    assert.equal(await readFile(join(result.attemptDirectory, 'workspace/skills', skillDirectory, 'references/value.txt'), 'utf8'), resource)
+    assert.equal(await readFile(join(capture.directory, 'skills', skillDirectory, 'references/value.txt'), 'utf8'), resource)
   })
 
   it('routes permission requests through a fail-closed decision and audit events', async () => {
@@ -1417,8 +1456,10 @@ describe('DSH ACP Runtime Adapter', () => {
   })
 
   it('restores bounded checkpoint files and renders pending action and prior tool results', async () => {
-    const adapter = await createAdapter()
+    const capture = await workspaceCapture()
+    const adapter = await createAdapter(500, undefined, capture.collect)
     const input = manifest('run-resume-context', 'attempt-2', 'Continue the approved operation.')
+    input.tools = [...input.tools, { id: 'write', version: '1.0.0' }]
     const actionArguments = { orderId: '42', expectedVersion: 'etag-v1' }
     const context = {
       pending_action: { arguments: actionArguments },
@@ -1445,7 +1486,7 @@ describe('DSH ACP Runtime Adapter', () => {
 
     const result = await (await adapter.execute(input)).done
     assert.equal(result.status, 'completed', result.errorMessage ?? undefined)
-    assert.equal(await readFile(join(result.attemptDirectory, 'workspace/output/库存报告.md'), 'utf8'), '# Existing draft\n')
+    assert.equal(await readFile(join(capture.directory, 'output/库存报告.md'), 'utf8'), '# Existing draft\n')
     const systemPrompt = renderSystemPrompt(input)
     assert.match(systemPrompt, /expectedVersion/)
     assert.match(systemPrompt, /call-read-1/)
@@ -1585,6 +1626,19 @@ describe('DSH ACP Runtime Adapter', () => {
     assert.equal(result.errorCode, 'SERVICE_SHUTDOWN')
   })
 })
+
+/**
+ * Copies the Attempt workspace while the run is still going: artifact collection runs before the
+ * Attempt ends, and the workspace is removed once it has ended (execution isolation 4.7).
+ */
+async function workspaceCapture() {
+  const directory = await mkdtemp(join(tmpdir(), 'dsh-work-workspace-capture-'))
+  const collect = async (_manifest: RuntimeManifest, workspace: string) => {
+    await cp(workspace, directory, { recursive: true })
+    return { published: [], skipped: [], skippedTotal: 0 }
+  }
+  return { directory, collect }
+}
 
 async function createAdapter(
   shutdownGraceMs = 500,

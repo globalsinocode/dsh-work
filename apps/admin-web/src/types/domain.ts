@@ -214,7 +214,11 @@ export interface BuiltinToolStatus {
   /** 服务启动时与 DSH 工具目录的比对结果；未比对时为 null。 */
   catalog: { checkedAt: string; missingTools: string[] } | { checkedAt: string; error: string } | null
   /** 本次启动的执行容器状态：决定 bash 是否装配。 */
-  executionContainer: { status: 'available' | 'unavailable' | 'not-configured' }
+  executionContainer: {
+    status: 'available' | 'unavailable' | 'not-configured'
+    /** 数据卷剩余空间低于阈值，暂不运行命令（执行隔离 4.7）。 */
+    diskLow?: boolean
+  }
 }
 
 export interface UpdateRuntimeConfigurationInput {

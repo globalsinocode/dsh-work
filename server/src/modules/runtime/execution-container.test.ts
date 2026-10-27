@@ -231,6 +231,81 @@ test('quiescence: if even removal fails the Attempt is failed and refuses furthe
   assert.equal(await containers.waitUntilIdle('other-attempt', 100), 'idle', 'other Attempts are unaffected')
 })
 
+/** Plan 4.7: scripted workspace measurements (each call takes the next value, the last repeats) and free space. */
+function scriptedUsage(bytes: number[], options: { low?: boolean[] } = {}) {
+  const sizes = [...bytes]
+  const lows = [...(options.low ?? [])]
+  return {
+    pollMs: 5,
+    measure: async () => ({ bytes: sizes.length > 1 ? sizes.shift()! : sizes[0]!, entries: 1, truncated: false }),
+    freeSpace: async () => ({ freeBytes: 1, totalBytes: 2, low: lows.length > 1 ? lows.shift()! : lows[0] ?? false }),
+  }
+}
+const GiB = 1024 ** 3
+
+function untilAborted(backend: FakeExecBackend) {
+  backend.execBehavior = async (_command, signal) => {
+    await new Promise(resolve => signal.addEventListener('abort', resolve, { once: true }))
+    throw new DOMException('Aborted', 'AbortError')
+  }
+}
+
+test('workspace cap: a command growing the workspace past 2 GiB is stopped, swept and explained; the Attempt goes on', async () => {
+  const backend = new FakeExecBackend()
+  untilAborted(backend)
+  const containers = new AttemptExecutionContainers(backend, { image, user: '501:20', usage: scriptedUsage([1 * GiB, 1.5 * GiB, 2.5 * GiB]) })
+  const result = await containers.exec('a1', '/ws', command({ argv: ['bash', '-c', 'yes > big'], mayLeaveProcesses: true }), new AbortController().signal)
+  assert.equal(result.limit, 'workspace')
+  assert.equal(result.exitCode, null)
+  assert.match(result.stderr, /命令已终止：工作区已用 2\.5 GB，超过上限 2 GB/)
+  assert.equal(backend.quiesced.length, 1, 'the stopped command is swept like a timeout')
+  assert.equal(await containers.waitUntilIdle('a1', 100), 'idle', 'not failed: the model can clean up')
+  backend.execBehavior = undefined
+  assert.equal((await containers.exec('a1', '/ws', command(), new AbortController().signal)).exitCode, 0)
+})
+
+test('workspace cap: deleting files in an over-cap workspace is not stopped', async () => {
+  const backend = new FakeExecBackend()
+  let finish: () => void = () => {}
+  backend.execBehavior = async () => {
+    await new Promise<void>(resolve => { finish = resolve })
+    return { exitCode: 0, stdout: '', stderr: '', truncated: false, timedOut: false }
+  }
+  // Over the cap before and during the command, but never above where it started.
+  const containers = new AttemptExecutionContainers(backend, { image, user: '501:20', usage: scriptedUsage([3 * GiB, 2.6 * GiB, 2.2 * GiB]) })
+  const pending = containers.exec('a1', '/ws', command({ argv: ['bash', '-c', 'rm -rf work'], mayLeaveProcesses: true }), new AbortController().signal)
+  await new Promise(resolve => setTimeout(resolve, 40))
+  finish()
+  const result = await pending
+  assert.equal(result.limit, undefined)
+  assert.equal(result.exitCode, 0)
+})
+
+test('workspace cap: far over the cap after a command fails the Attempt with its own reason', async () => {
+  const backend = new FakeExecBackend()
+  const containers = new AttemptExecutionContainers(backend, { image, user: '501:20', usage: { ...scriptedUsage([1 * GiB, 4.5 * GiB]), pollMs: 60_000 } })
+  await containers.exec('a1', '/ws', command({ argv: ['bash', '-c', 'x'], mayLeaveProcesses: true }), new AbortController().signal)
+  assert.equal(await containers.waitUntilIdle('a1', 100), 'failed')
+  assert.equal(containers.failureReason('a1'), 'workspace_limit')
+  assert.deepEqual(backend.removed, [backend.started[0]!.name], 'the container is removed')
+  await assert.rejects(containers.exec('a1', '/ws', command(), new AbortController().signal), /工作区超出 4 GB/)
+})
+
+test('free space: no command starts on a low data volume, and a running one is stopped when it runs low', async () => {
+  const refused = new FakeExecBackend()
+  const low = new AttemptExecutionContainers(refused, { image, user: '501:20', usage: scriptedUsage([0], { low: [true] }) })
+  await assert.rejects(low.exec('a1', '/ws', command(), new AbortController().signal),
+    (error: unknown) => error instanceof Error && /磁盘剩余空间不足/.test(error.message) && (error as { code?: string }).code === 'EXECUTION_DISK_LOW')
+  assert.equal(refused.started.length, 0, 'no container is created')
+
+  const backend = new FakeExecBackend()
+  untilAborted(backend)
+  const containers = new AttemptExecutionContainers(backend, { image, user: '501:20', usage: scriptedUsage([0], { low: [false, false, true] }) })
+  const result = await containers.exec('a1', '/ws', command({ argv: ['bash', '-c', 'x'], mayLeaveProcesses: true }), new AbortController().signal)
+  assert.equal(result.limit, 'disk')
+  assert.match(result.stderr, /服务器磁盘剩余空间不足/)
+})
+
 test('admission: only plain reads may run alongside other tools; bash and writes must be exclusive', () => {
   // What DSH 0.1.2-rc.1 reports (plan 3.7), including parallel tools the policy never allows.
   const reported = [
@@ -420,6 +495,42 @@ test('real docker: the quiescence sweep clears leftover processes and reports fo
     }
   } finally {
     await backend.remove(name).catch(() => undefined)
+    await rm(workspace, { recursive: true, force: true })
+  }
+})
+
+test('real docker: a command writing past the workspace cap is stopped in the container, and cleanup still runs', { skip: dockerTarget.skip, timeout: 120_000 }, async () => {
+  const { DockerExecutionBackend } = await import('./docker-execution-backend.ts')
+  const { measureWorkspace } = await import('./workspace-usage.ts')
+  const workspace = await mkdtemp(join(tmpdir(), 'dsh-exec-quota-'))
+  const backend = new DockerExecutionBackend()
+  await backend.detectFeatures()
+  // Every real MiB reports as a GiB, so a few MiB of writes cross the 2 GiB cap without filling the disk.
+  const containers = new AttemptExecutionContainers(backend, {
+    image: dockerTarget.image!, user: `${process.getuid?.()}:${process.getgid?.()}`,
+    usage: {
+      pollMs: 100,
+      measure: async root => { const usage = await measureWorkspace(root); return { ...usage, bytes: usage.bytes * 1024 } },
+      freeSpace: async () => ({ freeBytes: 1, totalBytes: 2, low: false }),
+    },
+  })
+  const run = (script: string) => containers.exec('quota-attempt', workspace, {
+    argv: ['bash', '-c', script], cwd: workspace, maxOutputBytes: 4096, timeoutMs: 60_000, mayLeaveProcesses: true,
+  }, new AbortController().signal)
+  try {
+    const stopped = await run('mkdir -p work; for i in $(seq 1 100); do head -c 1048576 /dev/zero > work/f$i; sleep 0.05; done; echo FINISHED')
+    assert.equal(stopped.limit, 'workspace')
+    assert.doesNotMatch(stopped.stdout, /FINISHED/, 'the writer was stopped before it finished')
+    assert.match(stopped.stderr, /超过上限 2 GB/)
+    const written = (await measureWorkspace(join(workspace, 'work'))).bytes
+    assert.ok(written < 20 * 1024 * 1024, `stopped soon after crossing the cap (${written} bytes on disk)`)
+    // Deleting is not stopped, and the Attempt goes on.
+    const cleaned = await run('rm -rf work; echo CLEANED')
+    assert.equal(cleaned.limit, undefined)
+    assert.match(cleaned.stdout, /CLEANED/)
+    assert.equal(await containers.waitUntilIdle('quota-attempt', 1_000), 'idle')
+  } finally {
+    await containers.release('quota-attempt').catch(() => undefined)
     await rm(workspace, { recursive: true, force: true })
   }
 })

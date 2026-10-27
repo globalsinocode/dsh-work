@@ -15,6 +15,8 @@ import { createRemoteSubprocessGateway, type ContainerCommandAudit } from './rem
 import { assertRealWorkspaceDirectory } from '../../infrastructure/storage/workspace-directory.ts'
 import type { ContainerCommand, ContainerCommandResult } from './execution-backend.ts'
 import { describeExecutionToolchain, type ExecutionTool } from './execution-toolchain.ts'
+import { formatBytes, WORKSPACE_LIMITS } from './workspace-usage.ts'
+import { retireAttemptWorkspace, sweepAttemptWorkspaces } from './attempt-workspace-retention.ts'
 import { formatExecutionTime } from '../../domain/execution-time.ts'
 import {
   MAX_TOOL_CALL_EVENTS,
@@ -167,6 +169,8 @@ export interface DshAcpRuntimeAdapterConfiguration {
     /** 静止保证（方案 3.7）：命令及其后的静止确认都结束前为 busy；静止无法恢复时为 failed。 */
     waitUntilIdle(attemptId: string, timeoutMs: number): Promise<'idle' | 'busy' | 'failed'>
     release(attemptId: string): Promise<void>
+    /** 不能再执行命令的原因：静止无法恢复，或工作区远超上限（方案 4.7）。 */
+    failureReason?(attemptId: string): 'quiescence' | 'workspace_limit' | undefined
     /** 启动检查在执行镜像中找到的程序（2b-1），写入 Runtime 说明。 */
     readonly toolchain?: readonly ExecutionTool[]
   }
@@ -827,6 +831,10 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
       await this.configuration.remoteExecution?.release(record.manifest.attempt_id).catch(error => {
         console.warn('execution container release failed', safeErrorMessage(error))
       })
+      // 方案 4.7：成果已入存储、检查点已读出，工作区随 Attempt 结束删除（失败的保留 3 天供排查）。
+      await retireAttemptWorkspace(record.snapshot.attemptDirectory, record.snapshot.status).catch(error => {
+        console.warn('attempt workspace cleanup failed', safeErrorMessage(error))
+      })
       if (record.manifest.mcp_connections?.length) {
         try {
           await this.finalizeMcpAudit(record)
@@ -978,8 +986,26 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
       released = await remoteExecution.release(record.manifest.attempt_id).then(() => true, () => false)
     }
     if (released) return true
-    if (!record.terminal) this.finishFailed(record, 'EXECUTION_CONTAINER_UNRECOVERABLE', '执行容器未能静止或回收，未收集成果')
+    if (!record.terminal) this.finishFailed(record, ...this.containerFailure(record, '执行容器未能静止或回收，未收集成果'))
     return false
+  }
+
+  /**
+   * 方案 4.7：按回收规则清扫 Attempt 工作区（含上线前累积的历史目录）；本进程仍在执行的 Attempt 跳过。
+   * 服务启动后与定期调用，只删除 `workspace/`。
+   */
+  async sweepAttemptWorkspaces() {
+    // 每个目录检查时再看一次，清扫期间新开始的 Attempt 同样跳过。
+    const isActive = (directory: string) => [...this.executions.values()]
+      .some(record => !record.terminal && record.snapshot.attemptDirectory === directory)
+    return sweepAttemptWorkspaces(this.configuration.runtimeRoot, { isActive })
+  }
+
+  /** 执行容器不能再用时的失败码与说明：工作区远超上限（方案 4.7）单独报告，其余为静止无法恢复。 */
+  private containerFailure(record: ExecutionRecord, message: string): [string, string] {
+    return this.configuration.remoteExecution?.failureReason?.(record.manifest.attempt_id) === 'workspace_limit'
+      ? ['EXECUTION_WORKSPACE_LIMIT', `工作区超出 ${formatBytes(WORKSPACE_LIMITS.failBytes)}，任务已停止`]
+      : ['EXECUTION_CONTAINER_UNRECOVERABLE', message]
   }
 
   /** 读取工作区前确认执行容器空闲；不空闲则拒绝（静止无法恢复时 Attempt 失败）。 */
@@ -990,7 +1016,7 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
     if (state === 'idle') return
     if (state === 'failed' && !record.terminal) {
       record.bridge?.abort()
-      this.finishFailed(record, 'EXECUTION_CONTAINER_UNRECOVERABLE', '执行容器无法恢复静止，任务已停止')
+      this.finishFailed(record, ...this.containerFailure(record, '执行容器无法恢复静止，任务已停止'))
       void record.client?.close().catch(() => undefined)
     }
     throw stateConflict('执行容器尚未静止，不能读取工作区')
@@ -1009,7 +1035,7 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
     if (state === 'failed') {
       if (!record.terminal) {
         record.bridge?.abort()
-        this.finishFailed(record, 'EXECUTION_CONTAINER_UNRECOVERABLE', '执行容器无法恢复静止，任务已停止')
+        this.finishFailed(record, ...this.containerFailure(record, '执行容器无法恢复静止，任务已停止'))
         void record.client?.close().catch(() => undefined)
       }
       throw Object.assign(new Error('执行容器无法恢复静止'), { code: 'permission_denied' })
@@ -1455,6 +1481,7 @@ export function renderSystemPrompt(manifest: RuntimeManifest, options: { executi
     sections.push([
       '# 运行命令',
       'bash 在本次运行专用的执行容器中执行：不能联网，只能使用镜像中已安装的程序与 Python 包，不能安装新依赖；每次一条前台命令，单条命令有时限，不支持后台运行；工作目录就是当前会话工作区，文件读写与工具看到的是同一份。',
+      `工作区（输入、中间文件与成果合计）不能超过 ${formatBytes(WORKSPACE_LIMITS.maxBytes)}，超出时命令会被终止；不再需要的中间文件及时删除。本次运行结束后，未登记为成果的文件不会保留。`,
       '命令产生的中间文件放在工作区其他目录（例如 work/）或 /tmp，不要放进 output。output 只放要交付给用户的顶层文件：Markdown、纯文本、CSV、HTML，以及 xlsx、docx、pptx、pdf、png、jpg；单个不超过 20 MB、合计不超过 50 MB、最多 20 个。含宏、脚本或会访问外部内容的文件，以及其他格式、子目录和隐藏文件都不会登记为成果，回答下方会列出未登记的文件。',
       ...(options.executionToolchain?.length ? [
         '执行镜像中已安装的程序（平台启动时检查得出；清单之外的程序不要假定存在，需要时先用 command -v 确认）：',

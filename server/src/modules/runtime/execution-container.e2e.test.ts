@@ -14,6 +14,7 @@ import { createRemoteSubprocessGateway, type ContainerCommandAudit } from './rem
 import { minimalXlsx } from '../../testing/office-fixtures.ts'
 import { ContainerArtifactTextExtractor } from '../workbench/application/container-artifact-text-extractor.ts'
 import { ContainerExecutor } from './container-executor.ts'
+import { measureWorkspace } from './workspace-usage.ts'
 
 /**
  * P1-style check through real DSH and real Docker (no model vendor: a scripted
@@ -49,7 +50,15 @@ test('DSH glob/grep/bash run inside the Attempt execution container and stay con
   await preflightDshRuntime(installation)
 
   const backend = new DockerExecutionBackend()
-  const containers = new AttemptExecutionContainers(backend, { image: image!, user: resolveExecutionContainerUser() })
+  // The free-space guard (plan 4.7) has its own tests; a developer machine low on disk must not turn
+  // this chain test into a refusal. Workspace measurement stays real.
+  const containers = new AttemptExecutionContainers(backend, {
+    image: image!, user: resolveExecutionContainerUser(),
+    usage: {
+      measure: root => measureWorkspace(root),
+      freeSpace: async () => ({ freeBytes: Number.MAX_SAFE_INTEGER, totalBytes: Number.MAX_SAFE_INTEGER, low: false }),
+    },
+  })
   // The same startup check main.ts runs: the image must provide the Office toolchain (2b-1).
   const toolchain = await backend.inspectExecutionImage(containers.image, containers.user)
   for (const id of ['bash', 'rg', 'soffice', 'pdftoppm']) assert.ok(toolchain.some(tool => tool.id === id), id)
