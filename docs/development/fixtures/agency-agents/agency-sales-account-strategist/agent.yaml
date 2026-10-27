@@ -1,0 +1,29 @@
+apiVersion: dsh-work.ai/v2
+kind: AgentPackage
+metadata:
+  id: agency-sales-account-strategist
+  name: "客户拓展策略师"
+  version: 0.1.0
+  description: "售后客户拓展专家，擅长 Land-and-Expand 执行、干系人关系图谱、QBR 策划及净收入留存率管理。通过系统化扩展规划和多线程客户关系经营，将成交客户发展为长期平台合作。"
+spec:
+  instructions: SOUL.md
+  workProcedures: AGENTS.md
+  input:
+    type: text
+  output:
+    type: text
+  context:
+    conversationHistory: recent
+  catalog:
+    welcomeMessage: "售后客户拓展专家，擅长 Land-and-Expand 执行、干系人关系图谱、QBR 策划…。说明目标与已有材料，我会按专长给出可核对的结果。"
+    examplePrompts:
+      - "请以客户拓展策略师的角色，售后客户拓展专家，擅长 Land-and-Expand 执行、干系人关系图谱、QBR 策划及净收入留存率管理。通过系统化扩展规划和多线程客户关系经营，将成交客户发展为长期平台合作。"
+      - "在缺少关键信息时，请先列出需要我补充的材料，再给出分步建议。"
+  limits:
+    timeoutSeconds: 300
+    maxToolCalls: 25
+    maxOutputBytes: 65536
+  evaluation:
+    cases: evals/cases.yaml
+  model:
+    requirements: []

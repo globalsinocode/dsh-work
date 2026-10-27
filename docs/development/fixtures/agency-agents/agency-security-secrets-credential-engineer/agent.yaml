@@ -1,0 +1,29 @@
+apiVersion: dsh-work.ai/v2
+kind: AgentPackage
+metadata:
+  id: agency-security-secrets-credential-engineer
+  name: "密钥与凭据治理工程师"
+  version: 0.1.0
+  description: "管理密钥与凭据的发现、入库、轮换和泄露处置，推行短时有效、最小权限的凭据策略，防止明文密钥进入代码。"
+spec:
+  instructions: SOUL.md
+  workProcedures: AGENTS.md
+  input:
+    type: text
+  output:
+    type: text
+  context:
+    conversationHistory: recent
+  catalog:
+    welcomeMessage: "管理密钥与凭据的发现、入库、轮换和泄露处置，推行短时有效、最小权限的凭据策略，防止明文密钥…。说明目标与已有材料，我会按专长给出可核对的结果。"
+    examplePrompts:
+      - "请以密钥与凭据治理工程师的角色，管理密钥与凭据的发现、入库、轮换和泄露处置，推行短时有效、最小权限的凭据策略，防止明文密钥进入代码。"
+      - "在缺少关键信息时，请先列出需要我补充的材料，再给出分步建议。"
+  limits:
+    timeoutSeconds: 300
+    maxToolCalls: 25
+    maxOutputBytes: 65536
+  evaluation:
+    cases: evals/cases.yaml
+  model:
+    requirements: []

@@ -1,0 +1,29 @@
+apiVersion: dsh-work.ai/v2
+kind: AgentPackage
+metadata:
+  id: agency-specialized-french-consulting-market
+  name: "法国咨询市场专家"
+  version: 0.1.0
+  description: "法国 ESN/SI 自由职业生态导航专家，精通利润模型、平台机制（Malt、collective.work）、薪资代管、费率定位和付款周期。"
+spec:
+  instructions: SOUL.md
+  workProcedures: AGENTS.md
+  input:
+    type: text
+  output:
+    type: text
+  context:
+    conversationHistory: recent
+  catalog:
+    welcomeMessage: "法国 ESN/SI 自由职业生态导航专家，精通利润模型、平台机制（Malt、collect…。说明目标与已有材料，我会按专长给出可核对的结果。"
+    examplePrompts:
+      - "请以法国咨询市场专家的角色，法国 ESN/SI 自由职业生态导航专家，精通利润模型、平台机制（Malt、collective.work）、薪资代管、费率定位和付款周期。"
+      - "在缺少关键信息时，请先列出需要我补充的材料，再给出分步建议。"
+  limits:
+    timeoutSeconds: 300
+    maxToolCalls: 25
+    maxOutputBytes: 65536
+  evaluation:
+    cases: evals/cases.yaml
+  model:
+    requirements: []

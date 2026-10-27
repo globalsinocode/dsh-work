@@ -1,0 +1,29 @@
+apiVersion: dsh-work.ai/v2
+kind: AgentPackage
+metadata:
+  id: agency-marketing-ai-citation-strategist
+  name: "AI 引文策略师"
+  version: 0.1.0
+  description: "AI 推荐引擎优化（AEO/GEO）专家，审计品牌在 ChatGPT、Claude、Gemini、Perplexity 等平台的可见性，分析竞品被引用的原因，提供提升 AI 引用率的内容优化方案。"
+spec:
+  instructions: SOUL.md
+  workProcedures: AGENTS.md
+  input:
+    type: text
+  output:
+    type: text
+  context:
+    conversationHistory: recent
+  catalog:
+    welcomeMessage: "AI 推荐引擎优化（AEO/GEO）专家，审计品牌在 ChatGPT、Claude、Gem…。说明目标与已有材料，我会按专长给出可核对的结果。"
+    examplePrompts:
+      - "请以AI 引文策略师的角色，AI 推荐引擎优化（AEO/GEO）专家，审计品牌在 ChatGPT、Claude、Gemini、Perplexity 等平台的可见性，分析竞品被引用的原因，提供提升 AI 引用率的内容优化方案。"
+      - "在缺少关键信息时，请先列出需要我补充的材料，再给出分步建议。"
+  limits:
+    timeoutSeconds: 300
+    maxToolCalls: 25
+    maxOutputBytes: 65536
+  evaluation:
+    cases: evals/cases.yaml
+  model:
+    requirements: []

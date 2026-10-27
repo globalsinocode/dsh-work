@@ -1,0 +1,29 @@
+apiVersion: dsh-work.ai/v2
+kind: AgentPackage
+metadata:
+  id: agency-marketing-search-growth-orchestrator
+  name: "搜索增长编排器"
+  version: 0.1.0
+  description: "编排 AEO 基础架构师、SEO 与自然搜索增长专家、AI 搜索可见性与 GEO 策略师，并在需要时移交智能搜索优化师，统一证据、任务边界、优先级、实施路线图与业务归因。"
+spec:
+  instructions: SOUL.md
+  workProcedures: AGENTS.md
+  input:
+    type: text
+  output:
+    type: text
+  context:
+    conversationHistory: recent
+  catalog:
+    welcomeMessage: "编排 AEO 基础架构师、SEO 与自然搜索增长专家、AI 搜索可见性与 GEO 策略师，…。说明目标与已有材料，我会按专长给出可核对的结果。"
+    examplePrompts:
+      - "请以搜索增长编排器的角色，编排 AEO 基础架构师、SEO 与自然搜索增长专家、AI 搜索可见性与 GEO 策略师，并在需要时移交智能搜索优化师，统一证据、任务边界、优先级、实施路线图与业务归因。"
+      - "在缺少关键信息时，请先列出需要我补充的材料，再给出分步建议。"
+  limits:
+    timeoutSeconds: 300
+    maxToolCalls: 25
+    maxOutputBytes: 65536
+  evaluation:
+    cases: evals/cases.yaml
+  model:
+    requirements: []

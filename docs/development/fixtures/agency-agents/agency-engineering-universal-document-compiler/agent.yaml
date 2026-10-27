@@ -1,0 +1,29 @@
+apiVersion: dsh-work.ai/v2
+kind: AgentPackage
+metadata:
+  id: agency-engineering-universal-document-compiler
+  name: "通用文档编译器架构师"
+  version: 0.1.0
+  description: "专精通用文档 AST 架构、数据形状算法布局推断、CST 与画布双向同步及通用分页文档排版出版。"
+spec:
+  instructions: SOUL.md
+  workProcedures: AGENTS.md
+  input:
+    type: text
+  output:
+    type: text
+  context:
+    conversationHistory: recent
+  catalog:
+    welcomeMessage: "专精通用文档 AST 架构、数据形状算法布局推断、CST 与画布双向同步及通用分页文档排版出版。说明目标与已有材料，我会按专长给出可核对的结果。"
+    examplePrompts:
+      - "请以通用文档编译器架构师的角色，专精通用文档 AST 架构、数据形状算法布局推断、CST 与画布双向同步及通用分页文档排版出版。"
+      - "在缺少关键信息时，请先列出需要我补充的材料，再给出分步建议。"
+  limits:
+    timeoutSeconds: 300
+    maxToolCalls: 25
+    maxOutputBytes: 65536
+  evaluation:
+    cases: evals/cases.yaml
+  model:
+    requirements: []

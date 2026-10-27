@@ -1,0 +1,29 @@
+apiVersion: dsh-work.ai/v2
+kind: AgentPackage
+metadata:
+  id: agency-finance-financial-analyst
+  name: "财务分析师"
+  version: 0.1.0
+  description: "专业财务分析师，精通财务建模、预测、场景分析和数据驱动的决策支持。将原始财务数据转化为可行动的商业智能，驱动战略规划、投资决策和运营优化。"
+spec:
+  instructions: SOUL.md
+  workProcedures: AGENTS.md
+  input:
+    type: text
+  output:
+    type: text
+  context:
+    conversationHistory: recent
+  catalog:
+    welcomeMessage: "专业财务分析师，精通财务建模、预测、场景分析和数据驱动的决策支持。将原始财务数据转化为可行…。说明目标与已有材料，我会按专长给出可核对的结果。"
+    examplePrompts:
+      - "请以财务分析师的角色，专业财务分析师，精通财务建模、预测、场景分析和数据驱动的决策支持。将原始财务数据转化为可行动的商业智能，驱动战略规划、投资决策和运营优化。"
+      - "在缺少关键信息时，请先列出需要我补充的材料，再给出分步建议。"
+  limits:
+    timeoutSeconds: 300
+    maxToolCalls: 25
+    maxOutputBytes: 65536
+  evaluation:
+    cases: evals/cases.yaml
+  model:
+    requirements: []

@@ -1,0 +1,29 @@
+apiVersion: dsh-work.ai/v2
+kind: AgentPackage
+metadata:
+  id: agency-engineering-pdf-engine-architect
+  name: "PDF 引擎架构师"
+  version: 0.1.0
+  description: "专精确定性 HTML 转 PDF 文档编译、Playwright 上下文池管理、动态欧几里得页面尺寸计算、LayoutNG 亚像素预算、PDF/UA-1 无障碍合规与 1:1 画布编辑器。"
+spec:
+  instructions: SOUL.md
+  workProcedures: AGENTS.md
+  input:
+    type: text
+  output:
+    type: text
+  context:
+    conversationHistory: recent
+  catalog:
+    welcomeMessage: "专精确定性 HTML 转 PDF 文档编译、Playwright 上下文池管理、动态欧几里…。说明目标与已有材料，我会按专长给出可核对的结果。"
+    examplePrompts:
+      - "请以PDF 引擎架构师的角色，专精确定性 HTML 转 PDF 文档编译、Playwright 上下文池管理、动态欧几里得页面尺寸计算、LayoutNG 亚像素预算、PDF/UA-1 无障碍合规与 1:1 画布编辑器。"
+      - "在缺少关键信息时，请先列出需要我补充的材料，再给出分步建议。"
+  limits:
+    timeoutSeconds: 300
+    maxToolCalls: 25
+    maxOutputBytes: 65536
+  evaluation:
+    cases: evals/cases.yaml
+  model:
+    requirements: []

@@ -1,0 +1,29 @@
+apiVersion: dsh-work.ai/v2
+kind: AgentPackage
+metadata:
+  id: agency-testing-api-tester
+  name: "API 测试员"
+  version: 0.1.0
+  description: "专注于全面 API 验证、性能测试和质量保证的 API 测试专家，覆盖所有系统和第三方集成"
+spec:
+  instructions: SOUL.md
+  workProcedures: AGENTS.md
+  input:
+    type: text
+  output:
+    type: text
+  context:
+    conversationHistory: recent
+  catalog:
+    welcomeMessage: "专注于全面 API 验证、性能测试和质量保证的 API 测试专家，覆盖所有系统和第三方集成。说明目标与已有材料，我会按专长给出可核对的结果。"
+    examplePrompts:
+      - "请以API 测试员的角色，专注于全面 API 验证、性能测试和质量保证的 API 测试专家，覆盖所有系统和第三方集成。"
+      - "在缺少关键信息时，请先列出需要我补充的材料，再给出分步建议。"
+  limits:
+    timeoutSeconds: 300
+    maxToolCalls: 25
+    maxOutputBytes: 65536
+  evaluation:
+    cases: evals/cases.yaml
+  model:
+    requirements: []

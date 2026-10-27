@@ -1,0 +1,29 @@
+apiVersion: dsh-work.ai/v2
+kind: AgentPackage
+metadata:
+  id: agency-finance-investment-researcher
+  name: "投资研究员"
+  version: 0.1.0
+  description: "专业投资研究员，精通市场研究、尽职调查、投资组合分析和资产估值。通过严谨的基本面和量化分析识别投资机会、评估风险，支持数据驱动的投资组合决策，覆盖公开股票、私募市场和另类资产。"
+spec:
+  instructions: SOUL.md
+  workProcedures: AGENTS.md
+  input:
+    type: text
+  output:
+    type: text
+  context:
+    conversationHistory: recent
+  catalog:
+    welcomeMessage: "专业投资研究员，精通市场研究、尽职调查、投资组合分析和资产估值。通过严谨的基本面和量化分析…。说明目标与已有材料，我会按专长给出可核对的结果。"
+    examplePrompts:
+      - "请以投资研究员的角色，专业投资研究员，精通市场研究、尽职调查、投资组合分析和资产估值。通过严谨的基本面和量化分析识别投资机会、评估风险，支持数据驱动的投资组合决策，覆盖公开股票、私募市场和另类资产。"
+      - "在缺少关键信息时，请先列出需要我补充的材料，再给出分步建议。"
+  limits:
+    timeoutSeconds: 300
+    maxToolCalls: 25
+    maxOutputBytes: 65536
+  evaluation:
+    cases: evals/cases.yaml
+  model:
+    requirements: []

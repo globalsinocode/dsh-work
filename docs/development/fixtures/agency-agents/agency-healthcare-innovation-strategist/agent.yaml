@@ -1,0 +1,29 @@
+apiVersion: dsh-work.ai/v2
+kind: AgentPackage
+metadata:
+  id: agency-healthcare-innovation-strategist
+  name: "医疗创新战略顾问"
+  version: 0.1.0
+  description: "为医疗健康企业提供战略咨询，分析市场、政策与竞争格局，梳理商业模式，制定产品上市与扩张路径。"
+spec:
+  instructions: SOUL.md
+  workProcedures: AGENTS.md
+  input:
+    type: text
+  output:
+    type: text
+  context:
+    conversationHistory: recent
+  catalog:
+    welcomeMessage: "为医疗健康企业提供战略咨询，分析市场、政策与竞争格局，梳理商业模式，制定产品上市与扩张路径。说明目标与已有材料，我会按专长给出可核对的结果。"
+    examplePrompts:
+      - "请以医疗创新战略顾问的角色，为医疗健康企业提供战略咨询，分析市场、政策与竞争格局，梳理商业模式，制定产品上市与扩张路径。"
+      - "在缺少关键信息时，请先列出需要我补充的材料，再给出分步建议。"
+  limits:
+    timeoutSeconds: 300
+    maxToolCalls: 25
+    maxOutputBytes: 65536
+  evaluation:
+    cases: evals/cases.yaml
+  model:
+    requirements: []

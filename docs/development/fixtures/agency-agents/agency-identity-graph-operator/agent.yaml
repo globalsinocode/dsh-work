@@ -1,0 +1,29 @@
+apiVersion: dsh-work.ai/v2
+kind: AgentPackage
+metadata:
+  id: agency-identity-graph-operator
+  name: "身份图谱操作员"
+  version: 0.1.0
+  description: "运维多智能体系统的共享身份图谱，确保每个智能体对\"这个实体是谁？\"都能得到一致的规范答案——即使在并发写入下也保持确定性。"
+spec:
+  instructions: SOUL.md
+  workProcedures: AGENTS.md
+  input:
+    type: text
+  output:
+    type: text
+  context:
+    conversationHistory: recent
+  catalog:
+    welcomeMessage: "运维多智能体系统的共享身份图谱，确保每个智能体对\"这个实体是谁？\"都能得到一致的规范答案—…。说明目标与已有材料，我会按专长给出可核对的结果。"
+    examplePrompts:
+      - "请以身份图谱操作员的角色，运维多智能体系统的共享身份图谱，确保每个智能体对\"这个实体是谁？\"都能得到一致的规范答案——即使在并发写入下也保持确定性。"
+      - "在缺少关键信息时，请先列出需要我补充的材料，再给出分步建议。"
+  limits:
+    timeoutSeconds: 300
+    maxToolCalls: 25
+    maxOutputBytes: 65536
+  evaluation:
+    cases: evals/cases.yaml
+  model:
+    requirements: []

@@ -1,0 +1,29 @@
+apiVersion: dsh-work.ai/v2
+kind: AgentPackage
+metadata:
+  id: agency-marketing-linkedin-content-creator
+  name: "LinkedIn 内容创作专家"
+  version: 0.1.0
+  description: "专注于 LinkedIn 个人品牌打造和专业内容创作的策略师，深谙 LinkedIn 算法与社区文化，通过高质量内容为创始人、求职者、技术人和职场人带来真实的商业机会与人脉增长。"
+spec:
+  instructions: SOUL.md
+  workProcedures: AGENTS.md
+  input:
+    type: text
+  output:
+    type: text
+  context:
+    conversationHistory: recent
+  catalog:
+    welcomeMessage: "专注于 LinkedIn 个人品牌打造和专业内容创作的策略师，深谙 LinkedIn 算法…。说明目标与已有材料，我会按专长给出可核对的结果。"
+    examplePrompts:
+      - "请以LinkedIn 内容创作专家的角色，专注于 LinkedIn 个人品牌打造和专业内容创作的策略师，深谙 LinkedIn 算法与社区文化，通过高质量内容为创始人、求职者、技术人和职场人带来真实的商业机会与人脉增长。"
+      - "在缺少关键信息时，请先列出需要我补充的材料，再给出分步建议。"
+  limits:
+    timeoutSeconds: 300
+    maxToolCalls: 25
+    maxOutputBytes: 65536
+  evaluation:
+    cases: evals/cases.yaml
+  model:
+    requirements: []

@@ -1,0 +1,29 @@
+apiVersion: dsh-work.ai/v2
+kind: AgentPackage
+metadata:
+  id: agency-specialized-chief-of-staff
+  name: "幕僚长"
+  version: 0.1.0
+  description: "为创始人统筹事务与日程，过滤信息噪音，跟进流程与决策落地，保证输出一致。"
+spec:
+  instructions: SOUL.md
+  workProcedures: AGENTS.md
+  input:
+    type: text
+  output:
+    type: text
+  context:
+    conversationHistory: recent
+  catalog:
+    welcomeMessage: "为创始人统筹事务与日程，过滤信息噪音，跟进流程与决策落地，保证输出一致。说明目标与已有材料，我会按专长给出可核对的结果。"
+    examplePrompts:
+      - "请以幕僚长的角色，为创始人统筹事务与日程，过滤信息噪音，跟进流程与决策落地，保证输出一致。"
+      - "在缺少关键信息时，请先列出需要我补充的材料，再给出分步建议。"
+  limits:
+    timeoutSeconds: 300
+    maxToolCalls: 25
+    maxOutputBytes: 65536
+  evaluation:
+    cases: evals/cases.yaml
+  model:
+    requirements: []

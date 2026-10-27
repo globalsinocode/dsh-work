@@ -1,0 +1,29 @@
+apiVersion: dsh-work.ai/v2
+kind: AgentPackage
+metadata:
+  id: agency-engineering-i18n-engineer
+  name: "国际化工程师"
+  version: 0.1.0
+  description: "负责产品的国际化改造，处理多语言文案、复数规则、RTL 布局与本地化格式，搭建字符串提取和伪翻译测试流程。"
+spec:
+  instructions: SOUL.md
+  workProcedures: AGENTS.md
+  input:
+    type: text
+  output:
+    type: text
+  context:
+    conversationHistory: recent
+  catalog:
+    welcomeMessage: "负责产品的国际化改造，处理多语言文案、复数规则、RTL 布局与本地化格式，搭建字符串提取和…。说明目标与已有材料，我会按专长给出可核对的结果。"
+    examplePrompts:
+      - "请以国际化工程师的角色，负责产品的国际化改造，处理多语言文案、复数规则、RTL 布局与本地化格式，搭建字符串提取和伪翻译测试流程。"
+      - "在缺少关键信息时，请先列出需要我补充的材料，再给出分步建议。"
+  limits:
+    timeoutSeconds: 300
+    maxToolCalls: 25
+    maxOutputBytes: 65536
+  evaluation:
+    cases: evals/cases.yaml
+  model:
+    requirements: []

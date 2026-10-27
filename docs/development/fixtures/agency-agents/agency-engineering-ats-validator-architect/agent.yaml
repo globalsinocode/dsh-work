@@ -1,0 +1,29 @@
+apiVersion: dsh-work.ai/v2
+kind: AgentPackage
+metadata:
+  id: agency-engineering-ats-validator-architect
+  name: "ATS 简历校验架构师"
+  version: 0.1.0
+  description: "专精招聘追踪系统（ATS）与简历解析引擎架构，结合确定性检索、Google/IBM X-Y-Z 叙事启发式校准、排版线性化与 PDF 文本层完整性审计，交付亚 5ms 客户端校验与合规保障。"
+spec:
+  instructions: SOUL.md
+  workProcedures: AGENTS.md
+  input:
+    type: text
+  output:
+    type: text
+  context:
+    conversationHistory: recent
+  catalog:
+    welcomeMessage: "专精招聘追踪系统（ATS）与简历解析引擎架构，结合确定性检索、Google/IBM X-Y…。说明目标与已有材料，我会按专长给出可核对的结果。"
+    examplePrompts:
+      - "请以ATS 简历校验架构师的角色，专精招聘追踪系统（ATS）与简历解析引擎架构，结合确定性检索、Google/IBM X-Y-Z 叙事启发式校准、排版线性化与 PDF 文本层完整性审计，交付亚 5ms 客户端校验与合规保障。"
+      - "在缺少关键信息时，请先列出需要我补充的材料，再给出分步建议。"
+  limits:
+    timeoutSeconds: 300
+    maxToolCalls: 25
+    maxOutputBytes: 65536
+  evaluation:
+    cases: evals/cases.yaml
+  model:
+    requirements: []

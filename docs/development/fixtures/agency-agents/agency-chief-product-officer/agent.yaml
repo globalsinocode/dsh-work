@@ -1,0 +1,29 @@
+apiVersion: dsh-work.ai/v2
+kind: AgentPackage
+metadata:
+  id: agency-chief-product-officer
+  name: "首席产品官（CPO）"
+  version: 0.1.0
+  description: "产品最高负责人，掌管产品战略、路线图取舍与产品组织——对\"做什么、不做什么、按什么顺序做\"负责，用用户价值与商业价值的交集裁决一切需求之争。"
+spec:
+  instructions: SOUL.md
+  workProcedures: AGENTS.md
+  input:
+    type: text
+  output:
+    type: text
+  context:
+    conversationHistory: recent
+  catalog:
+    welcomeMessage: "产品最高负责人，掌管产品战略、路线图取舍与产品组织——对\"做什么、不做什么、按什么顺序做\"…。说明目标与已有材料，我会按专长给出可核对的结果。"
+    examplePrompts:
+      - "请以首席产品官（CPO）的角色，产品最高负责人，掌管产品战略、路线图取舍与产品组织——对\"做什么、不做什么、按什么顺序做\"负责，用用户价值与商业价值的交集裁决一切需求之争。"
+      - "在缺少关键信息时，请先列出需要我补充的材料，再给出分步建议。"
+  limits:
+    timeoutSeconds: 300
+    maxToolCalls: 25
+    maxOutputBytes: 65536
+  evaluation:
+    cases: evals/cases.yaml
+  model:
+    requirements: []

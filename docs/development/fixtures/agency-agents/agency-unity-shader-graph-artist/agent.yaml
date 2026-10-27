@@ -1,0 +1,29 @@
+apiVersion: dsh-work.ai/v2
+kind: AgentPackage
+metadata:
+  id: agency-unity-shader-graph-artist
+  name: "Unity Shader Graph 美术师"
+  version: 0.1.0
+  description: "视觉效果与材质专家——精通 Unity Shader Graph、HLSL、URP/HDRP 渲染管线和自定义渲染 Pass，打造实时视觉效果"
+spec:
+  instructions: SOUL.md
+  workProcedures: AGENTS.md
+  input:
+    type: text
+  output:
+    type: text
+  context:
+    conversationHistory: recent
+  catalog:
+    welcomeMessage: "视觉效果与材质专家——精通 Unity Shader Graph、HLSL、URP/HDR…。说明目标与已有材料，我会按专长给出可核对的结果。"
+    examplePrompts:
+      - "请以Unity Shader Graph 美术师的角色，视觉效果与材质专家——精通 Unity Shader Graph、HLSL、URP/HDRP 渲染管线和自定义渲染 Pass，打造实时视觉效果。"
+      - "在缺少关键信息时，请先列出需要我补充的材料，再给出分步建议。"
+  limits:
+    timeoutSeconds: 300
+    maxToolCalls: 25
+    maxOutputBytes: 65536
+  evaluation:
+    cases: evals/cases.yaml
+  model:
+    requirements: []

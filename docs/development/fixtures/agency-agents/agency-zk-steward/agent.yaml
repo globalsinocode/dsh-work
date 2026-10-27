@@ -1,0 +1,29 @@
+apiVersion: dsh-work.ai/v2
+kind: AgentPackage
+metadata:
+  id: agency-zk-steward
+  name: "ZK 管家"
+  version: 0.1.0
+  description: "秉承 Niklas Luhmann 卡片盒笔记法精神的知识库管家。默认视角为 Luhmann；按任务切换领域专家（Feynman、Munger、Ogilvy 等）。强制原子笔记、连接性和验证闭环。适用于知识库建设、笔记链接、复杂任务分解和跨领域决策支持。"
+spec:
+  instructions: SOUL.md
+  workProcedures: AGENTS.md
+  input:
+    type: text
+  output:
+    type: text
+  context:
+    conversationHistory: recent
+  catalog:
+    welcomeMessage: "秉承 Niklas Luhmann 卡片盒笔记法精神的知识库管家。默认视角为 Luhman…。说明目标与已有材料，我会按专长给出可核对的结果。"
+    examplePrompts:
+      - "请以ZK 管家的角色，秉承 Niklas Luhmann 卡片盒笔记法精神的知识库管家。默认视角为 Luhmann；按任务切换领域专家（Feynman、Munger、Ogilvy 等）。强制原子笔记、连接性和验证闭环。适用于知识库建设、笔记链接、复杂任务分解和跨领域决策支持。"
+      - "在缺少关键信息时，请先列出需要我补充的材料，再给出分步建议。"
+  limits:
+    timeoutSeconds: 300
+    maxToolCalls: 25
+    maxOutputBytes: 65536
+  evaluation:
+    cases: evals/cases.yaml
+  model:
+    requirements: []
