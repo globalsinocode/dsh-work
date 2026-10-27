@@ -15,7 +15,7 @@ function fixture(t) {
     'AGENTS.md', 'README.md', 'package.json', '.env.example', '.github/workflows/ci.yml', 'docs',
     'server/package.json', 'server/config', 'server/src', 'server/migrations',
     'deploy/runtime.env.example', 'deploy/execution-image', '.github/workflows/execution-image.yml', 'scripts/deploy/preflight.sh',
-    'scripts/release/build-release.sh', 'scripts/runtime/probe.ts', 'scripts/runtime/run-timings.ts',
+    'scripts/release/build-release.sh', 'scripts/acceptance/c-tier-p2.mjs', 'scripts/runtime/probe.ts', 'scripts/runtime/run-timings.ts',
     'scripts/checks/contracts.mjs', 'scripts/testing/p0-smoke-server.ts',
     'apps/workbench-web/vitest.config.ts', 'apps/admin-web/vitest.config.ts', 'playwright.config.ts',
     'e2e/mvp-smoke.spec.ts', 'e2e/TEST-CATALOG.md', 'e2e/catalog', 'e2e/automation-smoke.spec.ts',

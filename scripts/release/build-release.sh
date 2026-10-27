@@ -58,6 +58,7 @@ mkdir -p \
   "${bundle}/apps/workbench-web" \
   "${bundle}/apps/admin-web" \
   "${bundle}/scripts/deploy" \
+  "${bundle}/scripts/acceptance" \
   "${bundle}/deploy/launchd" \
   "${bundle}/deploy/nginx"
 
@@ -98,6 +99,8 @@ deployment_scripts=(
 for deployment_script in "${deployment_scripts[@]}"; do
   cp "${project_root}/scripts/deploy/${deployment_script}" "${bundle}/scripts/deploy/"
 done
+# C 档 P2 验收脚本（docs/release/c-tier-p2-acceptance.md），无依赖，在 Mac mini 上直接运行。
+cp "${project_root}/scripts/acceptance/c-tier-p2.mjs" "${bundle}/scripts/acceptance/"
 
 cp "${project_root}/deploy/compose.yaml" "${bundle}/deploy/compose.yaml"
 cp "${project_root}/deploy/runtime.env.example" "${bundle}/deploy/runtime.env.example"
