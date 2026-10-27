@@ -396,6 +396,22 @@ DSH Worker（每 Attempt 一个，宿主进程）
 
 **验收：** 单元测试覆盖计量（块计数、链接、项数上限）、超限终止与“清理命令不被误杀”、剩余空间拒绝、回收规则；真实 Docker 端到端用例中命令循环写文件被在上限附近终止、Attempt 继续、删除后可继续执行；回收在 Attempt 结束后删除工作区。
 
+### 4.8 阶段 1b②：`python_execute` 并入执行容器（已定案，2026-10-27）
+
+**现状：** 每次 `python_execute` 调用一个临时容器（`DSH_WORK_PYTHON_IMAGE`、256 MB、0.5 CPU、全局槽位），Skill 目录挂为 `/skill` 并作为工作目录，`input/` 只读挂为 `/input`，`python-output/<Skill>/` 挂为 `/output`；输出只回列给模型，不登记为成果。这些路径没有写进工具说明或 Runtime 说明，但 Skill 作者可能写死。每 Attempt 一个的执行容器创建后不能按调用重新挂载 `/skill`，因此须改契约。
+
+**定案（逐项采纳建议）：**
+
+| # | 事项 | 定案 |
+| --- | --- | --- |
+| 1 | 路径契约 | 执行容器可用时，脚本在本 Attempt 的执行容器内运行，工作目录为工作区中该 Skill 的目录（`skills/<Skill>/`，相对路径照常可用）；输入、输出与 Skill 目录经环境变量 `DSH_INPUT_DIR`、`DSH_OUTPUT_DIR`、`DSH_SKILL_DIR` 给出（绝对路径，与宿主一致）；不再提供 `/skill`、`/input`、`/output` |
+| 2 | 兼容 | 安装时扫描 `.py` 中写死的 `/skill`、`/input`、`/output`，在安装计划中给出“需复核”提示；执行容器不可用时仍为每次调用一个容器（挂载不变），同时设置同名环境变量（值为 `/skill`、`/input`、`/output`），同一脚本两种模式都可运行 |
+| 3 | 输出 | 执行容器模式下 `DSH_OUTPUT_DIR` 指向工作区 `output/`，本次调用新增或修改的顶层文件回列给模型，Attempt 结束时按 2b-2 的规则登记为成果；每次调用一个容器的模式下输出仍只回列、不登记 |
+| 4 | 行为变化 | 同一 Attempt 内脚本能看到此前命令留下的文件；资源随执行容器（1 GB、2 CPU、单文件 256 MB、工作区 2 GB），不再占全局槽位；仍为只读根、断网、非 root；单次调用最长 300 秒；调用前后与 `bash` 一样做静止确认 |
+| 5 | 镜像与依赖 | 执行容器模式下 Python 来自执行镜像，`python_execute` 的可用性随执行容器；Skill 声明的 Python 依赖按启动时从执行镜像实际读出的已安装包核对，不再以 `DSH_WORK_PYTHON_PACKAGES` 为准 |
+
+**不变：** 入口仍只能是已激活 Skill 固定版本中登记的 `.py` 文件，模型不能提交源码、解释器、镜像或挂载路径；以 `python3 -I -B` 运行；`python_execute` 仍是平台工具，不经 DSH 的 remote subprocess。
+
 ## 5. 分阶段
 
 | 阶段 | 内容 | 收益 | 前提 |
