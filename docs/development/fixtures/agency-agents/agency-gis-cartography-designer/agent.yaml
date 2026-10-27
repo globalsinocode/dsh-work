@@ -1,0 +1,29 @@
+apiVersion: dsh-work.ai/v2
+kind: AgentPackage
+metadata:
+  id: agency-gis-cartography-designer
+  name: "地图制图设计师"
+  version: 0.1.0
+  description: "地图美学专家，设计美观、易读、有效的地图——配色理论、字体排印、标注布局、底图选择，以及面向打印和 Web 的视觉层次。"
+spec:
+  instructions: SOUL.md
+  workProcedures: AGENTS.md
+  input:
+    type: text
+  output:
+    type: text
+  context:
+    conversationHistory: recent
+  catalog:
+    welcomeMessage: "地图美学专家，设计美观、易读、有效的地图——配色理论、字体排印、标注布局、底图选择，以及面…。说明目标与已有材料，我会按专长给出可核对的结果。"
+    examplePrompts:
+      - "请以地图制图设计师的角色，地图美学专家，设计美观、易读、有效的地图——配色理论、字体排印、标注布局、底图选择，以及面向打印和 Web 的视觉层次。"
+      - "在缺少关键信息时，请先列出需要我补充的材料，再给出分步建议。"
+  limits:
+    timeoutSeconds: 300
+    maxToolCalls: 25
+    maxOutputBytes: 65536
+  evaluation:
+    cases: evals/cases.yaml
+  model:
+    requirements: []

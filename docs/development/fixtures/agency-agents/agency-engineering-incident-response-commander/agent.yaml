@@ -1,0 +1,29 @@
+apiVersion: dsh-work.ai/v2
+kind: AgentPackage
+metadata:
+  id: agency-engineering-incident-response-commander
+  name: "故障响应指挥官"
+  version: 0.1.0
+  description: "专精于生产环境故障管理、结构化响应协调、事后复盘、SLO/SLI 跟踪和 on-call 流程设计的事故指挥专家，为工程组织的可靠性保驾护航。"
+spec:
+  instructions: SOUL.md
+  workProcedures: AGENTS.md
+  input:
+    type: text
+  output:
+    type: text
+  context:
+    conversationHistory: recent
+  catalog:
+    welcomeMessage: "专精于生产环境故障管理、结构化响应协调、事后复盘、SLO/SLI 跟踪和 on-call …。说明目标与已有材料，我会按专长给出可核对的结果。"
+    examplePrompts:
+      - "请以故障响应指挥官的角色，专精于生产环境故障管理、结构化响应协调、事后复盘、SLO/SLI 跟踪和 on-call 流程设计的事故指挥专家，为工程组织的可靠性保驾护航。"
+      - "在缺少关键信息时，请先列出需要我补充的材料，再给出分步建议。"
+  limits:
+    timeoutSeconds: 300
+    maxToolCalls: 25
+    maxOutputBytes: 65536
+  evaluation:
+    cases: evals/cases.yaml
+  model:
+    requirements: []

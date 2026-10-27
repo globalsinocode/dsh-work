@@ -1,0 +1,904 @@
+{
+  "batch": "batch-01",
+  "generatedAt": "2026-10-27T01:12:45.796Z",
+  "defaultPublish": false,
+  "skills": [
+    {
+      "id": "plaza-sp-writing-plans",
+      "publish": false,
+      "parse": "ok",
+      "compatibility": "compatible",
+      "publishBlockers": [
+        "batch_01_manual_signoff"
+      ]
+    },
+    {
+      "id": "plaza-sp-executing-plans",
+      "publish": false,
+      "parse": "ok",
+      "compatibility": "compatible",
+      "publishBlockers": [
+        "batch_01_manual_signoff"
+      ]
+    },
+    {
+      "id": "plaza-sp-systematic-debugging",
+      "publish": false,
+      "parse": "ok",
+      "compatibility": "compatible",
+      "publishBlockers": [
+        "batch_01_manual_signoff"
+      ]
+    },
+    {
+      "id": "plaza-sp-test-driven-development",
+      "publish": false,
+      "parse": "ok",
+      "compatibility": "compatible",
+      "publishBlockers": [
+        "batch_01_manual_signoff"
+      ]
+    },
+    {
+      "id": "plaza-sp-requesting-code-review",
+      "publish": false,
+      "parse": "ok",
+      "compatibility": "compatible",
+      "publishBlockers": [
+        "batch_01_manual_signoff"
+      ]
+    },
+    {
+      "id": "plaza-sp-receiving-code-review",
+      "publish": false,
+      "parse": "ok",
+      "compatibility": "compatible",
+      "publishBlockers": [
+        "batch_01_manual_signoff"
+      ]
+    },
+    {
+      "id": "plaza-sp-verification-before-completion",
+      "publish": false,
+      "parse": "ok",
+      "compatibility": "compatible",
+      "publishBlockers": [
+        "batch_01_manual_signoff"
+      ]
+    },
+    {
+      "id": "plaza-sp-finishing-a-development-branch",
+      "publish": false,
+      "parse": "ok",
+      "compatibility": "compatible",
+      "publishBlockers": [
+        "batch_01_manual_signoff"
+      ]
+    },
+    {
+      "id": "plaza-anth-pdf",
+      "publish": false,
+      "parse": "ok",
+      "compatibility": "needs_review",
+      "publishBlockers": [
+        "needs_review",
+        "python_execute",
+        "batch_01_manual_signoff"
+      ]
+    },
+    {
+      "id": "plaza-anth-pptx",
+      "publish": false,
+      "parse": "ok",
+      "compatibility": "needs_review",
+      "publishBlockers": [
+        "needs_review",
+        "python_execute",
+        "batch_01_manual_signoff"
+      ]
+    },
+    {
+      "id": "plaza-anth-xlsx",
+      "publish": false,
+      "parse": "ok",
+      "compatibility": "needs_review",
+      "publishBlockers": [
+        "needs_review",
+        "python_execute",
+        "batch_01_manual_signoff"
+      ]
+    },
+    {
+      "id": "plaza-anth-doc-coauthoring",
+      "publish": false,
+      "parse": "ok",
+      "compatibility": "compatible",
+      "publishBlockers": [
+        "batch_01_manual_signoff"
+      ]
+    },
+    {
+      "id": "plaza-anth-internal-comms",
+      "publish": false,
+      "parse": "ok",
+      "compatibility": "compatible",
+      "publishBlockers": [
+        "batch_01_manual_signoff"
+      ]
+    },
+    {
+      "id": "plaza-kwp-finance-audit-support",
+      "publish": false,
+      "parse": "ok",
+      "compatibility": "compatible",
+      "publishBlockers": [
+        "batch_01_manual_signoff"
+      ]
+    },
+    {
+      "id": "plaza-kwp-finance-close-management",
+      "publish": false,
+      "parse": "ok",
+      "compatibility": "compatible",
+      "publishBlockers": [
+        "batch_01_manual_signoff"
+      ]
+    },
+    {
+      "id": "plaza-kwp-finance-financial-statements",
+      "publish": false,
+      "parse": "ok",
+      "compatibility": "compatible",
+      "publishBlockers": [
+        "batch_01_manual_signoff"
+      ]
+    },
+    {
+      "id": "plaza-kwp-finance-journal-entry",
+      "publish": false,
+      "parse": "ok",
+      "compatibility": "compatible",
+      "publishBlockers": [
+        "batch_01_manual_signoff"
+      ]
+    },
+    {
+      "id": "plaza-kwp-finance-journal-entry-prep",
+      "publish": false,
+      "parse": "ok",
+      "compatibility": "compatible",
+      "publishBlockers": [
+        "batch_01_manual_signoff"
+      ]
+    },
+    {
+      "id": "plaza-kwp-finance-reconciliation",
+      "publish": false,
+      "parse": "ok",
+      "compatibility": "compatible",
+      "publishBlockers": [
+        "batch_01_manual_signoff"
+      ]
+    },
+    {
+      "id": "plaza-kwp-finance-sox-testing",
+      "publish": false,
+      "parse": "ok",
+      "compatibility": "compatible",
+      "publishBlockers": [
+        "batch_01_manual_signoff"
+      ]
+    },
+    {
+      "id": "plaza-kwp-finance-variance-analysis",
+      "publish": false,
+      "parse": "ok",
+      "compatibility": "compatible",
+      "publishBlockers": [
+        "batch_01_manual_signoff"
+      ]
+    },
+    {
+      "id": "plaza-kwp-legal-brief",
+      "publish": false,
+      "parse": "ok",
+      "compatibility": "compatible",
+      "publishBlockers": [
+        "batch_01_manual_signoff"
+      ]
+    },
+    {
+      "id": "plaza-kwp-legal-compliance-check",
+      "publish": false,
+      "parse": "ok",
+      "compatibility": "compatible",
+      "publishBlockers": [
+        "batch_01_manual_signoff"
+      ]
+    },
+    {
+      "id": "plaza-kwp-legal-legal-response",
+      "publish": false,
+      "parse": "ok",
+      "compatibility": "compatible",
+      "publishBlockers": [
+        "batch_01_manual_signoff"
+      ]
+    },
+    {
+      "id": "plaza-kwp-legal-legal-risk-assessment",
+      "publish": false,
+      "parse": "ok",
+      "compatibility": "compatible",
+      "publishBlockers": [
+        "batch_01_manual_signoff"
+      ]
+    },
+    {
+      "id": "plaza-kwp-legal-meeting-briefing",
+      "publish": false,
+      "parse": "ok",
+      "compatibility": "compatible",
+      "publishBlockers": [
+        "batch_01_manual_signoff"
+      ]
+    },
+    {
+      "id": "plaza-kwp-legal-review-contract",
+      "publish": false,
+      "parse": "ok",
+      "compatibility": "compatible",
+      "publishBlockers": [
+        "batch_01_manual_signoff"
+      ]
+    },
+    {
+      "id": "plaza-kwp-legal-signature-request",
+      "publish": false,
+      "parse": "ok",
+      "compatibility": "compatible",
+      "publishBlockers": [
+        "batch_01_manual_signoff"
+      ]
+    },
+    {
+      "id": "plaza-kwp-legal-triage-nda",
+      "publish": false,
+      "parse": "ok",
+      "compatibility": "compatible",
+      "publishBlockers": [
+        "batch_01_manual_signoff"
+      ]
+    },
+    {
+      "id": "plaza-kwp-legal-vendor-check",
+      "publish": false,
+      "parse": "ok",
+      "compatibility": "compatible",
+      "publishBlockers": [
+        "batch_01_manual_signoff"
+      ]
+    },
+    {
+      "id": "plaza-kwp-product-management-competitive-brief",
+      "publish": false,
+      "parse": "ok",
+      "compatibility": "compatible",
+      "publishBlockers": [
+        "batch_01_manual_signoff"
+      ]
+    },
+    {
+      "id": "plaza-kwp-product-management-metrics-review",
+      "publish": false,
+      "parse": "ok",
+      "compatibility": "compatible",
+      "publishBlockers": [
+        "batch_01_manual_signoff"
+      ]
+    },
+    {
+      "id": "plaza-kwp-product-management-product-brainstorming",
+      "publish": false,
+      "parse": "ok",
+      "compatibility": "compatible",
+      "publishBlockers": [
+        "batch_01_manual_signoff"
+      ]
+    },
+    {
+      "id": "plaza-kwp-product-management-roadmap-update",
+      "publish": false,
+      "parse": "ok",
+      "compatibility": "compatible",
+      "publishBlockers": [
+        "batch_01_manual_signoff"
+      ]
+    },
+    {
+      "id": "plaza-kwp-product-management-sprint-planning",
+      "publish": false,
+      "parse": "ok",
+      "compatibility": "compatible",
+      "publishBlockers": [
+        "batch_01_manual_signoff"
+      ]
+    },
+    {
+      "id": "plaza-kwp-product-management-stakeholder-update",
+      "publish": false,
+      "parse": "ok",
+      "compatibility": "compatible",
+      "publishBlockers": [
+        "batch_01_manual_signoff"
+      ]
+    },
+    {
+      "id": "plaza-kwp-product-management-synthesize-research",
+      "publish": false,
+      "parse": "ok",
+      "compatibility": "compatible",
+      "publishBlockers": [
+        "batch_01_manual_signoff"
+      ]
+    },
+    {
+      "id": "plaza-kwp-product-management-write-spec",
+      "publish": false,
+      "parse": "ok",
+      "compatibility": "compatible",
+      "publishBlockers": [
+        "batch_01_manual_signoff"
+      ]
+    },
+    {
+      "id": "plaza-kwp-operations-capacity-plan",
+      "publish": false,
+      "parse": "ok",
+      "compatibility": "compatible",
+      "publishBlockers": [
+        "batch_01_manual_signoff"
+      ]
+    },
+    {
+      "id": "plaza-kwp-operations-change-request",
+      "publish": false,
+      "parse": "ok",
+      "compatibility": "compatible",
+      "publishBlockers": [
+        "batch_01_manual_signoff"
+      ]
+    },
+    {
+      "id": "plaza-kwp-operations-compliance-tracking",
+      "publish": false,
+      "parse": "ok",
+      "compatibility": "compatible",
+      "publishBlockers": [
+        "batch_01_manual_signoff"
+      ]
+    },
+    {
+      "id": "plaza-kwp-operations-process-doc",
+      "publish": false,
+      "parse": "ok",
+      "compatibility": "compatible",
+      "publishBlockers": [
+        "batch_01_manual_signoff"
+      ]
+    },
+    {
+      "id": "plaza-kwp-operations-process-optimization",
+      "publish": false,
+      "parse": "ok",
+      "compatibility": "compatible",
+      "publishBlockers": [
+        "batch_01_manual_signoff"
+      ]
+    },
+    {
+      "id": "plaza-kwp-operations-risk-assessment",
+      "publish": false,
+      "parse": "ok",
+      "compatibility": "compatible",
+      "publishBlockers": [
+        "batch_01_manual_signoff"
+      ]
+    },
+    {
+      "id": "plaza-kwp-operations-runbook",
+      "publish": false,
+      "parse": "ok",
+      "compatibility": "compatible",
+      "publishBlockers": [
+        "batch_01_manual_signoff"
+      ]
+    },
+    {
+      "id": "plaza-kwp-operations-status-report",
+      "publish": false,
+      "parse": "ok",
+      "compatibility": "compatible",
+      "publishBlockers": [
+        "batch_01_manual_signoff"
+      ]
+    },
+    {
+      "id": "plaza-kwp-operations-vendor-review",
+      "publish": false,
+      "parse": "ok",
+      "compatibility": "compatible",
+      "publishBlockers": [
+        "batch_01_manual_signoff"
+      ]
+    },
+    {
+      "id": "plaza-kwp-sales-account-context",
+      "publish": false,
+      "parse": "ok",
+      "compatibility": "compatible",
+      "publishBlockers": [
+        "batch_01_manual_signoff"
+      ]
+    },
+    {
+      "id": "plaza-kwp-sales-account-plan",
+      "publish": false,
+      "parse": "ok",
+      "compatibility": "compatible",
+      "publishBlockers": [
+        "batch_01_manual_signoff"
+      ]
+    },
+    {
+      "id": "plaza-kwp-sales-account-research",
+      "publish": false,
+      "parse": "ok",
+      "compatibility": "compatible",
+      "publishBlockers": [
+        "batch_01_manual_signoff"
+      ]
+    },
+    {
+      "id": "plaza-kwp-sales-account-tiering",
+      "publish": false,
+      "parse": "ok",
+      "compatibility": "compatible",
+      "publishBlockers": [
+        "batch_01_manual_signoff"
+      ]
+    },
+    {
+      "id": "plaza-kwp-sales-call-prep",
+      "publish": false,
+      "parse": "ok",
+      "compatibility": "compatible",
+      "publishBlockers": [
+        "batch_01_manual_signoff"
+      ]
+    },
+    {
+      "id": "plaza-kwp-sales-call-summary",
+      "publish": false,
+      "parse": "ok",
+      "compatibility": "compatible",
+      "publishBlockers": [
+        "batch_01_manual_signoff"
+      ]
+    },
+    {
+      "id": "plaza-kwp-sales-close-plan",
+      "publish": false,
+      "parse": "ok",
+      "compatibility": "compatible",
+      "publishBlockers": [
+        "batch_01_manual_signoff"
+      ]
+    },
+    {
+      "id": "plaza-kwp-sales-competitive-intelligence",
+      "publish": false,
+      "parse": "ok",
+      "compatibility": "compatible",
+      "publishBlockers": [
+        "batch_01_manual_signoff"
+      ]
+    },
+    {
+      "id": "plaza-kwp-sales-create-an-asset",
+      "publish": false,
+      "parse": "ok",
+      "compatibility": "compatible",
+      "publishBlockers": [
+        "batch_01_manual_signoff"
+      ]
+    },
+    {
+      "id": "plaza-kwp-sales-crm-hygiene-check",
+      "publish": false,
+      "parse": "ok",
+      "compatibility": "compatible",
+      "publishBlockers": [
+        "batch_01_manual_signoff"
+      ]
+    },
+    {
+      "id": "plaza-kwp-sales-customer-health",
+      "publish": false,
+      "parse": "ok",
+      "compatibility": "compatible",
+      "publishBlockers": [
+        "batch_01_manual_signoff"
+      ]
+    },
+    {
+      "id": "plaza-kwp-sales-customer-voice",
+      "publish": false,
+      "parse": "ok",
+      "compatibility": "compatible",
+      "publishBlockers": [
+        "batch_01_manual_signoff"
+      ]
+    },
+    {
+      "id": "plaza-kwp-sales-daily-briefing",
+      "publish": false,
+      "parse": "ok",
+      "compatibility": "compatible",
+      "publishBlockers": [
+        "batch_01_manual_signoff"
+      ]
+    },
+    {
+      "id": "plaza-kwp-sales-deal-advance-gap",
+      "publish": false,
+      "parse": "ok",
+      "compatibility": "compatible",
+      "publishBlockers": [
+        "batch_01_manual_signoff"
+      ]
+    },
+    {
+      "id": "plaza-kwp-sales-deal-review",
+      "publish": false,
+      "parse": "ok",
+      "compatibility": "compatible",
+      "publishBlockers": [
+        "batch_01_manual_signoff"
+      ]
+    },
+    {
+      "id": "plaza-kwp-sales-deal-signals",
+      "publish": false,
+      "parse": "ok",
+      "compatibility": "compatible",
+      "publishBlockers": [
+        "batch_01_manual_signoff"
+      ]
+    },
+    {
+      "id": "plaza-kwp-sales-deal-slip-scenario",
+      "publish": false,
+      "parse": "ok",
+      "compatibility": "compatible",
+      "publishBlockers": [
+        "batch_01_manual_signoff"
+      ]
+    },
+    {
+      "id": "plaza-kwp-sales-draft-outreach",
+      "publish": false,
+      "parse": "ok",
+      "compatibility": "compatible",
+      "publishBlockers": [
+        "batch_01_manual_signoff"
+      ]
+    },
+    {
+      "id": "plaza-kwp-sales-end-of-day",
+      "publish": false,
+      "parse": "ok",
+      "compatibility": "compatible",
+      "publishBlockers": [
+        "batch_01_manual_signoff"
+      ]
+    },
+    {
+      "id": "plaza-kwp-sales-expansion-whitespace",
+      "publish": false,
+      "parse": "ok",
+      "compatibility": "compatible",
+      "publishBlockers": [
+        "batch_01_manual_signoff"
+      ]
+    },
+    {
+      "id": "plaza-kwp-sales-forecast",
+      "publish": false,
+      "parse": "ok",
+      "compatibility": "compatible",
+      "publishBlockers": [
+        "batch_01_manual_signoff"
+      ]
+    },
+    {
+      "id": "plaza-kwp-sales-handle-objection",
+      "publish": false,
+      "parse": "ok",
+      "compatibility": "compatible",
+      "publishBlockers": [
+        "batch_01_manual_signoff"
+      ]
+    },
+    {
+      "id": "plaza-kwp-sales-inbox-sweep",
+      "publish": false,
+      "parse": "ok",
+      "compatibility": "compatible",
+      "publishBlockers": [
+        "batch_01_manual_signoff"
+      ]
+    },
+    {
+      "id": "plaza-kwp-sales-lead-triage",
+      "publish": false,
+      "parse": "ok",
+      "compatibility": "compatible",
+      "publishBlockers": [
+        "batch_01_manual_signoff"
+      ]
+    },
+    {
+      "id": "plaza-kwp-sales-log-activity",
+      "publish": false,
+      "parse": "ok",
+      "compatibility": "compatible",
+      "publishBlockers": [
+        "batch_01_manual_signoff"
+      ]
+    },
+    {
+      "id": "plaza-kwp-sales-pipeline-review",
+      "publish": false,
+      "parse": "ok",
+      "compatibility": "compatible",
+      "publishBlockers": [
+        "batch_01_manual_signoff"
+      ]
+    },
+    {
+      "id": "plaza-kwp-sales-renewal-radar",
+      "publish": false,
+      "parse": "ok",
+      "compatibility": "compatible",
+      "publishBlockers": [
+        "batch_01_manual_signoff"
+      ]
+    },
+    {
+      "id": "plaza-kwp-sales-rep-context",
+      "publish": false,
+      "parse": "ok",
+      "compatibility": "compatible",
+      "publishBlockers": [
+        "batch_01_manual_signoff"
+      ]
+    },
+    {
+      "id": "plaza-kwp-sales-setup",
+      "publish": false,
+      "parse": "ok",
+      "compatibility": "compatible",
+      "publishBlockers": [
+        "batch_01_manual_signoff"
+      ]
+    },
+    {
+      "id": "plaza-kwp-sales-stakeholder-map",
+      "publish": false,
+      "parse": "ok",
+      "compatibility": "compatible",
+      "publishBlockers": [
+        "batch_01_manual_signoff"
+      ]
+    },
+    {
+      "id": "plaza-kwp-sales-team-pipeline",
+      "publish": false,
+      "parse": "ok",
+      "compatibility": "compatible",
+      "publishBlockers": [
+        "batch_01_manual_signoff"
+      ]
+    },
+    {
+      "id": "plaza-kwp-sales-update-opportunity",
+      "publish": false,
+      "parse": "ok",
+      "compatibility": "compatible",
+      "publishBlockers": [
+        "batch_01_manual_signoff"
+      ]
+    },
+    {
+      "id": "plaza-kwp-sales-weekly-wrap",
+      "publish": false,
+      "parse": "ok",
+      "compatibility": "compatible",
+      "publishBlockers": [
+        "batch_01_manual_signoff"
+      ]
+    },
+    {
+      "id": "plaza-kwp-sales-win-loss-review",
+      "publish": false,
+      "parse": "ok",
+      "compatibility": "compatible",
+      "publishBlockers": [
+        "batch_01_manual_signoff"
+      ]
+    },
+    {
+      "id": "plaza-kwp-customer-support-customer-escalation",
+      "publish": false,
+      "parse": "ok",
+      "compatibility": "compatible",
+      "publishBlockers": [
+        "batch_01_manual_signoff"
+      ]
+    },
+    {
+      "id": "plaza-kwp-customer-support-customer-research",
+      "publish": false,
+      "parse": "ok",
+      "compatibility": "compatible",
+      "publishBlockers": [
+        "batch_01_manual_signoff"
+      ]
+    },
+    {
+      "id": "plaza-kwp-customer-support-draft-response",
+      "publish": false,
+      "parse": "ok",
+      "compatibility": "compatible",
+      "publishBlockers": [
+        "batch_01_manual_signoff"
+      ]
+    },
+    {
+      "id": "plaza-kwp-customer-support-kb-article",
+      "publish": false,
+      "parse": "ok",
+      "compatibility": "compatible",
+      "publishBlockers": [
+        "batch_01_manual_signoff"
+      ]
+    },
+    {
+      "id": "plaza-kwp-customer-support-ticket-triage",
+      "publish": false,
+      "parse": "ok",
+      "compatibility": "compatible",
+      "publishBlockers": [
+        "batch_01_manual_signoff"
+      ]
+    },
+    {
+      "id": "plaza-kwp-productivity-memory-management",
+      "publish": false,
+      "parse": "ok",
+      "compatibility": "compatible",
+      "publishBlockers": [
+        "batch_01_manual_signoff"
+      ]
+    },
+    {
+      "id": "plaza-kwp-productivity-start",
+      "publish": false,
+      "parse": "ok",
+      "compatibility": "compatible",
+      "publishBlockers": [
+        "batch_01_manual_signoff"
+      ]
+    },
+    {
+      "id": "plaza-kwp-productivity-task-management",
+      "publish": false,
+      "parse": "ok",
+      "compatibility": "compatible",
+      "publishBlockers": [
+        "batch_01_manual_signoff"
+      ]
+    },
+    {
+      "id": "plaza-kwp-productivity-update",
+      "publish": false,
+      "parse": "ok",
+      "compatibility": "compatible",
+      "publishBlockers": [
+        "batch_01_manual_signoff"
+      ]
+    },
+    {
+      "id": "plaza-kwp-human-resources-comp-analysis",
+      "publish": false,
+      "parse": "ok",
+      "compatibility": "compatible",
+      "publishBlockers": [
+        "batch_01_manual_signoff"
+      ]
+    },
+    {
+      "id": "plaza-kwp-human-resources-draft-offer",
+      "publish": false,
+      "parse": "ok",
+      "compatibility": "compatible",
+      "publishBlockers": [
+        "batch_01_manual_signoff"
+      ]
+    },
+    {
+      "id": "plaza-kwp-human-resources-interview-prep",
+      "publish": false,
+      "parse": "ok",
+      "compatibility": "compatible",
+      "publishBlockers": [
+        "batch_01_manual_signoff"
+      ]
+    },
+    {
+      "id": "plaza-kwp-human-resources-onboarding",
+      "publish": false,
+      "parse": "ok",
+      "compatibility": "compatible",
+      "publishBlockers": [
+        "batch_01_manual_signoff"
+      ]
+    },
+    {
+      "id": "plaza-kwp-human-resources-org-planning",
+      "publish": false,
+      "parse": "ok",
+      "compatibility": "compatible",
+      "publishBlockers": [
+        "batch_01_manual_signoff"
+      ]
+    },
+    {
+      "id": "plaza-kwp-human-resources-people-report",
+      "publish": false,
+      "parse": "ok",
+      "compatibility": "compatible",
+      "publishBlockers": [
+        "batch_01_manual_signoff"
+      ]
+    },
+    {
+      "id": "plaza-kwp-human-resources-performance-review",
+      "publish": false,
+      "parse": "ok",
+      "compatibility": "compatible",
+      "publishBlockers": [
+        "batch_01_manual_signoff"
+      ]
+    },
+    {
+      "id": "plaza-kwp-human-resources-policy-lookup",
+      "publish": false,
+      "parse": "ok",
+      "compatibility": "compatible",
+      "publishBlockers": [
+        "batch_01_manual_signoff"
+      ]
+    },
+    {
+      "id": "plaza-kwp-human-resources-recruiting-pipeline",
+      "publish": false,
+      "parse": "ok",
+      "compatibility": "compatible",
+      "publishBlockers": [
+        "batch_01_manual_signoff"
+      ]
+    }
+  ]
+}

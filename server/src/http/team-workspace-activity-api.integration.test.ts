@@ -25,11 +25,7 @@ import { PostgresWorkspaceService } from '../modules/workbench/application/postg
 import { Router } from './router.ts'
 import { registerContentRoutes } from './workbench/content-routes.ts'
 import { registerWorkspaceActivityRoutes } from './workbench/workspace-activity-routes.ts'
-import { bindWorkspaceNotificationRecipients } from '../modules/workbench/application/workspace-activity-writer.ts'
-import {
-  WorkspaceNotificationRecipientService,
-  createPostgresNotificationRecipientPorts,
-} from '../modules/workbench/application/workspace-notification-recipient-service.ts'
+import { bindTestWorkspaceNotificationRecipients } from '../infrastructure/postgres/workspace-notification-recipient-test-fixture.ts'
 import { registerWorkspaceAgentMemberRoutes } from './workbench/workspace-agent-member-routes.ts'
 import { registerWorkspaceLifecycleRoutes } from './workbench/workspace-lifecycle-routes.ts'
 import { registerWorkspaceMemberRoutes } from './workbench/workspace-member-routes.ts'
@@ -47,6 +43,7 @@ let activity: PostgresWorkspaceActivityService
 let server: ReturnType<typeof createServer>
 let baseUrl = ''
 let storageRoot = ''
+let unbindNotificationRecipients: (() => void) | undefined
 
 interface ActivityRow {
   id: string
@@ -69,12 +66,7 @@ before(async () => {
   storageRoot = await mkdtemp(join(tmpdir(), 'dsh-work-activity-'))
   authorization = new PostgresAuthorizationService(database)
   workspaces = new PostgresWorkspaceService(database)
-  const recipientPorts = createPostgresNotificationRecipientPorts(database)
-  bindWorkspaceNotificationRecipients(new WorkspaceNotificationRecipientService(
-    database,
-    recipientPorts.participants,
-    recipientPorts.members,
-  ))
+  unbindNotificationRecipients = bindTestWorkspaceNotificationRecipients(database)
   activity = new PostgresWorkspaceActivityService(database, workspaces)
   const content = new PostgresContentService(database, new LocalObjectStorage(storageRoot), authorization)
   const workspaceMembers = new PostgresWorkspaceMemberService(database, authorization)
@@ -97,6 +89,8 @@ before(async () => {
 })
 
 after(async () => {
+  unbindNotificationRecipients?.()
+  unbindNotificationRecipients = undefined
   if (server?.listening) await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()))
   if (storageRoot) await rm(storageRoot, { recursive: true, force: true })
   await throwaway.dispose()

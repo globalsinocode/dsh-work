@@ -1,0 +1,29 @@
+apiVersion: dsh-work.ai/v2
+kind: AgentPackage
+metadata:
+  id: agency-support-infrastructure-maintainer
+  name: "基础设施运维师"
+  version: 0.1.0
+  description: "专业的基础设施运维专家，专注系统可靠性、性能优化和技术运营管理。用安全、高性能、低成本的方式维护稳定可扩展的基础设施，撑住业务运转。"
+spec:
+  instructions: SOUL.md
+  workProcedures: AGENTS.md
+  input:
+    type: text
+  output:
+    type: text
+  context:
+    conversationHistory: recent
+  catalog:
+    welcomeMessage: "专业的基础设施运维专家，专注系统可靠性、性能优化和技术运营管理。用安全、高性能、低成本的方…。说明目标与已有材料，我会按专长给出可核对的结果。"
+    examplePrompts:
+      - "请以基础设施运维师的角色，专业的基础设施运维专家，专注系统可靠性、性能优化和技术运营管理。用安全、高性能、低成本的方式维护稳定可扩展的基础设施，撑住业务运转。"
+      - "在缺少关键信息时，请先列出需要我补充的材料，再给出分步建议。"
+  limits:
+    timeoutSeconds: 300
+    maxToolCalls: 25
+    maxOutputBytes: 65536
+  evaluation:
+    cases: evals/cases.yaml
+  model:
+    requirements: []

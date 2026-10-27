@@ -23,6 +23,7 @@ import { PostgresConversationRepository } from '../modules/workbench/application
 import { PostgresWorkspaceAgentMemberService } from '../modules/workbench/application/postgres-workspace-agent-member-service.ts'
 import type { DatabaseClient, DatabaseTransaction } from '../infrastructure/postgres/database.ts'
 import { createThrowawayDatabase, type ThrowawayDatabase } from '../infrastructure/postgres/test-database.ts'
+import { bindTestWorkspaceNotificationRecipients } from '../infrastructure/postgres/workspace-notification-recipient-test-fixture.ts'
 import { Router } from './router.ts'
 import { registerContentRoutes } from './workbench/content-routes.ts'
 import { registerWorkspaceAgentMemberRoutes } from './workbench/workspace-agent-member-routes.ts'
@@ -37,6 +38,7 @@ if (!databaseUrl) throw new Error('DSH_WORK_TEST_DATABASE_URL 未配置')
 const tenantId = 'tenant-dsh-work'
 
 let database: DatabaseClient
+let unbindNotificationRecipients: (() => void) | undefined
 let throwaway: ThrowawayDatabase
 let storageRoot: string
 let server: Server
@@ -77,6 +79,7 @@ before(async () => {
   // 一次性库：避免共享 dev 库的历史数据累积影响断言。
   throwaway = await createThrowawayDatabase({ namePrefix: 'dsh_work_agent_member_api_test', maxConnections: 8 })
   database = throwaway.client
+  unbindNotificationRecipients = bindTestWorkspaceNotificationRecipients(database)
 
   authorization = new PostgresAuthorizationService(database)
   agents = new PostgresAgentService(database)
@@ -113,6 +116,8 @@ before(async () => {
 
 after(async () => {
   if (server?.listening) await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()))
+  unbindNotificationRecipients?.()
+  unbindNotificationRecipients = undefined
   await throwaway.dispose()
   await rm(storageRoot, { recursive: true, force: true })
 })

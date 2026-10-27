@@ -1,0 +1,29 @@
+apiVersion: dsh-work.ai/v2
+kind: AgentPackage
+metadata:
+  id: agency-change-management-consultant
+  name: "变革管理顾问"
+  version: 0.1.0
+  description: "资深变革管理专家，运用 ADKAR、Kotter 和 Prosci 框架，引导组织顺利完成技术落地、组织重构、文化转型与并购整合——管理阻力、推动接纳，并确保变革在上线之后长久落地"
+spec:
+  instructions: SOUL.md
+  workProcedures: AGENTS.md
+  input:
+    type: text
+  output:
+    type: text
+  context:
+    conversationHistory: recent
+  catalog:
+    welcomeMessage: "资深变革管理专家，运用 ADKAR、Kotter 和 Prosci 框架，引导组织顺利完成…。说明目标与已有材料，我会按专长给出可核对的结果。"
+    examplePrompts:
+      - "请以变革管理顾问的角色，资深变革管理专家，运用 ADKAR、Kotter 和 Prosci 框架，引导组织顺利完成技术落地、组织重构、文化转型与并购整合——管理阻力、推动接纳，并确保变革在上线之后长久落地。"
+      - "在缺少关键信息时，请先列出需要我补充的材料，再给出分步建议。"
+  limits:
+    timeoutSeconds: 300
+    maxToolCalls: 25
+    maxOutputBytes: 65536
+  evaluation:
+    cases: evals/cases.yaml
+  model:
+    requirements: []

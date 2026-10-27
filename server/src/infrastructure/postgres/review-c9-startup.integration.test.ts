@@ -8,6 +8,7 @@ import { join, resolve } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import { after, before, test } from 'node:test'
 import { createThrowawayDatabase, type ThrowawayDatabase } from './test-database.ts'
+import { bindTestWorkspaceNotificationRecipients } from './workspace-notification-recipient-test-fixture.ts'
 import { testAttemptManifest } from './test-attempt-manifest.ts'
 import { PostgresContentService } from '../../modules/workbench/application/postgres-content-service.ts'
 import { PostgresAuthorizationService } from '../../modules/authorization/postgres-authorization-service.ts'
@@ -19,11 +20,13 @@ import type { LocalIdentityConfiguration } from '../../modules/identity/types.ts
 import { LocalObjectStorage } from '../storage/local-object-storage.ts'
 
 let db: ThrowawayDatabase
+let unbindNotificationRecipients: (() => void) | undefined
 const sessionSecret = 'review-c9-session-secret-with-32-characters'
 const password = 'ReviewC9pw1'
 let employeeId: string
 before(async () => {
   db = await createThrowawayDatabase({ namePrefix: 'dsh_review_c9' })
+  unbindNotificationRecipients = bindTestWorkspaceNotificationRecipients(db.client)
   // The application always requires a real login: create one administrator and one employee.
   const configuration = loadIdentityConfiguration({ DSH_WORK_AUTH_MODE: 'local', DSH_WORK_SESSION_SECRET: sessionSecret,
     DSH_WORK_WORKBENCH_ORIGINS: 'http://localhost:1', DSH_WORK_ADMIN_ORIGINS: 'http://localhost:1' }) as LocalIdentityConfiguration
@@ -33,7 +36,7 @@ before(async () => {
   await new IdentityAdministrationService(db.client, true).grantRole({ userId: employeeId, roleId: 'role-employee', actorId: adminId })
   await db.client`update local_user_credentials set must_change_password = false where user_id = ${employeeId}`
 })
-after(async () => { await db?.dispose() })
+after(async () => { unbindNotificationRecipients?.(); unbindNotificationRecipients = undefined; await db?.dispose() })
 async function freePort() {
   const server = createServer(); server.listen(0, '127.0.0.1'); await once(server, 'listening')
   const address = server.address(); assert.ok(address && typeof address !== 'string')

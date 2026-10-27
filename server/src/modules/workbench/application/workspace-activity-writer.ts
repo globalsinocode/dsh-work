@@ -83,8 +83,11 @@ export type WorkspaceNotifiableEvent =
 
 let recipientService: WorkspaceNotificationRecipientService | null = null
 
-export function bindWorkspaceNotificationRecipients(service: WorkspaceNotificationRecipientService) {
+export function bindWorkspaceNotificationRecipients(service: WorkspaceNotificationRecipientService): () => void {
   recipientService = service
+  return () => {
+    if (recipientService === service) recipientService = null
+  }
 }
 
 function assertSafeMetadata(metadata: WorkspaceActivityMetadata | undefined) {

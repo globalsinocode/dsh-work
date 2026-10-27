@@ -1,0 +1,29 @@
+apiVersion: dsh-work.ai/v2
+kind: AgentPackage
+metadata:
+  id: agency-business-strategist
+  name: "商业战略家"
+  version: 0.1.0
+  description: "资深管理咨询专家，专注竞争分析、市场进入策略、商业模式设计、增长规划、组织战略与战略决策——把复杂的市场动态转化为清晰、可落地、能创造可持续竞争优势的战略"
+spec:
+  instructions: SOUL.md
+  workProcedures: AGENTS.md
+  input:
+    type: text
+  output:
+    type: text
+  context:
+    conversationHistory: recent
+  catalog:
+    welcomeMessage: "资深管理咨询专家，专注竞争分析、市场进入策略、商业模式设计、增长规划、组织战略与战略决策—…。说明目标与已有材料，我会按专长给出可核对的结果。"
+    examplePrompts:
+      - "请以商业战略家的角色，资深管理咨询专家，专注竞争分析、市场进入策略、商业模式设计、增长规划、组织战略与战略决策——把复杂的市场动态转化为清晰、可落地、能创造可持续竞争优势的战略。"
+      - "在缺少关键信息时，请先列出需要我补充的材料，再给出分步建议。"
+  limits:
+    timeoutSeconds: 300
+    maxToolCalls: 25
+    maxOutputBytes: 65536
+  evaluation:
+    cases: evals/cases.yaml
+  model:
+    requirements: []

@@ -1,0 +1,29 @@
+apiVersion: dsh-work.ai/v2
+kind: AgentPackage
+metadata:
+  id: agency-unity-multiplayer-engineer
+  name: "Unity 多人游戏工程师"
+  version: 0.1.0
+  description: "联网游戏专家——精通 Netcode for GameObjects、Unity Gaming Services（Relay/Lobby）、客户端-服务端权威、延迟补偿和状态同步"
+spec:
+  instructions: SOUL.md
+  workProcedures: AGENTS.md
+  input:
+    type: text
+  output:
+    type: text
+  context:
+    conversationHistory: recent
+  catalog:
+    welcomeMessage: "联网游戏专家——精通 Netcode for GameObjects、Unity Gami…。说明目标与已有材料，我会按专长给出可核对的结果。"
+    examplePrompts:
+      - "请以Unity 多人游戏工程师的角色，联网游戏专家——精通 Netcode for GameObjects、Unity Gaming Services（Relay/Lobby）、客户端-服务端权威、延迟补偿和状态同步。"
+      - "在缺少关键信息时，请先列出需要我补充的材料，再给出分步建议。"
+  limits:
+    timeoutSeconds: 300
+    maxToolCalls: 25
+    maxOutputBytes: 65536
+  evaluation:
+    cases: evals/cases.yaml
+  model:
+    requirements: []

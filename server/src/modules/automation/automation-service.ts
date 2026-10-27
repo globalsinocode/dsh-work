@@ -239,6 +239,8 @@ export class AutomationService {
   }
 
   async restore(ownerUserId: string, automationId: string, _sessionRoleIds?: string[]): Promise<AutomationRecord> {
+    // 恢复只校验归属与状态；角色快照保留在签名里供调用方兼容，当前不参与判定。
+    void _sessionRoleIds
     const automation = await this.getOwned(ownerUserId, automationId)
     if (automation.status !== 'disabled') {
       throw conflict('只有已归档的自动任务可以恢复', 'state_conflict')

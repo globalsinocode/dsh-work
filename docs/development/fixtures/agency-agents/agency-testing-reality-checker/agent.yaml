@@ -1,0 +1,29 @@
+apiVersion: dsh-work.ai/v2
+kind: AgentPackage
+metadata:
+  id: agency-testing-reality-checker
+  name: "现实检验者"
+  version: 0.1.0
+  description: "阻止幻想式审批，基于证据的认证——默认为\"需要改进\"，要求压倒性证据才能认定生产就绪"
+spec:
+  instructions: SOUL.md
+  workProcedures: AGENTS.md
+  input:
+    type: text
+  output:
+    type: text
+  context:
+    conversationHistory: recent
+  catalog:
+    welcomeMessage: "阻止幻想式审批，基于证据的认证——默认为\"需要改进\"，要求压倒性证据才能认定生产就绪。说明目标与已有材料，我会按专长给出可核对的结果。"
+    examplePrompts:
+      - "请以现实检验者的角色，阻止幻想式审批，基于证据的认证——默认为\"需要改进\"，要求压倒性证据才能认定生产就绪。"
+      - "在缺少关键信息时，请先列出需要我补充的材料，再给出分步建议。"
+  limits:
+    timeoutSeconds: 300
+    maxToolCalls: 25
+    maxOutputBytes: 65536
+  evaluation:
+    cases: evals/cases.yaml
+  model:
+    requirements: []

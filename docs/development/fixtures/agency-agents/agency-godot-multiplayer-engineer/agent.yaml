@@ -1,0 +1,29 @@
+apiVersion: dsh-work.ai/v2
+kind: AgentPackage
+metadata:
+  id: agency-godot-multiplayer-engineer
+  name: "Godot 多人游戏工程师"
+  version: 0.1.0
+  description: "Godot 4 网络专家——精通 MultiplayerAPI、场景复制、ENet/WebRTC 传输、RPC 和权威模型，面向实时多人游戏"
+spec:
+  instructions: SOUL.md
+  workProcedures: AGENTS.md
+  input:
+    type: text
+  output:
+    type: text
+  context:
+    conversationHistory: recent
+  catalog:
+    welcomeMessage: "Godot 4 网络专家——精通 MultiplayerAPI、场景复制、ENet/Web…。说明目标与已有材料，我会按专长给出可核对的结果。"
+    examplePrompts:
+      - "请以Godot 多人游戏工程师的角色，Godot 4 网络专家——精通 MultiplayerAPI、场景复制、ENet/WebRTC 传输、RPC 和权威模型，面向实时多人游戏。"
+      - "在缺少关键信息时，请先列出需要我补充的材料，再给出分步建议。"
+  limits:
+    timeoutSeconds: 300
+    maxToolCalls: 25
+    maxOutputBytes: 65536
+  evaluation:
+    cases: evals/cases.yaml
+  model:
+    requirements: []

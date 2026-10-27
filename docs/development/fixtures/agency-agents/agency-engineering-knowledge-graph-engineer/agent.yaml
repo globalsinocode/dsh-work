@@ -1,0 +1,29 @@
+apiVersion: dsh-work.ai/v2
+kind: AgentPackage
+metadata:
+  id: agency-engineering-knowledge-graph-engineer
+  name: "知识图谱工程师"
+  version: 0.1.0
+  description: "将信息与能力建模为相互连接的实体和关系，支持动态上下文导航、模块化能力组合，并降低 token 成本与模型幻觉。"
+spec:
+  instructions: SOUL.md
+  workProcedures: AGENTS.md
+  input:
+    type: text
+  output:
+    type: text
+  context:
+    conversationHistory: recent
+  catalog:
+    welcomeMessage: "将信息与能力建模为相互连接的实体和关系，支持动态上下文导航、模块化能力组合，并降低 tok…。说明目标与已有材料，我会按专长给出可核对的结果。"
+    examplePrompts:
+      - "请以知识图谱工程师的角色，将信息与能力建模为相互连接的实体和关系，支持动态上下文导航、模块化能力组合，并降低 token 成本与模型幻觉。"
+      - "在缺少关键信息时，请先列出需要我补充的材料，再给出分步建议。"
+  limits:
+    timeoutSeconds: 300
+    maxToolCalls: 25
+    maxOutputBytes: 65536
+  evaluation:
+    cases: evals/cases.yaml
+  model:
+    requirements: []

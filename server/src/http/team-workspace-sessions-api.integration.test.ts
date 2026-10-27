@@ -6,6 +6,7 @@ import type { RequestIdentity } from '../modules/identity/types.ts'
 import { PostgresAuthorizationService } from '../modules/authorization/postgres-authorization-service.ts'
 import type { DatabaseClient } from '../infrastructure/postgres/database.ts'
 import { createThrowawayDatabase, type ThrowawayDatabase } from '../infrastructure/postgres/test-database.ts'
+import { bindTestWorkspaceNotificationRecipients } from '../infrastructure/postgres/workspace-notification-recipient-test-fixture.ts'
 import { PostgresConversationRepository } from '../modules/workbench/application/postgres-conversation-repository.ts'
 import { Router } from './router.ts'
 import { registerConversationRoutes } from './workbench/conversation-routes.ts'
@@ -14,6 +15,7 @@ const tenantId = 'tenant-dsh-work'
 const versionId = 'agent-version-dsh-work-assistant-1'
 
 let database: DatabaseClient
+let unbindNotificationRecipients: (() => void) | undefined
 let throwaway: ThrowawayDatabase
 let conversations: PostgresConversationRepository
 let server: Server
@@ -22,6 +24,7 @@ let baseUrl = ''
 before(async () => {
   throwaway = await createThrowawayDatabase({ namePrefix: 'dsh_work_sessions_api_test', maxConnections: 8 })
   database = throwaway.client
+  unbindNotificationRecipients = bindTestWorkspaceNotificationRecipients(database)
   conversations = new PostgresConversationRepository(database)
   const authorization = new PostgresAuthorizationService(database)
   const router = new Router({ authenticateApi: testApiAuthenticator })
@@ -45,6 +48,8 @@ before(async () => {
 
 after(async () => {
   if (server?.listening) await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()))
+  unbindNotificationRecipients?.()
+  unbindNotificationRecipients = undefined
   await throwaway.dispose()
 })
 

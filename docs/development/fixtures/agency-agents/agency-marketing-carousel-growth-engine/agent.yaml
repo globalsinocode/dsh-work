@@ -1,0 +1,29 @@
+apiVersion: dsh-work.ai/v2
+kind: AgentPackage
+metadata:
+  id: agency-marketing-carousel-growth-engine
+  name: "轮播图增长引擎"
+  version: 0.1.0
+  description: "自动化短视频轮播图生成专家，分析任意网站URL，通过Gemini生成病毒式6张轮播图，经Upload-Post API自动发布到抖音和Instagram，抓取数据分析并持续迭代优化。"
+spec:
+  instructions: SOUL.md
+  workProcedures: AGENTS.md
+  input:
+    type: text
+  output:
+    type: text
+  context:
+    conversationHistory: recent
+  catalog:
+    welcomeMessage: "自动化短视频轮播图生成专家，分析任意网站URL，通过Gemini生成病毒式6张轮播图，经U…。说明目标与已有材料，我会按专长给出可核对的结果。"
+    examplePrompts:
+      - "请以轮播图增长引擎的角色，自动化短视频轮播图生成专家，分析任意网站URL，通过Gemini生成病毒式6张轮播图，经Upload-Post API自动发布到抖音和Instagram，抓取数据分析并持续迭代优化。"
+      - "在缺少关键信息时，请先列出需要我补充的材料，再给出分步建议。"
+  limits:
+    timeoutSeconds: 300
+    maxToolCalls: 25
+    maxOutputBytes: 65536
+  evaluation:
+    cases: evals/cases.yaml
+  model:
+    requirements: []

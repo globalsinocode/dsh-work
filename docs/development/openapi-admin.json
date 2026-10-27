@@ -173,6 +173,44 @@
         "responses": { "200": { "$ref": "#/components/responses/Ok" } }
       }
     },
+    "/experience-iterations/agents/{agentId}/experiences": {
+      "get": {
+        "operationId": "listAgentExperiences",
+        "summary": "查询指定 Agent 的已发布经验及当前版本",
+        "parameters": [
+          { "name": "agentId", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": { "200": { "$ref": "#/components/responses/Ok" } }
+      }
+    },
+    "/experience-iterations/agents/{agentId}/experiences/{entryId}/current": {
+      "put": {
+        "operationId": "setAgentExperienceVersion",
+        "summary": "停用、启用或回滚 Agent 的当前经验版本",
+        "parameters": [
+          { "name": "agentId", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "entryId", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["versionId", "expectedVersionId", "reason"],
+                "properties": {
+                  "versionId": { "type": ["string", "null"], "minLength": 1, "maxLength": 128 },
+                  "expectedVersionId": { "type": ["string", "null"], "minLength": 1, "maxLength": 128 },
+                  "reason": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "responses": { "200": { "$ref": "#/components/responses/Ok" } }
+      }
+    },
     "/experience-iterations/applications": {
       "get": {
         "operationId": "listExperienceIterationApplications",
@@ -365,6 +403,21 @@
           "$ref": "#/components/parameters/AgentId"
         }
       ],
+      "get": {
+        "operationId": "getAdminAgentDetail",
+        "summary": "查询 Agent 详情与当前发布状态（验证与发布页入口）",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      },
       "patch": {
         "operationId": "setAgentWorkspaceJoin",
         "summary": "平台治理开关：允许或禁止该 Agent 加入团队空间；关闭后不再出现在团队空间「添加 Agent」候选",
@@ -424,6 +477,33 @@
             "$ref": "#/components/responses/Ok"
           },
           "404": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/agents/{agentId}/runs": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/AgentId"
+        },
+        {
+          "name": "limit",
+          "in": "query",
+          "required": false,
+          "schema": {
+            "type": "integer"
+          }
+        }
+      ],
+      "get": {
+        "operationId": "listAgentRecentRuns",
+        "summary": "查询 Agent 最近运行记录（验证与发布页历史）",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "403": {
             "$ref": "#/components/responses/Error"
           }
         }
@@ -495,6 +575,112 @@
             "$ref": "#/components/responses/Ok"
           },
           "404": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/agents/{agentId}/validations/{validationId}/cases/{caseId}/rerun": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/AgentId"
+        },
+        {
+          "name": "validationId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "caseId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "post": {
+        "operationId": "rerunAgentValidationCase",
+        "summary": "重跑单个验证案例",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/agents/{agentId}/validations/{validationId}/cases/{caseId}/verdict": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/AgentId"
+        },
+        {
+          "name": "validationId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "caseId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "post": {
+        "operationId": "judgeAgentValidationCase",
+        "summary": "登记单个验证案例的判定（不通过必须填写原因）",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "verdict"
+                ],
+                "properties": {
+                  "verdict": {
+                    "type": "string",
+                    "enum": [
+                      "passed",
+                      "failed"
+                    ]
+                  },
+                  "note": {
+                    "type": "string",
+                    "maxLength": 2000
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
             "$ref": "#/components/responses/Error"
           }
         }

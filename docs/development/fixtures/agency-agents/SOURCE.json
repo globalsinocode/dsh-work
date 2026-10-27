@@ -1,0 +1,2659 @@
+{
+  "upstream": "MichengAI/dsh-agency-agents",
+  "commit": "d3485d03d0bd728cce6d1b5b232059ac96a30623",
+  "personaLicense": "MIT",
+  "personaOrigin": "https://github.com/msitarzewski/agency-agents",
+  "pluginLicense": "Apache-2.0",
+  "convertedFor": "dsh-work AgentPackage dsh-work.ai/v2",
+  "expertCount": 331,
+  "experts": [
+    {
+      "id": "agency-academic-anthropologist",
+      "division": "academic",
+      "sourcePath": "assets/agency-agents-zh/academic/academic-anthropologist.md",
+      "frontmatterName": "人类学家",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-academic-geographer",
+      "division": "academic",
+      "sourcePath": "assets/agency-agents-zh/academic/academic-geographer.md",
+      "frontmatterName": "地理学家",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-academic-historian",
+      "division": "academic",
+      "sourcePath": "assets/agency-agents-zh/academic/academic-historian.md",
+      "frontmatterName": "历史学家",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-academic-narratologist",
+      "division": "academic",
+      "sourcePath": "assets/agency-agents-zh/academic/academic-narratologist.md",
+      "frontmatterName": "叙事学家",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-academic-psychologist",
+      "division": "academic",
+      "sourcePath": "assets/agency-agents-zh/academic/academic-psychologist.md",
+      "frontmatterName": "心理学家",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-academic-statistician",
+      "division": "academic",
+      "sourcePath": "assets/agency-agents-zh/academic/academic-statistician.md",
+      "frontmatterName": "统计学家",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-academic-study-planner",
+      "division": "academic",
+      "sourcePath": "assets/agency-agents-zh/academic/academic-study-planner.md",
+      "frontmatterName": "学习规划师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-chief-executive-officer",
+      "division": "company",
+      "sourcePath": "assets/agency-agents-zh/company/chief-executive-officer.md",
+      "frontmatterName": "首席执行官（CEO）",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-chief-marketing-officer",
+      "division": "company",
+      "sourcePath": "assets/agency-agents-zh/company/chief-marketing-officer.md",
+      "frontmatterName": "首席营销官（CMO）",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-chief-of-staff",
+      "division": "company",
+      "sourcePath": "assets/agency-agents-zh/company/chief-of-staff.md",
+      "frontmatterName": "幕僚长（Chief of Staff）",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-chief-operating-officer",
+      "division": "company",
+      "sourcePath": "assets/agency-agents-zh/company/chief-operating-officer.md",
+      "frontmatterName": "首席运营官（COO）",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-chief-product-officer",
+      "division": "company",
+      "sourcePath": "assets/agency-agents-zh/company/chief-product-officer.md",
+      "frontmatterName": "首席产品官（CPO）",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-chief-technology-officer",
+      "division": "company",
+      "sourcePath": "assets/agency-agents-zh/company/chief-technology-officer.md",
+      "frontmatterName": "首席技术官（CTO）",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-design-brand-guardian",
+      "division": "design",
+      "sourcePath": "assets/agency-agents-zh/design/design-brand-guardian.md",
+      "frontmatterName": "品牌守护者",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-design-image-prompt-engineer",
+      "division": "design",
+      "sourcePath": "assets/agency-agents-zh/design/design-image-prompt-engineer.md",
+      "frontmatterName": "图像提示词工程师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-design-inclusive-visuals-specialist",
+      "division": "design",
+      "sourcePath": "assets/agency-agents-zh/design/design-inclusive-visuals-specialist.md",
+      "frontmatterName": "包容性视觉专家",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-design-persona-walkthrough",
+      "division": "design",
+      "sourcePath": "assets/agency-agents-zh/design/design-persona-walkthrough.md",
+      "frontmatterName": "Persona 走查专家",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-design-ui-designer",
+      "division": "design",
+      "sourcePath": "assets/agency-agents-zh/design/design-ui-designer.md",
+      "frontmatterName": "UI 设计师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-design-ui-finish-gate-reviewer",
+      "division": "design",
+      "sourcePath": "assets/agency-agents-zh/design/design-ui-finish-gate-reviewer.md",
+      "frontmatterName": "UI 视觉验收设计师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-design-ux-architect",
+      "division": "design",
+      "sourcePath": "assets/agency-agents-zh/design/design-ux-architect.md",
+      "frontmatterName": "UX 架构师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-design-ux-researcher",
+      "division": "design",
+      "sourcePath": "assets/agency-agents-zh/design/design-ux-researcher.md",
+      "frontmatterName": "UX 研究员",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-design-video-prompt-engineer",
+      "division": "design",
+      "sourcePath": "assets/agency-agents-zh/design/design-video-prompt-engineer.md",
+      "frontmatterName": "视频提示词工程师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-design-visual-storyteller",
+      "division": "design",
+      "sourcePath": "assets/agency-agents-zh/design/design-visual-storyteller.md",
+      "frontmatterName": "视觉叙事师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-design-whimsy-injector",
+      "division": "design",
+      "sourcePath": "assets/agency-agents-zh/design/design-whimsy-injector.md",
+      "frontmatterName": "趣味注入师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-engineering-ai-data-remediation-engineer",
+      "division": "engineering",
+      "sourcePath": "assets/agency-agents-zh/engineering/engineering-ai-data-remediation-engineer.md",
+      "frontmatterName": "AI 数据修复工程师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-engineering-ai-engineer",
+      "division": "engineering",
+      "sourcePath": "assets/agency-agents-zh/engineering/engineering-ai-engineer.md",
+      "frontmatterName": "AI 工程师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-engineering-api-platform-engineer",
+      "division": "engineering",
+      "sourcePath": "assets/agency-agents-zh/engineering/engineering-api-platform-engineer.md",
+      "frontmatterName": "API 平台工程师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-engineering-ats-validator-architect",
+      "division": "engineering",
+      "sourcePath": "assets/agency-agents-zh/engineering/engineering-ats-validator-architect.md",
+      "frontmatterName": "ATS 简历校验架构师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-engineering-autonomous-optimizatio-b7a6d9",
+      "division": "engineering",
+      "sourcePath": "assets/agency-agents-zh/engineering/engineering-autonomous-optimization-architect.md",
+      "frontmatterName": "自主优化架构师",
+      "idTruncated": true,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-engineering-backend-architect",
+      "division": "engineering",
+      "sourcePath": "assets/agency-agents-zh/engineering/engineering-backend-architect.md",
+      "frontmatterName": "后端架构师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-engineering-china-network-engineer",
+      "division": "engineering",
+      "sourcePath": "assets/agency-agents-zh/engineering/engineering-china-network-engineer.md",
+      "frontmatterName": "国内网络架构工程师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-engineering-cms-developer",
+      "division": "engineering",
+      "sourcePath": "assets/agency-agents-zh/engineering/engineering-cms-developer.md",
+      "frontmatterName": "CMS 开发者",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-engineering-code-reviewer",
+      "division": "engineering",
+      "sourcePath": "assets/agency-agents-zh/engineering/engineering-code-reviewer.md",
+      "frontmatterName": "代码审查员",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-engineering-codebase-onboarding-engineer",
+      "division": "engineering",
+      "sourcePath": "assets/agency-agents-zh/engineering/engineering-codebase-onboarding-engineer.md",
+      "frontmatterName": "代码库入职引导工程师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-engineering-data-engineer",
+      "division": "engineering",
+      "sourcePath": "assets/agency-agents-zh/engineering/engineering-data-engineer.md",
+      "frontmatterName": "数据工程师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-engineering-data-visualization-engineer",
+      "division": "engineering",
+      "sourcePath": "assets/agency-agents-zh/engineering/engineering-data-visualization-engineer.md",
+      "frontmatterName": "数据可视化工程师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-engineering-database-optimizer",
+      "division": "engineering",
+      "sourcePath": "assets/agency-agents-zh/engineering/engineering-database-optimizer.md",
+      "frontmatterName": "数据库优化师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-engineering-database-reliability-engineer",
+      "division": "engineering",
+      "sourcePath": "assets/agency-agents-zh/engineering/engineering-database-reliability-engineer.md",
+      "frontmatterName": "数据库可靠性工程师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-engineering-desktop-app-engineer",
+      "division": "engineering",
+      "sourcePath": "assets/agency-agents-zh/engineering/engineering-desktop-app-engineer.md",
+      "frontmatterName": "桌面应用工程师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-engineering-developer-tooling-engineer",
+      "division": "engineering",
+      "sourcePath": "assets/agency-agents-zh/engineering/engineering-developer-tooling-engineer.md",
+      "frontmatterName": "开发者工具工程师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-engineering-devops-automator",
+      "division": "engineering",
+      "sourcePath": "assets/agency-agents-zh/engineering/engineering-devops-automator.md",
+      "frontmatterName": "DevOps 自动化师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-engineering-dingtalk-integration-d-ff5d44",
+      "division": "engineering",
+      "sourcePath": "assets/agency-agents-zh/engineering/engineering-dingtalk-integration-developer.md",
+      "frontmatterName": "钉钉集成开发工程师",
+      "idTruncated": true,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-engineering-drupal-performance",
+      "division": "engineering",
+      "sourcePath": "assets/agency-agents-zh/engineering/engineering-drupal-performance.md",
+      "frontmatterName": "Drupal 性能工程师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-engineering-drupal-shopping-cart",
+      "division": "engineering",
+      "sourcePath": "assets/agency-agents-zh/engineering/engineering-drupal-shopping-cart.md",
+      "frontmatterName": "Drupal 购物车工程师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-engineering-email-intelligence-engineer",
+      "division": "engineering",
+      "sourcePath": "assets/agency-agents-zh/engineering/engineering-email-intelligence-engineer.md",
+      "frontmatterName": "邮件智能工程师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-engineering-embedded-firmware-engineer",
+      "division": "engineering",
+      "sourcePath": "assets/agency-agents-zh/engineering/engineering-embedded-firmware-engineer.md",
+      "frontmatterName": "嵌入式固件工程师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-engineering-embedded-linux-driver--82181c",
+      "division": "engineering",
+      "sourcePath": "assets/agency-agents-zh/engineering/engineering-embedded-linux-driver-engineer.md",
+      "frontmatterName": "嵌入式 Linux 驱动工程师",
+      "idTruncated": true,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-engineering-feishu-integration-developer",
+      "division": "engineering",
+      "sourcePath": "assets/agency-agents-zh/engineering/engineering-feishu-integration-developer.md",
+      "frontmatterName": "飞书集成开发工程师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-engineering-filament-optimization--1a6a92",
+      "division": "engineering",
+      "sourcePath": "assets/agency-agents-zh/engineering/engineering-filament-optimization-specialist.md",
+      "frontmatterName": "Filament 优化专家",
+      "idTruncated": true,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-engineering-finops-engineer",
+      "division": "engineering",
+      "sourcePath": "assets/agency-agents-zh/engineering/engineering-finops-engineer.md",
+      "frontmatterName": "FinOps 工程师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-engineering-fpga-digital-design-engineer",
+      "division": "engineering",
+      "sourcePath": "assets/agency-agents-zh/engineering/engineering-fpga-digital-design-engineer.md",
+      "frontmatterName": "FPGA/ASIC 数字设计工程师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-engineering-frontend-developer",
+      "division": "engineering",
+      "sourcePath": "assets/agency-agents-zh/engineering/engineering-frontend-developer.md",
+      "frontmatterName": "前端开发者",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-engineering-gaussdb-expert",
+      "division": "engineering",
+      "sourcePath": "assets/agency-agents-zh/engineering/engineering-gaussdb-expert.md",
+      "frontmatterName": "GaussDB 专家工程师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-engineering-git-workflow-master",
+      "division": "engineering",
+      "sourcePath": "assets/agency-agents-zh/engineering/engineering-git-workflow-master.md",
+      "frontmatterName": "Git 工作流大师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-engineering-i18n-engineer",
+      "division": "engineering",
+      "sourcePath": "assets/agency-agents-zh/engineering/engineering-i18n-engineer.md",
+      "frontmatterName": "国际化工程师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-engineering-identity-access-engineer",
+      "division": "engineering",
+      "sourcePath": "assets/agency-agents-zh/engineering/engineering-identity-access-engineer.md",
+      "frontmatterName": "身份与访问管理工程师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-engineering-incident-response-commander",
+      "division": "engineering",
+      "sourcePath": "assets/agency-agents-zh/engineering/engineering-incident-response-commander.md",
+      "frontmatterName": "故障响应指挥官",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-engineering-iot-fleet-engineer",
+      "division": "engineering",
+      "sourcePath": "assets/agency-agents-zh/engineering/engineering-iot-fleet-engineer.md",
+      "frontmatterName": "物联网设备工程师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-engineering-iot-solution-architect",
+      "division": "engineering",
+      "sourcePath": "assets/agency-agents-zh/engineering/engineering-iot-solution-architect.md",
+      "frontmatterName": "IoT 方案架构师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-engineering-it-service-manager",
+      "division": "engineering",
+      "sourcePath": "assets/agency-agents-zh/engineering/engineering-it-service-manager.md",
+      "frontmatterName": "IT 服务经理",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-engineering-knowledge-graph-engineer",
+      "division": "engineering",
+      "sourcePath": "assets/agency-agents-zh/engineering/engineering-knowledge-graph-engineer.md",
+      "frontmatterName": "知识图谱工程师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-engineering-llm-post-training-engineer",
+      "division": "engineering",
+      "sourcePath": "assets/agency-agents-zh/engineering/engineering-llm-post-training-engineer.md",
+      "frontmatterName": "LLM 后训练工程师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-engineering-mechanical-design-engineer",
+      "division": "engineering",
+      "sourcePath": "assets/agency-agents-zh/engineering/engineering-mechanical-design-engineer.md",
+      "frontmatterName": "机械设计工程师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-engineering-minimal-change-engineer",
+      "division": "engineering",
+      "sourcePath": "assets/agency-agents-zh/engineering/engineering-minimal-change-engineer.md",
+      "frontmatterName": "最小变更工程师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-engineering-mobile-app-builder",
+      "division": "engineering",
+      "sourcePath": "assets/agency-agents-zh/engineering/engineering-mobile-app-builder.md",
+      "frontmatterName": "移动应用开发者",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-engineering-mobile-release-engineer",
+      "division": "engineering",
+      "sourcePath": "assets/agency-agents-zh/engineering/engineering-mobile-release-engineer.md",
+      "frontmatterName": "移动发布工程师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-engineering-multi-agent-systems-architect",
+      "division": "engineering",
+      "sourcePath": "assets/agency-agents-zh/engineering/engineering-multi-agent-systems-architect.md",
+      "frontmatterName": "多智能体系统架构师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-engineering-network-engineer-china",
+      "division": "engineering",
+      "sourcePath": "assets/agency-agents-zh/engineering/engineering-network-engineer-china.md",
+      "frontmatterName": "国内网络工程师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-engineering-network-engineer",
+      "division": "engineering",
+      "sourcePath": "assets/agency-agents-zh/engineering/engineering-network-engineer.md",
+      "frontmatterName": "网络工程师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-engineering-orgscript-engineer",
+      "division": "engineering",
+      "sourcePath": "assets/agency-agents-zh/engineering/engineering-orgscript-engineer.md",
+      "frontmatterName": "OrgScript 工程师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-engineering-payments-billing-engineer",
+      "division": "engineering",
+      "sourcePath": "assets/agency-agents-zh/engineering/engineering-payments-billing-engineer.md",
+      "frontmatterName": "支付计费工程师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-engineering-pc-host-engineer",
+      "division": "engineering",
+      "sourcePath": "assets/agency-agents-zh/engineering/engineering-pc-host-engineer.md",
+      "frontmatterName": "上位机工程师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-engineering-pdf-engine-architect",
+      "division": "engineering",
+      "sourcePath": "assets/agency-agents-zh/engineering/engineering-pdf-engine-architect.md",
+      "frontmatterName": "PDF 引擎架构师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-engineering-platform-engineer",
+      "division": "engineering",
+      "sourcePath": "assets/agency-agents-zh/engineering/engineering-platform-engineer.md",
+      "frontmatterName": "平台工程师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-engineering-privacy-engineer",
+      "division": "engineering",
+      "sourcePath": "assets/agency-agents-zh/engineering/engineering-privacy-engineer.md",
+      "frontmatterName": "隐私工程师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-engineering-prompt-engineer",
+      "division": "engineering",
+      "sourcePath": "assets/agency-agents-zh/engineering/engineering-prompt-engineer.md",
+      "frontmatterName": "Prompt 工程师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-engineering-rag-pipeline-engineer",
+      "division": "engineering",
+      "sourcePath": "assets/agency-agents-zh/engineering/engineering-rag-pipeline-engineer.md",
+      "frontmatterName": "RAG 管线工程师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-engineering-rapid-prototyper",
+      "division": "engineering",
+      "sourcePath": "assets/agency-agents-zh/engineering/engineering-rapid-prototyper.md",
+      "frontmatterName": "快速原型师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-engineering-realtime-collaboration-815c79",
+      "division": "engineering",
+      "sourcePath": "assets/agency-agents-zh/engineering/engineering-realtime-collaboration-engineer.md",
+      "frontmatterName": "实时协作工程师",
+      "idTruncated": true,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-engineering-rust-refactoring-specialist",
+      "division": "engineering",
+      "sourcePath": "assets/agency-agents-zh/engineering/engineering-rust-refactoring-specialist.md",
+      "frontmatterName": "Rust 重构工程师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-engineering-search-relevance-engineer",
+      "division": "engineering",
+      "sourcePath": "assets/agency-agents-zh/engineering/engineering-search-relevance-engineer.md",
+      "frontmatterName": "搜索相关性工程师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-engineering-section-508-specialist",
+      "division": "engineering",
+      "sourcePath": "assets/agency-agents-zh/engineering/engineering-section-508-specialist.md",
+      "frontmatterName": "无障碍合规工程师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-engineering-security-engineer",
+      "division": "engineering",
+      "sourcePath": "assets/agency-agents-zh/engineering/engineering-security-engineer.md",
+      "frontmatterName": "安全工程师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-engineering-senior-developer",
+      "division": "engineering",
+      "sourcePath": "assets/agency-agents-zh/engineering/engineering-senior-developer.md",
+      "frontmatterName": "高级开发者",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-engineering-servicenow-developer-mentor",
+      "division": "engineering",
+      "sourcePath": "assets/agency-agents-zh/engineering/engineering-servicenow-developer-mentor.md",
+      "frontmatterName": "ServiceNow 平台导师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-engineering-software-architect",
+      "division": "engineering",
+      "sourcePath": "assets/agency-agents-zh/engineering/engineering-software-architect.md",
+      "frontmatterName": "软件架构师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-engineering-solidity-smart-contrac-2715fd",
+      "division": "engineering",
+      "sourcePath": "assets/agency-agents-zh/engineering/engineering-solidity-smart-contract-engineer.md",
+      "frontmatterName": "Solidity 智能合约工程师",
+      "idTruncated": true,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-engineering-sre",
+      "division": "engineering",
+      "sourcePath": "assets/agency-agents-zh/engineering/engineering-sre.md",
+      "frontmatterName": "SRE (站点可靠性工程师)",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-engineering-technical-writer",
+      "division": "engineering",
+      "sourcePath": "assets/agency-agents-zh/engineering/engineering-technical-writer.md",
+      "frontmatterName": "技术文档工程师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-engineering-threat-detection-engineer",
+      "division": "engineering",
+      "sourcePath": "assets/agency-agents-zh/engineering/engineering-threat-detection-engineer.md",
+      "frontmatterName": "威胁检测工程师（工程侧）",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-engineering-universal-document-compiler",
+      "division": "engineering",
+      "sourcePath": "assets/agency-agents-zh/engineering/engineering-universal-document-compiler.md",
+      "frontmatterName": "通用文档编译器架构师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-engineering-uswds-developer",
+      "division": "engineering",
+      "sourcePath": "assets/agency-agents-zh/engineering/engineering-uswds-developer.md",
+      "frontmatterName": "USWDS 开发者",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-engineering-video-streaming-engineer",
+      "division": "engineering",
+      "sourcePath": "assets/agency-agents-zh/engineering/engineering-video-streaming-engineer.md",
+      "frontmatterName": "视频流工程师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-engineering-voice-ai-integration-engineer",
+      "division": "engineering",
+      "sourcePath": "assets/agency-agents-zh/engineering/engineering-voice-ai-integration-engineer.md",
+      "frontmatterName": "语音 AI 集成工程师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-engineering-webassembly-engineer",
+      "division": "engineering",
+      "sourcePath": "assets/agency-agents-zh/engineering/engineering-webassembly-engineer.md",
+      "frontmatterName": "WebAssembly 工程师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-engineering-wechat-mini-program-developer",
+      "division": "engineering",
+      "sourcePath": "assets/agency-agents-zh/engineering/engineering-wechat-mini-program-developer.md",
+      "frontmatterName": "微信小程序开发者",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-engineering-wordpress-performance",
+      "division": "engineering",
+      "sourcePath": "assets/agency-agents-zh/engineering/engineering-wordpress-performance.md",
+      "frontmatterName": "WordPress 性能工程师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-engineering-wordpress-shopping-cart",
+      "division": "engineering",
+      "sourcePath": "assets/agency-agents-zh/engineering/engineering-wordpress-shopping-cart.md",
+      "frontmatterName": "WordPress 购物车工程师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-finance-bookkeeper-controller",
+      "division": "finance",
+      "sourcePath": "assets/agency-agents-zh/finance/finance-bookkeeper-controller.md",
+      "frontmatterName": "簿记与财务总监",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-finance-financial-analyst",
+      "division": "finance",
+      "sourcePath": "assets/agency-agents-zh/finance/finance-financial-analyst.md",
+      "frontmatterName": "财务分析师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-finance-financial-forecaster",
+      "division": "finance",
+      "sourcePath": "assets/agency-agents-zh/finance/finance-financial-forecaster.md",
+      "frontmatterName": "财务预测分析师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-finance-fpa-analyst",
+      "division": "finance",
+      "sourcePath": "assets/agency-agents-zh/finance/finance-fpa-analyst.md",
+      "frontmatterName": "FP&A 分析师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-finance-fraud-detector",
+      "division": "finance",
+      "sourcePath": "assets/agency-agents-zh/finance/finance-fraud-detector.md",
+      "frontmatterName": "金融风控分析师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-finance-hk-stock-compliance-reviewer",
+      "division": "finance",
+      "sourcePath": "assets/agency-agents-zh/finance/finance-hk-stock-compliance-reviewer.md",
+      "frontmatterName": "香港股市合规审查专家",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-finance-investment-researcher",
+      "division": "finance",
+      "sourcePath": "assets/agency-agents-zh/finance/finance-investment-researcher.md",
+      "frontmatterName": "投资研究员",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-finance-invoice-manager",
+      "division": "finance",
+      "sourcePath": "assets/agency-agents-zh/finance/finance-invoice-manager.md",
+      "frontmatterName": "发票管理专家",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-finance-tax-strategist",
+      "division": "finance",
+      "sourcePath": "assets/agency-agents-zh/finance/finance-tax-strategist.md",
+      "frontmatterName": "税务策略师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-blender-addon-engineer",
+      "division": "game-development",
+      "sourcePath": "assets/agency-agents-zh/game-development/blender-addon-engineer.md",
+      "frontmatterName": "Blender 插件工程师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-economy-designer",
+      "division": "game-development",
+      "sourcePath": "assets/agency-agents-zh/game-development/economy-designer.md",
+      "frontmatterName": "经济系统设计师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-game-audio-engineer",
+      "division": "game-development",
+      "sourcePath": "assets/agency-agents-zh/game-development/game-audio-engineer.md",
+      "frontmatterName": "游戏音频工程师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-game-designer",
+      "division": "game-development",
+      "sourcePath": "assets/agency-agents-zh/game-development/game-designer.md",
+      "frontmatterName": "游戏设计师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-godot-gameplay-scripter",
+      "division": "game-development",
+      "sourcePath": "assets/agency-agents-zh/game-development/godot-gameplay-scripter.md",
+      "frontmatterName": "Godot 游戏脚本开发者",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-godot-multiplayer-engineer",
+      "division": "game-development",
+      "sourcePath": "assets/agency-agents-zh/game-development/godot-multiplayer-engineer.md",
+      "frontmatterName": "Godot 多人游戏工程师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-godot-shader-developer",
+      "division": "game-development",
+      "sourcePath": "assets/agency-agents-zh/game-development/godot-shader-developer.md",
+      "frontmatterName": "Godot Shader 开发者",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-level-designer",
+      "division": "game-development",
+      "sourcePath": "assets/agency-agents-zh/game-development/level-designer.md",
+      "frontmatterName": "关卡设计师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-narrative-designer",
+      "division": "game-development",
+      "sourcePath": "assets/agency-agents-zh/game-development/narrative-designer.md",
+      "frontmatterName": "叙事设计师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-roblox-avatar-creator",
+      "division": "game-development",
+      "sourcePath": "assets/agency-agents-zh/game-development/roblox-avatar-creator.md",
+      "frontmatterName": "Roblox 虚拟形象创作者",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-roblox-experience-designer",
+      "division": "game-development",
+      "sourcePath": "assets/agency-agents-zh/game-development/roblox-experience-designer.md",
+      "frontmatterName": "Roblox 体验设计师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-roblox-systems-scripter",
+      "division": "game-development",
+      "sourcePath": "assets/agency-agents-zh/game-development/roblox-systems-scripter.md",
+      "frontmatterName": "Roblox 系统脚本工程师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-technical-artist",
+      "division": "game-development",
+      "sourcePath": "assets/agency-agents-zh/game-development/technical-artist.md",
+      "frontmatterName": "技术美术",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-unity-architect",
+      "division": "game-development",
+      "sourcePath": "assets/agency-agents-zh/game-development/unity-architect.md",
+      "frontmatterName": "Unity 架构师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-unity-editor-tool-developer",
+      "division": "game-development",
+      "sourcePath": "assets/agency-agents-zh/game-development/unity-editor-tool-developer.md",
+      "frontmatterName": "Unity 编辑器工具开发者",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-unity-multiplayer-engineer",
+      "division": "game-development",
+      "sourcePath": "assets/agency-agents-zh/game-development/unity-multiplayer-engineer.md",
+      "frontmatterName": "Unity 多人游戏工程师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-unity-shader-graph-artist",
+      "division": "game-development",
+      "sourcePath": "assets/agency-agents-zh/game-development/unity-shader-graph-artist.md",
+      "frontmatterName": "Unity Shader Graph 美术师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-unreal-multiplayer-architect",
+      "division": "game-development",
+      "sourcePath": "assets/agency-agents-zh/game-development/unreal-multiplayer-architect.md",
+      "frontmatterName": "Unreal 多人游戏架构师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-unreal-systems-engineer",
+      "division": "game-development",
+      "sourcePath": "assets/agency-agents-zh/game-development/unreal-systems-engineer.md",
+      "frontmatterName": "Unreal 系统工程师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-unreal-technical-artist",
+      "division": "game-development",
+      "sourcePath": "assets/agency-agents-zh/game-development/unreal-technical-artist.md",
+      "frontmatterName": "Unreal 技术美术",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-unreal-world-builder",
+      "division": "game-development",
+      "sourcePath": "assets/agency-agents-zh/game-development/unreal-world-builder.md",
+      "frontmatterName": "Unreal 世界构建师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-gis-3d-scene-developer",
+      "division": "gis",
+      "sourcePath": "assets/agency-agents-zh/gis/gis-3d-scene-developer.md",
+      "frontmatterName": "三维场景开发者",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-gis-analyst",
+      "division": "gis",
+      "sourcePath": "assets/agency-agents-zh/gis/gis-analyst.md",
+      "frontmatterName": "GIS 分析师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-gis-bim-specialist",
+      "division": "gis",
+      "sourcePath": "assets/agency-agents-zh/gis/gis-bim-specialist.md",
+      "frontmatterName": "BIM/GIS 专家",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-gis-cartography-designer",
+      "division": "gis",
+      "sourcePath": "assets/agency-agents-zh/gis/gis-cartography-designer.md",
+      "frontmatterName": "地图制图设计师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-gis-drone-reality-mapping",
+      "division": "gis",
+      "sourcePath": "assets/agency-agents-zh/gis/gis-drone-reality-mapping.md",
+      "frontmatterName": "无人机实景测绘专家",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-gis-geoai-ml-engineer",
+      "division": "gis",
+      "sourcePath": "assets/agency-agents-zh/gis/gis-geoai-ml-engineer.md",
+      "frontmatterName": "GeoAI/ML 工程师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-gis-geoprocessing-specialist",
+      "division": "gis",
+      "sourcePath": "assets/agency-agents-zh/gis/gis-geoprocessing-specialist.md",
+      "frontmatterName": "地理处理专家",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-gis-qa-engineer",
+      "division": "gis",
+      "sourcePath": "assets/agency-agents-zh/gis/gis-qa-engineer.md",
+      "frontmatterName": "GIS 质检工程师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-gis-solution-engineer",
+      "division": "gis",
+      "sourcePath": "assets/agency-agents-zh/gis/gis-solution-engineer.md",
+      "frontmatterName": "解决方案工程师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-gis-spatial-data-engineer",
+      "division": "gis",
+      "sourcePath": "assets/agency-agents-zh/gis/gis-spatial-data-engineer.md",
+      "frontmatterName": "空间数据工程师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-gis-spatial-data-scientist",
+      "division": "gis",
+      "sourcePath": "assets/agency-agents-zh/gis/gis-spatial-data-scientist.md",
+      "frontmatterName": "空间数据科学家",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-gis-technical-consultant",
+      "division": "gis",
+      "sourcePath": "assets/agency-agents-zh/gis/gis-technical-consultant.md",
+      "frontmatterName": "技术顾问",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-gis-web-gis-developer",
+      "division": "gis",
+      "sourcePath": "assets/agency-agents-zh/gis/gis-web-gis-developer.md",
+      "frontmatterName": "Web GIS 开发工程师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-healthcare-clinical-evidence-agent",
+      "division": "healthcare",
+      "sourcePath": "assets/agency-agents-zh/healthcare/healthcare-clinical-evidence-agent.md",
+      "frontmatterName": "循证医学研究员",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-healthcare-innovation-strategist",
+      "division": "healthcare",
+      "sourcePath": "assets/agency-agents-zh/healthcare/healthcare-innovation-strategist.md",
+      "frontmatterName": "医疗创新战略顾问",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-healthcare-sovereign-health-systems-agent",
+      "division": "healthcare",
+      "sourcePath": "assets/agency-agents-zh/healthcare/healthcare-sovereign-health-systems-agent.md",
+      "frontmatterName": "医疗系统治理顾问",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-hr-performance-reviewer",
+      "division": "hr",
+      "sourcePath": "assets/agency-agents-zh/hr/hr-performance-reviewer.md",
+      "frontmatterName": "绩效管理专家",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-hr-recruiter",
+      "division": "hr",
+      "sourcePath": "assets/agency-agents-zh/hr/hr-recruiter.md",
+      "frontmatterName": "招聘专家（HR 全流程）",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-legal-contract-reviewer",
+      "division": "legal",
+      "sourcePath": "assets/agency-agents-zh/legal/legal-contract-reviewer.md",
+      "frontmatterName": "合同审查专家",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-legal-policy-writer",
+      "division": "legal",
+      "sourcePath": "assets/agency-agents-zh/legal/legal-policy-writer.md",
+      "frontmatterName": "制度文件撰写专家",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-marketing-aeo-foundations",
+      "division": "marketing",
+      "sourcePath": "assets/agency-agents-zh/marketing/marketing-aeo-foundations.md",
+      "frontmatterName": "AEO 基础架构师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-marketing-agentic-search-optimizer",
+      "division": "marketing",
+      "sourcePath": "assets/agency-agents-zh/marketing/marketing-agentic-search-optimizer.md",
+      "frontmatterName": "智能搜索优化师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-marketing-ai-citation-strategist",
+      "division": "marketing",
+      "sourcePath": "assets/agency-agents-zh/marketing/marketing-ai-citation-strategist.md",
+      "frontmatterName": "AI 引文策略师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-marketing-app-store-optimizer",
+      "division": "marketing",
+      "sourcePath": "assets/agency-agents-zh/marketing/marketing-app-store-optimizer.md",
+      "frontmatterName": "应用商店优化师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-marketing-baidu-seo-specialist",
+      "division": "marketing",
+      "sourcePath": "assets/agency-agents-zh/marketing/marketing-baidu-seo-specialist.md",
+      "frontmatterName": "百度 SEO 专家",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-marketing-bilibili-content-strategist",
+      "division": "marketing",
+      "sourcePath": "assets/agency-agents-zh/marketing/marketing-bilibili-content-strategist.md",
+      "frontmatterName": "B站内容运营专家",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-marketing-bilibili-strategist",
+      "division": "marketing",
+      "sourcePath": "assets/agency-agents-zh/marketing/marketing-bilibili-strategist.md",
+      "frontmatterName": "B站内容策略师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-marketing-book-co-author",
+      "division": "marketing",
+      "sourcePath": "assets/agency-agents-zh/marketing/marketing-book-co-author.md",
+      "frontmatterName": "图书联合作者",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-marketing-carousel-growth-engine",
+      "division": "marketing",
+      "sourcePath": "assets/agency-agents-zh/marketing/marketing-carousel-growth-engine.md",
+      "frontmatterName": "轮播图增长引擎",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-marketing-china-ecommerce-operator",
+      "division": "marketing",
+      "sourcePath": "assets/agency-agents-zh/marketing/marketing-china-ecommerce-operator.md",
+      "frontmatterName": "中国电商运营专家",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-marketing-china-market-localizatio-46291e",
+      "division": "marketing",
+      "sourcePath": "assets/agency-agents-zh/marketing/marketing-china-market-localization-strategist.md",
+      "frontmatterName": "中国市场本地化策略师",
+      "idTruncated": true,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-marketing-content-creator",
+      "division": "marketing",
+      "sourcePath": "assets/agency-agents-zh/marketing/marketing-content-creator.md",
+      "frontmatterName": "内容创作者",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-marketing-cross-border-ecommerce",
+      "division": "marketing",
+      "sourcePath": "assets/agency-agents-zh/marketing/marketing-cross-border-ecommerce.md",
+      "frontmatterName": "跨境电商运营专家",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-marketing-daily-news-briefing",
+      "division": "marketing",
+      "sourcePath": "assets/agency-agents-zh/marketing/marketing-daily-news-briefing.md",
+      "frontmatterName": "新闻情报官",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-marketing-developer-community-builder",
+      "division": "marketing",
+      "sourcePath": "assets/agency-agents-zh/marketing/marketing-developer-community-builder.md",
+      "frontmatterName": "开发者社区建设专家",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-marketing-douyin-strategist",
+      "division": "marketing",
+      "sourcePath": "assets/agency-agents-zh/marketing/marketing-douyin-strategist.md",
+      "frontmatterName": "抖音策略师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-marketing-ecommerce-operator",
+      "division": "marketing",
+      "sourcePath": "assets/agency-agents-zh/marketing/marketing-ecommerce-operator.md",
+      "frontmatterName": "电商运营师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-marketing-email-strategist",
+      "division": "marketing",
+      "sourcePath": "assets/agency-agents-zh/marketing/marketing-email-strategist.md",
+      "frontmatterName": "邮件营销策略师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-marketing-global-podcast-strategist",
+      "division": "marketing",
+      "sourcePath": "assets/agency-agents-zh/marketing/marketing-global-podcast-strategist.md",
+      "frontmatterName": "全球播客策略师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-marketing-growth-hacker",
+      "division": "marketing",
+      "sourcePath": "assets/agency-agents-zh/marketing/marketing-growth-hacker.md",
+      "frontmatterName": "增长黑客",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-marketing-instagram-curator",
+      "division": "marketing",
+      "sourcePath": "assets/agency-agents-zh/marketing/marketing-instagram-curator.md",
+      "frontmatterName": "Instagram 策展师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-marketing-knowledge-commerce-strategist",
+      "division": "marketing",
+      "sourcePath": "assets/agency-agents-zh/marketing/marketing-knowledge-commerce-strategist.md",
+      "frontmatterName": "知识付费产品策划师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-marketing-kuaishou-strategist",
+      "division": "marketing",
+      "sourcePath": "assets/agency-agents-zh/marketing/marketing-kuaishou-strategist.md",
+      "frontmatterName": "快手策略师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-marketing-linkedin-content-creator",
+      "division": "marketing",
+      "sourcePath": "assets/agency-agents-zh/marketing/marketing-linkedin-content-creator.md",
+      "frontmatterName": "LinkedIn 内容创作专家",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-marketing-livestream-commerce-coach",
+      "division": "marketing",
+      "sourcePath": "assets/agency-agents-zh/marketing/marketing-livestream-commerce-coach.md",
+      "frontmatterName": "直播电商主播教练",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-marketing-multi-platform-publisher",
+      "division": "marketing",
+      "sourcePath": "assets/agency-agents-zh/marketing/marketing-multi-platform-publisher.md",
+      "frontmatterName": "多平台发布编排官",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-marketing-podcast-strategist",
+      "division": "marketing",
+      "sourcePath": "assets/agency-agents-zh/marketing/marketing-podcast-strategist.md",
+      "frontmatterName": "播客内容策略师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-marketing-pr-communications-manager",
+      "division": "marketing",
+      "sourcePath": "assets/agency-agents-zh/marketing/marketing-pr-communications-manager.md",
+      "frontmatterName": "PR 与传播经理",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-marketing-private-domain-operator",
+      "division": "marketing",
+      "sourcePath": "assets/agency-agents-zh/marketing/marketing-private-domain-operator.md",
+      "frontmatterName": "私域流量运营师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-marketing-reddit-community-builder",
+      "division": "marketing",
+      "sourcePath": "assets/agency-agents-zh/marketing/marketing-reddit-community-builder.md",
+      "frontmatterName": "Reddit 社区运营",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-marketing-search-growth-orchestrator",
+      "division": "marketing",
+      "sourcePath": "assets/agency-agents-zh/marketing/marketing-search-growth-orchestrator.md",
+      "frontmatterName": "搜索增长编排器",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-marketing-seo-specialist",
+      "division": "marketing",
+      "sourcePath": "assets/agency-agents-zh/marketing/marketing-seo-specialist.md",
+      "frontmatterName": "SEO专家",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-marketing-short-video-editing-coach",
+      "division": "marketing",
+      "sourcePath": "assets/agency-agents-zh/marketing/marketing-short-video-editing-coach.md",
+      "frontmatterName": "短视频剪辑指导师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-marketing-social-media-strategist",
+      "division": "marketing",
+      "sourcePath": "assets/agency-agents-zh/marketing/marketing-social-media-strategist.md",
+      "frontmatterName": "社交媒体策略师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-marketing-tiktok-strategist",
+      "division": "marketing",
+      "sourcePath": "assets/agency-agents-zh/marketing/marketing-tiktok-strategist.md",
+      "frontmatterName": "TikTok 策略师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-marketing-twitter-engager",
+      "division": "marketing",
+      "sourcePath": "assets/agency-agents-zh/marketing/marketing-twitter-engager.md",
+      "frontmatterName": "Twitter 互动官",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-marketing-video-optimization-specialist",
+      "division": "marketing",
+      "sourcePath": "assets/agency-agents-zh/marketing/marketing-video-optimization-specialist.md",
+      "frontmatterName": "视频优化专家",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-marketing-wechat-official-account",
+      "division": "marketing",
+      "sourcePath": "assets/agency-agents-zh/marketing/marketing-wechat-official-account.md",
+      "frontmatterName": "微信公众号管理",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-marketing-wechat-operator",
+      "division": "marketing",
+      "sourcePath": "assets/agency-agents-zh/marketing/marketing-wechat-operator.md",
+      "frontmatterName": "微信公众号运营",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-marketing-weibo-strategist",
+      "division": "marketing",
+      "sourcePath": "assets/agency-agents-zh/marketing/marketing-weibo-strategist.md",
+      "frontmatterName": "微博运营策略师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-marketing-weixin-channels-strategist",
+      "division": "marketing",
+      "sourcePath": "assets/agency-agents-zh/marketing/marketing-weixin-channels-strategist.md",
+      "frontmatterName": "微信视频号运营策略师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-marketing-x-twitter-intelligence-analyst",
+      "division": "marketing",
+      "sourcePath": "assets/agency-agents-zh/marketing/marketing-x-twitter-intelligence-analyst.md",
+      "frontmatterName": "X/Twitter 情报分析师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-marketing-xiaohongshu-operator",
+      "division": "marketing",
+      "sourcePath": "assets/agency-agents-zh/marketing/marketing-xiaohongshu-operator.md",
+      "frontmatterName": "小红书运营专家",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-marketing-xiaohongshu-specialist",
+      "division": "marketing",
+      "sourcePath": "assets/agency-agents-zh/marketing/marketing-xiaohongshu-specialist.md",
+      "frontmatterName": "小红书专家",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-marketing-zhihu-strategist",
+      "division": "marketing",
+      "sourcePath": "assets/agency-agents-zh/marketing/marketing-zhihu-strategist.md",
+      "frontmatterName": "知乎策略师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-paid-media-auditor",
+      "division": "paid-media",
+      "sourcePath": "assets/agency-agents-zh/paid-media/paid-media-auditor.md",
+      "frontmatterName": "付费媒体审计师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-paid-media-creative-strategist",
+      "division": "paid-media",
+      "sourcePath": "assets/agency-agents-zh/paid-media/paid-media-creative-strategist.md",
+      "frontmatterName": "广告创意策略师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-paid-media-paid-social-strategist",
+      "division": "paid-media",
+      "sourcePath": "assets/agency-agents-zh/paid-media/paid-media-paid-social-strategist.md",
+      "frontmatterName": "社交广告策略师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-paid-media-ppc-strategist",
+      "division": "paid-media",
+      "sourcePath": "assets/agency-agents-zh/paid-media/paid-media-ppc-strategist.md",
+      "frontmatterName": "PPC 竞价策略师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-paid-media-programmatic-buyer",
+      "division": "paid-media",
+      "sourcePath": "assets/agency-agents-zh/paid-media/paid-media-programmatic-buyer.md",
+      "frontmatterName": "程序化广告采买专家",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-paid-media-search-query-analyst",
+      "division": "paid-media",
+      "sourcePath": "assets/agency-agents-zh/paid-media/paid-media-search-query-analyst.md",
+      "frontmatterName": "搜索词分析师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-paid-media-tracking-specialist",
+      "division": "paid-media",
+      "sourcePath": "assets/agency-agents-zh/paid-media/paid-media-tracking-specialist.md",
+      "frontmatterName": "追踪与归因专家",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-product-behavioral-nudge-engine",
+      "division": "product",
+      "sourcePath": "assets/agency-agents-zh/product/product-behavioral-nudge-engine.md",
+      "frontmatterName": "行为助推引擎",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-product-dx-engineer",
+      "division": "product",
+      "sourcePath": "assets/agency-agents-zh/product/product-dx-engineer.md",
+      "frontmatterName": "开发者体验工程师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-product-feedback-synthesizer",
+      "division": "product",
+      "sourcePath": "assets/agency-agents-zh/product/product-feedback-synthesizer.md",
+      "frontmatterName": "反馈分析师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-product-manager",
+      "division": "product",
+      "sourcePath": "assets/agency-agents-zh/product/product-manager.md",
+      "frontmatterName": "产品经理（PM）",
+      "idTruncated": false,
+      "upstreamToolsDeclared": "WebFetch, WebSearch, Read, Write, Edit"
+    },
+    {
+      "id": "agency-product-sprint-prioritizer",
+      "division": "product",
+      "sourcePath": "assets/agency-agents-zh/product/product-sprint-prioritizer.md",
+      "frontmatterName": "Sprint 排序师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-product-trend-researcher",
+      "division": "product",
+      "sourcePath": "assets/agency-agents-zh/product/product-trend-researcher.md",
+      "frontmatterName": "趋势研究员",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-project-management-experiment-tracker",
+      "division": "project-management",
+      "sourcePath": "assets/agency-agents-zh/project-management/project-management-experiment-tracker.md",
+      "frontmatterName": "实验追踪员",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-project-management-jira-workflow-steward",
+      "division": "project-management",
+      "sourcePath": "assets/agency-agents-zh/project-management/project-management-jira-workflow-steward.md",
+      "frontmatterName": "Jira工作流管家",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-project-management-meeting-notes-s-15cb61",
+      "division": "project-management",
+      "sourcePath": "assets/agency-agents-zh/project-management/project-management-meeting-notes-specialist.md",
+      "frontmatterName": "会议纪要专家",
+      "idTruncated": true,
+      "upstreamToolsDeclared": "Read, Write, Edit"
+    },
+    {
+      "id": "agency-project-management-project-shepherd",
+      "division": "project-management",
+      "sourcePath": "assets/agency-agents-zh/project-management/project-management-project-shepherd.md",
+      "frontmatterName": "项目牧羊人",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-project-management-studio-operations",
+      "division": "project-management",
+      "sourcePath": "assets/agency-agents-zh/project-management/project-management-studio-operations.md",
+      "frontmatterName": "工作室运营",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-project-management-studio-producer",
+      "division": "project-management",
+      "sourcePath": "assets/agency-agents-zh/project-management/project-management-studio-producer.md",
+      "frontmatterName": "工作室制片人",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-project-manager-senior",
+      "division": "project-management",
+      "sourcePath": "assets/agency-agents-zh/project-management/project-manager-senior.md",
+      "frontmatterName": "高级项目经理",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-research-synthesist",
+      "division": "research",
+      "sourcePath": "assets/agency-agents-zh/research/research-synthesist.md",
+      "frontmatterName": "研究证据综合专家",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-sales-account-strategist",
+      "division": "sales",
+      "sourcePath": "assets/agency-agents-zh/sales/sales-account-strategist.md",
+      "frontmatterName": "客户拓展策略师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-sales-coach",
+      "division": "sales",
+      "sourcePath": "assets/agency-agents-zh/sales/sales-coach.md",
+      "frontmatterName": "销售教练",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-sales-deal-strategist",
+      "division": "sales",
+      "sourcePath": "assets/agency-agents-zh/sales/sales-deal-strategist.md",
+      "frontmatterName": "赢单策略师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-sales-discovery-coach",
+      "division": "sales",
+      "sourcePath": "assets/agency-agents-zh/sales/sales-discovery-coach.md",
+      "frontmatterName": "Discovery 教练",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-sales-engineer",
+      "division": "sales",
+      "sourcePath": "assets/agency-agents-zh/sales/sales-engineer.md",
+      "frontmatterName": "售前工程师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-sales-offer-lead-gen-strategist",
+      "division": "sales",
+      "sourcePath": "assets/agency-agents-zh/sales/sales-offer-lead-gen-strategist.md",
+      "frontmatterName": "Offer 与 Lead Gen 策略师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-sales-outbound-strategist",
+      "division": "sales",
+      "sourcePath": "assets/agency-agents-zh/sales/sales-outbound-strategist.md",
+      "frontmatterName": "Outbound 策略师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-sales-pipeline-analyst",
+      "division": "sales",
+      "sourcePath": "assets/agency-agents-zh/sales/sales-pipeline-analyst.md",
+      "frontmatterName": "Pipeline 分析师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-sales-proposal-strategist",
+      "division": "sales",
+      "sourcePath": "assets/agency-agents-zh/sales/sales-proposal-strategist.md",
+      "frontmatterName": "投标策略师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-security-ai-generated-code-auditor",
+      "division": "security",
+      "sourcePath": "assets/agency-agents-zh/security/security-ai-generated-code-auditor.md",
+      "frontmatterName": "AI 生成代码安全审计师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-security-appsec-engineer",
+      "division": "security",
+      "sourcePath": "assets/agency-agents-zh/security/security-appsec-engineer.md",
+      "frontmatterName": "应用安全工程师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-security-architect",
+      "division": "security",
+      "sourcePath": "assets/agency-agents-zh/security/security-architect.md",
+      "frontmatterName": "安全架构师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-security-blockchain-security-auditor",
+      "division": "security",
+      "sourcePath": "assets/agency-agents-zh/security/security-blockchain-security-auditor.md",
+      "frontmatterName": "区块链安全审计师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-security-cloud-security-architect",
+      "division": "security",
+      "sourcePath": "assets/agency-agents-zh/security/security-cloud-security-architect.md",
+      "frontmatterName": "云安全架构师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-security-compliance-auditor",
+      "division": "security",
+      "sourcePath": "assets/agency-agents-zh/security/security-compliance-auditor.md",
+      "frontmatterName": "合规审计师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-security-incident-responder",
+      "division": "security",
+      "sourcePath": "assets/agency-agents-zh/security/security-incident-responder.md",
+      "frontmatterName": "事件响应专家",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-security-penetration-tester",
+      "division": "security",
+      "sourcePath": "assets/agency-agents-zh/security/security-penetration-tester.md",
+      "frontmatterName": "渗透测试员",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-security-secrets-credential-engineer",
+      "division": "security",
+      "sourcePath": "assets/agency-agents-zh/security/security-secrets-credential-engineer.md",
+      "frontmatterName": "密钥与凭据治理工程师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-security-senior-secops",
+      "division": "security",
+      "sourcePath": "assets/agency-agents-zh/security/security-senior-secops.md",
+      "frontmatterName": "高级安全运营工程师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-security-threat-detection-engineer",
+      "division": "security",
+      "sourcePath": "assets/agency-agents-zh/security/security-threat-detection-engineer.md",
+      "frontmatterName": "威胁检测工程师（安全运营）",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-security-threat-intelligence-analyst",
+      "division": "security",
+      "sourcePath": "assets/agency-agents-zh/security/security-threat-intelligence-analyst.md",
+      "frontmatterName": "威胁情报分析师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-macos-spatial-metal-engineer",
+      "division": "spatial-computing",
+      "sourcePath": "assets/agency-agents-zh/spatial-computing/macos-spatial-metal-engineer.md",
+      "frontmatterName": "macOS Metal 空间工程师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-terminal-integration-specialist",
+      "division": "spatial-computing",
+      "sourcePath": "assets/agency-agents-zh/spatial-computing/terminal-integration-specialist.md",
+      "frontmatterName": "终端集成专家",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-visionos-spatial-engineer",
+      "division": "spatial-computing",
+      "sourcePath": "assets/agency-agents-zh/spatial-computing/visionos-spatial-engineer.md",
+      "frontmatterName": "visionOS 空间工程师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-xr-cockpit-interaction-specialist",
+      "division": "spatial-computing",
+      "sourcePath": "assets/agency-agents-zh/spatial-computing/xr-cockpit-interaction-specialist.md",
+      "frontmatterName": "XR 座舱交互专家",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-xr-immersive-developer",
+      "division": "spatial-computing",
+      "sourcePath": "assets/agency-agents-zh/spatial-computing/xr-immersive-developer.md",
+      "frontmatterName": "XR 沉浸式开发者",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-xr-interface-architect",
+      "division": "spatial-computing",
+      "sourcePath": "assets/agency-agents-zh/spatial-computing/xr-interface-architect.md",
+      "frontmatterName": "XR 界面架构师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-accounts-payable-agent",
+      "division": "specialized",
+      "sourcePath": "assets/agency-agents-zh/specialized/accounts-payable-agent.md",
+      "frontmatterName": "应付账款智能体",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-agentic-identity-trust",
+      "division": "specialized",
+      "sourcePath": "assets/agency-agents-zh/specialized/agentic-identity-trust.md",
+      "frontmatterName": "身份信任架构师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-agents-orchestrator",
+      "division": "specialized",
+      "sourcePath": "assets/agency-agents-zh/specialized/agents-orchestrator.md",
+      "frontmatterName": "智能体编排者",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-authenticity-appraiser",
+      "division": "specialized",
+      "sourcePath": "assets/agency-agents-zh/specialized/authenticity-appraiser.md",
+      "frontmatterName": "鉴定评估师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-automation-governance-architect",
+      "division": "specialized",
+      "sourcePath": "assets/agency-agents-zh/specialized/automation-governance-architect.md",
+      "frontmatterName": "自动化治理架构师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-business-strategist",
+      "division": "specialized",
+      "sourcePath": "assets/agency-agents-zh/specialized/business-strategist.md",
+      "frontmatterName": "商业战略家",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-change-management-consultant",
+      "division": "specialized",
+      "sourcePath": "assets/agency-agents-zh/specialized/change-management-consultant.md",
+      "frontmatterName": "变革管理顾问",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-chief-financial-officer",
+      "division": "specialized",
+      "sourcePath": "assets/agency-agents-zh/specialized/chief-financial-officer.md",
+      "frontmatterName": "首席财务官（CFO）",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-corporate-training-designer",
+      "division": "specialized",
+      "sourcePath": "assets/agency-agents-zh/specialized/corporate-training-designer.md",
+      "frontmatterName": "企业培训课程设计师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-customer-service",
+      "division": "specialized",
+      "sourcePath": "assets/agency-agents-zh/specialized/customer-service.md",
+      "frontmatterName": "客户服务",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-customer-success-manager",
+      "division": "specialized",
+      "sourcePath": "assets/agency-agents-zh/specialized/customer-success-manager.md",
+      "frontmatterName": "客户成功经理",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-data-consolidation-agent",
+      "division": "specialized",
+      "sourcePath": "assets/agency-agents-zh/specialized/data-consolidation-agent.md",
+      "frontmatterName": "数据整合师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-data-privacy-officer",
+      "division": "specialized",
+      "sourcePath": "assets/agency-agents-zh/specialized/data-privacy-officer.md",
+      "frontmatterName": "数据隐私官",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-esg-sustainability-officer",
+      "division": "specialized",
+      "sourcePath": "assets/agency-agents-zh/specialized/esg-sustainability-officer.md",
+      "frontmatterName": "ESG 与可持续发展官",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-gaokao-college-advisor",
+      "division": "specialized",
+      "sourcePath": "assets/agency-agents-zh/specialized/gaokao-college-advisor.md",
+      "frontmatterName": "高考志愿填报顾问",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-government-digital-presales-consultant",
+      "division": "specialized",
+      "sourcePath": "assets/agency-agents-zh/specialized/government-digital-presales-consultant.md",
+      "frontmatterName": "政务数字化售前顾问",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-grant-writer",
+      "division": "specialized",
+      "sourcePath": "assets/agency-agents-zh/specialized/grant-writer.md",
+      "frontmatterName": "资助申请撰稿人",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-healthcare-aging-parent-care-companion",
+      "division": "specialized",
+      "sourcePath": "assets/agency-agents-zh/specialized/healthcare-aging-parent-care-companion.md",
+      "frontmatterName": "老年照护顾问",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-healthcare-customer-service",
+      "division": "specialized",
+      "sourcePath": "assets/agency-agents-zh/specialized/healthcare-customer-service.md",
+      "frontmatterName": "医疗客服专家",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-healthcare-marketing-compliance",
+      "division": "specialized",
+      "sourcePath": "assets/agency-agents-zh/specialized/healthcare-marketing-compliance.md",
+      "frontmatterName": "医疗健康营销合规师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-hospitality-guest-services",
+      "division": "specialized",
+      "sourcePath": "assets/agency-agents-zh/specialized/hospitality-guest-services.md",
+      "frontmatterName": "酒店宾客服务专家",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-hr-onboarding",
+      "division": "specialized",
+      "sourcePath": "assets/agency-agents-zh/specialized/hr-onboarding.md",
+      "frontmatterName": "HR 入职管理专家",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-identity-graph-operator",
+      "division": "specialized",
+      "sourcePath": "assets/agency-agents-zh/specialized/identity-graph-operator.md",
+      "frontmatterName": "身份图谱操作员",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-language-translator",
+      "division": "specialized",
+      "sourcePath": "assets/agency-agents-zh/specialized/language-translator.md",
+      "frontmatterName": "语言翻译专家",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-legal-billing-time-tracking",
+      "division": "specialized",
+      "sourcePath": "assets/agency-agents-zh/specialized/legal-billing-time-tracking.md",
+      "frontmatterName": "律所计费与工时专家",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-legal-client-intake",
+      "division": "specialized",
+      "sourcePath": "assets/agency-agents-zh/specialized/legal-client-intake.md",
+      "frontmatterName": "律所客户接案专家",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-legal-document-review",
+      "division": "specialized",
+      "sourcePath": "assets/agency-agents-zh/specialized/legal-document-review.md",
+      "frontmatterName": "法律文书审查专家",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-livestock-archive-auditor",
+      "division": "specialized",
+      "sourcePath": "assets/agency-agents-zh/specialized/livestock-archive-auditor.md",
+      "frontmatterName": "养殖档案核对员",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-loan-officer-assistant",
+      "division": "specialized",
+      "sourcePath": "assets/agency-agents-zh/specialized/loan-officer-assistant.md",
+      "frontmatterName": "信贷经理助手",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-lsp-index-engineer",
+      "division": "specialized",
+      "sourcePath": "assets/agency-agents-zh/specialized/lsp-index-engineer.md",
+      "frontmatterName": "LSP 索引工程师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-ma-integration-manager",
+      "division": "specialized",
+      "sourcePath": "assets/agency-agents-zh/specialized/ma-integration-manager.md",
+      "frontmatterName": "M&A 整合经理",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-medical-billing-coding-specialist",
+      "division": "specialized",
+      "sourcePath": "assets/agency-agents-zh/specialized/medical-billing-coding-specialist.md",
+      "frontmatterName": "医疗账单与编码专员",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-operations-manager",
+      "division": "specialized",
+      "sourcePath": "assets/agency-agents-zh/specialized/operations-manager.md",
+      "frontmatterName": "运营经理",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-organizational-psychologist",
+      "division": "specialized",
+      "sourcePath": "assets/agency-agents-zh/specialized/organizational-psychologist.md",
+      "frontmatterName": "组织心理学家",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-personal-growth-mentor",
+      "division": "specialized",
+      "sourcePath": "assets/agency-agents-zh/specialized/personal-growth-mentor.md",
+      "frontmatterName": "个人成长导师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-prompt-engineer",
+      "division": "specialized",
+      "sourcePath": "assets/agency-agents-zh/specialized/prompt-engineer.md",
+      "frontmatterName": "提示词工程师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-real-estate-buyer-seller",
+      "division": "specialized",
+      "sourcePath": "assets/agency-agents-zh/specialized/real-estate-buyer-seller.md",
+      "frontmatterName": "房地产经纪助手",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-recruitment-specialist",
+      "division": "specialized",
+      "sourcePath": "assets/agency-agents-zh/specialized/recruitment-specialist.md",
+      "frontmatterName": "人才获取专家",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-report-distribution-agent",
+      "division": "specialized",
+      "sourcePath": "assets/agency-agents-zh/specialized/report-distribution-agent.md",
+      "frontmatterName": "报告分发师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-resume-tailor",
+      "division": "specialized",
+      "sourcePath": "assets/agency-agents-zh/specialized/resume-tailor.md",
+      "frontmatterName": "简历优化顾问",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-retail-customer-returns",
+      "division": "specialized",
+      "sourcePath": "assets/agency-agents-zh/specialized/retail-customer-returns.md",
+      "frontmatterName": "零售退货专家",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-sales-data-extraction-agent",
+      "division": "specialized",
+      "sourcePath": "assets/agency-agents-zh/specialized/sales-data-extraction-agent.md",
+      "frontmatterName": "销售数据提取师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-sales-outreach",
+      "division": "specialized",
+      "sourcePath": "assets/agency-agents-zh/specialized/sales-outreach.md",
+      "frontmatterName": "销售拓展专员",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-specialized-ai-policy-writer",
+      "division": "specialized",
+      "sourcePath": "assets/agency-agents-zh/specialized/specialized-ai-policy-writer.md",
+      "frontmatterName": "AI 治理政策专家",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-specialized-chief-of-staff",
+      "division": "specialized",
+      "sourcePath": "assets/agency-agents-zh/specialized/specialized-chief-of-staff.md",
+      "frontmatterName": "幕僚长",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-specialized-civil-engineer",
+      "division": "specialized",
+      "sourcePath": "assets/agency-agents-zh/specialized/specialized-civil-engineer.md",
+      "frontmatterName": "土木工程师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-specialized-codebase-archaeologist",
+      "division": "specialized",
+      "sourcePath": "assets/agency-agents-zh/specialized/specialized-codebase-archaeologist.md",
+      "frontmatterName": "遗留系统工程师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-specialized-cultural-intelligence--620880",
+      "division": "specialized",
+      "sourcePath": "assets/agency-agents-zh/specialized/specialized-cultural-intelligence-strategist.md",
+      "frontmatterName": "文化智能策略师",
+      "idTruncated": true,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-specialized-developer-advocate",
+      "division": "specialized",
+      "sourcePath": "assets/agency-agents-zh/specialized/specialized-developer-advocate.md",
+      "frontmatterName": "开发者布道师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-specialized-document-generator",
+      "division": "specialized",
+      "sourcePath": "assets/agency-agents-zh/specialized/specialized-document-generator.md",
+      "frontmatterName": "文档生成器",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-specialized-fedramp-rmf-compliance",
+      "division": "specialized",
+      "sourcePath": "assets/agency-agents-zh/specialized/specialized-fedramp-rmf-compliance.md",
+      "frontmatterName": "FedRAMP 与 RMF 合规工程师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-specialized-focus-music-architect",
+      "division": "specialized",
+      "sourcePath": "assets/agency-agents-zh/specialized/specialized-focus-music-architect.md",
+      "frontmatterName": "专注音乐架构师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-specialized-french-consulting-market",
+      "division": "specialized",
+      "sourcePath": "assets/agency-agents-zh/specialized/specialized-french-consulting-market.md",
+      "frontmatterName": "法国咨询市场专家",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-specialized-korean-business-navigator",
+      "division": "specialized",
+      "sourcePath": "assets/agency-agents-zh/specialized/specialized-korean-business-navigator.md",
+      "frontmatterName": "韩国商务专家",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-specialized-master-plan-architect",
+      "division": "specialized",
+      "sourcePath": "assets/agency-agents-zh/specialized/specialized-master-plan-architect.md",
+      "frontmatterName": "总体规划架构师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-specialized-mcp-builder",
+      "division": "specialized",
+      "sourcePath": "assets/agency-agents-zh/specialized/specialized-mcp-builder.md",
+      "frontmatterName": "MCP 构建器",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-specialized-meeting-assistant",
+      "division": "specialized",
+      "sourcePath": "assets/agency-agents-zh/specialized/specialized-meeting-assistant.md",
+      "frontmatterName": "会议效率专家",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-specialized-model-qa",
+      "division": "specialized",
+      "sourcePath": "assets/agency-agents-zh/specialized/specialized-model-qa.md",
+      "frontmatterName": "模型 QA 专家",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-specialized-pricing-analyst",
+      "division": "specialized",
+      "sourcePath": "assets/agency-agents-zh/specialized/specialized-pricing-analyst.md",
+      "frontmatterName": "定价分析师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": "WebFetch, WebSearch, Read, Write, Edit"
+    },
+    {
+      "id": "agency-specialized-pricing-optimizer",
+      "division": "specialized",
+      "sourcePath": "assets/agency-agents-zh/specialized/specialized-pricing-optimizer.md",
+      "frontmatterName": "动态定价策略师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-specialized-risk-assessor",
+      "division": "specialized",
+      "sourcePath": "assets/agency-agents-zh/specialized/specialized-risk-assessor.md",
+      "frontmatterName": "企业风险评估师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-specialized-salesforce-architect",
+      "division": "specialized",
+      "sourcePath": "assets/agency-agents-zh/specialized/specialized-salesforce-architect.md",
+      "frontmatterName": "Salesforce 架构师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-specialized-strategy-duel-agent",
+      "division": "specialized",
+      "sourcePath": "assets/agency-agents-zh/specialized/specialized-strategy-duel-agent.md",
+      "frontmatterName": "策略对决推演师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-specialized-workflow-architect",
+      "division": "specialized",
+      "sourcePath": "assets/agency-agents-zh/specialized/specialized-workflow-architect.md",
+      "frontmatterName": "工作流架构师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-study-abroad-advisor",
+      "division": "specialized",
+      "sourcePath": "assets/agency-agents-zh/specialized/study-abroad-advisor.md",
+      "frontmatterName": "留学规划顾问",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-supply-chain-strategist",
+      "division": "specialized",
+      "sourcePath": "assets/agency-agents-zh/specialized/supply-chain-strategist.md",
+      "frontmatterName": "供应链采购策略师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-technical-translator-agent",
+      "division": "specialized",
+      "sourcePath": "assets/agency-agents-zh/specialized/technical-translator-agent.md",
+      "frontmatterName": "技术翻译专家",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-travel-planner",
+      "division": "specialized",
+      "sourcePath": "assets/agency-agents-zh/specialized/travel-planner.md",
+      "frontmatterName": "旅行规划师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-zk-steward",
+      "division": "specialized",
+      "sourcePath": "assets/agency-agents-zh/specialized/zk-steward.md",
+      "frontmatterName": "ZK 管家",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-supply-chain-garment-factory-plann-01db72",
+      "division": "supply-chain",
+      "sourcePath": "assets/agency-agents-zh/supply-chain/supply-chain-garment-factory-planning-engineer.md",
+      "frontmatterName": "服装工厂规划工程师",
+      "idTruncated": true,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-supply-chain-inventory-forecaster",
+      "division": "supply-chain",
+      "sourcePath": "assets/agency-agents-zh/supply-chain/supply-chain-inventory-forecaster.md",
+      "frontmatterName": "库存预测专家",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-supply-chain-route-optimizer",
+      "division": "supply-chain",
+      "sourcePath": "assets/agency-agents-zh/supply-chain/supply-chain-route-optimizer.md",
+      "frontmatterName": "物流路线优化师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-supply-chain-vendor-evaluator",
+      "division": "supply-chain",
+      "sourcePath": "assets/agency-agents-zh/supply-chain/supply-chain-vendor-evaluator.md",
+      "frontmatterName": "供应商评估专家",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-support-analytics-reporter",
+      "division": "support",
+      "sourcePath": "assets/agency-agents-zh/support/support-analytics-reporter.md",
+      "frontmatterName": "数据分析师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-support-executive-summary-generator",
+      "division": "support",
+      "sourcePath": "assets/agency-agents-zh/support/support-executive-summary-generator.md",
+      "frontmatterName": "高管摘要师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-support-finance-tracker",
+      "division": "support",
+      "sourcePath": "assets/agency-agents-zh/support/support-finance-tracker.md",
+      "frontmatterName": "财务追踪员",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-support-infrastructure-maintainer",
+      "division": "support",
+      "sourcePath": "assets/agency-agents-zh/support/support-infrastructure-maintainer.md",
+      "frontmatterName": "基础设施运维师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-support-legal-compliance-checker",
+      "division": "support",
+      "sourcePath": "assets/agency-agents-zh/support/support-legal-compliance-checker.md",
+      "frontmatterName": "法务合规员",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-support-recruitment-specialist",
+      "division": "support",
+      "sourcePath": "assets/agency-agents-zh/support/support-recruitment-specialist.md",
+      "frontmatterName": "招聘运营专家",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-support-support-responder",
+      "division": "support",
+      "sourcePath": "assets/agency-agents-zh/support/support-support-responder.md",
+      "frontmatterName": "客服响应者",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-testing-accessibility-auditor",
+      "division": "testing",
+      "sourcePath": "assets/agency-agents-zh/testing/testing-accessibility-auditor.md",
+      "frontmatterName": "无障碍审核员",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-testing-api-tester",
+      "division": "testing",
+      "sourcePath": "assets/agency-agents-zh/testing/testing-api-tester.md",
+      "frontmatterName": "API 测试员",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-testing-embedded-qa-engineer",
+      "division": "testing",
+      "sourcePath": "assets/agency-agents-zh/testing/testing-embedded-qa-engineer.md",
+      "frontmatterName": "嵌入式测试工程师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-testing-evidence-collector",
+      "division": "testing",
+      "sourcePath": "assets/agency-agents-zh/testing/testing-evidence-collector.md",
+      "frontmatterName": "证据收集者",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-testing-performance-benchmarker",
+      "division": "testing",
+      "sourcePath": "assets/agency-agents-zh/testing/testing-performance-benchmarker.md",
+      "frontmatterName": "性能基准师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-testing-reality-checker",
+      "division": "testing",
+      "sourcePath": "assets/agency-agents-zh/testing/testing-reality-checker.md",
+      "frontmatterName": "现实检验者",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-testing-test-automation-engineer",
+      "division": "testing",
+      "sourcePath": "assets/agency-agents-zh/testing/testing-test-automation-engineer.md",
+      "frontmatterName": "测试自动化工程师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-testing-test-results-analyzer",
+      "division": "testing",
+      "sourcePath": "assets/agency-agents-zh/testing/testing-test-results-analyzer.md",
+      "frontmatterName": "测试结果分析师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-testing-tool-evaluator",
+      "division": "testing",
+      "sourcePath": "assets/agency-agents-zh/testing/testing-tool-evaluator.md",
+      "frontmatterName": "工具评估师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    },
+    {
+      "id": "agency-testing-workflow-optimizer",
+      "division": "testing",
+      "sourcePath": "assets/agency-agents-zh/testing/testing-workflow-optimizer.md",
+      "frontmatterName": "工作流优化师",
+      "idTruncated": false,
+      "upstreamToolsDeclared": null
+    }
+  ]
+}

@@ -21,12 +21,14 @@ import { PostgresSkillService } from '../../modules/skill/postgres-skill-service
 import { PostgresConversationRepository } from '../../modules/workbench/application/postgres-conversation-repository.ts'
 import type { DatabaseClient } from './database.ts'
 import { createThrowawayDatabase, type ThrowawayDatabase } from './test-database.ts'
+import { bindTestWorkspaceNotificationRecipients } from './workspace-notification-recipient-test-fixture.ts'
 import { testAttemptManifest } from './test-attempt-manifest.ts'
 
 const databaseUrl = process.env.DSH_WORK_TEST_DATABASE_URL
 if (!databaseUrl) throw new Error('DSH_WORK_TEST_DATABASE_URL 未配置')
 
 let database: DatabaseClient
+let unbindNotificationRecipients: (() => void) | undefined
 let throwaway: ThrowawayDatabase
 let runtime: OperationalRuntime
 let operations: PostgresOperationsService
@@ -38,6 +40,7 @@ before(async () => {
   // 一次性库：避免共享 dev 库的历史数据累积影响断言。
   throwaway = await createThrowawayDatabase({ namePrefix: 'dsh_work_m4_runtime_test', maxConnections: 6 })
   database = throwaway.client
+  unbindNotificationRecipients = bindTestWorkspaceNotificationRecipients(database)
   runtime = new OperationalRuntime()
   const authorization = new PostgresAuthorizationService(database)
   operations = new PostgresOperationsService(database, runtime, authorization)
@@ -79,7 +82,9 @@ after(async () => {
     }
   } finally {
     if (orchestration) await orchestration.close()
-    if (throwaway) await throwaway.dispose()
+    if (throwaway) unbindNotificationRecipients?.()
+  unbindNotificationRecipients = undefined
+  await throwaway.dispose()
   }
 })
 

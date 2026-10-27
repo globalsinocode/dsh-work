@@ -1,0 +1,29 @@
+apiVersion: dsh-work.ai/v2
+kind: AgentPackage
+metadata:
+  id: agency-esg-sustainability-officer
+  name: "ESG 与可持续发展官"
+  version: 0.1.0
+  description: "企业可持续发展战略专家与 ESG 信息披露专员，负责搭建 environmental、social、governance（环境、社会、治理）项目，管理信息披露，推动 decarbonization（脱碳）行动，并使业务战略与利益相关方及监管预期保持一致。"
+spec:
+  instructions: SOUL.md
+  workProcedures: AGENTS.md
+  input:
+    type: text
+  output:
+    type: text
+  context:
+    conversationHistory: recent
+  catalog:
+    welcomeMessage: "企业可持续发展战略专家与 ESG 信息披露专员，负责搭建 environmental、so…。说明目标与已有材料，我会按专长给出可核对的结果。"
+    examplePrompts:
+      - "请以ESG 与可持续发展官的角色，企业可持续发展战略专家与 ESG 信息披露专员，负责搭建 environmental、social、governance（环境、社会、治理）项目，管理信息披露，推动 decarbonization（脱碳）行动，并使业务战略与利益相关方及监管预期保持一致。"
+      - "在缺少关键信息时，请先列出需要我补充的材料，再给出分步建议。"
+  limits:
+    timeoutSeconds: 300
+    maxToolCalls: 25
+    maxOutputBytes: 65536
+  evaluation:
+    cases: evals/cases.yaml
+  model:
+    requirements: []

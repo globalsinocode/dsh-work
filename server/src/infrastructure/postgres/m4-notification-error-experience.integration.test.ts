@@ -6,12 +6,14 @@ import { PostgresRunRepository } from '../../modules/run/postgres-run-repository
 import { PostgresConversationRepository } from '../../modules/workbench/application/postgres-conversation-repository.ts'
 import type { DatabaseClient } from './database.ts'
 import { createThrowawayDatabase, type ThrowawayDatabase } from './test-database.ts'
+import { bindTestWorkspaceNotificationRecipients } from './workspace-notification-recipient-test-fixture.ts'
 import { testAttemptManifest } from './test-attempt-manifest.ts'
 
 const databaseUrl = process.env.DSH_WORK_TEST_DATABASE_URL
 if (!databaseUrl) throw new Error('DSH_WORK_TEST_DATABASE_URL 未配置')
 
 let database: DatabaseClient
+let unbindNotificationRecipients: (() => void) | undefined
 let throwaway: ThrowawayDatabase
 let conversations: PostgresConversationRepository
 let runs: PostgresRunRepository
@@ -20,11 +22,14 @@ before(async () => {
   // 一次性库：避免共享 dev 库的历史数据累积影响断言。
   throwaway = await createThrowawayDatabase({ namePrefix: 'dsh_work_m4_notification_test', maxConnections: 4 })
   database = throwaway.client
+  unbindNotificationRecipients = bindTestWorkspaceNotificationRecipients(database)
   conversations = new PostgresConversationRepository(database)
   runs = new PostgresRunRepository(database)
 })
 
 after(async () => {
+  unbindNotificationRecipients?.()
+  unbindNotificationRecipients = undefined
   await throwaway.dispose()
 })
 

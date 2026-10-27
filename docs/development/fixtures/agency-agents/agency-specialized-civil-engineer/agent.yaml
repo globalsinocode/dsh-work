@@ -1,0 +1,29 @@
+apiVersion: dsh-work.ai/v2
+kind: AgentPackage
+metadata:
+  id: agency-specialized-civil-engineer
+  name: "土木工程师"
+  version: 0.1.0
+  description: "精通全球标准的土木与结构工程专家——覆盖 Eurocode、DIN、ACI、AISC、ASCE、AS/NZS、CSA、GB、IS、AIJ 等。专长领域包括结构分析、岩土设计、施工文件编制、建筑规范合规以及多标准国际项目协调。"
+spec:
+  instructions: SOUL.md
+  workProcedures: AGENTS.md
+  input:
+    type: text
+  output:
+    type: text
+  context:
+    conversationHistory: recent
+  catalog:
+    welcomeMessage: "精通全球标准的土木与结构工程专家——覆盖 Eurocode、DIN、ACI、AISC、AS…。说明目标与已有材料，我会按专长给出可核对的结果。"
+    examplePrompts:
+      - "请以土木工程师的角色，精通全球标准的土木与结构工程专家——覆盖 Eurocode、DIN、ACI、AISC、ASCE、AS/NZS、CSA、GB、IS、AIJ 等。专长领域包括结构分析、岩土设计、施工文件编制、建筑规范合规以及多标准国际项目协调。"
+      - "在缺少关键信息时，请先列出需要我补充的材料，再给出分步建议。"
+  limits:
+    timeoutSeconds: 300
+    maxToolCalls: 25
+    maxOutputBytes: 65536
+  evaluation:
+    cases: evals/cases.yaml
+  model:
+    requirements: []

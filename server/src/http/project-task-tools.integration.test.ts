@@ -8,6 +8,7 @@ import { after, before, test } from 'node:test'
 
 import type { DatabaseClient } from '../infrastructure/postgres/database.ts'
 import { createThrowawayDatabase, type ThrowawayDatabase } from '../infrastructure/postgres/test-database.ts'
+import { bindTestWorkspaceNotificationRecipients } from '../infrastructure/postgres/workspace-notification-recipient-test-fixture.ts'
 import { PostgresAuthorizationService } from '../modules/authorization/postgres-authorization-service.ts'
 import { PostgresAgentService } from '../modules/agent/postgres-agent-service.ts'
 import { ModelGovernanceService } from '../modules/model/model-governance-service.ts'
@@ -31,6 +32,7 @@ const tenantId = 'tenant-dsh-work'
 const signal = new AbortController().signal
 
 let throwaway: ThrowawayDatabase
+let unbindNotificationRecipients: (() => void) | undefined
 let database: DatabaseClient
 let projects: PostgresProjectService
 let tools: ProjectTaskTools
@@ -51,6 +53,7 @@ let space: {
 before(async () => {
   throwaway = await createThrowawayDatabase({ namePrefix: 'dsh_work_project_task_tools', maxConnections: 6 })
   database = throwaway.client
+  unbindNotificationRecipients = bindTestWorkspaceNotificationRecipients(database)
   const authorization = new PostgresAuthorizationService(database)
   const agents = new PostgresAgentService(database)
   agentMembers = new PostgresWorkspaceAgentMemberService(database, authorization, agents)
@@ -89,7 +92,9 @@ before(async () => {
 })
 
 after(async () => {
-  if (throwaway) await throwaway.dispose()
+  if (throwaway) unbindNotificationRecipients?.()
+  unbindNotificationRecipients = undefined
+  await throwaway.dispose()
 })
 
 test('list / get 返回本空间任务与可指派成员，不含任务对话内容', async () => {

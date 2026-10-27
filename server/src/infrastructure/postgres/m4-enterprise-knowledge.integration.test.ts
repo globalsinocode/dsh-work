@@ -21,6 +21,7 @@ import { PostgresConversationRepository } from '../../modules/workbench/applicat
 import { PostgresWorkspaceAgentMemberService } from '../../modules/workbench/application/postgres-workspace-agent-member-service.ts'
 import type { DatabaseClient } from './database.ts'
 import { createThrowawayDatabase, type ThrowawayDatabase } from './test-database.ts'
+import { bindTestWorkspaceNotificationRecipients } from './workspace-notification-recipient-test-fixture.ts'
 
 const databaseUrl = process.env.DSH_WORK_TEST_DATABASE_URL
 if (!databaseUrl) throw new Error('DSH_WORK_TEST_DATABASE_URL 未配置')
@@ -29,6 +30,7 @@ const knowledgeAgentVersionId = 'agent-version-m4-knowledge-1'
 const knowledgeAgentMemberId = 'm4-knowledge-agent-member'
 
 let database: DatabaseClient
+let unbindNotificationRecipients: (() => void) | undefined
 let throwaway: ThrowawayDatabase
 let knowledge: PostgresKnowledgeService
 let runtime: CapturingRuntime
@@ -40,6 +42,7 @@ before(async () => {
   // 一次性库：避免共享 dev 库的历史数据累积影响断言。
   throwaway = await createThrowawayDatabase({ namePrefix: 'dsh_work_m4_knowledge_test', maxConnections: 4 })
   database = throwaway.client
+  unbindNotificationRecipients = bindTestWorkspaceNotificationRecipients(database)
   knowledge = new PostgresKnowledgeService(database)
   authorization = new PostgresAuthorizationService(database)
   runtime = new CapturingRuntime()
@@ -108,6 +111,8 @@ before(async () => {
 
 after(async () => {
   await orchestration.close()
+  unbindNotificationRecipients?.()
+  unbindNotificationRecipients = undefined
   await throwaway.dispose()
 })
 

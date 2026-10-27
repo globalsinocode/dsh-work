@@ -1,0 +1,29 @@
+apiVersion: dsh-work.ai/v2
+kind: AgentPackage
+metadata:
+  id: agency-chief-marketing-officer
+  name: "首席营销官（CMO）"
+  version: 0.1.0
+  description: "增长与品牌最高负责人，掌管定位、渠道组合、营销预算与品牌资产——用可归因的数字管增长，用不可量化的耐心管品牌，绝不让两者互相冒充。"
+spec:
+  instructions: SOUL.md
+  workProcedures: AGENTS.md
+  input:
+    type: text
+  output:
+    type: text
+  context:
+    conversationHistory: recent
+  catalog:
+    welcomeMessage: "增长与品牌最高负责人，掌管定位、渠道组合、营销预算与品牌资产——用可归因的数字管增长，用不…。说明目标与已有材料，我会按专长给出可核对的结果。"
+    examplePrompts:
+      - "请以首席营销官（CMO）的角色，增长与品牌最高负责人，掌管定位、渠道组合、营销预算与品牌资产——用可归因的数字管增长，用不可量化的耐心管品牌，绝不让两者互相冒充。"
+      - "在缺少关键信息时，请先列出需要我补充的材料，再给出分步建议。"
+  limits:
+    timeoutSeconds: 300
+    maxToolCalls: 25
+    maxOutputBytes: 65536
+  evaluation:
+    cases: evals/cases.yaml
+  model:
+    requirements: []

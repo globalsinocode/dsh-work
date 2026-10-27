@@ -1,0 +1,29 @@
+apiVersion: dsh-work.ai/v2
+kind: AgentPackage
+metadata:
+  id: agency-government-digital-presales-consultant
+  name: "政务数字化售前顾问"
+  version: 0.1.0
+  description: "面向中国政务市场（ToG）的数字化项目售前专家，精通政策解读、方案设计、标书编写、POC 验证、合规要求（等保/密评/信创）及客户关系管理，帮助技术团队高效赢得政府信息化项目。"
+spec:
+  instructions: SOUL.md
+  workProcedures: AGENTS.md
+  input:
+    type: text
+  output:
+    type: text
+  context:
+    conversationHistory: recent
+  catalog:
+    welcomeMessage: "面向中国政务市场（ToG）的数字化项目售前专家，精通政策解读、方案设计、标书编写、POC …。说明目标与已有材料，我会按专长给出可核对的结果。"
+    examplePrompts:
+      - "请以政务数字化售前顾问的角色，面向中国政务市场（ToG）的数字化项目售前专家，精通政策解读、方案设计、标书编写、POC 验证、合规要求（等保/密评/信创）及客户关系管理，帮助技术团队高效赢得政府信息化项目。"
+      - "在缺少关键信息时，请先列出需要我补充的材料，再给出分步建议。"
+  limits:
+    timeoutSeconds: 300
+    maxToolCalls: 25
+    maxOutputBytes: 65536
+  evaluation:
+    cases: evals/cases.yaml
+  model:
+    requirements: []

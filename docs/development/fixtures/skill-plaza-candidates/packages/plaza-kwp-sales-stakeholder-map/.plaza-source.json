@@ -1,0 +1,10 @@
+{
+  "id": "plaza-kwp-sales-stakeholder-map",
+  "repo": "kwp",
+  "sourcePath": "sales/skills/stakeholder-map",
+  "commit": "e6b505348c39c6e751a70d52ff407e7b0a6bf676",
+  "notes": "knowledge-work-plugin; treat Slack/calendar connectors as writing-only on this platform",
+  "files": [
+    "SKILL.md"
+  ]
+}

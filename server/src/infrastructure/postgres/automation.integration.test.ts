@@ -25,6 +25,7 @@ import { PostgresContentService } from '../../modules/workbench/application/post
 import { PostgresConversationRepository } from '../../modules/workbench/application/postgres-conversation-repository.ts'
 import type { DatabaseClient } from './database.ts'
 import { createThrowawayDatabase, type ThrowawayDatabase } from './test-database.ts'
+import { bindTestWorkspaceNotificationRecipients } from './workspace-notification-recipient-test-fixture.ts'
 import { testAttemptManifest } from './test-attempt-manifest.ts'
 import { LocalObjectStorage } from '../storage/local-object-storage.ts'
 
@@ -32,6 +33,7 @@ const tenantId = 'tenant-dsh-work'
 const automationDirectory = { applicationId: 'automation-test', environment: 'test', maxSyncAgeMs: 60_000 }
 
 let throwaway: ThrowawayDatabase
+let unbindNotificationRecipients: (() => void) | undefined
 let database: DatabaseClient
 let automations: PostgresAutomationRepository
 let service: AutomationService
@@ -74,6 +76,7 @@ const runtime = new HoldingRuntime()
 before(async () => {
   throwaway = await createThrowawayDatabase({ namePrefix: 'dsh_work_automation_test', maxConnections: 6 })
   database = throwaway.client
+  unbindNotificationRecipients = bindTestWorkspaceNotificationRecipients(database)
   automations = new PostgresAutomationRepository(database)
   conversations = new PostgresConversationRepository(database)
   runs = new PostgresRunRepository(database)
@@ -116,6 +119,8 @@ function automationServiceWith(subjectAuthorization: PostgresAuthorizationServic
 
 after(async () => {
   await sweep.close()
+  unbindNotificationRecipients?.()
+  unbindNotificationRecipients = undefined
   await throwaway.dispose()
 })
 

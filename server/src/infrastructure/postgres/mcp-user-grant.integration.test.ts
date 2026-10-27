@@ -20,7 +20,7 @@ let throwaway: ThrowawayDatabase | undefined
 let grantService: McpUserGrantService
 let toolService: PostgresToolConnectorService
 let discovered: McpInspectionResult['capabilities'] = []
-let tokenResponses = new Map<string, { access_token: string; refresh_token?: string; expires_in?: number }>()
+const tokenResponses = new Map<string, { access_token: string; refresh_token?: string; expires_in?: number }>()
 
 const runtime: AgentRuntimePort = {
   async execute() { throw new Error('不执行 Agent Loop') },

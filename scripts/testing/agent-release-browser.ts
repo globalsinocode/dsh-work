@@ -16,7 +16,6 @@ import { PostgresAgentService } from '../../server/src/modules/agent/postgres-ag
 import { PostgresAgentAccessService } from '../../server/src/modules/agent/agent-access-service.ts'
 import { PostgresAgentValidationService } from '../../server/src/modules/agent/agent-validation-service.ts'
 import { PostgresAgentRunHistory } from '../../server/src/modules/agent/agent-run-history.ts'
-import { builtinTools } from '../../server/src/modules/runtime/builtin-tools.ts'
 import { PostgresMcpConnectorService } from '../../server/src/modules/tool/postgres-mcp-connector-service.ts'
 import { PostgresSkillService } from '../../server/src/modules/skill/postgres-skill-service.ts'
 import { PostgresAuthorizationService } from '../../server/src/modules/authorization/postgres-authorization-service.ts'
@@ -28,6 +27,7 @@ import { PostgresConversationRepository } from '../../server/src/modules/workben
 import { registerAgentRoutes } from '../../server/src/http/admin/agent-routes.ts'
 import { registerAgentValidationRoutes } from '../../server/src/http/admin/agent-validation-routes.ts'
 import { registerToolRoutes } from '../../server/src/http/admin/tool-routes.ts'
+import { PostgresToolConnectorService } from '../../server/src/modules/tool/postgres-tool-connector-service.ts'
 import { envelope, Router, requireRequestIdentity } from '../../server/src/http/router.ts'
 import type {
   AgentRuntimePort,
@@ -179,7 +179,7 @@ router.get(`${base}/identity/roles`, async () => envelope('admin', await databas
 `, 'postgres'))
 registerAgentRoutes(router, agents, new PostgresAgentAccessService(database.client))
 registerAgentValidationRoutes(router, agents, validation, new PostgresAgentRunHistory(database.client))
-registerToolRoutes(router, mcp, async () => ({ tools: builtinTools, disabledTools: [], catalog: null }))
+registerToolRoutes(router, new PostgresToolConnectorService(database.client, runtime))
 router.get('/health', () => ({ status: 'ok', testOnly: true, runtime: 'synthetic-agent-release-trial' }))
 
 const server = createServer((request, response) => void router.handle(request, response))

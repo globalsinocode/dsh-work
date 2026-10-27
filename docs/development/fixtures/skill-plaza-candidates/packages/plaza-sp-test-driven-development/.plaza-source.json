@@ -1,0 +1,11 @@
+{
+  "id": "plaza-sp-test-driven-development",
+  "repo": "superpowers",
+  "sourcePath": "skills/test-driven-development",
+  "commit": "bb92a77741419a4ab5f06e711a283343f1ada0c3",
+  "notes": null,
+  "files": [
+    "SKILL.md",
+    "writing-good-tests.md"
+  ]
+}

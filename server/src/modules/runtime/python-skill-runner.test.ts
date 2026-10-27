@@ -206,7 +206,9 @@ test('abort stops the mock container before the call settles and a failed remova
 
     const failing = new AbortController()
     const cleanup = runner.execute({ skill: 'demo', entry: 'failclean.py' }, manifest('failclean.py'), workspace, failing.signal)
-    await waitFor(() => existsCall(root, 'failclean.py'))
+    await waitFor(async () =>
+      await readFile(join(root, 'mode'), 'utf8').then(value => value.trim() === 'failclean.py').catch(() => false),
+    )
     failing.abort()
     await assert.rejects(cleanup, /清理失败/)
 
@@ -370,11 +372,6 @@ interface MockCall { t: number; args: string[]; sentinel: boolean; hasPath: bool
 async function readCalls(root: string): Promise<MockCall[]> {
   const text = await readFile(join(root, 'calls.ndjson'), 'utf8').catch(() => '')
   return text.split('\n').filter(Boolean).map(line => JSON.parse(line) as MockCall)
-}
-
-async function existsCall(root: string, entry: string): Promise<boolean> {
-  const calls = await readCalls(root)
-  return calls.some(call => call.args[0] === 'run' && call.args.at(-1) === entry)
 }
 
 function manifest(entry: string): RuntimeManifest {

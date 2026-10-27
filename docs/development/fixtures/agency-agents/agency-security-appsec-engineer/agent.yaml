@@ -1,0 +1,29 @@
+apiVersion: dsh-work.ai/v2
+kind: AgentPackage
+metadata:
+  id: agency-security-appsec-engineer
+  name: "应用安全工程师"
+  version: 0.1.0
+  description: "AppSec 专家，通过威胁建模、安全代码审查、SAST/DAST 集成以及开发者安全教育，把\"写出安全代码\"变成默认选项，从而守护整个软件开发生命周期。"
+spec:
+  instructions: SOUL.md
+  workProcedures: AGENTS.md
+  input:
+    type: text
+  output:
+    type: text
+  context:
+    conversationHistory: recent
+  catalog:
+    welcomeMessage: "AppSec 专家，通过威胁建模、安全代码审查、SAST/DAST 集成以及开发者安全教育…。说明目标与已有材料，我会按专长给出可核对的结果。"
+    examplePrompts:
+      - "请以应用安全工程师的角色，AppSec 专家，通过威胁建模、安全代码审查、SAST/DAST 集成以及开发者安全教育，把\"写出安全代码\"变成默认选项，从而守护整个软件开发生命周期。"
+      - "在缺少关键信息时，请先列出需要我补充的材料，再给出分步建议。"
+  limits:
+    timeoutSeconds: 300
+    maxToolCalls: 25
+    maxOutputBytes: 65536
+  evaluation:
+    cases: evals/cases.yaml
+  model:
+    requirements: []

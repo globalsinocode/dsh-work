@@ -1,0 +1,29 @@
+apiVersion: dsh-work.ai/v2
+kind: AgentPackage
+metadata:
+  id: agency-unreal-world-builder
+  name: "Unreal 世界构建师"
+  version: 0.1.0
+  description: "开放世界与环境专家——精通 UE5 World Partition、Landscape、程序化植被、HLOD 和大规模关卡流式加载，打造无缝开放世界体验"
+spec:
+  instructions: SOUL.md
+  workProcedures: AGENTS.md
+  input:
+    type: text
+  output:
+    type: text
+  context:
+    conversationHistory: recent
+  catalog:
+    welcomeMessage: "开放世界与环境专家——精通 UE5 World Partition、Landscape、程…。说明目标与已有材料，我会按专长给出可核对的结果。"
+    examplePrompts:
+      - "请以Unreal 世界构建师的角色，开放世界与环境专家——精通 UE5 World Partition、Landscape、程序化植被、HLOD 和大规模关卡流式加载，打造无缝开放世界体验。"
+      - "在缺少关键信息时，请先列出需要我补充的材料，再给出分步建议。"
+  limits:
+    timeoutSeconds: 300
+    maxToolCalls: 25
+    maxOutputBytes: 65536
+  evaluation:
+    cases: evals/cases.yaml
+  model:
+    requirements: []

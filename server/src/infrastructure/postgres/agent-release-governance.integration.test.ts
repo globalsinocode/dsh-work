@@ -37,6 +37,7 @@ import type {
 } from '../../modules/runtime/runtime-types.ts'
 import type { DatabaseClient } from './database.ts'
 import { createThrowawayDatabase, type ThrowawayDatabase } from './test-database.ts'
+import { bindTestWorkspaceNotificationRecipients } from './workspace-notification-recipient-test-fixture.ts'
 
 if (!process.env.DSH_WORK_TEST_DATABASE_URL) throw new Error('DSH_WORK_TEST_DATABASE_URL 未配置')
 
@@ -44,6 +45,7 @@ const tenantId = 'tenant-dsh-work'
 const ADMIN = 'user-release-admin'
 
 let database: DatabaseClient
+let unbindNotificationRecipients: (() => void) | undefined
 let throwaway: ThrowawayDatabase
 let agents: PostgresAgentService
 let release: PostgresAgentReleaseService
@@ -56,6 +58,7 @@ let releaseBaseUrl = ''
 before(async () => {
   throwaway = await createThrowawayDatabase({ namePrefix: 'dsh_work_agent_release_test', maxConnections: 8 })
   database = throwaway.client
+  unbindNotificationRecipients = bindTestWorkspaceNotificationRecipients(database)
   trialRuntime = new TrialStubRuntime()
   tools = new PostgresToolConnectorService(database, trialRuntime)
   const artifactStore = new SkillArtifactStore(new LocalObjectStorage(mkdtempSync(join(tmpdir(), 'agent-release-artifacts-')), { fileMode: 0o400 }))
@@ -94,6 +97,8 @@ after(async () => {
     await new Promise<void>((resolve, reject) => releaseHttp!.close(error => error ? reject(error) : resolve()))
   }
   await orchestration.close()
+  unbindNotificationRecipients?.()
+  unbindNotificationRecipients = undefined
   await throwaway.dispose()
 })
 

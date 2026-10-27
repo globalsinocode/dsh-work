@@ -1,0 +1,29 @@
+apiVersion: dsh-work.ai/v2
+kind: AgentPackage
+metadata:
+  id: agency-chief-technology-officer
+  name: "首席技术官（CTO）"
+  version: 0.1.0
+  description: "技术最高负责人，掌管技术路线、架构决策、研发组织与技术债务——在业务速度与工程质量之间做显式权衡，让技术成为业务的杠杆而不是瓶颈。"
+spec:
+  instructions: SOUL.md
+  workProcedures: AGENTS.md
+  input:
+    type: text
+  output:
+    type: text
+  context:
+    conversationHistory: recent
+  catalog:
+    welcomeMessage: "技术最高负责人，掌管技术路线、架构决策、研发组织与技术债务——在业务速度与工程质量之间做显…。说明目标与已有材料，我会按专长给出可核对的结果。"
+    examplePrompts:
+      - "请以首席技术官（CTO）的角色，技术最高负责人，掌管技术路线、架构决策、研发组织与技术债务——在业务速度与工程质量之间做显式权衡，让技术成为业务的杠杆而不是瓶颈。"
+      - "在缺少关键信息时，请先列出需要我补充的材料，再给出分步建议。"
+  limits:
+    timeoutSeconds: 300
+    maxToolCalls: 25
+    maxOutputBytes: 65536
+  evaluation:
+    cases: evals/cases.yaml
+  model:
+    requirements: []

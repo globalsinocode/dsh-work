@@ -18,6 +18,7 @@ import {
 import { ArtifactCard } from '@dsh-work/ui-core'
 import { useAuthStore } from '@/stores/auth'
 import { useContentStore } from '@/stores/content'
+import { useTaskStore } from '@/stores/tasks'
 import { workbenchApi } from '@/api/client'
 import type {
   Artifact,
@@ -89,6 +90,7 @@ const route = useRoute()
 const router = useRouter()
 const authStore = useAuthStore()
 const contentStore = useContentStore()
+const taskStore = useTaskStore()
 const starterRef = ref<{
   useWorkspaceFile: (file: WorkspaceFile) => void
 }>()
@@ -357,6 +359,21 @@ function selectTab(tab: WorkspaceTab) {
  * 视图切换写入 `?view=history`（design §2.2）。只有团队空间渲染切换行：
  * 个人空间的 `conversationView` 恒为 `new`，既不渲染历史视图也不发历史请求（AC-23）。
  */
+function onConversationViewKeydown(event: KeyboardEvent, index: number) {
+  const keyTargets: Record<string, number> = {
+    ArrowLeft: (index - 1 + conversationViews.length) % conversationViews.length,
+    ArrowRight: (index + 1) % conversationViews.length,
+    Home: 0,
+    End: conversationViews.length - 1,
+  }
+  const targetIndex = keyTargets[event.key]
+  if (targetIndex === undefined) return
+  event.preventDefault()
+  const target = conversationViews[targetIndex]
+  if (!target) return
+  void setConversationView(target.id)
+}
+
 function setConversationView(view: ConversationView) {
   conversationView.value = view
   const query = { ...route.query }
@@ -454,6 +471,12 @@ function openVersionDialog(file: WorkspaceFile, event?: MouseEvent) {
 }
 
 /** 对话框关闭后把焦点还给「版本」触发按钮（design §4）。 */
+// TW-10 ：团队成员在会话里的活动会改变成果归属，实时刷新成果列表。
+watch(
+  () => taskStore.sessionActivity,
+  () => { void contentStore.refreshArtifacts() },
+)
+
 watch(versionDialogOpen, (open) => {
   if (open) return
   void nextTick(() => {
@@ -1106,14 +1129,16 @@ const chatScope = computed(() => ({
             aria-label="对话视图"
           >
             <button
-              v-for="view in conversationViews"
+              v-for="(view, index) in conversationViews"
               :key="view.id"
               class="workspace-conversation-pane__view"
               :class="{ 'is-active': conversationView === view.id }"
               type="button"
               role="tab"
               :aria-selected="conversationView === view.id"
+              :tabindex="conversationView === view.id ? 0 : -1"
               @click="setConversationView(view.id)"
+              @keydown="onConversationViewKeydown($event, index)"
             >
               {{ view.label }}
             </button>

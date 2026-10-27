@@ -1597,6 +1597,105 @@
         "description": "逻辑移除：保留 archived 响应字段，增加 removedFromHistory=true、physicalDeletion=false。停止出现在历史/最近列表，不物理删除消息/运行/文件/成果；不提供恢复。幂等但仍复核当前作者和空间访问。"
       }
     },
+    "/runs/{runId}/export": {
+      "parameters": [
+        {
+          "name": "runId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "get": {
+        "operationId": "exportRunMarkdown",
+        "summary": "把本人可访问的 Run 导出为 Markdown 附件",
+        "responses": {
+          "200": {
+            "description": "Markdown 附件",
+            "content": {
+              "text/markdown": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/sessions/{sessionId}/export": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/SessionId"
+        }
+      ],
+      "get": {
+        "operationId": "exportSessionMarkdown",
+        "summary": "把本人可访问的会话导出为 Markdown 附件",
+        "responses": {
+          "200": {
+            "description": "Markdown 附件",
+            "content": {
+              "text/markdown": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/sessions/{sessionId}/discard-draft": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/SessionId"
+        }
+      ],
+      "post": {
+        "operationId": "discardEmptyDraftSession",
+        "summary": "丢弃尚未产生任何消息的草稿会话（按 clientIntentId 幂等）",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "clientIntentId"
+                ],
+                "properties": {
+                  "clientIntentId": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
     "/sessions/{sessionId}/summary": {
       "parameters": [
         {

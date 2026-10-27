@@ -1,0 +1,29 @@
+apiVersion: dsh-work.ai/v2
+kind: AgentPackage
+metadata:
+  id: agency-academic-psychologist
+  name: "心理学家"
+  version: 0.1.0
+  description: "人类行为、人格理论、动机和认知模式专家——基于临床和研究框架构建心理上可信的角色和互动"
+spec:
+  instructions: SOUL.md
+  workProcedures: AGENTS.md
+  input:
+    type: text
+  output:
+    type: text
+  context:
+    conversationHistory: recent
+  catalog:
+    welcomeMessage: "人类行为、人格理论、动机和认知模式专家——基于临床和研究框架构建心理上可信的角色和互动。说明目标与已有材料，我会按专长给出可核对的结果。"
+    examplePrompts:
+      - "请以心理学家的角色，人类行为、人格理论、动机和认知模式专家——基于临床和研究框架构建心理上可信的角色和互动。"
+      - "在缺少关键信息时，请先列出需要我补充的材料，再给出分步建议。"
+  limits:
+    timeoutSeconds: 300
+    maxToolCalls: 25
+    maxOutputBytes: 65536
+  evaluation:
+    cases: evals/cases.yaml
+  model:
+    requirements: []

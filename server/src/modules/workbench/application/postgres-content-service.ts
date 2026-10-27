@@ -9,7 +9,7 @@ import type { DatabaseClient, DatabaseTransaction } from '../../../infrastructur
 import type { PostgresAuthorizationService } from '../../authorization/postgres-authorization-service.ts'
 import { authorizationDenied, canReadWorkspaceObject, isAuthorizationDenial, requestInvalid } from '../../../domain/authorization-errors.ts'
 import { dependencyUnavailable } from '../../../domain/request-errors.ts'
-import type { FileAttachment, FileMount } from '../../runtime/runtime-types.ts'
+import type { FileAttachment, PreparedRuntimeFile } from '../../runtime/runtime-types.ts'
 import { isAdminRunPurpose } from '../../runtime/runtime-types.ts'
 import { insertTeamWorkspaceRows } from './team-workspace-rows.ts'
 import { BaselineFileSafetyScanner, type FileSafetyScannerPort } from './file-safety-scanner.ts'
@@ -131,14 +131,6 @@ interface RuntimeFileRow {
   /** Set when the file is a run artifact version: the mount tells the Agent which artifact it revises. */
   artifactId: string | null
   artifactVersion: number | null
-}
-
-export interface PreparedRuntimeFile {
-  fileId: string
-  extractionId: string
-  mount: FileMount
-  /** 解析文本承载不了的图片，按只读附件挂进 /workspace/input/attachments/。 */
-  attachments: FileAttachment[]
 }
 
 interface PreparedRuntimeArtifact {

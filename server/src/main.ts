@@ -64,7 +64,10 @@ import { PostgresWorkspaceUsageService } from './modules/workbench/application/p
 import { PostgresWorkspaceService } from './modules/workbench/application/postgres-workspace-service.ts'
 import { PostgresAgentService } from './modules/agent/postgres-agent-service.ts'
 import { PostgresAgentReleaseService } from './modules/agent/postgres-agent-release-service.ts'
+import { PostgresAgentValidationService } from './modules/agent/agent-validation-service.ts'
+import { PostgresAgentRunHistory } from './modules/agent/agent-run-history.ts'
 import { registerAgentReleaseRoutes } from './http/admin/agent-release-routes.ts'
+import { registerAgentValidationRoutes } from './http/admin/agent-validation-routes.ts'
 import { registerAssistantRoutes } from './http/admin/assistant-routes.ts'
 import { registerSkillInstallationRoutes } from './http/admin/skill-installation-routes.ts'
 import { AdminSkillInstallationService } from './modules/skill/admin-skill-installation-service.ts'
@@ -532,6 +535,10 @@ async function start() {
   const trialRecovery = await agentRelease.recoverInterruptedTrials()
   if (trialRecovery.interrupted > 0) console.warn('agent release trial recovery completed', trialRecovery)
   registerAgentReleaseRoutes(router, agentRelease)
+  // S3 验证与发布：管理端 Agent 详情页的用例/验证/发布接口（浏览器夹具一直单独装配，生产入口此前缺失）。
+  registerAgentValidationRoutes(router, agents,
+    new PostgresAgentValidationService(database, agents, skills, orchestration, mcpService),
+    new PostgresAgentRunHistory(database))
   registerSkillRoutes(router, skills)
   registerToolRoutes(router, toolService)
   registerWorkbenchAgentRoutes(router, agents, authorization)

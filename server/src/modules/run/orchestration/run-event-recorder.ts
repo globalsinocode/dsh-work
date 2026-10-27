@@ -1,7 +1,11 @@
 import type { RuntimeEvent, RuntimeManifest } from '../../runtime/runtime-types.ts'
-import type { JsonObject, RunRecord, StoredRunEvent } from '../run-types.ts'
+import type { JsonObject, RunRecord, RunState, StoredRunEvent } from '../run-types.ts'
 import type { AttemptBudget } from './attempt-budget.ts'
 import { tenantId, type OrchestrationDependencies } from './orchestration-dependencies.ts'
+
+const TERMINAL_RUN_STATUSES = new Set<RunState>(['succeeded', 'failed', 'cancelled'])
+const TERMINAL_ATTEMPT_STATUSES = new Set(['succeeded', 'failed', 'cancelled', 'cancel_requested'])
+const LATE_TERMINAL_EVENT_TYPES = new Set(['assistant.completed', 'run.completed', 'run.failed', 'run.cancelled'])
 
 /**
  * Persists Runtime events first, then applies their consequences: Run/Attempt state,
@@ -11,6 +15,7 @@ import { tenantId, type OrchestrationDependencies } from './orchestration-depend
 export class RunEventRecorder {
   private readonly eventWrites = new Map<string, Promise<void>>()
   private readonly assistantOutputs = new Map<string, string>()
+  private readonly assistantRawOutputs = new Map<string, string>()
   private readonly deps: OrchestrationDependencies
   private readonly budget: AttemptBudget
 
@@ -37,6 +42,7 @@ export class RunEventRecorder {
       this.eventWrites.delete(runId)
     }
     this.assistantOutputs.delete(attemptId)
+    this.assistantRawOutputs.delete(attemptId)
   }
 
   /** Waits for every pending event write (service shutdown). */
@@ -54,6 +60,8 @@ export class RunEventRecorder {
   }
 
   private async persistEvent(run: RunRecord, event: RuntimeEvent) {
+    const attemptBefore = await this.deps.runs.getAttempt(tenantId, event.attempt_id)
+    const runBefore = await this.deps.runs.getRun(tenantId, run.id)
     const stored: StoredRunEvent = {
       id: event.event_id,
       tenantId,
@@ -66,7 +74,21 @@ export class RunEventRecorder {
       traceId: event.trace_id,
       occurredAt: event.occurred_at,
     }
+    if (LATE_TERMINAL_EVENT_TYPES.has(event.event_type)
+      && runBefore
+      && TERMINAL_RUN_STATUSES.has(runBefore.status)) {
+      stored.safeMetadata = { ...stored.safeMetadata, late: true }
+    }
     await this.deps.runs.appendEvent(stored)
+    const attemptAfter = await this.deps.runs.getAttempt(tenantId, event.attempt_id)
+    if (LATE_TERMINAL_EVENT_TYPES.has(event.event_type)
+      && attemptBefore?.status === 'running'
+      && attemptAfter
+      && TERMINAL_ATTEMPT_STATUSES.has(attemptAfter.status)) {
+      await this.deps.runs.markEventLate(tenantId, event.event_id)
+      return
+    }
+    if (stored.safeMetadata['late'] === true) return
     const eventRun = await this.deps.runs.getRun(tenantId, run.id)
     if (eventRun?.currentAttemptId !== event.attempt_id) return
     if (event.event_type === 'run.started') {
@@ -86,6 +108,7 @@ export class RunEventRecorder {
       }
       await this.deps.operations?.appendAudit(run.requestedBy, 'run.waiting', run.id, 'success', event.trace_id, 'Worker 已释放，等待动作审批')
     } else if (event.event_type === 'assistant.completed' && event.display_message) {
+      this.assistantRawOutputs.set(event.attempt_id, event.display_message)
       let assistantContent = this.deps.knowledge
         ? await this.deps.knowledge.addCitationFooter(event.attempt_id, event.display_message)
         : event.display_message
@@ -140,6 +163,7 @@ export class RunEventRecorder {
     } else if (event.event_type === 'run.completed') {
       const attempt = await this.deps.runs.getAttempt(tenantId, event.attempt_id)
       const assistantOutput = this.assistantOutputs.get(event.attempt_id) ?? ''
+      const assistantRawOutput = this.assistantRawOutputs.get(event.attempt_id) ?? ''
       await this.budget.settle(event, 'succeeded', assistantOutput)
       await this.deps.runs.transitionAttempt(tenantId, event.attempt_id, 'succeeded')
       await this.deps.runs.transitionRun(tenantId, run.id, 'succeeded')
@@ -159,6 +183,9 @@ export class RunEventRecorder {
       await this.deps.operations?.appendAudit('system', 'run.completed', run.id, 'success', event.trace_id, 'DSH Runtime 执行完成')
       await this.deps.delegation?.cancelActiveDescendants(run.taskId, '父任务已结束，终止未收敛的活动子任务')
       await this.deps.delegation?.observeChildTerminal(run.id)
+      if (assistantRawOutput) {
+        await this.deps.projectArchivist?.afterTaskRun(run, assistantRawOutput)
+      }
       if (run.sessionId) {
         await this.deps.conversations.writeRunTerminalNotificationIfTeam({
           sessionId: run.sessionId,
@@ -169,6 +196,7 @@ export class RunEventRecorder {
         })
       }
       this.assistantOutputs.delete(event.attempt_id)
+      this.assistantRawOutputs.delete(event.attempt_id)
     } else if (event.event_type === 'approval.resolved') {
       if (event.safe_metadata['tool_name'] === 'prepare_skill_installation') {
         await this.deps.operations?.appendAudit(run.requestedBy, 'skill.installation.tool.approval', run.id, event.safe_metadata['decision'] === 'allow_once' ? 'success' : 'blocked', event.trace_id, '安装预览工具权限检查；此授权不代表确认安装')

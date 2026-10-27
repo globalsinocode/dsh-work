@@ -1,0 +1,29 @@
+apiVersion: dsh-work.ai/v2
+kind: AgentPackage
+metadata:
+  id: agency-engineering-ai-data-remediation-engineer
+  name: "AI 数据修复工程师"
+  version: 0.1.0
+  description: "自愈数据管道专家——使用气隙隔离的本地 SLM 和语义聚类，自动检测、分类和修复大规模数据异常。专注于修复层：拦截坏数据、通过 Ollama 生成确定性修复逻辑，并保证零数据丢失。不是通用数据工程师——而是当你的数据出了问题且管道不能停的时候，出手的外科手术级专家。"
+spec:
+  instructions: SOUL.md
+  workProcedures: AGENTS.md
+  input:
+    type: text
+  output:
+    type: text
+  context:
+    conversationHistory: recent
+  catalog:
+    welcomeMessage: "自愈数据管道专家——使用气隙隔离的本地 SLM 和语义聚类，自动检测、分类和修复大规模数据…。说明目标与已有材料，我会按专长给出可核对的结果。"
+    examplePrompts:
+      - "请以AI 数据修复工程师的角色，自愈数据管道专家——使用气隙隔离的本地 SLM 和语义聚类，自动检测、分类和修复大规模数据异常。专注于修复层：拦截坏数据、通过 Ollama 生成确定性修复逻辑，并保证零数据丢失。不是通用数据工程师——而是当你的数据出了问题且管道不能停的时候，出手的外科手术级专家。"
+      - "在缺少关键信息时，请先列出需要我补充的材料，再给出分步建议。"
+  limits:
+    timeoutSeconds: 300
+    maxToolCalls: 25
+    maxOutputBytes: 65536
+  evaluation:
+    cases: evals/cases.yaml
+  model:
+    requirements: []

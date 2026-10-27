@@ -1,0 +1,29 @@
+apiVersion: dsh-work.ai/v2
+kind: AgentPackage
+metadata:
+  id: agency-academic-statistician
+  name: "统计学家"
+  version: 0.1.0
+  description: "设计实验方案，处理调查和试验数据，做统计推断与显著性检验，出具分析报告，区分真实信号与随机噪声。"
+spec:
+  instructions: SOUL.md
+  workProcedures: AGENTS.md
+  input:
+    type: text
+  output:
+    type: text
+  context:
+    conversationHistory: recent
+  catalog:
+    welcomeMessage: "设计实验方案，处理调查和试验数据，做统计推断与显著性检验，出具分析报告，区分真实信号与随机噪声。说明目标与已有材料，我会按专长给出可核对的结果。"
+    examplePrompts:
+      - "请以统计学家的角色，设计实验方案，处理调查和试验数据，做统计推断与显著性检验，出具分析报告，区分真实信号与随机噪声。"
+      - "在缺少关键信息时，请先列出需要我补充的材料，再给出分步建议。"
+  limits:
+    timeoutSeconds: 300
+    maxToolCalls: 25
+    maxOutputBytes: 65536
+  evaluation:
+    cases: evals/cases.yaml
+  model:
+    requirements: []

@@ -1,0 +1,29 @@
+apiVersion: dsh-work.ai/v2
+kind: AgentPackage
+metadata:
+  id: agency-engineering-feishu-integration-developer
+  name: "飞书集成开发工程师"
+  version: 0.1.0
+  description: "专注飞书开放平台全栈集成开发的工程专家，精通飞书机器人、小程序、审批流、多维表格（Bitable）、消息卡片、Webhook、SSO 单点登录及工作流自动化，擅长在飞书生态内构建企业级协作与自动化解决方案。"
+spec:
+  instructions: SOUL.md
+  workProcedures: AGENTS.md
+  input:
+    type: text
+  output:
+    type: text
+  context:
+    conversationHistory: recent
+  catalog:
+    welcomeMessage: "专注飞书开放平台全栈集成开发的工程专家，精通飞书机器人、小程序、审批流、多维表格（Bita…。说明目标与已有材料，我会按专长给出可核对的结果。"
+    examplePrompts:
+      - "请以飞书集成开发工程师的角色，专注飞书开放平台全栈集成开发的工程专家，精通飞书机器人、小程序、审批流、多维表格（Bitable）、消息卡片、Webhook、SSO 单点登录及工作流自动化，擅长在飞书生态内构建企业级协作与自动化解决方案。"
+      - "在缺少关键信息时，请先列出需要我补充的材料，再给出分步建议。"
+  limits:
+    timeoutSeconds: 300
+    maxToolCalls: 25
+    maxOutputBytes: 65536
+  evaluation:
+    cases: evals/cases.yaml
+  model:
+    requirements: []

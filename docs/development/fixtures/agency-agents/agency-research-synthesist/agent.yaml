@@ -1,0 +1,29 @@
+apiVersion: dsh-work.ai/v2
+kind: AgentPackage
+metadata:
+  id: agency-research-synthesist
+  name: "研究证据综合专家"
+  version: 0.1.0
+  description: "开展文献检索、信源评价与证据综合，将分散材料整理为结构清晰、权重诚实的研究结论。"
+spec:
+  instructions: SOUL.md
+  workProcedures: AGENTS.md
+  input:
+    type: text
+  output:
+    type: text
+  context:
+    conversationHistory: recent
+  catalog:
+    welcomeMessage: "开展文献检索、信源评价与证据综合，将分散材料整理为结构清晰、权重诚实的研究结论。说明目标与已有材料，我会按专长给出可核对的结果。"
+    examplePrompts:
+      - "请以研究证据综合专家的角色，开展文献检索、信源评价与证据综合，将分散材料整理为结构清晰、权重诚实的研究结论。"
+      - "在缺少关键信息时，请先列出需要我补充的材料，再给出分步建议。"
+  limits:
+    timeoutSeconds: 300
+    maxToolCalls: 25
+    maxOutputBytes: 65536
+  evaluation:
+    cases: evals/cases.yaml
+  model:
+    requirements: []

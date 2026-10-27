@@ -1,0 +1,18 @@
+{
+  "id": "plaza-sp-systematic-debugging",
+  "repo": "superpowers",
+  "sourcePath": "skills/systematic-debugging",
+  "commit": "bb92a77741419a4ab5f06e711a283343f1ada0c3",
+  "notes": null,
+  "files": [
+    "CREATION-LOG.md",
+    "SKILL.md",
+    "condition-based-waiting.md",
+    "defense-in-depth.md",
+    "root-cause-tracing.md",
+    "test-academic.md",
+    "test-pressure-1.md",
+    "test-pressure-2.md",
+    "test-pressure-3.md"
+  ]
+}

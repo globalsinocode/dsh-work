@@ -306,6 +306,15 @@ export interface FileAttachment {
   source?: string
 }
 
+/** 运行前已复核并固化的输入文件（内容服务产出，执行装配消费）。 */
+export interface PreparedRuntimeFile {
+  fileId: string
+  extractionId: string
+  mount: FileMount
+  /** 解析文本承载不了的图片，按只读附件挂进 /workspace/input/attachments/。 */
+  attachments: FileAttachment[]
+}
+
 export interface FileMount {
   file_id: string
   mount_path: string

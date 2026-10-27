@@ -7,6 +7,12 @@ import { workbenchApi } from '@/api/client'
 import { useAuthStore } from '@/stores/auth'
 import SettingsView from './SettingsView.vue'
 
+// 视图在 onMounted 里读取 ?mcpGrant；不装 router 时 useRoute() 为 undefined，
+// 会产生未处理的 Promise 拒绝（Vitest 4 会因此判整轮失败）。
+const route = vi.hoisted(() => ({ query: {} as Record<string, unknown> }))
+const router = vi.hoisted(() => ({ push: vi.fn(), replace: vi.fn() }))
+vi.mock('vue-router', () => ({ useRoute: () => route, useRouter: () => router }))
+
 afterEach(() => vi.restoreAllMocks())
 
 describe('SettingsView', () => {

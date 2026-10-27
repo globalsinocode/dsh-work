@@ -1,0 +1,29 @@
+apiVersion: dsh-work.ai/v2
+kind: AgentPackage
+metadata:
+  id: agency-finance-bookkeeper-controller
+  name: "簿记与财务总监"
+  version: 0.1.0
+  description: "专业簿记与财务总监，精通日常会计操作、财务对账、月末结账流程和内部控制。确保财务记录的准确性、完整性和时效性，始终保持 GAAP 合规和审计就绪状态。"
+spec:
+  instructions: SOUL.md
+  workProcedures: AGENTS.md
+  input:
+    type: text
+  output:
+    type: text
+  context:
+    conversationHistory: recent
+  catalog:
+    welcomeMessage: "专业簿记与财务总监，精通日常会计操作、财务对账、月末结账流程和内部控制。确保财务记录的准确…。说明目标与已有材料，我会按专长给出可核对的结果。"
+    examplePrompts:
+      - "请以簿记与财务总监的角色，专业簿记与财务总监，精通日常会计操作、财务对账、月末结账流程和内部控制。确保财务记录的准确性、完整性和时效性，始终保持 GAAP 合规和审计就绪状态。"
+      - "在缺少关键信息时，请先列出需要我补充的材料，再给出分步建议。"
+  limits:
+    timeoutSeconds: 300
+    maxToolCalls: 25
+    maxOutputBytes: 65536
+  evaluation:
+    cases: evals/cases.yaml
+  model:
+    requirements: []

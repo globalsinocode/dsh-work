@@ -2,16 +2,19 @@ import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { after, before, test } from 'node:test'
 import { createThrowawayDatabase, type ThrowawayDatabase } from './test-database.ts'
+import { bindTestWorkspaceNotificationRecipients } from './workspace-notification-recipient-test-fixture.ts'
 import { PostgresConversationRepository } from '../../modules/workbench/application/postgres-conversation-repository.ts'
 
 const tenant = 'tenant-dsh-work'
 let db: ThrowawayDatabase
 let conversations: PostgresConversationRepository
+let unbindNotificationRecipients: (() => void) | undefined
 before(async () => {
   db = await createThrowawayDatabase({ namePrefix: 'dsh_review_admin_session' })
+  unbindNotificationRecipients = bindTestWorkspaceNotificationRecipients(db.client)
   conversations = new PostgresConversationRepository(db.client)
 })
-after(async () => { await db?.dispose() })
+after(async () => { unbindNotificationRecipients?.(); unbindNotificationRecipients = undefined; await db?.dispose() })
 async function adminSession() {
   const id = `admin-session-${randomUUID()}`
   await db.client`insert into sessions (id, tenant_id, created_by, title, status, audience, workspace_id, agent_version_id)

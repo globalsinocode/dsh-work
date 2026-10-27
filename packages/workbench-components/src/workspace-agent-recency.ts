@@ -2,10 +2,39 @@ const STORAGE_KEY = 'dsh-workbench:recent-workspace-agent-member'
 
 type RecentMap = Record<string, string>
 
-function readMap(): RecentMap {
-  if (typeof localStorage === 'undefined') return {}
+/**
+ * 浏览器里用 localStorage；测试或受限环境（没有 window.localStorage）时退化为
+ * 进程内 Map，保证“最近使用 Agent”的语义仍可验证，而不是静默失效。
+ */
+const memoryStore = new Map<string, string>()
+
+function storage(): Storage | undefined {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY)
+    const candidate = globalThis.window?.localStorage ?? globalThis.localStorage
+    return candidate ?? undefined
+  } catch {
+    return undefined
+  }
+}
+
+function readRaw(): string | null {
+  const store = storage()
+  if (store) return store.getItem(STORAGE_KEY)
+  return memoryStore.get(STORAGE_KEY) ?? null
+}
+
+function writeRaw(value: string) {
+  const store = storage()
+  if (store) {
+    store.setItem(STORAGE_KEY, value)
+    return
+  }
+  memoryStore.set(STORAGE_KEY, value)
+}
+
+function readMap(): RecentMap {
+  try {
+    const raw = readRaw()
     if (!raw) return {}
     const parsed = JSON.parse(raw) as unknown
     if (!parsed || typeof parsed !== 'object') return {}
@@ -22,9 +51,8 @@ function readMap(): RecentMap {
 }
 
 function writeMap(map: RecentMap) {
-  if (typeof localStorage === 'undefined') return
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(map))
+    writeRaw(JSON.stringify(map))
   } catch {
     // 隐私模式或配额满时静默降级，不影响输入与发送。
   }

@@ -12,6 +12,7 @@ import { setTimeout as delay } from 'node:timers/promises'
 import { after, before, test } from 'node:test'
 import { strToU8, zipSync } from 'fflate'
 import { createThrowawayDatabase, type ThrowawayDatabase } from './test-database.ts'
+import { bindTestWorkspaceNotificationRecipients } from './workspace-notification-recipient-test-fixture.ts'
 import { PostgresAuthorizationService } from '../../modules/authorization/postgres-authorization-service.ts'
 import { PostgresOperationsService } from '../../modules/admin/application/postgres-operations-service.ts'
 import { PostgresConversationRepository } from '../../modules/workbench/application/postgres-conversation-repository.ts'
@@ -36,6 +37,7 @@ import { LocalObjectStorage } from '../storage/local-object-storage.ts'
 const tenant = 'tenant-dsh-work', actor = 'U00008'
 const real = process.env.DSH_WORK_SKILL_REAL_DSH === '1'
 let database: ThrowawayDatabase, orchestration: RunOrchestrationService, service: AdminSkillInstallationService
+let unbindNotificationRecipients: (() => void) | undefined
 let assistant: AdminAssistantService
 let operations: PostgresOperationsService
 let agents: PostgresAgentService
@@ -56,6 +58,7 @@ async function fixtureAcquire(source: SkillSource) {
 }
 before(async () => {
   database = await createThrowawayDatabase({ namePrefix: 'dsh_skill_installation_test' })
+  unbindNotificationRecipients = bindTestWorkspaceNotificationRecipients(database.client)
   runtimeRoot = await mkdtemp(join(tmpdir(), 'dsh-install-test-'))
   artifactStore = new SkillArtifactStore(new LocalObjectStorage(join(runtimeRoot, 'skills'), { fileMode: 0o400 }))
   const projectRoot = resolve(import.meta.dirname, '../../../..')
@@ -80,7 +83,7 @@ before(async () => {
   service = new AdminSkillInstallationService(database.client, orchestration, auth, real ? acquireSkillSource : fixtureAcquire, false, [], artifactStore)
   assistant = new AdminAssistantService(database.client, orchestration, auth, service, skills, agents, operations)
 })
-after(async () => { await orchestration?.close(); await database?.dispose(); if (runtimeRoot) await rm(runtimeRoot, { recursive: true, force: true }) })
+after(async () => { unbindNotificationRecipients?.(); unbindNotificationRecipients = undefined; await orchestration?.close(); await database?.dispose(); if (runtimeRoot) await rm(runtimeRoot, { recursive: true, force: true }) })
 const source = real ? 'https://raw.githubusercontent.com/vercel-labs/agent-skills/main/skills/web-design-guidelines/SKILL.md' : 'https://example.org/skill.zip'
 async function send(message = source) {
   const sessionId = `admin-session-${randomUUID()}`, requestId = randomUUID()

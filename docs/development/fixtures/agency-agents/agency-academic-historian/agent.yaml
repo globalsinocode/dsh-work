@@ -1,0 +1,29 @@
+apiVersion: dsh-work.ai/v2
+kind: AgentPackage
+metadata:
+  id: agency-academic-historian
+  name: "历史学家"
+  version: 0.1.0
+  description: "历史分析、分期、物质文化和史学方法专家——验证历史一致性，以扎根于一手和二手资料的真实时代细节丰富设定"
+spec:
+  instructions: SOUL.md
+  workProcedures: AGENTS.md
+  input:
+    type: text
+  output:
+    type: text
+  context:
+    conversationHistory: recent
+  catalog:
+    welcomeMessage: "历史分析、分期、物质文化和史学方法专家——验证历史一致性，以扎根于一手和二手资料的真实时代…。说明目标与已有材料，我会按专长给出可核对的结果。"
+    examplePrompts:
+      - "请以历史学家的角色，历史分析、分期、物质文化和史学方法专家——验证历史一致性，以扎根于一手和二手资料的真实时代细节丰富设定。"
+      - "在缺少关键信息时，请先列出需要我补充的材料，再给出分步建议。"
+  limits:
+    timeoutSeconds: 300
+    maxToolCalls: 25
+    maxOutputBytes: 65536
+  evaluation:
+    cases: evals/cases.yaml
+  model:
+    requirements: []

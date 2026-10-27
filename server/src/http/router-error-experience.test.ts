@@ -4,6 +4,7 @@ import { test } from 'node:test'
 import type { RequestIdentity } from '../modules/identity/types.ts'
 import { ModelCapabilityMismatchError } from '../modules/model/model-governance-service.ts'
 import { ExecutionCapabilityUnavailableError } from '../modules/runtime/execution-capabilities.ts'
+import { authorizationDenied } from '../domain/authorization-errors.ts'
 import { accessDenied, dependencyTimeout, invalidRequest, notFound, stateConflict, dependencyUnavailable } from '../domain/request-errors.ts'
 import { assertApiRouteAccess, classifyHttpError, readJsonBody } from './router.ts'
 
@@ -47,7 +48,8 @@ test('status never comes from message wording: an untyped error is always a 500'
 test('each request error category keeps its status, code, message and next step', () => {
   const cases = [
     [invalidRequest('文件大小超过 20 MB 限制'), 422, 'invalid_request', /调整输入内容或文件/],
-    [accessDenied('管理对话不存在或不可访问'), 403, 'authorization_denied', /成员关系|授权/],
+    [accessDenied('管理对话不存在或不可访问'), 403, 'permission_denied', /成员关系|授权/],
+    [authorizationDenied('当前账号无权访问该资源'), 403, 'authorization_denied', /配置角色与数据范围/],
     [notFound('Agent 不存在'), 404, 'resource_not_found', /列表/],
     [stateConflict('当前状态不能取消'), 409, 'state_conflict', /刷新对象状态/],
     [dependencyUnavailable('Runtime 当前离线'), 503, 'dependency_unavailable', /运行时或连接器/],
@@ -67,7 +69,7 @@ test('permission and validation failures preserve safe causes and actionable gui
     '/api/workbench/workspaces/ws-private',
   )
   assert.equal(forbidden.status, 403)
-  assert.equal(forbidden.error.code, 'authorization_denied')
+  assert.equal(forbidden.error.code, 'permission_denied')
   assert.equal(forbidden.error.object, '工作空间 ws-private')
   assert.match(forbidden.error.suggestion, /成员关系|授权/)
 

@@ -1,0 +1,29 @@
+apiVersion: dsh-work.ai/v2
+kind: AgentPackage
+metadata:
+  id: agency-specialized-strategy-duel-agent
+  name: "策略对决推演师"
+  version: 0.1.0
+  description: "运用 game theory（博弈论）和三十六计开展实时策略对决推演"
+spec:
+  instructions: SOUL.md
+  workProcedures: AGENTS.md
+  input:
+    type: text
+  output:
+    type: text
+  context:
+    conversationHistory: recent
+  catalog:
+    welcomeMessage: "运用 game theory（博弈论）和三十六计开展实时策略对决推演。说明目标与已有材料，我会按专长给出可核对的结果。"
+    examplePrompts:
+      - "请以策略对决推演师的角色，运用 game theory（博弈论）和三十六计开展实时策略对决推演。"
+      - "在缺少关键信息时，请先列出需要我补充的材料，再给出分步建议。"
+  limits:
+    timeoutSeconds: 300
+    maxToolCalls: 25
+    maxOutputBytes: 65536
+  evaluation:
+    cases: evals/cases.yaml
+  model:
+    requirements: []

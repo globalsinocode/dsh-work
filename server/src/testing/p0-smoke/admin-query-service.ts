@@ -13,6 +13,7 @@ import type {
   ConnectorConfiguration,
   CreateAgentDraftInput,
   CreateSkillInput,
+  DshRuntimeToolConnectorStatus,
   EmployeeModelUsageSummary,
   ListPage,
   ManagedWorkspaceDefinition,
@@ -25,10 +26,13 @@ import type {
   SessionListQuery,
   SkillConfiguration,
   SkillDefinition,
+  ToolCatalogSyncResult,
+  ToolDefinition,
   UpdateAgentDraftInput,
   UpdateRuntimeConfigurationInput,
   UpdateSkillInput,
 } from '../../domain/types.ts'
+import { DSH_RUNTIME_CONNECTOR_ID } from '../../domain/tool-category.ts'
 import { builtinTools, invalidSkillToolReferences, normalizeDisabledTools, type BuiltinToolStatus } from '../../modules/runtime/builtin-tools.ts'
 import { invalidRequest, notFound, stateConflict } from '../../domain/request-errors.ts'
 
@@ -421,6 +425,53 @@ export class AdminQueryService {
   private async assertSkillToolsAvailable(toolIds: string[]) {
     const invalid = invalidSkillToolReferences(unique(toolIds))
     if (invalid.length) throw invalidRequest(`Skill 引用了平台不提供的工具：${invalid.join('、')}`)
+  }
+
+  async getTools(): Promise<ToolDefinition[]> {
+    return []
+  }
+
+  async getToolCatalog() {
+    return []
+  }
+
+  async syncToolCatalog(input: { actor: string }): Promise<ToolCatalogSyncResult> {
+    if (!input.actor.trim()) throw stateConflict('操作人不能为空')
+    const synchronizedAt = new Date().toISOString()
+    return {
+      tools: [],
+      discoveredCount: builtinTools.length,
+      admittedCount: 0,
+      unavailableCount: builtinTools.length,
+      synchronizedAt,
+    }
+  }
+
+  async listToolBindings() {
+    return []
+  }
+
+  async getDshRuntimeToolConnectorStatus(): Promise<DshRuntimeToolConnectorStatus> {
+    const connector = (await this.getConnectors()).find(item => item.id === DSH_RUNTIME_CONNECTOR_ID)
+    const [runtime] = await this.repository.read('runtimes')
+    return {
+      runtimeId: runtime?.id ?? null,
+      connectorId: connector?.id ?? DSH_RUNTIME_CONNECTOR_ID,
+      name: connector?.name ?? 'DSH 内置工具',
+      status: connector?.status ?? 'healthy',
+      endpoint: connector?.endpoint ?? 'prototype://dsh-runtime',
+      toolCount: connector?.toolCount ?? builtinTools.length,
+      activeBindingCount: 0,
+      latestBindingRevision: null,
+      catalogDigest: '0'.repeat(64),
+      lastCheckedAt: connector?.lastCheckedAt ?? '刚刚',
+      lastHealthMessage: 'P0 冒烟：内置工具连接可用。',
+    }
+  }
+
+  async checkDshRuntimeToolConnector(input: { actor: string }): Promise<DshRuntimeToolConnectorStatus> {
+    if (!input.actor.trim()) throw stateConflict('操作人不能为空')
+    return this.getDshRuntimeToolConnectorStatus()
   }
 
   async getBuiltinToolStatus(): Promise<BuiltinToolStatus> {

@@ -1,6 +1,5 @@
 import type { PostgresAuthorizationService } from '../../authorization/postgres-authorization-service.ts'
 import { authorizationDenied, canReadWorkspaceObject } from '../../../domain/authorization-errors.ts'
-import type { RunOrchestrationService } from '../../run/run-orchestration-service.ts'
 import type { PostgresConversationRepository, ExportableSessionMessage } from './postgres-conversation-repository.ts'
 
 const exportMessageLimit = 100
@@ -11,14 +10,19 @@ export interface ConversationExport {
   content: AsyncIterable<string>
 }
 
+/** 会话摘要读取端口；由 run 编排服务实现，workbench 只依赖结构以避免反向模块依赖。 */
+export interface SessionThreadPort {
+  getSessionThread(sessionId: string, userId: string): Promise<{ title: string }>
+}
+
 export class SessionExportService {
   private readonly conversations: PostgresConversationRepository
-  private readonly orchestration: RunOrchestrationService
+  private readonly orchestration: SessionThreadPort
   private readonly authorization: PostgresAuthorizationService
 
   constructor(deps: {
     conversations: PostgresConversationRepository
-    orchestration: RunOrchestrationService
+    orchestration: SessionThreadPort
     authorization: PostgresAuthorizationService
   }) {
     this.conversations = deps.conversations

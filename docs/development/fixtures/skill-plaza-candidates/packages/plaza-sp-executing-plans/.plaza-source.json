@@ -1,0 +1,16 @@
+{
+  "id": "plaza-sp-executing-plans",
+  "repo": "superpowers",
+  "sourcePath": "skills/executing-plans",
+  "commit": "bb92a77741419a4ab5f06e711a283343f1ada0c3",
+  "notes": null,
+  "files": [
+    "SKILL.md",
+    "references/code-reviewer.md",
+    "scripts/review-package.txt",
+    "scripts/sdd-workspace.txt",
+    "scripts/task-brief.txt",
+    "scripts/task-done.txt",
+    "scripts/task-start.txt"
+  ]
+}

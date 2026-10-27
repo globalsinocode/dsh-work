@@ -667,7 +667,7 @@ async function enrichSessionVersionBindings(
   },
 ) {
   let agentVersionReference: string | null = null
-  let skillVersionId: string | null = session.selectedSkillVersionId ?? null
+  const skillVersionId: string | null = session.selectedSkillVersionId ?? null
   let skillVersionReference: string | null = null
   if (session.agentVersionId) {
     agentVersionReference = await agents.lookupVersionReference(session.agentVersionId)

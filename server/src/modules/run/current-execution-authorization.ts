@@ -3,7 +3,6 @@ import { authorizationDenied, isAuthorizationDenial } from '../../domain/authori
 import { isAdminRunPurpose } from '../runtime/runtime-types.ts'
 import type { McpConnectionSnapshot, RuntimeManifest } from '../runtime/runtime-types.ts'
 import type { PostgresToolConnectorService } from '../tool/postgres-tool-connector-service.ts'
-import type { PostgresContentService } from '../workbench/application/postgres-content-service.ts'
 
 export class AuthorizationCheckUnavailableError extends Error {
   readonly code = 'AUTHORIZATION_CHECK_UNAVAILABLE'
@@ -25,6 +24,11 @@ export class ToolBindingCheckUnavailableError extends AuthorizationCheckUnavaila
   }
 }
 
+/** 运行期文件复核端口；由 workbench 内容服务实现，run 模块只依赖该结构，避免反向依赖。 */
+export interface RuntimeFileRecheckPort {
+  recheckRuntimeFiles(manifest: RuntimeManifest): Promise<void>
+}
+
 type AuthorizationPort = Pick<PostgresAuthorizationService,
   'workspaceTypeOf' | 'authorizeRuntime' | 'authorizeTeamRunExecution' | 'requireAdminReader' | 'requirePlatformAdmin' | 'requireActiveAgentPrincipal' | 'assertAgentPrincipalSnapshot'>
   & Partial<Pick<PostgresAuthorizationService, 'assertAgentRoutineRun'>>
@@ -40,7 +44,7 @@ export interface ExecutionToolCheckPort {
 /** All checks use live grants and pinned versions. This never rewrites the Manifest. */
 export async function assertCurrentExecutionAuthorization(
   authorization: AuthorizationPort,
-  content: Pick<PostgresContentService, 'recheckRuntimeFiles'> | undefined,
+  content: RuntimeFileRecheckPort | undefined,
   manifest: RuntimeManifest,
   bindings?: ExecutionBindingAuthorizationPort,
   toolBindingsChecked = false,

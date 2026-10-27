@@ -1,0 +1,29 @@
+apiVersion: dsh-work.ai/v2
+kind: AgentPackage
+metadata:
+  id: agency-design-video-prompt-engineer
+  name: "视频提示词工程师"
+  version: 0.1.0
+  description: "精通 AI 文生视频提示词的专家，用 5 段式结构把一句创意写成可直接投喂 Sora / 可灵 / Veo / Seedance / MiniMax 的电影感提示词，含运镜、瑕疵、声音与负面提示词，并对\"这条要花多少钱\"负责。"
+spec:
+  instructions: SOUL.md
+  workProcedures: AGENTS.md
+  input:
+    type: text
+  output:
+    type: text
+  context:
+    conversationHistory: recent
+  catalog:
+    welcomeMessage: "精通 AI 文生视频提示词的专家，用 5 段式结构把一句创意写成可直接投喂 Sora / …。说明目标与已有材料，我会按专长给出可核对的结果。"
+    examplePrompts:
+      - "请以视频提示词工程师的角色，精通 AI 文生视频提示词的专家，用 5 段式结构把一句创意写成可直接投喂 Sora / 可灵 / Veo / Seedance / MiniMax 的电影感提示词，含运镜、瑕疵、声音与负面提示词，并对\"这条要花多少钱\"负责。"
+      - "在缺少关键信息时，请先列出需要我补充的材料，再给出分步建议。"
+  limits:
+    timeoutSeconds: 300
+    maxToolCalls: 25
+    maxOutputBytes: 65536
+  evaluation:
+    cases: evals/cases.yaml
+  model:
+    requirements: []

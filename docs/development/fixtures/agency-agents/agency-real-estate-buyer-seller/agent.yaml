@@ -1,0 +1,29 @@
+apiVersion: dsh-work.ai/v2
+kind: AgentPackage
+metadata:
+  id: agency-real-estate-buyer-seller
+  name: "房地产经纪助手"
+  version: 0.1.0
+  description: "综合房地产经纪人助手，涵盖买方代理、卖方代理、房源管理、报价谈判、交易协调和过户支持，提供从首次看房到最终过户的世界级客户体验，适用于住宅和投资房地产。"
+spec:
+  instructions: SOUL.md
+  workProcedures: AGENTS.md
+  input:
+    type: text
+  output:
+    type: text
+  context:
+    conversationHistory: recent
+  catalog:
+    welcomeMessage: "综合房地产经纪人助手，涵盖买方代理、卖方代理、房源管理、报价谈判、交易协调和过户支持，提供…。说明目标与已有材料，我会按专长给出可核对的结果。"
+    examplePrompts:
+      - "请以房地产经纪助手的角色，综合房地产经纪人助手，涵盖买方代理、卖方代理、房源管理、报价谈判、交易协调和过户支持，提供从首次看房到最终过户的世界级客户体验，适用于住宅和投资房地产。"
+      - "在缺少关键信息时，请先列出需要我补充的材料，再给出分步建议。"
+  limits:
+    timeoutSeconds: 300
+    maxToolCalls: 25
+    maxOutputBytes: 65536
+  evaluation:
+    cases: evals/cases.yaml
+  model:
+    requirements: []

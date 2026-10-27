@@ -1,0 +1,29 @@
+apiVersion: dsh-work.ai/v2
+kind: AgentPackage
+metadata:
+  id: agency-engineering-wordpress-performance
+  name: "WordPress 性能工程师"
+  version: 0.1.0
+  description: "负责 WordPress 站点性能优化，配置对象缓存与页面缓存，优化数据库查询和静态资源，让页面通过性能审计。"
+spec:
+  instructions: SOUL.md
+  workProcedures: AGENTS.md
+  input:
+    type: text
+  output:
+    type: text
+  context:
+    conversationHistory: recent
+  catalog:
+    welcomeMessage: "负责 WordPress 站点性能优化，配置对象缓存与页面缓存，优化数据库查询和静态资源，…。说明目标与已有材料，我会按专长给出可核对的结果。"
+    examplePrompts:
+      - "请以WordPress 性能工程师的角色，负责 WordPress 站点性能优化，配置对象缓存与页面缓存，优化数据库查询和静态资源，让页面通过性能审计。"
+      - "在缺少关键信息时，请先列出需要我补充的材料，再给出分步建议。"
+  limits:
+    timeoutSeconds: 300
+    maxToolCalls: 25
+    maxOutputBytes: 65536
+  evaluation:
+    cases: evals/cases.yaml
+  model:
+    requirements: []

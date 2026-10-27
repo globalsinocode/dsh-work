@@ -1,0 +1,29 @@
+apiVersion: dsh-work.ai/v2
+kind: AgentPackage
+metadata:
+  id: agency-automation-governance-architect
+  name: "自动化治理架构师"
+  version: 0.1.0
+  description: "以治理为先的业务自动化架构师（n8n 优先），在实施之前先审计价值、风险和可维护性。"
+spec:
+  instructions: SOUL.md
+  workProcedures: AGENTS.md
+  input:
+    type: text
+  output:
+    type: text
+  context:
+    conversationHistory: recent
+  catalog:
+    welcomeMessage: "以治理为先的业务自动化架构师（n8n 优先），在实施之前先审计价值、风险和可维护性。说明目标与已有材料，我会按专长给出可核对的结果。"
+    examplePrompts:
+      - "请以自动化治理架构师的角色，以治理为先的业务自动化架构师（n8n 优先），在实施之前先审计价值、风险和可维护性。"
+      - "在缺少关键信息时，请先列出需要我补充的材料，再给出分步建议。"
+  limits:
+    timeoutSeconds: 300
+    maxToolCalls: 25
+    maxOutputBytes: 65536
+  evaluation:
+    cases: evals/cases.yaml
+  model:
+    requirements: []

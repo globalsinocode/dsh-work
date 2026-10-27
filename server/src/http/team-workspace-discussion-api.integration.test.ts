@@ -26,6 +26,7 @@ import { PostgresConversationRepository } from '../modules/workbench/application
 import { PostgresWorkspaceAgentMemberService } from '../modules/workbench/application/postgres-workspace-agent-member-service.ts'
 import type { DatabaseClient } from '../infrastructure/postgres/database.ts'
 import { createThrowawayDatabase, type ThrowawayDatabase } from '../infrastructure/postgres/test-database.ts'
+import { bindTestWorkspaceNotificationRecipients } from '../infrastructure/postgres/workspace-notification-recipient-test-fixture.ts'
 import { Router } from './router.ts'
 import { registerConversationRoutes } from './workbench/conversation-routes.ts'
 import { registerWorkspaceAgentMemberRoutes } from './workbench/workspace-agent-member-routes.ts'
@@ -34,6 +35,7 @@ import { LocalObjectStorage } from '../infrastructure/storage/local-object-stora
 const tenantId = 'tenant-dsh-work'
 
 let database: DatabaseClient
+let unbindNotificationRecipients: (() => void) | undefined
 let throwaway: ThrowawayDatabase
 let storageRoot: string
 let server: Server
@@ -913,6 +915,7 @@ class CompletingTestRuntime implements AgentRuntimePort {
 before(async () => {
   throwaway = await createThrowawayDatabase({ namePrefix: 'dsh_work_tw10_discussion_test', maxConnections: 8 })
   database = throwaway.client
+  unbindNotificationRecipients = bindTestWorkspaceNotificationRecipients(database)
   storageRoot = await mkdtemp(join(tmpdir(), 'dsh-work-tw10-'))
 
   authorization = new PostgresAuthorizationService(database)
@@ -948,6 +951,8 @@ before(async () => {
 
 after(async () => {
   if (server?.listening) await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()))
+  unbindNotificationRecipients?.()
+  unbindNotificationRecipients = undefined
   await throwaway.dispose()
   await rm(storageRoot, { recursive: true, force: true })
 })

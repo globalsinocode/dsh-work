@@ -12,10 +12,12 @@ import { PostgresContentService } from '../../modules/workbench/application/post
 import { PostgresConversationRepository } from '../../modules/workbench/application/postgres-conversation-repository.ts'
 import type { DatabaseClient } from './database.ts'
 import { createThrowawayDatabase, type ThrowawayDatabase } from './test-database.ts'
+import { bindTestWorkspaceNotificationRecipients } from './workspace-notification-recipient-test-fixture.ts'
 import { testAttemptManifest } from './test-attempt-manifest.ts'
 import { LocalObjectStorage } from '../storage/local-object-storage.ts'
 
 let throwaway: ThrowawayDatabase
+let unbindNotificationRecipients: (() => void) | undefined
 
 let database: DatabaseClient
 let storageRoot = ''
@@ -27,6 +29,7 @@ before(async () => {
   // 一次性库：避免共享 dev 库的历史数据干扰断言。
   throwaway = await createThrowawayDatabase({ namePrefix: 'dsh_work_m5_security_test', maxConnections: 5 })
   database = throwaway.client
+  unbindNotificationRecipients = bindTestWorkspaceNotificationRecipients(database)
   storageRoot = await mkdtemp(join(tmpdir(), 'dsh-work-m5-security-'))
   authorization = new PostgresAuthorizationService(database)
   content = new PostgresContentService(database, new LocalObjectStorage(storageRoot), authorization)
@@ -34,6 +37,8 @@ before(async () => {
 })
 
 after(async () => {
+  unbindNotificationRecipients?.()
+  unbindNotificationRecipients = undefined
   await throwaway.dispose()
   if (storageRoot) await rm(storageRoot, { recursive: true, force: true })
 })

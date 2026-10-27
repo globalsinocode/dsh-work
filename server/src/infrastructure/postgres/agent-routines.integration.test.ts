@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { after, before, test } from 'node:test'
 
 import { createThrowawayDatabase, type ThrowawayDatabase } from './test-database.ts'
+import { bindTestWorkspaceNotificationRecipients } from './workspace-notification-recipient-test-fixture.ts'
 import type { DatabaseClient } from './database.ts'
 import { AgentRoutineService } from '../../modules/automation/agent-routine-service.ts'
 import { PostgresAuthorizationService } from '../../modules/authorization/postgres-authorization-service.ts'
@@ -23,6 +24,7 @@ const versionId = 'agent-version-dsh-work-assistant-1'
 const isCode = (error: unknown, code: string) =>
   typeof error === 'object' && error !== null && 'code' in error && error.code === code
 let throwaway: ThrowawayDatabase
+let unbindNotificationRecipients: (() => void) | undefined
 let database: DatabaseClient
 let service: AgentRoutineService
 let authorization: PostgresAuthorizationService
@@ -47,6 +49,7 @@ class HoldingRuntime implements AgentRuntimePort {
 before(async () => {
   throwaway = await createThrowawayDatabase({ namePrefix: 'dsh_work_agent_routine', maxConnections: 8 })
   database = throwaway.client
+  unbindNotificationRecipients = bindTestWorkspaceNotificationRecipients(database)
   await database`
     insert into users (id, tenant_id, external_subject, display_name, status, identity_provider, business_user)
     values ('U00002', ${tenantId}, 'directory:routine-recipient-U00002', '主动任务新接收人', 'active', 'ai-hub', true)
@@ -64,7 +67,7 @@ before(async () => {
     undefined, authorization, { tasks: new PostgresTaskRepository(database) })
   service = new AgentRoutineService(database, authorization, runs, orchestration, conversations)
 })
-after(async () => { await throwaway?.dispose() })
+after(async () => { unbindNotificationRecipients?.(); unbindNotificationRecipients = undefined; await throwaway?.dispose() })
 
 test('AE-05 Agent routine pins Agent initiator, recipient, version and budget without a Session', async () => {
   const [workspace] = await database<{ id: string }[]>`

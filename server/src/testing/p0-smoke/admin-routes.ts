@@ -136,6 +136,18 @@ export function registerAdminRoutes(router: Router, service: AdminQueryService) 
     if (!skill) throw new Error(`未找到指定 Skill Version：${input.skillId}@${input.version}`)
     return envelope('admin', { skill, release: prototypeSkillRelease(skill, requireRequestIdentity(context, 'admin').userId, 'rollback') })
   })
+  router.get(`${basePath}/tools`, async () => envelope('admin', await service.getTools()))
+  router.get(`${basePath}/tools/catalog`, async () => envelope('admin', await service.getToolCatalog()))
+  router.post(`${basePath}/tools/sync`, async (_request, context) => envelope('admin', await service.syncToolCatalog({
+    actor: requireRequestIdentity(context, 'admin').userId,
+  })))
+  router.get(`${basePath}/tools/bindings`, async () => envelope('admin', { items: await service.listToolBindings() }))
+  router.get(`${basePath}/runtimes/dsh-tool-connector`, async () =>
+    envelope('admin', await service.getDshRuntimeToolConnectorStatus()))
+  router.post(`${basePath}/runtimes/dsh-tool-connector/check`, async (_request, context) =>
+    envelope('admin', await service.checkDshRuntimeToolConnector({
+      actor: requireRequestIdentity(context, 'admin').userId,
+    })))
   router.get(`${basePath}/connectors`, async () => envelope('admin', await service.getMcpConnectors()))
   router.get(`${basePath}/runtimes/builtin-tools`, async () => envelope('admin', await service.getBuiltinToolStatus()))
   router.post(`${basePath}/connectors/check`, async (request, context) => {

@@ -1,0 +1,29 @@
+apiVersion: dsh-work.ai/v2
+kind: AgentPackage
+metadata:
+  id: agency-roblox-systems-scripter
+  name: "Roblox 系统脚本工程师"
+  version: 0.1.0
+  description: "Roblox 平台工程专家——精通 Luau、客户端-服务端安全模型、RemoteEvent/RemoteFunction、DataStore 和模块架构，面向可扩展的 Roblox 体验"
+spec:
+  instructions: SOUL.md
+  workProcedures: AGENTS.md
+  input:
+    type: text
+  output:
+    type: text
+  context:
+    conversationHistory: recent
+  catalog:
+    welcomeMessage: "Roblox 平台工程专家——精通 Luau、客户端-服务端安全模型、RemoteEven…。说明目标与已有材料，我会按专长给出可核对的结果。"
+    examplePrompts:
+      - "请以Roblox 系统脚本工程师的角色，Roblox 平台工程专家——精通 Luau、客户端-服务端安全模型、RemoteEvent/RemoteFunction、DataStore 和模块架构，面向可扩展的 Roblox 体验。"
+      - "在缺少关键信息时，请先列出需要我补充的材料，再给出分步建议。"
+  limits:
+    timeoutSeconds: 300
+    maxToolCalls: 25
+    maxOutputBytes: 65536
+  evaluation:
+    cases: evals/cases.yaml
+  model:
+    requirements: []

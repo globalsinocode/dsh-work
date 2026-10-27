@@ -26,6 +26,7 @@ import { streamRunEvents, registerConversationRoutes } from '../../http/workbenc
 import { Router } from '../../http/router.ts'
 import type { DatabaseClient } from './database.ts'
 import { createThrowawayDatabase, type ThrowawayDatabase } from './test-database.ts'
+import { bindTestWorkspaceNotificationRecipients } from './workspace-notification-recipient-test-fixture.ts'
 import { testAttemptManifest } from './test-attempt-manifest.ts'
 import { createServer, type Server } from 'node:http'
 
@@ -36,6 +37,7 @@ const tenantId = 'tenant-dsh-work'
 const runtimeId = 'runtime-local-01'
 
 let database: DatabaseClient
+let unbindNotificationRecipients: (() => void) | undefined
 let throwaway: ThrowawayDatabase
 let runtime: FakeRuntime
 let authorization: PostgresAuthorizationService
@@ -52,6 +54,7 @@ before(async () => {
   // 一次性库：避免共享 dev 库的历史数据累积影响断言。
   throwaway = await createThrowawayDatabase({ namePrefix: 'dsh_work_revocation_api_test', maxConnections: 10 })
   database = throwaway.client
+  unbindNotificationRecipients = bindTestWorkspaceNotificationRecipients(database)
   // 本套件用共享的 runtime-local-01 跑真实调度（startRun / recoverAfterServiceRestart）。
   // claimAttempt 按 runtime 全局统计 status='running' 的 attempt 占用容量，而多个用例
   // 会直接落库 running 的 run/attempt 作为夹具，会跨用例耗尽默认容量 2，导致后续用例
@@ -110,6 +113,8 @@ before(async () => {
 after(async () => {
   if (server?.listening) await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()))
   if (orchestration) await orchestration.close()
+  unbindNotificationRecipients?.()
+  unbindNotificationRecipients = undefined
   await throwaway.dispose()
 })
 

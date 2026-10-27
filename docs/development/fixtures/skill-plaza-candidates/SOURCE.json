@@ -1,0 +1,632 @@
+{
+  "batch": "batch-01",
+  "approvedAt": "2026-10-15",
+  "fixturesRelative": "docs/development/fixtures/skill-plaza-candidates/packages",
+  "zipOutputRelative": "dist/skill-plaza-packages",
+  "skillCount": 99,
+  "repos": {
+    "superpowers": {
+      "owner": "obra",
+      "name": "superpowers",
+      "commit": "bb92a77741419a4ab5f06e711a283343f1ada0c3",
+      "license": "MIT"
+    },
+    "skills": {
+      "owner": "anthropics",
+      "name": "skills",
+      "commit": "dbd4588f9e1033efb41dad4bef2f7947c8993d44",
+      "license": "mixed (doc skills: source-available)"
+    },
+    "kwp": {
+      "owner": "anthropics",
+      "name": "knowledge-work-plugins",
+      "commit": "e6b505348c39c6e751a70d52ff407e7b0a6bf676",
+      "license": "Apache-2.0"
+    },
+    "workbuddy": {
+      "owner": "infometa",
+      "name": "workbuddyskills",
+      "commit": "ccbc6809c9c10c0fdcd33c3eccd3a2424cdb926e",
+      "license": "none (repository)"
+    }
+  },
+  "kwp": {
+    "plugins": [
+      "finance",
+      "legal",
+      "product-management",
+      "operations",
+      "sales",
+      "customer-support",
+      "productivity",
+      "human-resources"
+    ],
+    "skipSkillNamePattern": "(?:^|\\/)(?:crm|slack|calendar|gmail|outlook|hubspot|salesforce|inbox-sync|route-lead|schedule-meeting|meeting-prep|email-draft|email-triage)(?:\\/|$)"
+  },
+  "skills": [
+    {
+      "id": "plaza-sp-writing-plans",
+      "repo": "superpowers",
+      "sourcePath": "skills/writing-plans"
+    },
+    {
+      "id": "plaza-sp-executing-plans",
+      "repo": "superpowers",
+      "sourcePath": "skills/executing-plans"
+    },
+    {
+      "id": "plaza-sp-systematic-debugging",
+      "repo": "superpowers",
+      "sourcePath": "skills/systematic-debugging"
+    },
+    {
+      "id": "plaza-sp-test-driven-development",
+      "repo": "superpowers",
+      "sourcePath": "skills/test-driven-development"
+    },
+    {
+      "id": "plaza-sp-requesting-code-review",
+      "repo": "superpowers",
+      "sourcePath": "skills/requesting-code-review"
+    },
+    {
+      "id": "plaza-sp-receiving-code-review",
+      "repo": "superpowers",
+      "sourcePath": "skills/receiving-code-review"
+    },
+    {
+      "id": "plaza-sp-verification-before-completion",
+      "repo": "superpowers",
+      "sourcePath": "skills/verification-before-completion"
+    },
+    {
+      "id": "plaza-sp-finishing-a-development-branch",
+      "repo": "superpowers",
+      "sourcePath": "skills/finishing-a-development-branch"
+    },
+    {
+      "id": "plaza-anth-pdf",
+      "repo": "skills",
+      "sourcePath": "skills/pdf",
+      "notes": "source-available; may require python_execute after import"
+    },
+    {
+      "id": "plaza-anth-pptx",
+      "repo": "skills",
+      "sourcePath": "skills/pptx",
+      "notes": "source-available; may require python_execute after import"
+    },
+    {
+      "id": "plaza-anth-xlsx",
+      "repo": "skills",
+      "sourcePath": "skills/xlsx",
+      "notes": "source-available; may require python_execute after import"
+    },
+    {
+      "id": "plaza-anth-doc-coauthoring",
+      "repo": "skills",
+      "sourcePath": "skills/doc-coauthoring"
+    },
+    {
+      "id": "plaza-anth-internal-comms",
+      "repo": "skills",
+      "sourcePath": "skills/internal-comms"
+    },
+    {
+      "id": "plaza-kwp-finance-audit-support",
+      "repo": "kwp",
+      "sourcePath": "finance/skills/audit-support",
+      "notes": "knowledge-work-plugin; treat Slack/calendar connectors as writing-only on this platform"
+    },
+    {
+      "id": "plaza-kwp-finance-close-management",
+      "repo": "kwp",
+      "sourcePath": "finance/skills/close-management",
+      "notes": "knowledge-work-plugin; treat Slack/calendar connectors as writing-only on this platform"
+    },
+    {
+      "id": "plaza-kwp-finance-financial-statements",
+      "repo": "kwp",
+      "sourcePath": "finance/skills/financial-statements",
+      "notes": "knowledge-work-plugin; treat Slack/calendar connectors as writing-only on this platform"
+    },
+    {
+      "id": "plaza-kwp-finance-journal-entry",
+      "repo": "kwp",
+      "sourcePath": "finance/skills/journal-entry",
+      "notes": "knowledge-work-plugin; treat Slack/calendar connectors as writing-only on this platform"
+    },
+    {
+      "id": "plaza-kwp-finance-journal-entry-prep",
+      "repo": "kwp",
+      "sourcePath": "finance/skills/journal-entry-prep",
+      "notes": "knowledge-work-plugin; treat Slack/calendar connectors as writing-only on this platform"
+    },
+    {
+      "id": "plaza-kwp-finance-reconciliation",
+      "repo": "kwp",
+      "sourcePath": "finance/skills/reconciliation",
+      "notes": "knowledge-work-plugin; treat Slack/calendar connectors as writing-only on this platform"
+    },
+    {
+      "id": "plaza-kwp-finance-sox-testing",
+      "repo": "kwp",
+      "sourcePath": "finance/skills/sox-testing",
+      "notes": "knowledge-work-plugin; treat Slack/calendar connectors as writing-only on this platform"
+    },
+    {
+      "id": "plaza-kwp-finance-variance-analysis",
+      "repo": "kwp",
+      "sourcePath": "finance/skills/variance-analysis",
+      "notes": "knowledge-work-plugin; treat Slack/calendar connectors as writing-only on this platform"
+    },
+    {
+      "id": "plaza-kwp-legal-brief",
+      "repo": "kwp",
+      "sourcePath": "legal/skills/brief",
+      "notes": "knowledge-work-plugin; treat Slack/calendar connectors as writing-only on this platform"
+    },
+    {
+      "id": "plaza-kwp-legal-compliance-check",
+      "repo": "kwp",
+      "sourcePath": "legal/skills/compliance-check",
+      "notes": "knowledge-work-plugin; treat Slack/calendar connectors as writing-only on this platform"
+    },
+    {
+      "id": "plaza-kwp-legal-legal-response",
+      "repo": "kwp",
+      "sourcePath": "legal/skills/legal-response",
+      "notes": "knowledge-work-plugin; treat Slack/calendar connectors as writing-only on this platform"
+    },
+    {
+      "id": "plaza-kwp-legal-legal-risk-assessment",
+      "repo": "kwp",
+      "sourcePath": "legal/skills/legal-risk-assessment",
+      "notes": "knowledge-work-plugin; treat Slack/calendar connectors as writing-only on this platform"
+    },
+    {
+      "id": "plaza-kwp-legal-meeting-briefing",
+      "repo": "kwp",
+      "sourcePath": "legal/skills/meeting-briefing",
+      "notes": "knowledge-work-plugin; treat Slack/calendar connectors as writing-only on this platform"
+    },
+    {
+      "id": "plaza-kwp-legal-review-contract",
+      "repo": "kwp",
+      "sourcePath": "legal/skills/review-contract",
+      "notes": "knowledge-work-plugin; treat Slack/calendar connectors as writing-only on this platform"
+    },
+    {
+      "id": "plaza-kwp-legal-signature-request",
+      "repo": "kwp",
+      "sourcePath": "legal/skills/signature-request",
+      "notes": "knowledge-work-plugin; treat Slack/calendar connectors as writing-only on this platform"
+    },
+    {
+      "id": "plaza-kwp-legal-triage-nda",
+      "repo": "kwp",
+      "sourcePath": "legal/skills/triage-nda",
+      "notes": "knowledge-work-plugin; treat Slack/calendar connectors as writing-only on this platform"
+    },
+    {
+      "id": "plaza-kwp-legal-vendor-check",
+      "repo": "kwp",
+      "sourcePath": "legal/skills/vendor-check",
+      "notes": "knowledge-work-plugin; treat Slack/calendar connectors as writing-only on this platform"
+    },
+    {
+      "id": "plaza-kwp-product-management-competitive-brief",
+      "repo": "kwp",
+      "sourcePath": "product-management/skills/competitive-brief",
+      "notes": "knowledge-work-plugin; treat Slack/calendar connectors as writing-only on this platform"
+    },
+    {
+      "id": "plaza-kwp-product-management-metrics-review",
+      "repo": "kwp",
+      "sourcePath": "product-management/skills/metrics-review",
+      "notes": "knowledge-work-plugin; treat Slack/calendar connectors as writing-only on this platform"
+    },
+    {
+      "id": "plaza-kwp-product-management-product-brainstorming",
+      "repo": "kwp",
+      "sourcePath": "product-management/skills/product-brainstorming",
+      "notes": "knowledge-work-plugin; treat Slack/calendar connectors as writing-only on this platform"
+    },
+    {
+      "id": "plaza-kwp-product-management-roadmap-update",
+      "repo": "kwp",
+      "sourcePath": "product-management/skills/roadmap-update",
+      "notes": "knowledge-work-plugin; treat Slack/calendar connectors as writing-only on this platform"
+    },
+    {
+      "id": "plaza-kwp-product-management-sprint-planning",
+      "repo": "kwp",
+      "sourcePath": "product-management/skills/sprint-planning",
+      "notes": "knowledge-work-plugin; treat Slack/calendar connectors as writing-only on this platform"
+    },
+    {
+      "id": "plaza-kwp-product-management-stakeholder-update",
+      "repo": "kwp",
+      "sourcePath": "product-management/skills/stakeholder-update",
+      "notes": "knowledge-work-plugin; treat Slack/calendar connectors as writing-only on this platform"
+    },
+    {
+      "id": "plaza-kwp-product-management-synthesize-research",
+      "repo": "kwp",
+      "sourcePath": "product-management/skills/synthesize-research",
+      "notes": "knowledge-work-plugin; treat Slack/calendar connectors as writing-only on this platform"
+    },
+    {
+      "id": "plaza-kwp-product-management-write-spec",
+      "repo": "kwp",
+      "sourcePath": "product-management/skills/write-spec",
+      "notes": "knowledge-work-plugin; treat Slack/calendar connectors as writing-only on this platform"
+    },
+    {
+      "id": "plaza-kwp-operations-capacity-plan",
+      "repo": "kwp",
+      "sourcePath": "operations/skills/capacity-plan",
+      "notes": "knowledge-work-plugin; treat Slack/calendar connectors as writing-only on this platform"
+    },
+    {
+      "id": "plaza-kwp-operations-change-request",
+      "repo": "kwp",
+      "sourcePath": "operations/skills/change-request",
+      "notes": "knowledge-work-plugin; treat Slack/calendar connectors as writing-only on this platform"
+    },
+    {
+      "id": "plaza-kwp-operations-compliance-tracking",
+      "repo": "kwp",
+      "sourcePath": "operations/skills/compliance-tracking",
+      "notes": "knowledge-work-plugin; treat Slack/calendar connectors as writing-only on this platform"
+    },
+    {
+      "id": "plaza-kwp-operations-process-doc",
+      "repo": "kwp",
+      "sourcePath": "operations/skills/process-doc",
+      "notes": "knowledge-work-plugin; treat Slack/calendar connectors as writing-only on this platform"
+    },
+    {
+      "id": "plaza-kwp-operations-process-optimization",
+      "repo": "kwp",
+      "sourcePath": "operations/skills/process-optimization",
+      "notes": "knowledge-work-plugin; treat Slack/calendar connectors as writing-only on this platform"
+    },
+    {
+      "id": "plaza-kwp-operations-risk-assessment",
+      "repo": "kwp",
+      "sourcePath": "operations/skills/risk-assessment",
+      "notes": "knowledge-work-plugin; treat Slack/calendar connectors as writing-only on this platform"
+    },
+    {
+      "id": "plaza-kwp-operations-runbook",
+      "repo": "kwp",
+      "sourcePath": "operations/skills/runbook",
+      "notes": "knowledge-work-plugin; treat Slack/calendar connectors as writing-only on this platform"
+    },
+    {
+      "id": "plaza-kwp-operations-status-report",
+      "repo": "kwp",
+      "sourcePath": "operations/skills/status-report",
+      "notes": "knowledge-work-plugin; treat Slack/calendar connectors as writing-only on this platform"
+    },
+    {
+      "id": "plaza-kwp-operations-vendor-review",
+      "repo": "kwp",
+      "sourcePath": "operations/skills/vendor-review",
+      "notes": "knowledge-work-plugin; treat Slack/calendar connectors as writing-only on this platform"
+    },
+    {
+      "id": "plaza-kwp-sales-account-context",
+      "repo": "kwp",
+      "sourcePath": "sales/skills/account-context",
+      "notes": "knowledge-work-plugin; treat Slack/calendar connectors as writing-only on this platform"
+    },
+    {
+      "id": "plaza-kwp-sales-account-plan",
+      "repo": "kwp",
+      "sourcePath": "sales/skills/account-plan",
+      "notes": "knowledge-work-plugin; treat Slack/calendar connectors as writing-only on this platform"
+    },
+    {
+      "id": "plaza-kwp-sales-account-research",
+      "repo": "kwp",
+      "sourcePath": "sales/skills/account-research",
+      "notes": "knowledge-work-plugin; treat Slack/calendar connectors as writing-only on this platform"
+    },
+    {
+      "id": "plaza-kwp-sales-account-tiering",
+      "repo": "kwp",
+      "sourcePath": "sales/skills/account-tiering",
+      "notes": "knowledge-work-plugin; treat Slack/calendar connectors as writing-only on this platform"
+    },
+    {
+      "id": "plaza-kwp-sales-call-prep",
+      "repo": "kwp",
+      "sourcePath": "sales/skills/call-prep",
+      "notes": "knowledge-work-plugin; treat Slack/calendar connectors as writing-only on this platform"
+    },
+    {
+      "id": "plaza-kwp-sales-call-summary",
+      "repo": "kwp",
+      "sourcePath": "sales/skills/call-summary",
+      "notes": "knowledge-work-plugin; treat Slack/calendar connectors as writing-only on this platform"
+    },
+    {
+      "id": "plaza-kwp-sales-close-plan",
+      "repo": "kwp",
+      "sourcePath": "sales/skills/close-plan",
+      "notes": "knowledge-work-plugin; treat Slack/calendar connectors as writing-only on this platform"
+    },
+    {
+      "id": "plaza-kwp-sales-competitive-intelligence",
+      "repo": "kwp",
+      "sourcePath": "sales/skills/competitive-intelligence",
+      "notes": "knowledge-work-plugin; treat Slack/calendar connectors as writing-only on this platform"
+    },
+    {
+      "id": "plaza-kwp-sales-create-an-asset",
+      "repo": "kwp",
+      "sourcePath": "sales/skills/create-an-asset",
+      "notes": "knowledge-work-plugin; treat Slack/calendar connectors as writing-only on this platform"
+    },
+    {
+      "id": "plaza-kwp-sales-crm-hygiene-check",
+      "repo": "kwp",
+      "sourcePath": "sales/skills/crm-hygiene-check",
+      "notes": "knowledge-work-plugin; treat Slack/calendar connectors as writing-only on this platform"
+    },
+    {
+      "id": "plaza-kwp-sales-customer-health",
+      "repo": "kwp",
+      "sourcePath": "sales/skills/customer-health",
+      "notes": "knowledge-work-plugin; treat Slack/calendar connectors as writing-only on this platform"
+    },
+    {
+      "id": "plaza-kwp-sales-customer-voice",
+      "repo": "kwp",
+      "sourcePath": "sales/skills/customer-voice",
+      "notes": "knowledge-work-plugin; treat Slack/calendar connectors as writing-only on this platform"
+    },
+    {
+      "id": "plaza-kwp-sales-daily-briefing",
+      "repo": "kwp",
+      "sourcePath": "sales/skills/daily-briefing",
+      "notes": "knowledge-work-plugin; treat Slack/calendar connectors as writing-only on this platform"
+    },
+    {
+      "id": "plaza-kwp-sales-deal-advance-gap",
+      "repo": "kwp",
+      "sourcePath": "sales/skills/deal-advance-gap",
+      "notes": "knowledge-work-plugin; treat Slack/calendar connectors as writing-only on this platform"
+    },
+    {
+      "id": "plaza-kwp-sales-deal-review",
+      "repo": "kwp",
+      "sourcePath": "sales/skills/deal-review",
+      "notes": "knowledge-work-plugin; treat Slack/calendar connectors as writing-only on this platform"
+    },
+    {
+      "id": "plaza-kwp-sales-deal-signals",
+      "repo": "kwp",
+      "sourcePath": "sales/skills/deal-signals",
+      "notes": "knowledge-work-plugin; treat Slack/calendar connectors as writing-only on this platform"
+    },
+    {
+      "id": "plaza-kwp-sales-deal-slip-scenario",
+      "repo": "kwp",
+      "sourcePath": "sales/skills/deal-slip-scenario",
+      "notes": "knowledge-work-plugin; treat Slack/calendar connectors as writing-only on this platform"
+    },
+    {
+      "id": "plaza-kwp-sales-draft-outreach",
+      "repo": "kwp",
+      "sourcePath": "sales/skills/draft-outreach",
+      "notes": "knowledge-work-plugin; treat Slack/calendar connectors as writing-only on this platform"
+    },
+    {
+      "id": "plaza-kwp-sales-end-of-day",
+      "repo": "kwp",
+      "sourcePath": "sales/skills/end-of-day",
+      "notes": "knowledge-work-plugin; treat Slack/calendar connectors as writing-only on this platform"
+    },
+    {
+      "id": "plaza-kwp-sales-expansion-whitespace",
+      "repo": "kwp",
+      "sourcePath": "sales/skills/expansion-whitespace",
+      "notes": "knowledge-work-plugin; treat Slack/calendar connectors as writing-only on this platform"
+    },
+    {
+      "id": "plaza-kwp-sales-forecast",
+      "repo": "kwp",
+      "sourcePath": "sales/skills/forecast",
+      "notes": "knowledge-work-plugin; treat Slack/calendar connectors as writing-only on this platform"
+    },
+    {
+      "id": "plaza-kwp-sales-handle-objection",
+      "repo": "kwp",
+      "sourcePath": "sales/skills/handle-objection",
+      "notes": "knowledge-work-plugin; treat Slack/calendar connectors as writing-only on this platform"
+    },
+    {
+      "id": "plaza-kwp-sales-inbox-sweep",
+      "repo": "kwp",
+      "sourcePath": "sales/skills/inbox-sweep",
+      "notes": "knowledge-work-plugin; treat Slack/calendar connectors as writing-only on this platform"
+    },
+    {
+      "id": "plaza-kwp-sales-lead-triage",
+      "repo": "kwp",
+      "sourcePath": "sales/skills/lead-triage",
+      "notes": "knowledge-work-plugin; treat Slack/calendar connectors as writing-only on this platform"
+    },
+    {
+      "id": "plaza-kwp-sales-log-activity",
+      "repo": "kwp",
+      "sourcePath": "sales/skills/log-activity",
+      "notes": "knowledge-work-plugin; treat Slack/calendar connectors as writing-only on this platform"
+    },
+    {
+      "id": "plaza-kwp-sales-pipeline-review",
+      "repo": "kwp",
+      "sourcePath": "sales/skills/pipeline-review",
+      "notes": "knowledge-work-plugin; treat Slack/calendar connectors as writing-only on this platform"
+    },
+    {
+      "id": "plaza-kwp-sales-renewal-radar",
+      "repo": "kwp",
+      "sourcePath": "sales/skills/renewal-radar",
+      "notes": "knowledge-work-plugin; treat Slack/calendar connectors as writing-only on this platform"
+    },
+    {
+      "id": "plaza-kwp-sales-rep-context",
+      "repo": "kwp",
+      "sourcePath": "sales/skills/rep-context",
+      "notes": "knowledge-work-plugin; treat Slack/calendar connectors as writing-only on this platform"
+    },
+    {
+      "id": "plaza-kwp-sales-setup",
+      "repo": "kwp",
+      "sourcePath": "sales/skills/setup",
+      "notes": "knowledge-work-plugin; treat Slack/calendar connectors as writing-only on this platform"
+    },
+    {
+      "id": "plaza-kwp-sales-stakeholder-map",
+      "repo": "kwp",
+      "sourcePath": "sales/skills/stakeholder-map",
+      "notes": "knowledge-work-plugin; treat Slack/calendar connectors as writing-only on this platform"
+    },
+    {
+      "id": "plaza-kwp-sales-team-pipeline",
+      "repo": "kwp",
+      "sourcePath": "sales/skills/team-pipeline",
+      "notes": "knowledge-work-plugin; treat Slack/calendar connectors as writing-only on this platform"
+    },
+    {
+      "id": "plaza-kwp-sales-update-opportunity",
+      "repo": "kwp",
+      "sourcePath": "sales/skills/update-opportunity",
+      "notes": "knowledge-work-plugin; treat Slack/calendar connectors as writing-only on this platform"
+    },
+    {
+      "id": "plaza-kwp-sales-weekly-wrap",
+      "repo": "kwp",
+      "sourcePath": "sales/skills/weekly-wrap",
+      "notes": "knowledge-work-plugin; treat Slack/calendar connectors as writing-only on this platform"
+    },
+    {
+      "id": "plaza-kwp-sales-win-loss-review",
+      "repo": "kwp",
+      "sourcePath": "sales/skills/win-loss-review",
+      "notes": "knowledge-work-plugin; treat Slack/calendar connectors as writing-only on this platform"
+    },
+    {
+      "id": "plaza-kwp-customer-support-customer-escalation",
+      "repo": "kwp",
+      "sourcePath": "customer-support/skills/customer-escalation",
+      "notes": "knowledge-work-plugin; treat Slack/calendar connectors as writing-only on this platform"
+    },
+    {
+      "id": "plaza-kwp-customer-support-customer-research",
+      "repo": "kwp",
+      "sourcePath": "customer-support/skills/customer-research",
+      "notes": "knowledge-work-plugin; treat Slack/calendar connectors as writing-only on this platform"
+    },
+    {
+      "id": "plaza-kwp-customer-support-draft-response",
+      "repo": "kwp",
+      "sourcePath": "customer-support/skills/draft-response",
+      "notes": "knowledge-work-plugin; treat Slack/calendar connectors as writing-only on this platform"
+    },
+    {
+      "id": "plaza-kwp-customer-support-kb-article",
+      "repo": "kwp",
+      "sourcePath": "customer-support/skills/kb-article",
+      "notes": "knowledge-work-plugin; treat Slack/calendar connectors as writing-only on this platform"
+    },
+    {
+      "id": "plaza-kwp-customer-support-ticket-triage",
+      "repo": "kwp",
+      "sourcePath": "customer-support/skills/ticket-triage",
+      "notes": "knowledge-work-plugin; treat Slack/calendar connectors as writing-only on this platform"
+    },
+    {
+      "id": "plaza-kwp-productivity-memory-management",
+      "repo": "kwp",
+      "sourcePath": "productivity/skills/memory-management",
+      "notes": "knowledge-work-plugin; treat Slack/calendar connectors as writing-only on this platform"
+    },
+    {
+      "id": "plaza-kwp-productivity-start",
+      "repo": "kwp",
+      "sourcePath": "productivity/skills/start",
+      "notes": "knowledge-work-plugin; treat Slack/calendar connectors as writing-only on this platform"
+    },
+    {
+      "id": "plaza-kwp-productivity-task-management",
+      "repo": "kwp",
+      "sourcePath": "productivity/skills/task-management",
+      "notes": "knowledge-work-plugin; treat Slack/calendar connectors as writing-only on this platform"
+    },
+    {
+      "id": "plaza-kwp-productivity-update",
+      "repo": "kwp",
+      "sourcePath": "productivity/skills/update",
+      "notes": "knowledge-work-plugin; treat Slack/calendar connectors as writing-only on this platform"
+    },
+    {
+      "id": "plaza-kwp-human-resources-comp-analysis",
+      "repo": "kwp",
+      "sourcePath": "human-resources/skills/comp-analysis",
+      "notes": "knowledge-work-plugin; treat Slack/calendar connectors as writing-only on this platform"
+    },
+    {
+      "id": "plaza-kwp-human-resources-draft-offer",
+      "repo": "kwp",
+      "sourcePath": "human-resources/skills/draft-offer",
+      "notes": "knowledge-work-plugin; treat Slack/calendar connectors as writing-only on this platform"
+    },
+    {
+      "id": "plaza-kwp-human-resources-interview-prep",
+      "repo": "kwp",
+      "sourcePath": "human-resources/skills/interview-prep",
+      "notes": "knowledge-work-plugin; treat Slack/calendar connectors as writing-only on this platform"
+    },
+    {
+      "id": "plaza-kwp-human-resources-onboarding",
+      "repo": "kwp",
+      "sourcePath": "human-resources/skills/onboarding",
+      "notes": "knowledge-work-plugin; treat Slack/calendar connectors as writing-only on this platform"
+    },
+    {
+      "id": "plaza-kwp-human-resources-org-planning",
+      "repo": "kwp",
+      "sourcePath": "human-resources/skills/org-planning",
+      "notes": "knowledge-work-plugin; treat Slack/calendar connectors as writing-only on this platform"
+    },
+    {
+      "id": "plaza-kwp-human-resources-people-report",
+      "repo": "kwp",
+      "sourcePath": "human-resources/skills/people-report",
+      "notes": "knowledge-work-plugin; treat Slack/calendar connectors as writing-only on this platform"
+    },
+    {
+      "id": "plaza-kwp-human-resources-performance-review",
+      "repo": "kwp",
+      "sourcePath": "human-resources/skills/performance-review",
+      "notes": "knowledge-work-plugin; treat Slack/calendar connectors as writing-only on this platform"
+    },
+    {
+      "id": "plaza-kwp-human-resources-policy-lookup",
+      "repo": "kwp",
+      "sourcePath": "human-resources/skills/policy-lookup",
+      "notes": "knowledge-work-plugin; treat Slack/calendar connectors as writing-only on this platform"
+    },
+    {
+      "id": "plaza-kwp-human-resources-recruiting-pipeline",
+      "repo": "kwp",
+      "sourcePath": "human-resources/skills/recruiting-pipeline",
+      "notes": "knowledge-work-plugin; treat Slack/calendar connectors as writing-only on this platform"
+    }
+  ]
+}

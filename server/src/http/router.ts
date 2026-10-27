@@ -8,7 +8,7 @@ import type {
   ApiAuthenticator,
   RequestIdentity,
 } from '../modules/identity/types.ts'
-import { publicAuthorizationResponseCode } from '../domain/authorization-errors.ts'
+import { isAuthorizationDenial, publicAuthorizationResponseCode } from '../domain/authorization-errors.ts'
 import { invalidRequest, stateConflict } from '../domain/request-errors.ts'
 
 export interface ApiMeta {
@@ -196,7 +196,7 @@ export function classifyHttpError(error: unknown, path: string): { status: numbe
           : status === 503 && error.code.startsWith('skill_')
             ? '请管理员检查 Skill 存储和试运行执行能力，恢复后重试。'
             : suggestions[status])
-    const code = status === 403 ? publicAuthorizationResponseCode(error.code) : error.code
+    const code = status === 403 && isAuthorizationDenial(error) ? publicAuthorizationResponseCode(error.code) : error.code
     return {
       status,
       error: {
