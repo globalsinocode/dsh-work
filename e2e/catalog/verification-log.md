@@ -2,6 +2,16 @@
 
 历史验证记录：每次实施的阶段、已运行的测试与未覆盖项。只追加，新记录写在最前面；不是验收标准。证据层级与写法见[验收目录索引](../TEST-CATALOG.md)。
 
+### 2026-10-27：M6 红灯修复（本地 Windows，停在 push 前）
+
+**阶段：** Task 0–8 实施与分层验证（未 `git push`）。
+
+**已通过（本机）：** `pnpm verify`；`skill-plaza-candidates.test.ts`；`agency-agent-fixtures.test.ts`；`runtime-manifest-schema.test.ts`（25）；`test:m5:api`（30）；`run-event-recorder` P1-8 两条；`workspace-activity-writer.test.ts`（2）。
+
+**未通过 / 未跑：** `ci:unit` 在 Windows 上因 `runtime-adapter.test.ts` 只读文件 `mode` 断言（292 vs 256）及若干 DSH/sandbox 依赖用例失败；完整 `test:runtime` 与 `pnpm test:e2e`、P1 集成矩阵未在本机跑绿。真实 OIDC、生产 DSH、多账号撤权与企业连接器未执行。
+
+**提交：** `dev` 顶端 7 条功能提交（Skill 准入、Agency 夹具、Manifest、身份边界、P0 工具治理、通知绑定、员工壳层）；另含契约测试修补（待与文档提交一并入库）。
+
 ### 2026-10-24：本地补硬 AUTO/MCP 缺口（正式发布门禁 + 收权/停用）
 
 **阶段：** 针对同日「剩余目录 P2」中标明的缺口补证据；仍为本地密码登录 + 真实 DSH `0.1.2-rc.1`，**非** OIDC/生产。

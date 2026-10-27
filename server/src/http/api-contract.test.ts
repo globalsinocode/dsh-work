@@ -310,7 +310,7 @@ test('prototype admin exposes the asynchronous Skill test progress contract', as
   assert.equal(progress.body.data.status, 'passed')
 })
 
-test('prototype admin lists only MCP connectors and shows built-in tools read-only', async () => {
+test('prototype admin exposes tool governance read paths for the global store', async () => {
   const connectors = await getJson<{ data: Array<{ id: string; protocol: string }> }>('/api/admin/v1/connectors')
   assert.equal(connectors.response.status, 200)
   assert.ok(connectors.body.data.length > 0)
@@ -324,8 +324,14 @@ test('prototype admin lists only MCP connectors and shows built-in tools read-on
   assert.ok(builtin.body.data.tools.some(tool => tool.name === 'read' && tool.source === 'dsh' && tool.assembly === 'always'))
   assert.ok(builtin.body.data.tools.some(tool => tool.name === 'web_search' && tool.assembly === 'agent-opt-in'))
   assert.deepEqual(builtin.body.data.disabledTools, [])
-  const removed = await fetch(`${baseUrl}/api/admin/v1/tools`)
-  assert.equal(removed.status, 404)
+
+  const tools = await getJson<{ data: unknown[] }>('/api/admin/v1/tools')
+  assert.equal(tools.response.status, 200)
+  assert.ok(Array.isArray(tools.body.data))
+
+  const runtimeConnector = await getJson<{ data: { connectorId: string } }>('/api/admin/v1/runtimes/dsh-tool-connector')
+  assert.equal(runtimeConnector.response.status, 200)
+  assert.equal(runtimeConnector.body.data.connectorId, 'connector-dsh-workspace')
 })
 
 test('unavailable conversation commands return an actionable 503 instead of a route 404', async () => {
