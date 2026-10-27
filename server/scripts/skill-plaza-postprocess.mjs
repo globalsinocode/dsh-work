@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { access, copyFile, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
+import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const serverRoot = fileURLToPath(new URL('..', import.meta.url))

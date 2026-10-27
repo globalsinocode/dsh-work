@@ -23,6 +23,7 @@ import { registerContentRoutes } from '../../http/workbench/content-routes.ts'
 import { LocalObjectStorage } from '../storage/local-object-storage.ts'
 
 let db: ThrowawayDatabase, root: string, content: PostgresContentService
+let unbindNotificationRecipients: (() => void) | undefined
 let conversations: PostgresConversationRepository, orchestration: RunOrchestrationService
 let server: ReturnType<typeof createServer>, origin: string
 let calls = 0
@@ -35,6 +36,7 @@ const runtime: AgentRuntimePort = {
 }
 before(async () => {
   db = await createThrowawayDatabase({ namePrefix: 'dsh_work_review_a1', maxConnections: 5 })
+  unbindNotificationRecipients = bindTestWorkspaceNotificationRecipients(db.client)
   root = await mkdtemp(join(tmpdir(), 'dsh-work-review-a1-'))
   const auth = new PostgresAuthorizationService(db.client)
   content = new PostgresContentService(db.client, new LocalObjectStorage(root), auth)
@@ -54,6 +56,8 @@ before(async () => {
   origin = `http://127.0.0.1:${address.port}/api/workbench/v1`
 })
 after(async () => {
+  unbindNotificationRecipients?.()
+  unbindNotificationRecipients = undefined
   if (server?.listening) await new Promise<void>(resolve => server.close(() => resolve()))
   await orchestration?.close()
   await db?.dispose()

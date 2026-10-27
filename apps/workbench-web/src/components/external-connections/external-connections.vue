@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { McpUserGrantListItem } from '@/types/domain'
 
-const props = defineProps<{
+defineProps<{
   items: McpUserGrantListItem[]
   loading?: boolean
   grantError?: string

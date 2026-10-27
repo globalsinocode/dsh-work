@@ -67,7 +67,7 @@ before(async () => {
     undefined, authorization, { tasks: new PostgresTaskRepository(database) })
   service = new AgentRoutineService(database, authorization, runs, orchestration, conversations)
 })
-after(async () => { await throwaway?.dispose() })
+after(async () => { unbindNotificationRecipients?.(); unbindNotificationRecipients = undefined; await throwaway?.dispose() })
 
 test('AE-05 Agent routine pins Agent initiator, recipient, version and budget without a Session', async () => {
   const [workspace] = await database<{ id: string }[]>`

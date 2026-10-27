@@ -374,11 +374,6 @@ async function readCalls(root: string): Promise<MockCall[]> {
   return text.split('\n').filter(Boolean).map(line => JSON.parse(line) as MockCall)
 }
 
-async function existsCall(root: string, entry: string): Promise<boolean> {
-  const calls = await readCalls(root)
-  return calls.some(call => call.args[0] === 'run' && call.args.at(-1) === entry)
-}
-
 function manifest(entry: string): RuntimeManifest {
   return {
     agent_configuration: {

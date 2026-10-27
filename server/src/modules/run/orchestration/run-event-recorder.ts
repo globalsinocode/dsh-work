@@ -1,9 +1,9 @@
 import type { RuntimeEvent, RuntimeManifest } from '../../runtime/runtime-types.ts'
-import type { JsonObject, RunRecord, RunStatus, StoredRunEvent } from '../run-types.ts'
+import type { JsonObject, RunRecord, RunState, StoredRunEvent } from '../run-types.ts'
 import type { AttemptBudget } from './attempt-budget.ts'
 import { tenantId, type OrchestrationDependencies } from './orchestration-dependencies.ts'
 
-const TERMINAL_RUN_STATUSES = new Set<RunStatus>(['succeeded', 'failed', 'cancelled'])
+const TERMINAL_RUN_STATUSES = new Set<RunState>(['succeeded', 'failed', 'cancelled'])
 const TERMINAL_ATTEMPT_STATUSES = new Set(['succeeded', 'failed', 'cancelled', 'cancel_requested'])
 const LATE_TERMINAL_EVENT_TYPES = new Set(['assistant.completed', 'run.completed', 'run.failed', 'run.cancelled'])
 

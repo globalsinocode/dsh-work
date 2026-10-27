@@ -24,8 +24,8 @@ test('writeNotifiableEvent fails when notification recipients are not bound', as
 })
 
 test('recipient binding cleanup is idempotent and preserves a newer binding', () => {
-  const first = { resolve: async () => [] } as WorkspaceNotificationRecipientService
-  const second = { resolve: async () => [] } as WorkspaceNotificationRecipientService
+  const first = { resolve: async () => [] } as unknown as WorkspaceNotificationRecipientService
+  const second = { resolve: async () => [] } as unknown as WorkspaceNotificationRecipientService
   const unbindFirst = bindWorkspaceNotificationRecipients(first)
   const unbindSecond = bindWorkspaceNotificationRecipients(second)
   unbindFirst()

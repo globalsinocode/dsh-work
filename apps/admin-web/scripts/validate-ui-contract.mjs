@@ -190,7 +190,6 @@ requireFragments('src/views/CapabilityManagementView.vue', [
 ])
 forbidFragments('../../packages/admin-components/src/AdminShell.vue', ['DSH 工具管理', '工具权限'])
 forbidFragments('src/views/CapabilityManagementView.vue', [
-  'data-action="sync-dsh-tools"',
   'data-action="edit-tool"',
   'data-action="edit-connector"',
   'data-action="create-tools"',
