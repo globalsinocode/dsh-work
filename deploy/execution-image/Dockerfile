@@ -24,20 +24,26 @@ RUN set -eux; \
       > /etc/apt/sources.list.d/debian.sources; \
     printf '%s\n' \
       'Acquire::Check-Valid-Until "false";' \
-      'Acquire::Retries "5";' \
+      'Acquire::Retries "10";' \
       'APT::Install-Recommends "false";' \
       > /etc/apt/apt.conf.d/99dsh-work-snapshot; \
-    apt-get update; \
-    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-      fontconfig \
-      fonts-liberation2 \
-      fonts-noto-cjk \
-      libreoffice-calc-nogui \
-      libreoffice-impress-nogui \
-      libreoffice-writer-nogui \
-      pandoc \
-      poppler-utils; \
-    rm -rf /var/lib/apt/lists/*; \
+    packages='fontconfig fonts-liberation2 fonts-noto-cjk libreoffice-calc-nogui libreoffice-impress-nogui libreoffice-writer-nogui pandoc poppler-utils'; \
+    # snapshot.debian.org resets connections under load and apt's own retries are immediate, so
+    # each fetch is retried with backoff. Separate loops: the base image's docker-clean hook empties
+    # the package cache on every `apt-get update`, while a repeated download-only run keeps what it
+    # already has. apt still verifies every package against the signed snapshot index.
+    for attempt in 1 2 3 4 5; do \
+      if apt-get update; then break; fi; \
+      [ "${attempt}" -lt 5 ] || exit 1; \
+      sleep $((attempt * 20)); \
+    done; \
+    for attempt in 1 2 3 4 5; do \
+      if apt-get install -y --download-only ${packages}; then break; fi; \
+      [ "${attempt}" -lt 5 ] || exit 1; \
+      sleep $((attempt * 20)); \
+    done; \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ${packages}; \
+    rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*.deb; \
     # Build the font cache now: at run time the root is read-only and HOME is a small tmpfs.
     fc-cache -f
 
