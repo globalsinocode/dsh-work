@@ -24,6 +24,7 @@ import { roleLabels, useAuthStore } from '@/stores/auth'
 import { useContentStore } from '@/stores/content'
 import { useNotificationStore } from '@/stores/notifications'
 import { useTaskStore } from '@/stores/tasks'
+import ModeSwitchMenu from '@/components/ModeSwitchMenu.vue'
 import NotificationInbox from '@/components/NotificationInbox.vue'
 import type { TaskRun } from '@/types/domain'
 import { isTaskInArchivedWorkspace } from '@/utils/archived-workspaces'
@@ -50,8 +51,8 @@ const navigation = [
   { label: '新对话', path: '/workbench', icon: HomeFilled },
   { label: 'Skill 广场', path: '/skills', icon: Grid },
   { label: 'AI 同事', path: '/agents', icon: UserFilled },
-  { label: '团队空间', path: '/workspaces', icon: Collection },
-  { label: '自动任务', path: '/automations', icon: AlarmClock },
+  { label: '项目空间', path: '/workspaces', icon: Collection },
+  { label: '定时任务', path: '/automations', icon: AlarmClock },
 ]
 
 function isActive(path: string) {
@@ -278,7 +279,9 @@ onBeforeUnmount(() => {
         <NotificationInbox />
         <el-dropdown trigger="click" placement="top-start" @command="onAccountCommand">
           <button class="profile-button" type="button" aria-label="打开用户中心">
-            <span class="profile-button__avatar">{{ authStore.user.avatarText }}</span>
+            <ModeSwitchMenu placement="top-start">
+              <span class="profile-button__avatar">{{ authStore.user.avatarText }}</span>
+            </ModeSwitchMenu>
             <span class="profile-button__copy">
               <strong>{{ authStore.user.name }}</strong>
               <small>{{ roleLabels[authStore.user.role] }}</small>
