@@ -44,6 +44,7 @@ test('任务线程的成果交给档案员时不带平台追加的知识与记�
     operations: undefined,
     sessionSummaries: undefined,
     persistentWait: undefined,
+    delegation: undefined,
     projectArchivist: permissive({ afterTaskRun: async (_run: RunRecord, output: string) => { archived.push(output) } }),
   })
   const recorder = new RunEventRecorder(deps, permissive<AttemptBudget>())
@@ -74,6 +75,7 @@ test('迟到的终态事件标记为 late 落库，不改变 Run 状态也不写
     operations: undefined,
     sessionSummaries: undefined,
     persistentWait: undefined,
+    delegation: undefined,
   })
   const recorder = new RunEventRecorder(deps, permissive<AttemptBudget>())
 
@@ -105,6 +107,7 @@ test('写入期间 Attempt 被平台结束时补标 late（P1-8）', async () =>
     operations: undefined,
     sessionSummaries: undefined,
     persistentWait: undefined,
+    delegation: undefined,
   })
   const recorder = new RunEventRecorder(deps, permissive<AttemptBudget>())
 

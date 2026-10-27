@@ -1,7 +1,11 @@
 import type { RuntimeEvent, RuntimeManifest } from '../../runtime/runtime-types.ts'
-import type { JsonObject, RunRecord, StoredRunEvent } from '../run-types.ts'
+import type { JsonObject, RunRecord, RunStatus, StoredRunEvent } from '../run-types.ts'
 import type { AttemptBudget } from './attempt-budget.ts'
 import { tenantId, type OrchestrationDependencies } from './orchestration-dependencies.ts'
+
+const TERMINAL_RUN_STATUSES = new Set<RunStatus>(['succeeded', 'failed', 'cancelled'])
+const TERMINAL_ATTEMPT_STATUSES = new Set(['succeeded', 'failed', 'cancelled', 'cancel_requested'])
+const LATE_TERMINAL_EVENT_TYPES = new Set(['assistant.completed', 'run.completed', 'run.failed', 'run.cancelled'])
 
 /**
  * Persists Runtime events first, then applies their consequences: Run/Attempt state,
@@ -54,6 +58,8 @@ export class RunEventRecorder {
   }
 
   private async persistEvent(run: RunRecord, event: RuntimeEvent) {
+    const attemptBefore = await this.deps.runs.getAttempt(tenantId, event.attempt_id)
+    const runBefore = await this.deps.runs.getRun(tenantId, run.id)
     const stored: StoredRunEvent = {
       id: event.event_id,
       tenantId,
@@ -66,7 +72,21 @@ export class RunEventRecorder {
       traceId: event.trace_id,
       occurredAt: event.occurred_at,
     }
+    if (LATE_TERMINAL_EVENT_TYPES.has(event.event_type)
+      && runBefore
+      && TERMINAL_RUN_STATUSES.has(runBefore.status)) {
+      stored.safeMetadata = { ...stored.safeMetadata, late: true }
+    }
     await this.deps.runs.appendEvent(stored)
+    const attemptAfter = await this.deps.runs.getAttempt(tenantId, event.attempt_id)
+    if (LATE_TERMINAL_EVENT_TYPES.has(event.event_type)
+      && attemptBefore?.status === 'running'
+      && attemptAfter
+      && TERMINAL_ATTEMPT_STATUSES.has(attemptAfter.status)) {
+      await this.deps.runs.markEventLate(tenantId, event.event_id)
+      return
+    }
+    if (stored.safeMetadata['late'] === true) return
     const eventRun = await this.deps.runs.getRun(tenantId, run.id)
     if (eventRun?.currentAttemptId !== event.attempt_id) return
     if (event.event_type === 'run.started') {
