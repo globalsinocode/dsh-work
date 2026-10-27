@@ -84,13 +84,14 @@ export async function personalWorkbenchFixture(prefix: string, options: {
   } })
   registerConversationRoutes(router, conversations, orchestration, runs, agents, auth, undefined, undefined, agentMembers)
   registerContentRoutes(router, content, auth)
+  let unbindNotificationRecipients: (() => void) | undefined
   if (options.browser) {
     registerWorkbenchAgentRoutes(router, agents, auth)
     registerAutomationRoutes(router, automationService)
     if (options.teamCollaboration) {
       const workspaces = new PostgresWorkspaceService(db.client)
       const recipientPorts = createPostgresNotificationRecipientPorts(db.client)
-      bindWorkspaceNotificationRecipients(new WorkspaceNotificationRecipientService(
+      unbindNotificationRecipients = bindWorkspaceNotificationRecipients(new WorkspaceNotificationRecipientService(
         db.client,
         recipientPorts.participants,
         recipientPorts.members,
@@ -135,6 +136,8 @@ export async function personalWorkbenchFixture(prefix: string, options: {
       return id
     },
     async close() {
+      unbindNotificationRecipients?.()
+      unbindNotificationRecipients = undefined
       await new Promise<void>(resolve => server.close(() => resolve()))
       await orchestration.close(); await db.dispose(); await rm(root, { recursive: true, force: true })
     },

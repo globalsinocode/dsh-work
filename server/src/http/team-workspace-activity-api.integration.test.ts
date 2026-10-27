@@ -47,6 +47,7 @@ let activity: PostgresWorkspaceActivityService
 let server: ReturnType<typeof createServer>
 let baseUrl = ''
 let storageRoot = ''
+let unbindNotificationRecipients: (() => void) | undefined
 
 interface ActivityRow {
   id: string
@@ -70,7 +71,7 @@ before(async () => {
   authorization = new PostgresAuthorizationService(database)
   workspaces = new PostgresWorkspaceService(database)
   const recipientPorts = createPostgresNotificationRecipientPorts(database)
-  bindWorkspaceNotificationRecipients(new WorkspaceNotificationRecipientService(
+  unbindNotificationRecipients = bindWorkspaceNotificationRecipients(new WorkspaceNotificationRecipientService(
     database,
     recipientPorts.participants,
     recipientPorts.members,
@@ -97,6 +98,8 @@ before(async () => {
 })
 
 after(async () => {
+  unbindNotificationRecipients?.()
+  unbindNotificationRecipients = undefined
   if (server?.listening) await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()))
   if (storageRoot) await rm(storageRoot, { recursive: true, force: true })
   await throwaway.dispose()
