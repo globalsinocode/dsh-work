@@ -1037,6 +1037,20 @@ export const mockSkills: SkillDefinition[] = [
 
 export const mockConnectors: ConnectorDefinition[] = [
   {
+    id: 'connector-dsh-workspace',
+    name: 'DSH 内置工具',
+    system: 'DSH Runtime',
+    status: 'healthy',
+    toolCount: 12,
+    protocol: 'runtime',
+    endpoint: 'dsh://runtime-local-01',
+    authType: '服务身份',
+    credentialRef: 'runtime-local-01',
+    scopeDescription: '当前 Runtime 已加载的平台内置工具目录。',
+    latency: '—',
+    lastCheckedAt: '刚刚',
+  },
+  {
     id: 'connector-mcp-knowledge',
     name: '企业知识 MCP',
     system: 'MCP',

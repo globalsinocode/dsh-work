@@ -8,8 +8,10 @@ const api = vi.hoisted(() => ({
   getAgentVersions: vi.fn(),
   getAgentJoinedWorkspaces: vi.fn(),
   getAuditEvents: vi.fn(),
+  getTools: vi.fn(),
   getMcpConnectors: vi.fn(),
   getBuiltinTools: vi.fn(),
+  getDshRuntimeToolConnector: vi.fn(),
   getGrantSourceReconciliation: vi.fn(),
   getHealth: vi.fn(),
   getOperationsSummary: vi.fn(),
@@ -34,6 +36,56 @@ describe('admin content store Skill version state', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     vi.clearAllMocks()
+    api.getTools.mockResolvedValue([])
+    api.getMcpConnectors.mockResolvedValue([])
+    api.getBuiltinTools.mockResolvedValue({ tools: [], disabledTools: [], catalog: { checkedAt: '', missingTools: [] } })
+    api.getDshRuntimeToolConnector.mockResolvedValue({
+      connectorId: 'connector-dsh-workspace',
+      name: 'DSH 内置工具',
+      status: 'healthy',
+      endpoint: 'prototype://dsh-runtime',
+      toolCount: 0,
+      activeBindingCount: 0,
+      latestBindingRevision: null,
+      catalogDigest: '0'.repeat(64),
+      lastCheckedAt: '刚刚',
+      lastHealthMessage: 'P0 冒烟',
+      runtimeId: 'runtime-local-01',
+    })
+  })
+
+  it('loads admin governance data when tool endpoints are available', async () => {
+    const { useAuthStore } = await import('./auth')
+    const { useContentStore } = await import('./content')
+    const authStore = useAuthStore()
+    api.getSession.mockResolvedValue({
+      identityProvider: 'prototype-sso',
+      apiAudience: 'admin',
+      permissions: ['admin:read'],
+      user: {
+        id: 'U00001', name: '平台管理员', title: '管理员', department: '数字化中心',
+        avatarText: '管', role: 'platform_admin', dataScopes: [],
+      },
+    })
+    await authStore.load()
+    api.getAgents.mockResolvedValue([])
+    api.getAgentVersions.mockResolvedValue([])
+    api.getSkills.mockResolvedValue([])
+    api.getSkillVersions.mockResolvedValue([])
+    api.getSkillReleaseRecords.mockResolvedValue([])
+    api.getTasks.mockResolvedValue([])
+    api.getRuntimes.mockResolvedValue([])
+    api.getWorkspaces.mockResolvedValue([])
+    api.getHealth.mockResolvedValue({})
+    api.getUsage.mockResolvedValue({})
+    api.getPlatformStatus.mockResolvedValue({ architecture: 'node-modular-monolith' })
+
+    const store = useContentStore()
+    await store.load(true)
+
+    expect(api.getTools).toHaveBeenCalled()
+    expect(store.tools).toEqual([])
+    expect(store.adminInitialized).toBe(true)
   })
 
   it('marks the published draft in version history without a page reload', async () => {
