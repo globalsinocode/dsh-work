@@ -42,10 +42,11 @@ const updateDraft = {
 }
 
 const createStringFields = [
-  'id', 'name', 'description', 'visibility', 'welcomeMessage', 'systemPrompt', 'changeSummary',
+  'id', 'name', 'description', 'welcomeMessage', 'systemPrompt', 'changeSummary',
 ] as const
+const optionalAccessFields = ['visibility', 'roleIds', 'dataScopes'] as const
 const updateStringFields = ['agentId', ...createStringFields.filter(field => field !== 'id'), 'expectedRevision'] as const
-const arrayFields = ['roleIds', 'dataScopes', 'examplePrompts', 'skills', 'tools'] as const
+const arrayFields = ['examplePrompts', 'skills', 'tools'] as const
 const quotaFields = ['maxOutputBytes', 'maxToolCalls', 'timeoutSeconds'] as const
 const optionalArrayFields = ['executionRoleIds', 'executionDataScopes'] as const
 const leaked = 'secret-leak-value'
@@ -172,6 +173,18 @@ test('optional fields may be omitted, and illegal values are rejected without ec
   assertInvalid(() => parseCreateAgentDraftInput({ ...createDraft, workInstructions: { leak: leaked } }), 'workInstructions')
   assertInvalid(() => parseUpdateAgentDraftInput({ ...updateDraft, workInstructions: { leak: leaked } }), 'workInstructions')
   assertInvalid(() => parseCreateAgentDraftInput({ ...createDraft, workInstructions: 1 }), 'workInstructions')
+
+  for (const field of optionalAccessFields) {
+    assert.doesNotThrow(() => parseCreateAgentDraftInput({ ...createDraft, [field]: undefined }))
+    assert.doesNotThrow(() => parseCreateAgentDraftInput({ ...createDraft, [field]: null }))
+    assert.doesNotThrow(() => parseUpdateAgentDraftInput({ ...updateDraft, [field]: undefined }))
+    assert.equal(parseCreateAgentDraftInput({ ...createDraft, [field]: undefined })[field], undefined)
+    assertInvalid(() => parseCreateAgentDraftInput({ ...createDraft, [field]: { leak: leaked } }), field)
+    assertInvalid(() => parseCreateAgentDraftInput({ ...createDraft, [field]: 1 }), field)
+    if (field !== 'visibility') {
+      assertInvalid(() => parseCreateAgentDraftInput({ ...createDraft, [field]: ['ok', { leak: leaked }] }), field)
+    }
+  }
 
   for (const field of optionalArrayFields) {
     assert.doesNotThrow(() => parseCreateAgentDraftInput({ ...createDraft, [field]: undefined }))

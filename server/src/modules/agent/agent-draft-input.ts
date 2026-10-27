@@ -27,14 +27,17 @@ export function parseUpdateAgentDraftInput(value: unknown): Omit<UpdateAgentDraf
 
 function readSharedDraft(record: Record<string, unknown>) {
   const workInstructions = readWorkInstructions(record)
+  const visibility = readOptionalString(record, 'visibility')
+  const roleIds = readOptionalStringArray(record, 'roleIds')
+  const dataScopes = readOptionalStringArray(record, 'dataScopes')
   return {
     name: requireString(record, 'name'),
     description: requireString(record, 'description'),
     owner: compatibilityText(record, 'owner'),
     department: compatibilityText(record, 'department'),
-    visibility: requireString(record, 'visibility'),
-    roleIds: requireStringArray(record, 'roleIds'),
-    dataScopes: requireStringArray(record, 'dataScopes'),
+    ...(visibility !== undefined ? { visibility } : {}),
+    ...(roleIds !== undefined ? { roleIds } : {}),
+    ...(dataScopes !== undefined ? { dataScopes } : {}),
     welcomeMessage: requireString(record, 'welcomeMessage'),
     examplePrompts: requireStringArray(record, 'examplePrompts'),
     systemPrompt: requireString(record, 'systemPrompt'),
@@ -112,6 +115,11 @@ function requireStringArray(record: Record<string, unknown>, field: string): str
 function readOptionalStringArray(record: Record<string, unknown>, field: string): string[] | undefined {
   if (!Object.hasOwn(record, field) || record[field] === undefined || record[field] === null) return undefined
   return requireStringArray(record, field)
+}
+
+function readOptionalString(record: Record<string, unknown>, field: string): string | undefined {
+  if (!Object.hasOwn(record, field) || record[field] === undefined || record[field] === null) return undefined
+  return requireString(record, field)
 }
 
 function readWorkInstructions(record: Record<string, unknown>): string | null | undefined {
