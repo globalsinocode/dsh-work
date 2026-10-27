@@ -85,7 +85,7 @@ describe('admin content store Skill version state', () => {
 
     expect(api.getTools).toHaveBeenCalled()
     expect(store.tools).toEqual([])
-    expect(store.adminInitialized).toBe(true)
+    expect(store.initialized).toBe(true)
   })
 
   it('marks the published draft in version history without a page reload', async () => {

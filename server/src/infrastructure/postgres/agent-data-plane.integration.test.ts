@@ -5,6 +5,7 @@ import { after, before, test } from 'node:test'
 
 import type { DatabaseClient } from './database.ts'
 import { createThrowawayDatabase, type ThrowawayDatabase } from './test-database.ts'
+import { bindTestWorkspaceNotificationRecipients } from './workspace-notification-recipient-test-fixture.ts'
 import { PostgresAgentDataService, type AgentDataActor } from '../../modules/agent-data/postgres-agent-data-service.ts'
 import { PostgresRunRepository } from '../../modules/run/postgres-run-repository.ts'
 import { PostgresTaskRepository } from '../../modules/task/postgres-task-repository.ts'
@@ -20,6 +21,7 @@ const tenantId = 'tenant-dsh-work'
 const primaryAgentId = 'agent-dsh-work-assistant'
 const primaryVersionId = 'agent-version-dsh-work-assistant-1'
 let throwaway: ThrowawayDatabase
+let unbindNotificationRecipients: (() => void) | undefined
 let database: DatabaseClient
 let service: PostgresAgentDataService
 let runs: PostgresRunRepository
@@ -28,6 +30,7 @@ let tasks: PostgresTaskRepository
 before(async () => {
   throwaway = await createThrowawayDatabase({ namePrefix: 'dsh_work_ae03_data', maxConnections: 6 })
   database = throwaway.client
+  unbindNotificationRecipients = bindTestWorkspaceNotificationRecipients(database)
   service = new PostgresAgentDataService(database)
   runs = new PostgresRunRepository(database)
   tasks = new PostgresTaskRepository(database)
@@ -74,7 +77,9 @@ before(async () => {
   `
 })
 
-after(async () => { await throwaway.dispose() })
+after(async () => { unbindNotificationRecipients?.()
+  unbindNotificationRecipients = undefined
+  await throwaway.dispose() })
 
 const schema = {
   type: 'object', additionalProperties: false,

@@ -2,6 +2,19 @@
 
 历史验证记录：每次实施的阶段、已运行的测试与未覆盖项。只追加，新记录写在最前面；不是验收标准。证据层级与写法见[验收目录索引](../TEST-CATALOG.md)。
 
+### 2026-10-27：M6 第二轮红灯修复
+
+**环境：** Windows 10，Node v24.14.1，`corepack pnpm`（若可用）；PostgreSQL 依赖 `DSH_WORK_TEST_DATABASE_URL`（集成未在本轮全量执行）。
+
+| 命令 | 退出码 | 备注 |
+| --- | --- | --- |
+| `node --test run-event-recorder.test.ts` | 0 | 4/4，含档案员原文与重放不二次归档 |
+| `node --test openapi-coverage.test.ts` | 1 | 经验路由已补；仍报 admin agent 发布/验证 operation 无对应路由（既有漂移） |
+| `node --test --test-name-pattern=abort stops… python-skill-runner.test.ts` | 1 | Windows `DSH_WORK_PYTHON_USER` / `getuid` 环境阻塞 |
+| `test:integration` / `test:e2e` / `ci:static` | 未运行 | 待在 CI 或具备 pnpm+PG 的环境收口 |
+
+**层级：** 单测证据为 P0 逻辑；Integration/Browser 需 Linux CI 与 P0 冒烟服务。真实 OIDC、生产 DSH、多账号收权与企业连接器无 P2 证据。
+
 ### 2026-10-27：M6 红灯修复（本地 Windows，停在 push 前）
 
 **阶段：** Task 0–8 实施与分层验证（未 `git push`）。

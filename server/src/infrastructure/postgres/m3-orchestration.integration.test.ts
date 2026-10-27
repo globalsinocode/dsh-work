@@ -31,12 +31,14 @@ import { PostgresTaskRepository, TaskContractConflictError, taskOperationParamet
 import { PostgresTaskQueryService } from '../../modules/run/postgres-task-query-service.ts'
 import type { DatabaseClient } from './database.ts'
 import { createThrowawayDatabase, type ThrowawayDatabase } from './test-database.ts'
+import { bindTestWorkspaceNotificationRecipients } from './workspace-notification-recipient-test-fixture.ts'
 import { LocalObjectStorage } from '../storage/local-object-storage.ts'
 
 const databaseUrl = process.env.DSH_WORK_TEST_DATABASE_URL
 if (!databaseUrl) throw new Error('DSH_WORK_TEST_DATABASE_URL 未配置')
 
 let database: DatabaseClient
+let unbindNotificationRecipients: (() => void) | undefined
 let throwaway: ThrowawayDatabase
 let runtime: DeterministicRuntime
 let runs: PostgresRunRepository
@@ -53,6 +55,7 @@ before(async () => {
   // 一次性库：避免共享 dev 库的历史数据累积影响断言。
   throwaway = await createThrowawayDatabase({ namePrefix: 'dsh_work_m3_orchestration_test', maxConnections: 6 })
   database = throwaway.client
+  unbindNotificationRecipients = bindTestWorkspaceNotificationRecipients(database)
   runtime = new DeterministicRuntime()
   runs = new PostgresRunRepository(database)
   conversations = new PostgresConversationRepository(database)
@@ -96,6 +99,8 @@ before(async () => {
 after(async () => {
   if (apiServer?.listening) await new Promise<void>((resolve, reject) => apiServer.close(error => error ? reject(error) : resolve()))
   await orchestration.close()
+  unbindNotificationRecipients?.()
+  unbindNotificationRecipients = undefined
   await throwaway.dispose()
 })
 

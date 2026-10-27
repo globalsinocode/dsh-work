@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { before, after, test } from 'node:test'
 import { personalWorkbenchFixture, testTenant } from './personal-workbench-test-fixture.ts'
+import { bindTestWorkspaceNotificationRecipients } from './workspace-notification-recipient-test-fixture.ts'
 import { IdentitySessionRepository } from '../../modules/identity/session-repository.ts'
 let f: Awaited<ReturnType<typeof personalWorkbenchFixture>>
 before(async () => { f=await personalWorkbenchFixture('dsh_b5_lifecycle') })
@@ -69,6 +70,7 @@ test('conversation removal works with a one-connection pool (no out-of-transacti
   const { PostgresConversationRepository } = await import('../../modules/workbench/application/postgres-conversation-repository.ts')
   const { setTimeout: delay } = await import('node:timers/promises')
   const single = createDatabase({ url: f.db.url, maxConnections: 1 })
+  const unbindNotificationRecipients = bindTestWorkspaceNotificationRecipients(single)
   try {
     const repository = new PostgresConversationRepository(single)
     const session = await repository.createSession({ userId: 'U00001', title: 'B5 single connection' })
@@ -77,5 +79,8 @@ test('conversation removal works with a one-connection pool (no out-of-transacti
       delay(1500).then(() => { throw new Error('archiveSession borrowed a second connection while holding its transaction') }),
     ])
     assert.equal(removed.archived, true)
-  } finally { await single.end({ timeout: 0 }) }
+  } finally {
+    unbindNotificationRecipients()
+    await single.end({ timeout: 0 })
+  }
 })

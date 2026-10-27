@@ -192,7 +192,9 @@ onBeforeUnmount(() => {
 
     <aside class="employee-sidebar" :class="{ 'employee-sidebar--mobile-open': mobileOpen }">
       <div class="employee-sidebar__logo">
-        <AppLogo dark />
+        <ModeSwitchMenu placement="bottom-start">
+          <AppLogo dark />
+        </ModeSwitchMenu>
       </div>
 
       <button class="new-conversation-button" type="button" @click="navigate('/workbench')">
@@ -279,9 +281,7 @@ onBeforeUnmount(() => {
         <NotificationInbox />
         <el-dropdown trigger="click" placement="top-start" @command="onAccountCommand">
           <button class="profile-button" type="button" aria-label="打开用户中心">
-            <ModeSwitchMenu placement="top-start">
-              <span class="profile-button__avatar">{{ authStore.user.avatarText }}</span>
-            </ModeSwitchMenu>
+            <span class="profile-button__avatar">{{ authStore.user.avatarText }}</span>
             <span class="profile-button__copy">
               <strong>{{ authStore.user.name }}</strong>
               <small>{{ roleLabels[authStore.user.role] }}</small>

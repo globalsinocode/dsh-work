@@ -12,6 +12,7 @@ import { setTimeout as delay } from 'node:timers/promises'
 import { after, before, test } from 'node:test'
 import { strToU8, zipSync } from 'fflate'
 import { createThrowawayDatabase, type ThrowawayDatabase } from './test-database.ts'
+import { bindTestWorkspaceNotificationRecipients } from './workspace-notification-recipient-test-fixture.ts'
 import { PostgresAuthorizationService } from '../../modules/authorization/postgres-authorization-service.ts'
 import { PostgresOperationsService } from '../../modules/admin/application/postgres-operations-service.ts'
 import { PostgresConversationRepository } from '../../modules/workbench/application/postgres-conversation-repository.ts'
@@ -36,6 +37,7 @@ import { LocalObjectStorage } from '../storage/local-object-storage.ts'
 const tenant = 'tenant-dsh-work', actor = 'U00008'
 const real = process.env.DSH_WORK_SKILL_REAL_DSH === '1'
 let database: ThrowawayDatabase, orchestration: RunOrchestrationService, service: AdminSkillInstallationService
+let unbindNotificationRecipients: (() => void) | undefined
 let assistant: AdminAssistantService
 let operations: PostgresOperationsService
 let agents: PostgresAgentService

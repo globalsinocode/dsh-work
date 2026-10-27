@@ -58,6 +58,36 @@ test('任务线程的成果交给档案员时不带平台追加的知识与记�
   assert.deepEqual(archived, ['缺货集中在饮料类目。'])
 })
 
+test('run.completed 成功后清理原文缓存，重放终态不会再次交给档案员', async () => {
+  const archived: string[] = []
+  const deps = permissive<OrchestrationDependencies>({
+    runs: permissive({
+      getRun: async () => run,
+      getAttempt: async () => ({ id: 'attempt-1', status: 'running' }),
+      appendEvent: async (input: { id: string }) => input,
+      transitionAttempt: async () => undefined,
+      transitionRun: async () => undefined,
+    }),
+    conversations: permissive({
+      getRunPrompt: async () => '分析缺货原因',
+      writeRunTerminalNotificationIfTeam: async () => undefined,
+    }),
+    operations: undefined,
+    sessionSummaries: undefined,
+    persistentWait: undefined,
+    delegation: undefined,
+    projectArchivist: permissive({ afterTaskRun: async (_run: RunRecord, output: string) => { archived.push(output) } }),
+  })
+  const recorder = new RunEventRecorder(deps, permissive<AttemptBudget>({ settle: async () => undefined }))
+
+  recorder.record(run, event(1, 'assistant.completed', '缺货集中在饮料类目。'))
+  recorder.record(run, event(2, 'run.completed'))
+  recorder.record(run, event(3, 'run.completed'))
+  await recorder.flush(run.id)
+
+  assert.deepEqual(archived, ['缺货集中在饮料类目。'])
+})
+
 test('迟到的终态事件标记为 late 落库，不改变 Run 状态也不写回复（P1-8）', async () => {
   const stored: Array<{ eventType: string; safeMetadata: Record<string, unknown> }> = []
   const transitions: string[] = []

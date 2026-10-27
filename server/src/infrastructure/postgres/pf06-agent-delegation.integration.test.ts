@@ -4,6 +4,7 @@ import { after, before, test } from 'node:test'
 
 import type { DatabaseClient } from './database.ts'
 import { createThrowawayDatabase, type ThrowawayDatabase } from './test-database.ts'
+import { bindTestWorkspaceNotificationRecipients } from './workspace-notification-recipient-test-fixture.ts'
 import { PostgresAgentService } from '../../modules/agent/postgres-agent-service.ts'
 import { PostgresAuthorizationService, type RuntimeAuthorizationDecision } from '../../modules/authorization/postgres-authorization-service.ts'
 import { ModelGovernanceService } from '../../modules/model/model-governance-service.ts'
@@ -21,6 +22,7 @@ import { PostgresConversationRepository } from '../../modules/workbench/applicat
 const tenantId = 'tenant-dsh-work'
 const targetAgentVersionId = 'agent-version-dsh-work-assistant-1'
 let database: DatabaseClient
+let unbindNotificationRecipients: (() => void) | undefined
 let throwaway: ThrowawayDatabase
 let runs: PostgresRunRepository
 let tasks: PostgresTaskRepository
@@ -30,13 +32,16 @@ let taskQueries: PostgresTaskQueryService
 before(async () => {
   throwaway = await createThrowawayDatabase({ namePrefix: 'dsh_work_pf06_delegation', maxConnections: 8 })
   database = throwaway.client
+  unbindNotificationRecipients = bindTestWorkspaceNotificationRecipients(database)
   runs = new PostgresRunRepository(database)
   tasks = new PostgresTaskRepository(database)
   authorization = new PostgresAuthorizationService(database)
   taskQueries = new PostgresTaskQueryService(database, tasks, runs)
 })
 
-after(async () => { await throwaway.dispose() })
+after(async () => { unbindNotificationRecipients?.()
+  unbindNotificationRecipients = undefined
+  await throwaway.dispose() })
 
 test('PF-06 stores a versioned allow-list and rejects unpublished delegation targets', async () => {
   const agents = new PostgresAgentService(database)

@@ -7,6 +7,7 @@ import { setTimeout as delay } from 'node:timers/promises'
 import { after, before, test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 import { createThrowawayDatabase, type ThrowawayDatabase } from './test-database.ts'
+import { bindTestWorkspaceNotificationRecipients } from './workspace-notification-recipient-test-fixture.ts'
 import { PostgresRunRepository } from '../../modules/run/postgres-run-repository.ts'
 import { RunOrchestrationService } from '../../modules/run/run-orchestration-service.ts'
 import { PostgresConversationRepository } from '../../modules/workbench/application/postgres-conversation-repository.ts'
@@ -20,9 +21,17 @@ import { DshAcpRuntimeAdapter } from '../../modules/runtime/dsh-acp-runtime-adap
 import { LocalObjectStorage } from '../storage/local-object-storage.ts'
 
 let db: ThrowawayDatabase
+let unbindNotificationRecipients: (() => void) | undefined
 const mockWorker = join(dirname(fileURLToPath(import.meta.url)), '../../modules/runtime/testing/mock-acp-worker.ts')
-before(async () => { db = await createThrowawayDatabase({ namePrefix: 'dsh_work_review_a2', maxConnections: 5 }) })
-after(async () => { await db?.dispose() })
+before(async () => {
+  db = await createThrowawayDatabase({ namePrefix: 'dsh_work_review_a2', maxConnections: 5 })
+  unbindNotificationRecipients = bindTestWorkspaceNotificationRecipients(db.client)
+})
+after(async () => {
+  unbindNotificationRecipients?.()
+  unbindNotificationRecipients = undefined
+  await db?.dispose()
+})
 class ClaimBoundaryRepository extends PostgresRunRepository {
   atBoundary?: () => Promise<void>
   override async claimAttempt(...args: Parameters<PostgresRunRepository['claimAttempt']>) {

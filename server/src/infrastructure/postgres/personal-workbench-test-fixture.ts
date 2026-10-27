@@ -27,11 +27,7 @@ import { registerWorkspaceAgentMemberRoutes } from '../../http/workbench/workspa
 import { PostgresWorkspaceActivityService } from '../../modules/workbench/application/postgres-workspace-activity-service.ts'
 import { PostgresWorkspaceService } from '../../modules/workbench/application/postgres-workspace-service.ts'
 import { PostgresWorkspaceAgentMemberService } from '../../modules/workbench/application/postgres-workspace-agent-member-service.ts'
-import { bindWorkspaceNotificationRecipients } from '../../modules/workbench/application/workspace-activity-writer.ts'
-import {
-  WorkspaceNotificationRecipientService,
-  createPostgresNotificationRecipientPorts,
-} from '../../modules/workbench/application/workspace-notification-recipient-service.ts'
+import { bindTestWorkspaceNotificationRecipients } from './workspace-notification-recipient-test-fixture.ts'
 import { AutomationService } from '../../modules/automation/automation-service.ts'
 import { PostgresAutomationRepository } from '../../modules/automation/postgres-automation-repository.ts'
 import { defaultAutomationConfig } from '../../modules/automation/automation-types.ts'
@@ -51,6 +47,7 @@ export async function personalWorkbenchFixture(prefix: string, options: {
   const auth = new PostgresAuthorizationService(db.client)
   const content = new PostgresContentService(db.client, new LocalObjectStorage(root), auth)
   const conversations = new PostgresConversationRepository(db.client)
+  let unbindNotificationRecipients = bindTestWorkspaceNotificationRecipients(db.client)
   const runs = new PostgresRunRepository(db.client)
   const agents = new PostgresAgentService(db.client)
   const agentMembers = options.teamCollaboration
@@ -84,18 +81,11 @@ export async function personalWorkbenchFixture(prefix: string, options: {
   } })
   registerConversationRoutes(router, conversations, orchestration, runs, agents, auth, undefined, undefined, agentMembers)
   registerContentRoutes(router, content, auth)
-  let unbindNotificationRecipients: (() => void) | undefined
   if (options.browser) {
     registerWorkbenchAgentRoutes(router, agents, auth)
     registerAutomationRoutes(router, automationService)
     if (options.teamCollaboration) {
       const workspaces = new PostgresWorkspaceService(db.client)
-      const recipientPorts = createPostgresNotificationRecipientPorts(db.client)
-      unbindNotificationRecipients = bindWorkspaceNotificationRecipients(new WorkspaceNotificationRecipientService(
-        db.client,
-        recipientPorts.participants,
-        recipientPorts.members,
-      ))
       registerWorkspaceActivityRoutes(
         router,
         new PostgresWorkspaceActivityService(db.client, workspaces),
@@ -136,8 +126,8 @@ export async function personalWorkbenchFixture(prefix: string, options: {
       return id
     },
     async close() {
-      unbindNotificationRecipients?.()
-      unbindNotificationRecipients = undefined
+      unbindNotificationRecipients()
+      unbindNotificationRecipients = () => undefined
       await new Promise<void>(resolve => server.close(() => resolve()))
       await orchestration.close(); await db.dispose(); await rm(root, { recursive: true, force: true })
     },

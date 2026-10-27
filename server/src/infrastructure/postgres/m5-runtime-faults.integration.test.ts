@@ -18,8 +18,10 @@ import type {
 import { PostgresConversationRepository } from '../../modules/workbench/application/postgres-conversation-repository.ts'
 import type { DatabaseClient } from './database.ts'
 import { createThrowawayDatabase, type ThrowawayDatabase } from './test-database.ts'
+import { bindTestWorkspaceNotificationRecipients } from './workspace-notification-recipient-test-fixture.ts'
 
 let throwaway: ThrowawayDatabase
+let unbindNotificationRecipients: (() => void) | undefined
 
 let database: DatabaseClient
 let runs: PostgresRunRepository
@@ -30,12 +32,15 @@ before(async () => {
   // 一次性库：避免共享 dev 库的历史数据干扰断言。
   throwaway = await createThrowawayDatabase({ namePrefix: 'dsh_work_m5_faults_test', maxConnections: 6 })
   database = throwaway.client
+  unbindNotificationRecipients = bindTestWorkspaceNotificationRecipients(database)
   runs = new PostgresRunRepository(database)
   conversations = new PostgresConversationRepository(database)
   models = new ModelGovernanceService(new PostgresModelGovernanceRepository(database))
 })
 
 after(async () => {
+  unbindNotificationRecipients?.()
+  unbindNotificationRecipients = undefined
   await throwaway.dispose()
 })
 

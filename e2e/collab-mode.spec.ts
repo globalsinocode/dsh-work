@@ -11,7 +11,9 @@ test.beforeEach(async ({ page }) => {
 
 async function chooseMode(page: Page, label: '工作模式' | '协作模式') {
   await page.getByRole('button', { name: '切换模式' }).click()
-  await page.getByRole('menuitem', { name: new RegExp(label) }).click()
+  const item = page.getByRole('menuitem', { name: new RegExp(label) })
+  await expect(item).toBeVisible()
+  await item.click()
 }
 
 async function switchToCollab(page: Page, options: { narrow?: boolean } = {}) {

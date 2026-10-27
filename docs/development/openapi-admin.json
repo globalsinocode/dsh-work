@@ -173,6 +173,44 @@
         "responses": { "200": { "$ref": "#/components/responses/Ok" } }
       }
     },
+    "/experience-iterations/agents/{agentId}/experiences": {
+      "get": {
+        "operationId": "listAgentExperiences",
+        "summary": "查询指定 Agent 的已发布经验及当前版本",
+        "parameters": [
+          { "name": "agentId", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": { "200": { "$ref": "#/components/responses/Ok" } }
+      }
+    },
+    "/experience-iterations/agents/{agentId}/experiences/{entryId}/current": {
+      "put": {
+        "operationId": "setAgentExperienceVersion",
+        "summary": "停用、启用或回滚 Agent 的当前经验版本",
+        "parameters": [
+          { "name": "agentId", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "entryId", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["versionId", "expectedVersionId", "reason"],
+                "properties": {
+                  "versionId": { "type": ["string", "null"], "minLength": 1, "maxLength": 128 },
+                  "expectedVersionId": { "type": ["string", "null"], "minLength": 1, "maxLength": 128 },
+                  "reason": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "responses": { "200": { "$ref": "#/components/responses/Ok" } }
+      }
+    },
     "/experience-iterations/applications": {
       "get": {
         "operationId": "listExperienceIterationApplications",

@@ -7,6 +7,7 @@ import { join } from 'node:path'
 import { after, before, test } from 'node:test'
 
 import { createThrowawayDatabase, type ThrowawayDatabase } from '../infrastructure/postgres/test-database.ts'
+import { bindTestWorkspaceNotificationRecipients } from '../infrastructure/postgres/workspace-notification-recipient-test-fixture.ts'
 import { testAttemptManifest } from '../infrastructure/postgres/test-attempt-manifest.ts'
 import type { DatabaseClient } from '../infrastructure/postgres/database.ts'
 import type { RequestIdentity } from '../modules/identity/types.ts'
@@ -35,6 +36,7 @@ const tenantId = 'tenant-dsh-work'
 const runtimeId = 'runtime-local-01'
 
 let database: DatabaseClient
+let unbindNotificationRecipients: (() => void) | undefined
 let throwaway: ThrowawayDatabase
 let storageRoot: string
 let authorization: PostgresAuthorizationService
@@ -57,6 +59,7 @@ interface MemberRow {
 before(async () => {
   throwaway = await createThrowawayDatabase({ namePrefix: 'dsh_work_lifecycle_api_test', maxConnections: 12 })
   database = throwaway.client
+  unbindNotificationRecipients = bindTestWorkspaceNotificationRecipients(database)
   storageRoot = await mkdtemp(join(tmpdir(), 'dsh-work-lifecycle-'))
   // 并发用例会留下 running 的 attempt（FakeRuntime 不自动完成），默认容量 2 会跨用例
   // 耗尽，使「领取」因容量而非归档判断失败，用例失去鉴别力。给测试 runtime 充足容量。
@@ -108,6 +111,8 @@ before(async () => {
 after(async () => {
   if (server?.listening) await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()))
   if (orchestration) await orchestration.close()
+  unbindNotificationRecipients?.()
+  unbindNotificationRecipients = undefined
   await throwaway.dispose()
   await rm(storageRoot, { recursive: true, force: true })
 })
