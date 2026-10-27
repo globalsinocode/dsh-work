@@ -15,6 +15,9 @@ import { minimalXlsx } from '../../testing/office-fixtures.ts'
 import { ContainerArtifactTextExtractor } from '../workbench/application/container-artifact-text-extractor.ts'
 import { ContainerExecutor } from './container-executor.ts'
 import { measureWorkspace } from './workspace-usage.ts'
+import { ExecutionContainerPythonRunner } from './execution-container-python.ts'
+import { skillDirectory } from './python-skill-runner.ts'
+import type { RuntimeManifest } from './runtime-types.ts'
 
 /**
  * P1-style check through real DSH and real Docker (no model vendor: a scripted
@@ -283,6 +286,50 @@ test('2b-3: binary artifact text is extracted by the platform script in a dispos
     assert.equal(executor.containersInUse, 0, 'the extraction container was removed')
     assert.deepEqual(executor.pendingRemovals, [])
   } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('1b②: a Skill script runs inside the Attempt container and finds its paths through the environment', { skip: extractionSkip, timeout: 180_000 }, async () => {
+  const root = await mkdtemp(join(tmpdir(), 'dsh-py-container-e2e-'))
+  const workspace = join(root, 'workspace')
+  const backend = new DockerExecutionBackend()
+  await backend.detectFeatures()
+  const containers = new AttemptExecutionContainers(backend, {
+    image: image!, user: resolveExecutionContainerUser(),
+    usage: { measure: dir => measureWorkspace(dir), freeSpace: async () => ({ freeBytes: Number.MAX_SAFE_INTEGER, totalBytes: Number.MAX_SAFE_INTEGER, low: false }) },
+  })
+  try {
+    // The Adapter materializes an activated Skill under workspace/skills/<id>; the platform mounts inputs read-only.
+    const skillDir = skillDirectory(workspace, 'skill-report')
+    await mkdir(join(skillDir, 'scripts'), { recursive: true })
+    await writeFile(join(skillDir, 'scripts', 'build.py'), [
+      'import csv, os, sys',
+      'rows = list(csv.reader(open(os.path.join(os.environ["DSH_INPUT_DIR"], "01-sales.csv.txt"), encoding="utf-8")))',
+      'total = sum(int(row[1]) for row in rows[1:])',
+      'open(os.path.join(os.environ["DSH_OUTPUT_DIR"], "汇总.md"), "w", encoding="utf-8").write(f"# 合计\\n{total}\\n")',
+      'print(os.getcwd() == os.environ["DSH_SKILL_DIR"], sys.argv[1], total)',
+    ].join('\n'), { mode: 0o400 })
+    await mkdir(join(workspace, 'input'), { recursive: true })
+    await writeFile(join(workspace, 'input', '01-sales.csv.txt'), '区域,收入\n华东,1200\n华南,800\n', { mode: 0o400 })
+    const manifest = {
+      attempt_id: 'py-e2e-attempt',
+      agent_configuration: { skill_instructions: [{ id: 'skill-report', name: 'report', version: '1.0.0', files: [{ path: 'scripts/build.py', sha256: 'a'.repeat(64), size: 1 }] }] },
+    } as unknown as RuntimeManifest
+    const result = await new ExecutionContainerPythonRunner(containers)
+      .execute({ skill: 'report', entry: 'scripts/build.py', args: ['华东'] }, manifest, workspace, new AbortController().signal)
+    assert.equal(result.exitCode, 0, result.stderr)
+    assert.equal(result.stdout.trim(), 'True 华东 2000', 'cwd is the Skill directory; args and inputs arrive')
+    assert.deepEqual(result.artifacts.map(file => file.name), ['汇总.md'])
+    assert.equal(await readFile(join(workspace, 'output', '汇总.md'), 'utf8'), '# 合计\n2000\n')
+    // The fixed sandbox mounts of the per-call mode do not exist here.
+    const fixed = await containers.exec('py-e2e-attempt', workspace, {
+      argv: ['bash', '-c', 'test -e /skill || test -e /input || test -e /output && echo PRESENT || echo ABSENT'],
+      cwd: workspace, maxOutputBytes: 1024, timeoutMs: 10_000, mayLeaveProcesses: true,
+    }, new AbortController().signal)
+    assert.equal(fixed.stdout.trim(), 'ABSENT')
+  } finally {
+    await containers.release('py-e2e-attempt').catch(() => undefined)
     await rm(root, { recursive: true, force: true })
   }
 })

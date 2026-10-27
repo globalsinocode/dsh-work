@@ -396,7 +396,9 @@ DSH Worker（每 Attempt 一个，宿主进程）
 
 **验收：** 单元测试覆盖计量（块计数、链接、项数上限）、超限终止与“清理命令不被误杀”、剩余空间拒绝、回收规则；真实 Docker 端到端用例中命令循环写文件被在上限附近终止、Attempt 继续、删除后可继续执行；回收在 Attempt 结束后删除工作区。
 
-### 4.8 阶段 1b②：`python_execute` 并入执行容器（已定案，2026-10-27）
+### 4.8 阶段 1b②：`python_execute` 并入执行容器（已定案并实施，2026-10-27）
+
+**实施：** [execution-container-python.ts](../../server/src/modules/runtime/execution-container-python.ts) 经 `AttemptExecutionContainers.exec` 运行（与 `bash` 同一套静止确认与 4.7 容量限制）；容器命令新增只接受这三个路径变量的 `env`；执行容器启动检查另读出镜像中已安装的 Python 包；安装计划扫描写死路径（`python_fixed_sandbox_paths`，需复核）；Runtime 说明在执行容器模式下增加“Python 脚本”一节，给出环境变量与工作区绝对路径（脚本工作目录是 Skill 目录，文件参数须用绝对路径）；成果收集的触发条件加入 `python_execute`。
 
 **现状：** 每次 `python_execute` 调用一个临时容器（`DSH_WORK_PYTHON_IMAGE`、256 MB、0.5 CPU、全局槽位），Skill 目录挂为 `/skill` 并作为工作目录，`input/` 只读挂为 `/input`，`python-output/<Skill>/` 挂为 `/output`；输出只回列给模型，不登记为成果。这些路径没有写进工具说明或 Runtime 说明，但 Skill 作者可能写死。每 Attempt 一个的执行容器创建后不能按调用重新挂载 `/skill`，因此须改契约。
 

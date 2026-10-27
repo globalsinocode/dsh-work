@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { strToU8, zipSync, type Zippable } from 'fflate'
 import { parseSkillBundle, parseSkillPackage, toSkillPackageArtifact } from './skill-package.ts'
-import { buildSkillInstallationPlan } from './skill-installation-plan.ts'
+import { buildSkillInstallationPlan, normalizePythonPackageName } from './skill-installation-plan.ts'
 import { continueSkillSource, isPublicAddress, parseSkillSource } from './skill-source.ts'
 import { SkillArtifactStore } from './skill-artifact-store.ts'
 import { LocalObjectStorage } from '../../infrastructure/storage/local-object-storage.ts'
@@ -133,6 +133,25 @@ test('resolves delegated Skills from the same archive and detects Python sandbox
   const scriptedBundle = { root: scripted, packages: [scripted], edges: [] }
   assert.equal(buildSkillInstallationPlan(scriptedBundle, { pythonSandboxAvailable: false }).compatibility.status, 'incompatible')
   assert.equal(buildSkillInstallationPlan(scriptedBundle, { pythonSandboxAvailable: true }).compatibility.status, 'compatible')
+
+  // 1b② (plan 4.8): scripts that hard-code the per-call sandbox mounts need review; env variables are fine.
+  const fixedPaths = parseSkillPackage(zipSync({
+    'SKILL.md': strToU8(sampleSkill), 'references/example.txt': strToU8('marker'),
+    'scripts/check.py': strToU8('import os\nopen("/input/data.csv").read()\nopen(os.path.join("/output", "r.md"), "w")\n'),
+    'scripts/ok.py': strToU8('import os\nout = os.environ["DSH_OUTPUT_DIR"]\nprint("/inputs are fine in text")\n'),
+  }))
+  const reviewed = buildSkillInstallationPlan({ root: fixedPaths, packages: [fixedPaths], edges: [] }, { pythonSandboxAvailable: true })
+  assert.equal(reviewed.compatibility.status, 'needs_review')
+  const issue = reviewed.compatibility.issues.find(item => item.code === 'python_fixed_sandbox_paths')
+  assert.ok(issue)
+  assert.match(issue.message, /scripts\/check\.py/)
+  assert.doesNotMatch(issue.message, /scripts\/ok\.py/)
+  assert.match(issue.message, /DSH_SKILL_DIR、DSH_INPUT_DIR、DSH_OUTPUT_DIR/)
+})
+
+test('Python package requirements match by normalized name', () => {
+  assert.equal(normalizePythonPackageName(' Python_Docx '), 'python-docx')
+  assert.equal(normalizePythonPackageName('ruamel.yaml'), 'ruamel-yaml')
 })
 
 test('continues only an explicit selection from a known source', () => {

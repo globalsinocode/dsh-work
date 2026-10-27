@@ -424,6 +424,14 @@ describe('DSH ACP Runtime Adapter', () => {
     assert.match(withBash, /不能联网/)
     assert.match(withBash, /不支持后台运行/)
     assert.match(withBash, /不能超过 2 GB，超出时命令会被终止/)
+
+    // 1b② (plan 4.8): with the execution container, python_execute runs there and needs absolute file arguments.
+    const withPython = compileRuntimeManifest({ ...base, tools: [...base.tools, { id: 'python_execute', version: '1.0.0' }] }).manifest
+    const containerPython = renderSystemPrompt(withPython, { executionWorkspace: '/data/dsh-attempts/t/run/attempt/workspace' })
+    assert.match(containerPython, /# Python 脚本/)
+    assert.match(containerPython, /DSH_SKILL_DIR、DSH_INPUT_DIR、DSH_OUTPUT_DIR/)
+    assert.match(containerPython, /工作区位于 \/data\/dsh-attempts\/t\/run\/attempt\/workspace/)
+    assert.doesNotMatch(renderSystemPrompt(withPython), /# Python 脚本/, 'the per-call sandbox keeps its own mounts')
     assert.match(withBash, /中间文件放在工作区其他目录/)
     assert.match(withBash, /xlsx、docx、pptx、pdf、png、jpg/)
     assert.doesNotMatch(withBash, /执行镜像中已安装的程序/, 'no list without a startup check result')

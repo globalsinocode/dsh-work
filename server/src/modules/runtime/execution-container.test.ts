@@ -36,6 +36,8 @@ class FakeExecBackend implements ExecutionBackend {
   async inspectImage() {}
   toolchain: ExecutionTool[] = [{ id: 'bash', version: '5.2.37' }, { id: 'rg', version: '15.0.0' }]
   async inspectExecutionImage() { return this.toolchain }
+  pythonPackages: string[] = []
+  async inspectPythonPackages() { return this.pythonPackages }
   async detectFeatures() {}
   async removeOrphans() {}
   startPythonSandbox(): never { throw new Error('not used') }

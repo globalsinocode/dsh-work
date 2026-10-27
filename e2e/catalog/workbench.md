@@ -210,6 +210,20 @@ P1/P2 的执行结果须单独记录数据库、身份、Runtime/DSH 版本和�
 
 **验收：** 上述测试通过；真实 Docker 用例中写文件的命令在上限附近被终止、删除命令不被终止。P2 另需在目标环境用真实 DSH 让模型生成大文件，核对终止说明与回收结果，并观察剩余空间告警。
 
+### EX-SHELL-02 Skill Python 脚本在执行容器内运行，结果登记为成果（执行隔离 1b②）
+
+**优先级：** P1 · **角色：** 员工、平台管理员 · **运行层级：** Python 执行单元测试（执行容器以测试替身代替）、Skill 安装计划单元测试、Runtime Adapter（受控 Worker）；真实 Docker 用例为 opt-in；真实 DSH 运行带脚本的 Skill 属 P2<br>
+**前置数据：** 执行容器模式可用，执行镜像含 `python3`；一个已发布、含 `.py` 入口的 Skill 被员工运行激活<br>
+**spec：** `server/src/modules/runtime/execution-container-python.test.ts`、`server/src/modules/runtime/python-skill-runner.test.ts`、`server/src/modules/skill/skill-package.test.ts`、`server/src/modules/runtime/runtime-adapter.test.ts`、`server/src/modules/runtime/execution-container.e2e.test.ts`
+
+1. 模型调用 `python_execute` 时，脚本在本轮的执行容器内运行，工作目录是该 Skill 的目录；脚本经 `DSH_INPUT_DIR`、`DSH_OUTPUT_DIR`、`DSH_SKILL_DIR` 找到输入、输出与 Skill 目录；运行说明给出工作区路径，模型传入绝对路径的文件参数。
+2. 脚本写入输出目录的文件在调用结果中列出，本轮结束时按成果规则登记，可下载、预览与继续修改；不合规的文件跳过并说明。
+3. 脚本只能运行 Skill 登记的入口，不能提交源码或命令；超时、工作区超限时调用被终止并说明。
+4. 安装 Skill 时，写死 `/skill`、`/input`、`/output` 的脚本在安装计划中提示需复核；Skill 声明的 Python 依赖按执行镜像实际已安装的包判断能否发布。
+5. 执行容器不可用时仍为每次调用一个容器，同一脚本经同名环境变量照常运行，输出只列出不登记。
+
+**验收：** 上述测试通过；真实 Docker 用例中脚本经环境变量读写并写出成果。P2 另需在目标环境用真实 DSH 运行一个带 Python 脚本的 Skill，核对结果与成果登记。
+
 ### EX-CONTEXT-01 长对话保留首条约束并使用对话摘要
 
 **优先级：** P1 · **角色：** 员工 · **运行层级：** 一次性 PostgreSQL、受控 Runtime、Manifest 编译器<br>

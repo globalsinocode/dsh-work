@@ -687,7 +687,10 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
             DSH_PERMISSION_MODE: 'workspace-write',
             DSH_SNAPSHOT: 'record',
             DSH_SNAPSHOT_SESSIONS_ROOT: join(record.snapshot.attemptDirectory, 'sessions'),
-            DSH_AGENT_SYSTEM_PROMPT: renderSystemPrompt(record.manifest, { executionToolchain: remoteExecution?.toolchain }),
+            DSH_AGENT_SYSTEM_PROMPT: renderSystemPrompt(record.manifest, {
+              executionToolchain: remoteExecution?.toolchain,
+              ...(remoteExecution ? { executionWorkspace: workspaceDirectory } : {}),
+            }),
             DSH_ALLOWED_TOOLS_JSON: JSON.stringify(record.manifest.tools.map(tool => tool.id)),
             DSH_MAX_TOOL_CALLS: String(record.manifest.limits.max_tool_calls),
             DSH_WORKSPACE_ROOT: workspaceDirectory,
@@ -766,7 +769,8 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
       const collectStartMono = performance.now()
       // bash 也能在 output/ 写出成果（执行隔离 2b）：write 被紧急停用时同样要收集。
       if (!isAdminRunPurpose(record.manifest.purpose)
-        && record.manifest.tools.some(tool => tool.id === 'write' || tool.id === 'bash')) {
+        // python_execute 在执行容器内把结果写入 output/（方案 4.8），同样收集。
+        && record.manifest.tools.some(tool => tool.id === 'write' || tool.id === 'bash' || tool.id === 'python_execute')) {
         if (!this.configuration.collectArtifacts) throw dependencyUnavailable('成果收集服务不可用')
         const collection = await this.configuration.collectArtifacts(record.manifest, workspaceDirectory)
         artifacts = collection.published
@@ -1396,11 +1400,15 @@ export function renderUserPrompt(manifest: RuntimeManifest) {
   ].join('\n')
 }
 
-/** `executionToolchain`: what the execution container's startup check found; listed when bash is assembled. */
 /** Office, PDF and image inputs: revising them means writing a new binary file, which needs bash. */
 const BINARY_INPUT_PATTERN = /\.(xlsx|docx|pptx|pdf|png|jpe?g)$/i
 
-export function renderSystemPrompt(manifest: RuntimeManifest, options: { executionToolchain?: readonly ExecutionTool[] } = {}) {
+/**
+ * `executionToolchain`: what the execution container's startup check found; listed when bash is assembled.
+ * `executionWorkspace`: the workspace's absolute path in execution container mode, where python_execute
+ * runs inside the container (plan 4.8) and scripts need absolute file arguments.
+ */
+export function renderSystemPrompt(manifest: RuntimeManifest, options: { executionToolchain?: readonly ExecutionTool[]; executionWorkspace?: string } = {}) {
   const sections = [manifest.agent_configuration.system_prompt.trim()]
   sections.push([
     '# 本次执行的实际能力边界',
@@ -1487,6 +1495,12 @@ export function renderSystemPrompt(manifest: RuntimeManifest, options: { executi
         '执行镜像中已安装的程序（平台启动时检查得出；清单之外的程序不要假定存在，需要时先用 command -v 确认）：',
         ...describeExecutionToolchain(options.executionToolchain),
       ] : []),
+    ].join('\n'))
+  }
+  if (options.executionWorkspace && manifest.tools.some(tool => tool.id === 'python_execute')) {
+    sections.push([
+      '# Python 脚本',
+      `python_execute 在本次运行的执行容器中运行已激活 Skill 登记的脚本：工作目录是该 Skill 的目录，环境变量 DSH_SKILL_DIR、DSH_INPUT_DIR、DSH_OUTPUT_DIR 给出 Skill 目录、输入目录与输出目录（即工作区的 output/）的绝对路径。给脚本传文件参数时使用绝对路径，工作区位于 ${options.executionWorkspace}。脚本写入输出目录的文件按成果规则登记。`,
     ].join('\n'))
   }
   if (manifest.agent_configuration.skill_instructions.length > 0) {

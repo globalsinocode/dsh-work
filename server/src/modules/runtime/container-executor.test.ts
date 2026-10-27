@@ -15,6 +15,7 @@ class FakeBackend implements ExecutionBackend {
 
   async inspectImage() {}
   async inspectExecutionImage() { return [] }
+  async inspectPythonPackages() { return [] }
   async detectFeatures() {}
   async removeOrphans() {}
   async startExecutionContainer(): Promise<{ keeperPid: number }> { throw new Error('not used by these tests') }

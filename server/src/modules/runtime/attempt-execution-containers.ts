@@ -82,6 +82,8 @@ export class AttemptExecutionContainers {
   readonly user: string
   /** Programs the startup check found in the image; listed in the Runtime instructions. Empty before preflight. */
   toolchain: readonly ExecutionTool[] = []
+  /** Python distributions installed in the image (normalized names); Skill dependencies are checked against them (plan 4.8). */
+  pythonPackages: readonly string[] = []
   private readonly backend: ExecutionBackend
   private readonly attempts = new Map<string, AttemptState>()
   private readonly pendingRemoval = new Set<string>()
@@ -112,6 +114,7 @@ export class AttemptExecutionContainers {
   /** Image and toolchain check, feature detection and the startup orphan sweep (single service instance). */
   async preflight() {
     this.toolchain = await this.backend.inspectExecutionImage(this.image, this.user)
+    if (this.toolchain.some(tool => tool.id === 'python3')) this.pythonPackages = await this.backend.inspectPythonPackages(this.image, this.user)
     await this.backend.detectFeatures()
     await this.backend.removeOrphans()
   }

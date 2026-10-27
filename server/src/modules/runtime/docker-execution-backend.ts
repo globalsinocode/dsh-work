@@ -22,6 +22,19 @@ const SANDBOX_USER_PATTERN = /^[1-9]\d{0,9}:[1-9]\d{0,9}$/
 const SANDBOX_LABEL = 'dsh-work.python-sandbox=1'
 const EXECUTION_LABEL = 'dsh-work.execution-container=1'
 /** The only environment a command sees besides the image's own ENV; nothing is forwarded from the host or DSH. */
+/** The only per-command variables (python_execute paths, plan 4.8); values must be plain absolute paths. */
+const COMMAND_ENV_KEYS = new Set(['DSH_SKILL_DIR', 'DSH_INPUT_DIR', 'DSH_OUTPUT_DIR'])
+
+export function commandEnvironment(command: Pick<ContainerCommand, 'env'>): string[] {
+  return Object.entries(command.env ?? {}).flatMap(([key, value]) => {
+    if (!COMMAND_ENV_KEYS.has(key) || !isAbsolute(value) || /[\0\r\n]/.test(value)) throw invalidRequest(`命令环境变量无效：${key}`)
+    return ['-e', `${key}=${value}`]
+  })
+}
+
+/** The paths a Skill script sees in the per-call Python sandbox, as in the execution container (plan 4.8). */
+const PYTHON_SANDBOX_PATH_ENV = ['DSH_SKILL_DIR=/skill', 'DSH_INPUT_DIR=/input', 'DSH_OUTPUT_DIR=/output'] as const
+
 export const EXECUTION_COMMAND_ENV = [
   'LANG=C.UTF-8',
   'PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin',
@@ -123,6 +136,12 @@ export class DockerExecutionBackend implements ExecutionBackend {
     return parseToolchainProbe(probe.stdout)
   }
 
+  async inspectPythonPackages(image: string, user: string) {
+    const probe = await runCommand(this.command, buildToolchainProbeArguments(image, user, PYTHON_PACKAGES_PROBE_SCRIPT), 60_000)
+    if (probe.exitCode !== 0) throw dependencyUnavailable(`执行镜像无法列出 Python 包：${brief(probe.stderr) || image}`)
+    return probe.stdout.split('\n').map(line => line.trim()).filter(line => /^[a-z0-9][a-z0-9-]*$/.test(line))
+  }
+
   async detectFeatures() {
     const info = await runCommand(this.command, ['info', '--format', '{{.SwapLimit}}\n{{json .SecurityOptions}}'], 15_000)
     if (info.exitCode !== 0) return
@@ -179,7 +198,7 @@ export class DockerExecutionBackend implements ExecutionBackend {
     const token = randomBytes(12).toString('hex')
     const watchdogSeconds = Math.ceil(command.timeoutMs / 1000) + WATCHDOG_GRACE_SECONDS
     const child = spawn(this.command, [
-      'exec', '-w', command.cwd, ...EXECUTION_COMMAND_ENV.flatMap(value => ['-e', value]),
+      'exec', '-w', command.cwd, ...EXECUTION_COMMAND_ENV.flatMap(value => ['-e', value]), ...commandEnvironment(command),
       name, 'sh', '-c', EXEC_WRAPPER, 'dsh-exec', token, String(watchdogSeconds), ...command.argv,
     ], { env: dockerCommandEnv(), stdio: ['ignore', 'pipe', 'pipe'] })
     const stdout = boundedBytes(command.maxOutputBytes)
@@ -297,12 +316,16 @@ export function buildPythonSandboxArguments(
     '--mount', `type=bind,src=${skillRoot},dst=/skill,readonly`,
     '--mount', `type=bind,src=${inputRoot},dst=/input,readonly`,
     '--mount', `type=bind,src=${outputRoot},dst=/output`,
+    ...PYTHON_SANDBOX_PATH_ENV.flatMap(value => ['-e', value]),
     '--workdir', '/skill', image, 'python', '-I', '-B', entry, ...args,
   ]
 }
 
+/** Prints the normalized names of the Python distributions installed in the image, one per line. */
+export const PYTHON_PACKAGES_PROBE_SCRIPT = `python3 -I -c 'import importlib.metadata as m, re; print("\\n".join(sorted({re.sub(r"[-_.]+", "-", (d.metadata["Name"] or "").lower()) for d in m.distributions()} - {""})))'`
+
 /** One throwaway container under the execution-container posture that reports the image's toolchain. */
-export function buildToolchainProbeArguments(image: string, user: string) {
+export function buildToolchainProbeArguments(image: string, user: string, script: string = TOOLCHAIN_PROBE_SCRIPT) {
   if (!SANDBOX_USER_PATTERN.test(user)) throw invalidRequest('执行容器用户必须是非 root 的 uid:gid')
   const [uid, gid] = user.split(':')
   const limits = EXECUTION_CONTAINER_LIMITS
@@ -315,7 +338,7 @@ export function buildToolchainProbeArguments(image: string, user: string) {
     // soffice --version may set up its profile under HOME, as in a real execution container.
     '--tmpfs', `${EXECUTION_CONTAINER_HOME}:rw,nosuid,nodev,size=${limits.homeSize},uid=${uid},gid=${gid},mode=0700`,
     ...EXECUTION_COMMAND_ENV.flatMap(value => ['-e', value]),
-    '--entrypoint', 'bash', image, '-c', TOOLCHAIN_PROBE_SCRIPT,
+    '--entrypoint', 'bash', image, '-c', script,
   ]
 }
 

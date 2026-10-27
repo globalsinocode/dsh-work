@@ -35,17 +35,11 @@ export class PythonSkillRunner {
   }
 
   async execute(input: Record<string, unknown>, manifest: RuntimeManifest, workspaceDirectory: string, signal: AbortSignal) {
-    const skillName = typeof input['skill'] === 'string' ? input['skill'].trim() : ''
-    const entry = typeof input['entry'] === 'string' ? input['entry'].trim() : ''
-    const args = input['args'] === undefined ? [] : input['args']
-    if (!skillName || !ENTRY_PATTERN.test(entry) || entry.includes('..')) throw invalidRequest('Python Skill 或入口文件无效')
-    if (!Array.isArray(args) || args.length > 32 || args.some(value => typeof value !== 'string' || value.length > 1000 || value.includes('\0'))) throw invalidRequest('Python 参数无效')
-    const matches = manifest.agent_configuration.skill_instructions.filter(skill => (skill.name ?? skill.id) === skillName || skill.id === skillName)
-    if (matches.length !== 1 || !matches[0]!.files?.some(file => file.path === entry && file.path.endsWith('.py'))) throw new Error('入口文件未在当前 Run 的锁定 Skill 中声明')
+    const { skillId, entry, args } = resolvePythonCall(input, manifest)
     if (signal.aborted) throw new DOMException('Aborted', 'AbortError')
-    const skillRoot = resolve(workspaceDirectory, 'skills', safeSegment(matches[0]!.id))
+    const skillRoot = skillDirectory(workspaceDirectory, skillId)
     const inputRoot = resolve(workspaceDirectory, 'input')
-    const outputRoot = resolve(workspaceDirectory, 'python-output', safeSegment(matches[0]!.id))
+    const outputRoot = resolve(workspaceDirectory, 'python-output', safeSegment(skillId))
     const [uidText, gidText] = this.user.split(':')
     const uid = Number(uidText)
     const gid = Number(gidText)
@@ -61,7 +55,7 @@ export class PythonSkillRunner {
         inputRoot: inputMount,
         outputRoot,
         entry,
-        args: args as string[],
+        args,
         shouldStop: async () => outputOverQuota(await measurePythonOutput(outputRoot)),
       }, signal)
       const collected = await listArtifacts(outputRoot)
@@ -79,6 +73,26 @@ export class PythonSkillRunner {
       await Promise.all(staged.map(path => rm(path, { recursive: true, force: true })))
     }
   }
+}
+
+/**
+ * What every `python_execute` call is checked against, in either mode: the entry must be a `.py`
+ * file declared by exactly one Skill of this Run's locked version; no source, interpreter or path.
+ */
+export function resolvePythonCall(input: Record<string, unknown>, manifest: RuntimeManifest): { skillId: string; entry: string; args: string[] } {
+  const skillName = typeof input['skill'] === 'string' ? input['skill'].trim() : ''
+  const entry = typeof input['entry'] === 'string' ? input['entry'].trim() : ''
+  const args = input['args'] === undefined ? [] : input['args']
+  if (!skillName || !ENTRY_PATTERN.test(entry) || entry.includes('..')) throw invalidRequest('Python Skill 或入口文件无效')
+  if (!Array.isArray(args) || args.length > 32 || args.some(value => typeof value !== 'string' || value.length > 1000 || value.includes('\0'))) throw invalidRequest('Python 参数无效')
+  const matches = manifest.agent_configuration.skill_instructions.filter(skill => (skill.name ?? skill.id) === skillName || skill.id === skillName)
+  if (matches.length !== 1 || !matches[0]!.files?.some(file => file.path === entry && file.path.endsWith('.py'))) throw new Error('入口文件未在当前 Run 的锁定 Skill 中声明')
+  return { skillId: matches[0]!.id, entry, args: args as string[] }
+}
+
+/** Where the Adapter materializes an activated Skill inside the Attempt workspace. */
+export function skillDirectory(workspaceDirectory: string, skillId: string) {
+  return resolve(workspaceDirectory, 'skills', safeSegment(skillId))
 }
 
 export function resolvePythonSandboxUser(configured?: string): string {

@@ -88,6 +88,11 @@ export interface ContainerCommand {
    * container must then be verified quiescent before the host touches the workspace again.
    */
   mayLeaveProcesses?: boolean
+  /**
+   * Extra variables for this command only: `python_execute`'s paths (`DSH_SKILL_DIR`,
+   * `DSH_INPUT_DIR`, `DSH_OUTPUT_DIR`), absolute paths inside the workspace. Nothing else is accepted.
+   */
+  env?: Readonly<Record<string, string>>
 }
 
 export interface ContainerCommandResult {
@@ -108,6 +113,8 @@ export interface ExecutionBackend {
    * required tools are present (bash and `rg` for DSH tools, LibreOffice and poppler for 2b).
    */
   inspectExecutionImage(image: string, user: string): Promise<ExecutionTool[]>
+  /** Normalized names of the Python distributions installed in the execution image (plan 4.8). */
+  inspectPythonPackages(image: string, user: string): Promise<string[]>
   /** Detects optional runtime features (swap accounting, AppArmor) used by the fixed posture. */
   detectFeatures(): Promise<void>
   /** Startup only: removes every container this service manages. Assumes a single service instance. */

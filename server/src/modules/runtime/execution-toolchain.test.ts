@@ -91,6 +91,7 @@ test('preflight keeps the toolchain the backend found', async () => {
   const calls: string[] = []
   const backend = {
     async inspectExecutionImage(checked: string, user: string) { calls.push(`${checked} ${user}`); return found },
+    async inspectPythonPackages() { return ['pandas', 'openpyxl', 'python-docx'] },
     async detectFeatures() {},
     async removeOrphans() {},
   } as unknown as ExecutionBackend
@@ -99,6 +100,7 @@ test('preflight keeps the toolchain the backend found', async () => {
   await containers.preflight()
   assert.deepEqual(calls, [`${image} 501:20`])
   assert.equal(containers.toolchain, found)
+  assert.deepEqual(containers.pythonPackages, ['pandas', 'openpyxl', 'python-docx'], 'python3 present: installed packages are read (plan 4.8)')
 })
 
 test('Runtime instructions name the tools with platform text and the probed versions', () => {

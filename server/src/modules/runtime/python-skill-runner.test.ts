@@ -47,7 +47,10 @@ test('Python Skill runner requires a digest-pinned image and builds a closed san
   const imageIndex = args.indexOf(image)
   assert.deepEqual(args.slice(imageIndex), [image, 'python', '-I', '-B', 'scripts/check.py', 'value'])
   const options = args.slice(0, imageIndex)
-  for (const flag of ['--env', '-e', '--privileged', '--network=host']) assert.equal(options.includes(flag), false)
+  for (const flag of ['--env', '--privileged', '--network=host']) assert.equal(options.includes(flag), false)
+  // Only the fixed path variables shared with the execution container (plan 4.8); no host environment.
+  assert.deepEqual(options.flatMap((value, index) => value === '-e' ? [options[index + 1]] : []),
+    ['DSH_SKILL_DIR=/skill', 'DSH_INPUT_DIR=/input', 'DSH_OUTPUT_DIR=/output'])
   assert.deepEqual(options.slice(0, 8), ['run', '--rm', '--name', `dsh-py-${'ab'.repeat(8)}`, '--label', 'dsh-work.python-sandbox=1', '--init', '--pull'])
   assert.equal(options[options.indexOf('--pull') + 1], 'never')
   assert.ok(options.includes('--network') && options[options.indexOf('--network') + 1] === 'none')
@@ -190,7 +193,8 @@ test('abort stops the mock container before the call settles and a failed remova
     assert.ok(runCall.args.includes('apparmor=docker-default'))
     assert.ok(runCall.args.includes('--memory-swap'))
     assert.ok(runCall.args.includes('--init'))
-    assert.equal(runCall.args.includes('-e'), false)
+    assert.deepEqual(runCall.args.flatMap((value, index) => value === '-e' ? [runCall.args[index + 1]] : []),
+      ['DSH_SKILL_DIR=/skill', 'DSH_INPUT_DIR=/input', 'DSH_OUTPUT_DIR=/output'], 'only the fixed path variables')
     assert.equal(runCall.args[runCall.args.indexOf('--user') + 1], user)
 
     const controller = new AbortController()

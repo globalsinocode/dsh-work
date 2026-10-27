@@ -50,6 +50,8 @@ import { ContainerExecutor, parseMaxContainers } from './modules/runtime/contain
 import { DockerExecutionBackend } from './modules/runtime/docker-execution-backend.ts'
 import { AttemptExecutionContainers, assertExclusiveToolScheduling, resolveExecutionContainerUser } from './modules/runtime/attempt-execution-containers.ts'
 import { freeSpace } from './modules/runtime/workspace-usage.ts'
+import { ExecutionContainerPythonRunner } from './modules/runtime/execution-container-python.ts'
+import { normalizePythonPackageName } from './modules/skill/skill-installation-plan.ts'
 import { redactSensitiveText } from './security/safe-observability.ts'
 import {
   preflightDshRuntime,
@@ -221,6 +223,13 @@ async function start() {
   } : null)
   const pythonRunner = python.value
   pythonCapability = python.state
+  // 执行隔离 1b②（方案 4.8）：执行容器可用且镜像含 python3 时，python_execute 在本 Attempt 的执行容器内运行，
+  // 可用性随执行容器，依赖按执行镜像实际已安装的包核对；否则沿用每次调用一个容器（DSH_WORK_PYTHON_IMAGE）。
+  const containerPythonRunner = attemptContainers?.toolchain.some(tool => tool.id === 'python3')
+    ? new ExecutionContainerPythonRunner(attemptContainers)
+    : null
+  if (containerPythonRunner) pythonCapability = { status: 'available' }
+  const executePythonCall = containerPythonRunner ?? pythonRunner
   // 执行隔离 2b-3：二进制成果的解析文本只在一次性容器中生成（执行镜像、Python 沙箱姿态、独立的 2 个槽位）。
   // 执行容器不可用时不解析，二进制成果仍可发布，只是没有解析文本。
   let extractionExecutor: ContainerExecutor | null = null
@@ -345,7 +354,7 @@ async function start() {
         })
       },
     }),
-    ...(pythonRunner ? { executePython: (input, manifest, workspace, signal) => pythonRunner.execute(input, manifest, workspace, signal) } : {}),
+    ...(executePythonCall ? { executePython: (input, manifest, workspace, signal) => executePythonCall.execute(input, manifest, workspace, signal) } : {}),
     ...(attemptContainers ? {
       remoteExecution: attemptContainers,
       recordContainerCommand: async (manifest, audit) => {
@@ -409,8 +418,8 @@ async function start() {
     const health = await runtime.health()
     if (health.status === 'offline' || !health.acceptingRuns) throw new ExecutionCapabilityUnavailableError('dsh')
     if (references.includes('python_execute@1.0.0') && pythonCapability.status !== 'available') throw new ExecutionCapabilityUnavailableError('python')
-    const configuredPackages = new Set(pythonPackages.map(value => value.toLowerCase()))
-    if (requiredPackages.some(name => !configuredPackages.has(name.toLowerCase()))) {
+    const configuredPackages = new Set(pythonPackages.map(normalizePythonPackageName))
+    if (requiredPackages.some(name => !configuredPackages.has(normalizePythonPackageName(name)))) {
       throw new RequestError(503, 'SKILL_DEPENDENCIES_UNAVAILABLE', '声明的 Python 依赖未配置并验证，当前不可发布')
     }
   }
@@ -466,8 +475,10 @@ async function start() {
   persistentWaitRef.current = persistentWait
   orchestration.setPersistentWaitService(persistentWait)
   persistentWait.start()
-  const pythonPackages = (process.env.DSH_WORK_PYTHON_PACKAGES ?? '').split(',').map(value => value.trim()).filter(Boolean)
-  const installationService: AdminSkillInstallationService = new AdminSkillInstallationService(database, orchestration, authorization, acquireSkillSource, Boolean(pythonRunner), pythonPackages, skillArtifacts, checkInstallationRuntime)
+  const pythonPackages = containerPythonRunner && attemptContainers
+    ? [...attemptContainers.pythonPackages]
+    : (process.env.DSH_WORK_PYTHON_PACKAGES ?? '').split(',').map(value => value.trim()).filter(Boolean)
+  const installationService: AdminSkillInstallationService = new AdminSkillInstallationService(database, orchestration, authorization, acquireSkillSource, Boolean(executePythonCall), pythonPackages, skillArtifacts, checkInstallationRuntime)
   const assistantService = new AdminAssistantService(database, orchestration, authorization, installationService, skills, agents, operations)
   skills.setPackageTester((userId, skill, prompt) => installationService.testPackage(userId, skill, prompt))
   skills.setPackageTestLifecycle({
