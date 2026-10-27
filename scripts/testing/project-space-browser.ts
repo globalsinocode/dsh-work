@@ -11,6 +11,7 @@ import { envelope } from '../../server/src/http/router.ts'
 import { personalWorkbenchFixture, testTenant } from '../../server/src/infrastructure/postgres/personal-workbench-test-fixture.ts'
 import { PersonalBrowserRuntime } from '../../server/src/infrastructure/postgres/personal-browser-runtime.ts'
 import { publishDraftWithSealedTrial } from '../../server/src/infrastructure/postgres/test-release-fixture.ts'
+import { PostgresAgentAccessService } from '../../server/src/modules/agent/agent-access-service.ts'
 import type {
   AgentRuntimePort,
   RuntimeEvent,
@@ -190,6 +191,16 @@ const created = await agents.createAgent({  id: 'agent-ps-p1',
   executionDataScopes: [],
 })
 await publishDraftWithSealedTrial(database, agents, created.agent.id, 'U00008')
+// 发布只改版本；「谁能用这个 Agent」由 Agent 级访问（agents.visible_role_ids）决定，
+// 默认是空数组。加入空间前会按添加人角色复核可见性，因此夹具必须先授可见角色。
+await new PostgresAgentAccessService(database).updateAccess({
+  agentId: created.agent.id,
+  actor: 'U00008',
+  expectedRevision: 1,
+  visibleRoleIds: ['role-employee'],
+  roleIds: [],
+  dataScopes: [],
+})
 const agentMember = await workspaceAgentMembers.addAgentMember(
   workspace.id, created.agent.id, 'U00001', ['role-employee'],
 )

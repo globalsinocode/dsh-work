@@ -297,6 +297,8 @@ export class RunOrchestrationService {
       .update(JSON.stringify([tenantId, session.id, input.userId, key]))
       .digest('hex').slice(0, 32)
     const messageId = `message-discussion-${session.id}-${keyHash}`
+    // 首条发言把草稿会话转正（0085）：讨论消息持久化只接受 active 会话。
+    await this.deps.conversations.activateSession(session.id)
     const committed = await this.deps.conversations.appendDiscussionMessage({
       sessionId: session.id,
       userId: input.userId,
@@ -342,6 +344,10 @@ export class RunOrchestrationService {
       throw requestInvalid('fileIds 必须是文件标识数组')
     }
     const session = await this.requireSessionAccess(input.sessionId, input.userId, 'write')
+    // 首条内容把草稿会话转正（0085）：前端带 clientIntentId 建出的会话是 draft，
+    // 而 Run 仓储、附件归属校验与讨论消息持久化都只接受 active 会话——两处若
+    // 不先转正，首次发送必然 403。转正放在写权限校验之后、读取附件之前。
+    await this.deps.conversations.activateSession(session.id)
     let agentVersionId = session.agentVersionId
     let taskThread = false
     if (session.workspaceType === 'team') {
