@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -12,6 +12,8 @@ import { preflightDshRuntime, resolveDshRuntimeInstallation, withExecutionContai
 import { createPlatformToolBridge } from './platform-tool-bridge.ts'
 import { createRemoteSubprocessGateway, type ContainerCommandAudit } from './remote-subprocess-gateway.ts'
 import { minimalXlsx } from '../../testing/office-fixtures.ts'
+import { ContainerArtifactTextExtractor } from '../workbench/application/container-artifact-text-extractor.ts'
+import { ContainerExecutor } from './container-executor.ts'
 
 /**
  * P1-style check through real DSH and real Docker (no model vendor: a scripted
@@ -217,4 +219,61 @@ test('DSH glob/grep/bash run inside the Attempt execution container and stay con
   assert.equal(containers.activeAttempts.length, 0)
   const leftover = spawnSync('docker', ['ps', '-aq', '--filter', 'label=dsh-work.execution-container=1'], { encoding: 'utf8' }).stdout.trim()
   assert.equal(leftover, '', 'the Attempt container was removed')
+})
+
+const extractionSkip = !image ? 'DSH_WORK_EXECUTION_E2E_IMAGE is not set'
+  : spawnSync('docker', ['info'], { timeout: 15_000 }).status !== 0 ? 'Docker is not available' : false
+
+test('2b-3: binary artifact text is extracted by the platform script in a disposable container', { skip: extractionSkip, timeout: 180_000 }, async () => {
+  const root = await mkdtemp(join(tmpdir(), 'dsh-extract-e2e-'))
+  try {
+    // Real Office files written by the image's own libraries and LibreOffice, as an Agent would produce them.
+    const generated = join(root, 'generated')
+    await mkdir(generated)
+    const user = resolveExecutionContainerUser()
+    const make = spawnSync('docker', [
+      'run', '--rm', '--pull', 'never', '--network', 'none', '--read-only', '--user', user,
+      '--tmpfs', '/tmp', '--tmpfs', `/home/exec:uid=${user.split(':')[0]},gid=${user.split(':')[1]}`, '-e', 'HOME=/home/exec',
+      '--mount', `type=bind,src=${generated},dst=/generated`, '--workdir', '/generated', '--entrypoint', 'bash', image!, '-c', [
+        'python3 - <<"PY"',
+        'import docx, openpyxl, pptx',
+        'document = docx.Document(); document.add_heading("季度经营报告", 1); document.add_paragraph("华东区收入同比增长 12%。"); document.save("report.docx")',
+        'book = openpyxl.Workbook(); book.active.title = "营收"; book.active.append(["区域", "收入"]); book.active.append(["华东", 1200]); book.active.append(["合计", "=SUM(B2:B2)"]); book.save("revenue.xlsx")',
+        'deck = pptx.Presentation(); slide = deck.slides.add_slide(deck.slide_layouts[1]); slide.shapes.title.text = "经营概览"; deck.save("overview.pptx")',
+        'PY',
+        'soffice --headless --convert-to pdf report.docx > /dev/null 2>&1',
+      ].join('\n'),
+    ], { encoding: 'utf8', timeout: 120_000 })
+    assert.equal(make.status, 0, make.stderr)
+
+    // Feature detection only: preflight would also sweep every platform container on this daemon.
+    const extractionBackend = new DockerExecutionBackend()
+    await extractionBackend.detectFeatures()
+    const executor = new ContainerExecutor(extractionBackend, { pythonImage: image!, maxContainers: 1 })
+    const extractor = new ContainerArtifactTextExtractor(executor, {
+      user, scriptRoot: join(projectRoot, 'server/config/execution'), workRoot: join(root, 'work'),
+    })
+    const read = (name: string) => readFile(join(generated, name))
+    const results = await extractor.extract([
+      { name: '季度报告.docx', type: 'docx', bytes: await read('report.docx') },
+      { name: '营收.xlsx', type: 'xlsx', bytes: await read('revenue.xlsx') },
+      { name: '概览.pptx', type: 'pptx', bytes: await read('overview.pptx') },
+      { name: '报告.pdf', type: 'pdf', bytes: await read('report.pdf') },
+      { name: '损坏.pdf', type: 'pdf', bytes: Buffer.from('%PDF-1.7 broken') },
+    ])
+    const texts = results.map(result => result.ok ? result.text : `failed:${result.code}`)
+    assert.match(texts[0]!, /季度经营报告\n华东区收入同比增长 12%。/)
+    assert.match(texts[1]!, /^# XLSX 文件摘要\n工作表：1；数据行：3/)
+    assert.match(texts[1]!, /## 营收\n区域\t收入\n华东\t1200\n合计\t=SUM\(B2:B2\)/, 'a formula without a cached value shows the formula')
+    assert.match(texts[2]!, /## 第 1 页\n经营概览/)
+    assert.match(texts[3]!, /季度经营报告/)
+    assert.equal(results[3]?.ok && results[3].pageCount, 1)
+    assert.equal(texts[4], 'failed:PDF_UNREADABLE')
+    assert.deepEqual(await readdir(join(root, 'work')), [], 'per-call directories are removed')
+    executor.close()
+    assert.equal(executor.containersInUse, 0, 'the extraction container was removed')
+    assert.deepEqual(executor.pendingRemovals, [])
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
 })

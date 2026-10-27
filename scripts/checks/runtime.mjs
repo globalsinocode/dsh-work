@@ -1,3 +1,6 @@
+import { existsSync, readdirSync } from 'node:fs'
+import { resolve } from 'node:path'
+
 function environmentValues(source) {
   return Object.fromEntries([...source.matchAll(/^([A-Z_]+)=(.*)$/gm)].map(match => [match[1], match[2].trim()]))
 }
@@ -37,6 +40,19 @@ export function checkRuntime(check) {
     check.assert(scripts[`probe:${mode}`] === `pnpm probe -- ${mode}`, `缺少 probe:${mode} 探针入口`)
   }
   checkExecutionImage(check)
+  checkReleaseCopiesRuntimeConfig(check)
+}
+
+/** Files the server loads at run time from server/config must ship in the release bundle. */
+function checkReleaseCopiesRuntimeConfig(check) {
+  const build = check.read('scripts/release/build-release.sh')
+  for (const directory of ['server/config/dsh', 'server/config/execution']) {
+    const path = resolve(check.root, directory)
+    if (!existsSync(path)) continue
+    for (const name of readdirSync(path).filter(file => !/\.test\.[cm]?[jt]s$/.test(file))) {
+      check.assert(build.includes(`${directory}/${name}`), `发布包未复制运行时配置 ${directory}/${name}（scripts/release/build-release.sh）`)
+    }
+  }
 }
 
 /** The execution image must be rebuildable from pinned inputs only (plan 4.6, 2b-1). */

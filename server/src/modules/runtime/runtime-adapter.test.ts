@@ -350,6 +350,29 @@ describe('Runtime Manifest compiler', () => {
 
     input.input.file_mounts = [fileMount('/workspace/input/01-inventory-uat.txt', '物料,库存\nA-01,120')]
     assert.doesNotMatch(renderSystemPrompt(compileRuntimeManifest(input).manifest), /此前生成的成果/)
+
+    // 2b-3: a binary artifact with extracted text but no bash can only be read, not revised.
+    const workbook = {
+      ...fileMount('/workspace/input/01-revenue.txt', '# XLSX 文件摘要\n工作表：1'),
+      source_name: '营收.xlsx', media_type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      artifact_revision: { artifact_id: 'artifact-revenue', version: 1 },
+    }
+    input.input.file_mounts = [workbook]
+    const textOnly = renderSystemPrompt(compileRuntimeManifest(input).manifest)
+    assert.match(textOnly, /读取路径（解析文本）：input\/01-revenue\.txt/)
+    assert.match(textOnly, /只能参考其解析文本，无法直接修改该文件/)
+    assert.doesNotMatch(textOnly, /output\/营收\.xlsx/, 'never told to write text into an xlsx')
+    // With bash both paths are listed and the revision works from the original file.
+    input.tools = [...input.tools, { id: 'bash', version: '1.0.0' }]
+    input.input.original_mounts = [{
+      file_id: workbook.file_id, mount_path: '/workspace/input/original/01-revenue.xlsx', access: 'read_only',
+      source_name: '营收.xlsx', media_type: workbook.media_type, sha256: 'a'.repeat(64), size_bytes: 10,
+      artifact_revision: workbook.artifact_revision,
+    }]
+    const withOriginal = renderSystemPrompt(compileRuntimeManifest(input).manifest)
+    assert.match(withOriginal, /读取路径（解析文本）：input\/01-revenue\.txt/)
+    assert.match(withOriginal, /原始文件（只读.*input\/original\/01-revenue\.xlsx/)
+    assert.match(withOriginal, /基于原始文件处理，把修改后的完整文件写入 output\/营收\.xlsx，平台会登记为第 2 版/)
   })
 
   it('renders only the progressive Skill catalog when activate_skill is available', () => {

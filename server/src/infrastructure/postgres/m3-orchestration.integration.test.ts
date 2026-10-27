@@ -33,7 +33,8 @@ import { PostgresTaskQueryService } from '../../modules/run/postgres-task-query-
 import type { DatabaseClient } from './database.ts'
 import { createThrowawayDatabase, type ThrowawayDatabase } from './test-database.ts'
 import { LocalObjectStorage } from '../storage/local-object-storage.ts'
-import { minimalDocx, minimalXlsx } from '../../testing/office-fixtures.ts'
+import { minimalDocx, minimalPptx, minimalXlsx } from '../../testing/office-fixtures.ts'
+import type { ArtifactTextExtraction, ArtifactTextExtractorPort } from '../../modules/workbench/application/container-artifact-text-extractor.ts'
 
 const databaseUrl = process.env.DSH_WORK_TEST_DATABASE_URL
 if (!databaseUrl) throw new Error('DSH_WORK_TEST_DATABASE_URL 未配置')
@@ -1595,4 +1596,114 @@ test('2b-4: with bash, inputs also mount their originals and a binary artifact i
   } finally {
     v2.release()
   }
+})
+
+test('2b-3: binary artifacts get container-extracted text, failures are recorded, and outages are backfilled', async () => {
+  const calls: string[][] = []
+  let outage = false
+  const extractor: ArtifactTextExtractorPort = {
+    async extract(files) {
+      calls.push(files.map(file => file.type))
+      if (outage) throw new Error('no extraction capacity')
+      return files.map((file): ArtifactTextExtraction => file.type === 'pdf'
+        ? { ok: false, detectedType: 'pdf', code: 'PDF_UNREADABLE', message: 'PDF 无法读取' }
+        : { ok: true, detectedType: file.type, text: `# ${file.type} 解析文本\n华东\t1200`, pageCount: file.type === 'pptx' ? 1 : null, sheetCount: file.type === 'xlsx' ? 1 : null, rowCount: 2 })
+    },
+  }
+  const extracting = new PostgresContentService(
+    database, new LocalObjectStorage(`/tmp/dsh-work-m3-extract-${randomUUID()}`), new PostgresAuthorizationService(database),
+    undefined, undefined, { artifactTextExtractor: extractor },
+  )
+  const service = (executionContainerAvailable: boolean) => new RunOrchestrationService(
+    runs, new PostgresConversationRepository(database, undefined, { binaryArtifactsReferenceable: executionContainerAvailable }),
+    new ModelGovernanceService(new PostgresModelGovernanceRepository(database)), runtime,
+    extracting, new PostgresOperationsService(database), undefined, undefined, new PostgresAuthorizationService(database),
+    { tasks: new PostgresTaskRepository(database), executionContainerAvailable },
+  )
+  const withoutBash = service(false)
+  const session = await withoutBash.createSession({ userId: 'U00001', title: '解析二进制成果' })
+  const turn = async (orchestrator: RunOrchestrationService, prompt: string, fileIds: string[], output: Record<string, Buffer>) => {
+    const workspaceDirectory = await mkdtemp(join(tmpdir(), 'dsh-work-binary-text-'))
+    await mkdir(join(workspaceDirectory, 'output'))
+    for (const [name, bytes] of Object.entries(output)) await writeFile(join(workspaceDirectory, 'output', name), bytes)
+    let release: () => void = () => undefined
+    runtime.completionGate = new Promise<void>(resolve => { release = resolve })
+    try {
+      const created = await orchestrator.startRun({ userId: 'U00001', sessionId: session.id, prompt, idempotencyKey: randomUUID(), fileIds })
+      assert.ok(created)
+      await waitForTask(created.id, 'running')
+      const manifest = (await runs.getAttempt('tenant-dsh-work', created.currentAttemptId!))!.manifest as unknown as RuntimeManifest
+      const published = Object.keys(output).length ? await extracting.publishRuntimeArtifacts({ manifest, workspaceDirectory }) : null
+      release()
+      await waitForTask(created.id, 'succeeded')
+      return { created, manifest, published }
+    } finally {
+      release()
+    }
+  }
+  const pdf = Buffer.from('%PDF-1.7\n1 0 obj\n<< /Type /Catalog >>\nendobj\ntrailer\n<< /Root 1 0 R >>\n%%EOF\n', 'latin1')
+
+  // One container call for all binary artifacts of the turn; text artifacts keep their own text.
+  const first = await turn(withoutBash, '生成报告', [], {
+    '数据.xlsx': minimalXlsx(), '说明.docx': minimalDocx(), '概览.pptx': minimalPptx(), '报告.pdf': pdf, '周报.md': Buffer.from('# 周报\n'),
+  })
+  assert.equal(first.published?.published.length, 5)
+  assert.equal(calls.length, 1, 'one extraction container per turn')
+  assert.deepEqual([...calls[0]!].sort(), ['docx', 'pdf', 'pptx', 'xlsx'])
+  const extractions = await database<{ name: string; version: string; type: string; status: string; code: string | null; pages: number | null; sheets: number | null }[]>`
+    select f.original_name as name, fe.extractor_version as version, fe.detected_type as type, fe.status, fe.error_code as code,
+           fe.page_count as pages, fe.sheet_count as sheets
+      from file_extractions fe join file_objects f on f.tenant_id = fe.tenant_id and f.id = fe.file_id
+     where fe.tenant_id = 'tenant-dsh-work' and f.session_id = ${session.id} order by f.original_name`
+  assert.deepEqual(Object.fromEntries(extractions.map(row => [row.name, [row.version, row.type, row.status, row.code, row.pages, row.sheets]])), {
+    '数据.xlsx': ['exec-office-v1', 'xlsx', 'succeeded', null, null, 1],
+    '说明.docx': ['exec-office-v1', 'docx', 'succeeded', null, null, null],
+    '概览.pptx': ['exec-office-v1', 'pptx', 'succeeded', null, 1, null],
+    '报告.pdf': ['exec-office-v1', 'pdf', 'failed', 'PDF_UNREADABLE', null, null],
+    '周报.md': ['m4-basic-v1', 'text', 'succeeded', null, null, null],
+  })
+
+  // Without bash the xlsx is now an input through its text only; "continue editing" stays off without the container.
+  const artifacts = (await new PostgresConversationRepository(database).getTask(first.created.id, 'U00001'))!.result.artifacts
+  const workbook = artifacts.find(item => item.name === '数据.xlsx')!
+  assert.equal(workbook.canReference, false, 'revising a binary artifact still needs the execution container')
+  // 我的文件: with text the xlsx can start a new conversation; the PDF whose extraction failed cannot.
+  const personal = await extracting.listPersonalFiles({ actorUserId: 'U00001', source: 'artifact', limit: 50 })
+  const listed = Object.fromEntries(personal.items.filter(item => item.sessionId === session.id).map(item => [item.name, [item.parseStatus, item.canReference]]))
+  assert.deepEqual(listed['数据.xlsx'], ['succeeded', true])
+  assert.deepEqual(listed['报告.pdf'], ['failed', false])
+  const textOnly = await turn(withoutBash, '总结表格', [workbook.fileId!], {})
+  assert.deepEqual(textOnly.manifest.input.file_mounts.map(mount => [mount.source_name, mount.content]), [['数据.xlsx', '# xlsx 解析文本\n华东\t1200']])
+  assert.equal(textOnly.manifest.input.original_mounts, undefined)
+  // A binary artifact whose extraction failed is still refused without bash.
+  const report = artifacts.find(item => item.name === '报告.pdf')!
+  await assert.rejects(
+    withoutBash.startRun({ userId: 'U00001', sessionId: session.id, prompt: '读报告', idempotencyKey: randomUUID(), fileIds: [report.fileId!] }),
+    /需要运行命令的能力/,
+  )
+  // With bash it gets both the text and the original.
+  const both = await turn(service(true), '改表格', [workbook.fileId!], {})
+  assert.deepEqual(both.manifest.input.file_mounts.map(mount => mount.source_name), ['数据.xlsx'])
+  assert.deepEqual(both.manifest.input.original_mounts?.map(mount => mount.source_name), ['数据.xlsx'])
+
+  // The container cannot run: the artifact is published without any extraction, and the backfill adds it later.
+  outage = true
+  const later = await turn(withoutBash, '再生成一份', [], { '补充.docx': minimalDocx({ 'word/extra.xml': '<x/>' }) })
+  assert.deepEqual(later.published?.published.map(item => item.name), ['补充.docx'])
+  const [missing] = await database<{ count: number }[]>`
+    select count(*)::integer as count from file_extractions fe join file_objects f on f.tenant_id = fe.tenant_id and f.id = fe.file_id
+     where f.tenant_id = 'tenant-dsh-work' and f.original_name = '补充.docx' and f.session_id = ${session.id}`
+  assert.equal(missing?.count, 0)
+  outage = false
+  calls.length = 0
+  const backfilled = await extracting.backfillBinaryArtifactExtractions()
+  assert.ok(backfilled.extracted >= 1)
+  assert.equal(calls.flat().includes('pdf'), false, 'the recorded PDF failure is not retried')
+  const [recorded] = await database<{ status: string; version: string }[]>`
+    select fe.status, fe.extractor_version as version from file_extractions fe join file_objects f on f.tenant_id = fe.tenant_id and f.id = fe.file_id
+     where f.tenant_id = 'tenant-dsh-work' and f.original_name = '补充.docx' and f.session_id = ${session.id}`
+  assert.deepEqual(recorded, { status: 'succeeded', version: 'exec-office-v1' })
+  // Nothing readable is left: another backfill records nothing new.
+  const again = await extracting.backfillBinaryArtifactExtractions()
+  assert.equal(again.extracted + again.failed, 0)
 })

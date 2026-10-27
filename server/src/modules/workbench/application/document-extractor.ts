@@ -28,7 +28,7 @@ export function extractDocument(name: string, bytes: Buffer): DocumentExtraction
   else if (extension === '.txt' || extension === '.md') result = extractText(bytes)
   else throw extractionError('FILE_TYPE_UNSUPPORTED', '当前仅支持 PDF、DOCX、XLSX、CSV、TXT 和 Markdown')
 
-  const text = normalizeText(result.text)
+  const text = normalizeExtractedText(result.text)
   if (!text) throw extractionError('FILE_NO_EXTRACTABLE_TEXT', '文件中没有可提取的文本内容')
   if (text.length > maxExtractedCharacters) {
     throw extractionError('FILE_EXTRACTED_TEXT_TOO_LARGE', '文件解析后的文本超过 512000 字符，请拆分后重试')
@@ -293,7 +293,8 @@ function decodeXmlEntities(value: string) {
     .replaceAll(/&#x([A-Fa-f0-9]+);/g, (_match, code: string) => String.fromCodePoint(Number.parseInt(code, 16)))
 }
 
-function normalizeText(value: string) {
+/** Line endings, trailing blanks and runs of blank lines, as every stored extraction is normalized. */
+export function normalizeExtractedText(value: string) {
   return value.replaceAll('\r\n', '\n').replaceAll('\r', '\n').replaceAll(/[ \t]+\n/g, '\n').replaceAll(/\n{4,}/g, '\n\n\n').trim()
 }
 

@@ -1371,6 +1371,9 @@ export function renderUserPrompt(manifest: RuntimeManifest) {
 }
 
 /** `executionToolchain`: what the execution container's startup check found; listed when bash is assembled. */
+/** Office, PDF and image inputs: revising them means writing a new binary file, which needs bash. */
+const BINARY_INPUT_PATTERN = /\.(xlsx|docx|pptx|pdf|png|jpe?g)$/i
+
 export function renderSystemPrompt(manifest: RuntimeManifest, options: { executionToolchain?: readonly ExecutionTool[] } = {}) {
   const sections = [manifest.agent_configuration.system_prompt.trim()]
   sections.push([
@@ -1431,9 +1434,12 @@ export function renderSystemPrompt(manifest: RuntimeManifest, options: { executi
         ...(file.textPath ? [`   - 读取路径（解析文本）：${file.textPath.slice('/workspace/'.length)}`] : []),
         ...(file.originalPath ? [`   - 原始文件（只读，供 bash 中的程序处理，如 pandas、openpyxl、LibreOffice）：${file.originalPath.slice('/workspace/'.length)}`] : []),
         `   - 媒体类型：${file.mediaType}`,
-        ...(file.revision ? [file.originalPath && !file.textPath
-          ? `   - 这是此前生成的成果第 ${file.revision.version} 版；用户要求修改它时，基于原始文件处理，把修改后的完整文件写入 output/${file.sourceName}，平台会登记为第 ${file.revision.version + 1} 版；只是参考时不要重写`
-          : `   - 这是此前生成的成果第 ${file.revision.version} 版；用户要求修改它时，把修改后的完整内容写入 output/${file.sourceName}，平台会登记为第 ${file.revision.version + 1} 版；只是参考时不要重写`] : []),
+        ...(file.revision ? [!BINARY_INPUT_PATTERN.test(file.sourceName)
+          ? `   - 这是此前生成的成果第 ${file.revision.version} 版；用户要求修改它时，把修改后的完整内容写入 output/${file.sourceName}，平台会登记为第 ${file.revision.version + 1} 版；只是参考时不要重写`
+          : file.originalPath
+            ? `   - 这是此前生成的成果第 ${file.revision.version} 版；用户要求修改它时，基于原始文件处理，把修改后的完整文件写入 output/${file.sourceName}，平台会登记为第 ${file.revision.version + 1} 版；只是参考时不要重写`
+            // 2b-3：二进制成果有解析文本但本次没有 bash 时只能参考，不能写出新版本。
+            : `   - 这是此前生成的成果第 ${file.revision.version} 版，本次只能参考其解析文本，无法直接修改该文件；用户要求修改时说明当前不能运行命令，可改为提供文字版修改建议`] : []),
       ].join('\n')),
     ].join('\n'))
   }

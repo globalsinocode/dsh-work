@@ -57,6 +57,7 @@ import {
   type DshRuntimeInstallation,
 } from './modules/runtime/dsh-runtime-installation.ts'
 import { PostgresContentService } from './modules/workbench/application/postgres-content-service.ts'
+import { ContainerArtifactTextExtractor } from './modules/workbench/application/container-artifact-text-extractor.ts'
 import { PostgresWorkspaceMemberService } from './modules/workbench/application/postgres-workspace-member-service.ts'
 import { PostgresWorkspaceLifecycleService } from './modules/workbench/application/postgres-workspace-lifecycle-service.ts'
 import { PostgresWorkspaceAgentMemberService } from './modules/workbench/application/postgres-workspace-agent-member-service.ts'
@@ -219,6 +220,20 @@ async function start() {
   } : null)
   const pythonRunner = python.value
   pythonCapability = python.state
+  // 执行隔离 2b-3：二进制成果的解析文本只在一次性容器中生成（执行镜像、Python 沙箱姿态、独立的 2 个槽位）。
+  // 执行容器不可用时不解析，二进制成果仍可发布，只是没有解析文本。
+  let extractionExecutor: ContainerExecutor | null = null
+  if (attemptContainers) {
+    const containers = attemptContainers
+    try {
+      const executor = new ContainerExecutor(new DockerExecutionBackend(), { pythonImage: containers.image, maxContainers: 2 })
+      await executor.preflight()
+      executor.startMaintenance()
+      extractionExecutor = executor
+    } catch (error) {
+      console.warn(`artifact text extraction unavailable: ${redactSensitiveText(error instanceof Error ? error.message : String(error)).slice(0, 500)}`)
+    }
+  }
   const conversations = new PostgresConversationRepository(database, undefined, { binaryArtifactsReferenceable: attemptContainers !== null })
   const authorization = new PostgresAuthorizationService(database, {
     // AI Hub 身份的后台任务必须复核目录；配置降级为 local 时传 null，
@@ -232,7 +247,15 @@ async function start() {
         }
       : null,
   })
-  const content = new PostgresContentService(database, new LocalObjectStorage(resolve(dataRoot, 'storage')), authorization)
+  const content = new PostgresContentService(database, new LocalObjectStorage(resolve(dataRoot, 'storage')), authorization, undefined, undefined, {
+    artifactTextExtractor: extractionExecutor && attemptContainers
+      ? new ContainerArtifactTextExtractor(extractionExecutor, {
+          user: attemptContainers.user,
+          scriptRoot: resolve(projectRoot, 'server/config/execution'),
+          workRoot: resolve(dataRoot, 'artifact-extraction'),
+        })
+      : undefined,
+  })
   const runs = new PostgresRunRepository(database)
   const tasks = new PostgresTaskRepository(database)
   const taskQueries = new PostgresTaskQueryService(database, tasks, runs)
@@ -464,6 +487,10 @@ async function start() {
   await content.backfillArtifactExtractions()
     .then(result => { if (result.extracted > 0) console.warn('artifact extraction backfill completed', result) })
     .catch(error => console.error('artifact extraction backfill failed', error))
+  // 2b-3：二进制成果补解析在后台进行，不阻塞启动；容器失败的批次留待下次启动。
+  void content.backfillBinaryArtifactExtractions()
+    .then(result => { if (result.extracted > 0 || result.failed > 0) console.warn('binary artifact extraction backfill completed', result) })
+    .catch(error => console.error('binary artifact extraction backfill failed', redactSensitiveText(error instanceof Error ? error.message : String(error)).slice(0, 500)))
   if (restartRecovery.failed > 0 || restartRecovery.resumedQueued > 0) {
     console.warn('service restart recovery completed', restartRecovery)
   }
@@ -572,6 +599,7 @@ async function start() {
         persistentWait?.close()
         if (orchestration) await orchestration.close()
         containerExecutor?.close()
+        extractionExecutor?.close()
         attemptContainers?.close()
         await database.end()
         process.exit(0)

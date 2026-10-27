@@ -47,3 +47,7 @@ export function minimalXlsx(extra: Record<string, string | Buffer> = {}): Buffer
 export function minimalDocx(extra: Record<string, string | Buffer> = {}): Buffer {
   return zip({ '[Content_Types].xml': CONTENT_TYPES, 'word/document.xml': '<w:document><w:body/></w:document>', ...extra })
 }
+
+export function minimalPptx(extra: Record<string, string | Buffer> = {}): Buffer {
+  return zip({ '[Content_Types].xml': CONTENT_TYPES, 'ppt/presentation.xml': '<p:presentation/>', ...extra })
+}

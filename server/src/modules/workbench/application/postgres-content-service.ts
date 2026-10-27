@@ -12,6 +12,10 @@ import { insertTeamWorkspaceRows } from './team-workspace-rows.ts'
 import { BaselineFileSafetyScanner, type FileSafetyScannerPort } from './file-safety-scanner.ts'
 import { extractDocument } from './document-extractor.ts'
 import {
+  BINARY_TEXT_TYPES, CONTAINER_EXTRACTOR_VERSION,
+  type ArtifactTextExtraction, type ArtifactTextExtractorPort, type BinaryTextType,
+} from './container-artifact-text-extractor.ts'
+import {
   ARTIFACT_LIMITS, artifactFormat, checkArtifactContent, checkArtifactName, displayArtifactName, isTextArtifactType,
   type ArtifactSkipReason,
 } from './artifact-file-policy.ts'
@@ -186,17 +190,30 @@ interface PreparedRuntimeArtifact {
   bytes: Buffer
   sha256: string
   storageKey: string
-  /** Original text kept as the file's extraction so a later turn can mount it; null when not usable as text. */
+  /**
+   * The file's extraction so a later turn can mount it: the original text of a text artifact, or
+   * container-extracted text of a binary one (2b-3); null when not usable as text.
+   */
   text: ArtifactInputText | null
+  /** Binary artifact whose extraction ran and failed; recorded so it is not retried. */
+  textFailure?: { detectedType: BinaryTextType; code: string; message: string }
 }
 
 interface ArtifactInputText {
+  extractorVersion: string
   content: string
   sha256: string
   storageKey: string
-  detectedType: 'csv' | 'text'
-  rowCount: number
+  detectedType: 'csv' | 'text' | BinaryTextType
+  rowCount: number | null
+  pageCount?: number | null
+  sheetCount?: number | null
 }
+
+/** Extractions whose text can be mounted as a Run input: uploads and text artifacts, and binary artifacts (2b-3). */
+const TEXT_EXTRACTOR_VERSIONS = ['m4-basic-v1', CONTAINER_EXTRACTOR_VERSION]
+/** Most binary artifacts one extraction container parses at once (startup backfill). */
+const BACKFILL_BATCH_FILES = 10
 
 export class PostgresContentService {
   private readonly database: DatabaseClient
@@ -204,6 +221,7 @@ export class PostgresContentService {
   private readonly authorization: PostgresAuthorizationService
   private readonly scanner: FileSafetyScannerPort
   private readonly workspaces: PostgresWorkspaceService
+  private readonly artifactTextExtractor: ArtifactTextExtractorPort | null
 
   constructor(
     database: DatabaseClient,
@@ -211,12 +229,15 @@ export class PostgresContentService {
     authorization: PostgresAuthorizationService,
     scanner: FileSafetyScannerPort = new BaselineFileSafetyScanner(),
     workspaces = new PostgresWorkspaceService(database),
+    /** `artifactTextExtractor`: container extraction of binary artifacts (2b-3); without it they get no text. */
+    options: { artifactTextExtractor?: ArtifactTextExtractorPort } = {},
   ) {
     this.database = database
     this.storage = storage
     this.authorization = authorization
     this.scanner = scanner
     this.workspaces = workspaces
+    this.artifactTextExtractor = options.artifactTextExtractor ?? null
   }
 
   /**
@@ -629,7 +650,7 @@ export class PostgresContentService {
            order by av.version_no desc, av.id desc limit 1
         ) result on true
         left join lateral (select fe.status from file_extractions fe where fe.tenant_id = f.tenant_id and fe.file_id = f.id
-          and fe.extractor_version = 'm4-basic-v1' order by fe.created_at desc, fe.id desc limit 1) extraction on true
+          and fe.extractor_version = any(${TEXT_EXTRACTOR_VERSIONS}) order by fe.created_at desc, fe.id desc limit 1) extraction on true
        where f.tenant_id = ${tenantId} and w.workspace_type = 'personal'
          and (${readableWorkspacePredicate(this.database, input.actorUserId)})
          and f.removed_at is null
@@ -1490,7 +1511,7 @@ export class PostgresContentService {
    * A file can be a Run input when it is clean, not removed, and either has extracted text, or is a
    * binary platform artifact (Office, PDF, image) that is mounted as its original file when bash is
    * assembled (execution isolation 2b-4). Uploads whose extraction failed stay unusable. Callers
-   * left-join `fe` on a succeeded `m4-basic-v1` extraction.
+   * left-join `fe` on a succeeded extraction of one of `TEXT_EXTRACTOR_VERSIONS`.
    */
   private runtimeFileReadyPredicate() {
     return this.database`
@@ -1516,7 +1537,7 @@ export class PostgresContentService {
              art.id as "artifactId", art.version_no as "artifactVersion"
         from file_objects f
         left join file_extractions fe on fe.tenant_id = f.tenant_id and fe.file_id = f.id
-          and fe.status = 'succeeded' and fe.extractor_version = 'm4-basic-v1'
+          and fe.status = 'succeeded' and fe.extractor_version = any(${TEXT_EXTRACTOR_VERSIONS})
         join sessions target on target.tenant_id = f.tenant_id and target.id = ${input.sessionId}
         left join lateral (
           select a.id, av.version_no from artifact_versions av
@@ -1697,7 +1718,7 @@ export class PostgresContentService {
         select f.id
           from file_objects f
           left join file_extractions fe on fe.tenant_id = f.tenant_id and fe.file_id = f.id
-            and fe.status = 'succeeded' and fe.extractor_version = 'm4-basic-v1'
+            and fe.status = 'succeeded' and fe.extractor_version = any(${TEXT_EXTRACTOR_VERSIONS})
           join workspaces target on target.tenant_id = f.tenant_id and target.id = ${input.workspaceId}
          where f.tenant_id = ${input.tenantId} and f.id = ${fileId}
            ${this.runtimeFileReadyPredicate()}
@@ -1844,6 +1865,8 @@ export class PostgresContentService {
         text: artifactInputText(format.type, bytes, fileId),
       })
     }
+    // 2b-3：二进制成果的解析文本在一次性容器中生成；容器本身失败时不写解析记录，启动补解析会重试。
+    await this.attachBinaryArtifactTexts(prepared)
 
     for (const artifact of prepared) {
       await this.storage.putIfAbsent(artifact.storageKey, artifact.bytes)
@@ -1928,10 +1951,20 @@ export class PostgresContentService {
           await transaction`
             insert into file_extractions (
               id, tenant_id, file_id, extractor_version, detected_type, status,
-              text_storage_key, text_sha256, character_count, row_count
+              text_storage_key, text_sha256, character_count, page_count, sheet_count, row_count
             ) values (
-              ${`extraction-${artifact.fileId}`}, ${tenantId}, ${artifact.fileId}, 'm4-basic-v1', ${artifact.text.detectedType}, 'succeeded',
-              ${artifact.text.storageKey}, ${artifact.text.sha256}, ${artifact.text.content.length}, ${artifact.text.rowCount}
+              ${`extraction-${artifact.fileId}`}, ${tenantId}, ${artifact.fileId}, ${artifact.text.extractorVersion},
+              ${artifact.text.detectedType}, 'succeeded', ${artifact.text.storageKey}, ${artifact.text.sha256},
+              ${artifact.text.content.length}, ${artifact.text.pageCount ?? null}, ${artifact.text.sheetCount ?? null}, ${artifact.text.rowCount}
+            )
+          `
+        } else if (artifact.textFailure) {
+          await transaction`
+            insert into file_extractions (
+              id, tenant_id, file_id, extractor_version, detected_type, status, error_code, error_message
+            ) values (
+              ${`extraction-${artifact.fileId}`}, ${tenantId}, ${artifact.fileId}, ${CONTAINER_EXTRACTOR_VERSION},
+              ${artifact.textFailure.detectedType}, 'failed', ${artifact.textFailure.code}, ${artifact.textFailure.message}
             )
           `
         }
@@ -2016,6 +2049,94 @@ export class PostgresContentService {
       extracted += inserted.count
     }
     return { inspected: rows.length, extracted }
+  }
+
+  /**
+   * 2b-3 backfill: binary artifacts without any extraction (published before 2b-3, or while the
+   * extraction container could not run) get container-extracted text. Meant to run in the
+   * background after startup; when a batch's container fails the rest waits for the next start.
+   */
+  async backfillBinaryArtifactExtractions(limit = 200): Promise<{ inspected: number; extracted: number; failed: number }> {
+    const counts = { inspected: 0, extracted: 0, failed: 0 }
+    if (!this.artifactTextExtractor) return counts
+    const rows = await this.database<{ fileId: string; storageKey: string; artifactType: BinaryTextType }[]>`
+      select distinct on (f.id) f.id as "fileId", f.storage_key as "storageKey", a.artifact_type as "artifactType"
+        from artifact_versions av
+        join artifacts a on a.tenant_id = av.tenant_id and a.id = av.artifact_id
+        join file_objects f on f.tenant_id = av.tenant_id and f.id = av.file_object_id
+       where av.tenant_id = ${tenantId} and f.removed_at is null and f.scan_status = 'clean'
+         and a.artifact_type = any(${BINARY_TEXT_TYPES as BinaryTextType[]})
+         and f.size_bytes <= ${ARTIFACT_LIMITS.maxFileBytes}
+         and not exists (select 1 from file_extractions fe where fe.tenant_id = f.tenant_id and fe.file_id = f.id)
+       order by f.id
+       limit ${limit}
+    `
+    counts.inspected = rows.length
+    for (let start = 0; start < rows.length; start += BACKFILL_BATCH_FILES) {
+      const batch: Array<{ fileId: string; type: BinaryTextType; bytes: Buffer }> = []
+      for (const row of rows.slice(start, start + BACKFILL_BATCH_FILES)) {
+        const bytes = await this.storage.get(row.storageKey).catch(() => null)
+        if (bytes) batch.push({ fileId: row.fileId, type: row.artifactType, bytes })
+      }
+      const results = await this.artifactTextExtractor.extract(batch.map(file => ({ name: file.fileId, type: file.type, bytes: file.bytes })))
+      for (const [index, file] of batch.entries()) {
+        const result = results[index]
+        if (!result) continue
+        if (result.ok) {
+          const text = binaryArtifactText(file.fileId, result)
+          await this.storage.putIfAbsent(text.storageKey, Buffer.from(text.content, 'utf8'))
+          const inserted = await this.database`
+            insert into file_extractions (
+              id, tenant_id, file_id, extractor_version, detected_type, status,
+              text_storage_key, text_sha256, character_count, page_count, sheet_count, row_count
+            ) values (
+              ${`extraction-${file.fileId}`}, ${tenantId}, ${file.fileId}, ${CONTAINER_EXTRACTOR_VERSION}, ${text.detectedType}, 'succeeded',
+              ${text.storageKey}, ${text.sha256}, ${text.content.length}, ${text.pageCount ?? null}, ${text.sheetCount ?? null}, ${text.rowCount}
+            )
+            on conflict (id) do nothing
+          `
+          counts.extracted += inserted.count
+        } else {
+          const inserted = await this.database`
+            insert into file_extractions (
+              id, tenant_id, file_id, extractor_version, detected_type, status, error_code, error_message
+            ) values (
+              ${`extraction-${file.fileId}`}, ${tenantId}, ${file.fileId}, ${CONTAINER_EXTRACTOR_VERSION},
+              ${result.detectedType}, 'failed', ${result.code}, ${result.message}
+            )
+            on conflict (id) do nothing
+          `
+          counts.failed += inserted.count
+        }
+      }
+    }
+    return counts
+  }
+
+  /**
+   * 2b-3: binary artifacts get their text from the container extractor. A file-level failure is
+   * recorded (the artifact can still be mounted as its original file); when the container itself
+   * cannot run nothing is recorded, publishing goes on, and the startup backfill retries.
+   */
+  private async attachBinaryArtifactTexts(artifacts: PreparedRuntimeArtifact[]) {
+    const pending = artifacts.flatMap(artifact => {
+      const type = BINARY_TEXT_TYPES.find(candidate => candidate === artifact.type)
+      return type && !artifact.text ? [{ artifact, type }] : []
+    })
+    if (!pending.length || !this.artifactTextExtractor) return
+    let results: ArtifactTextExtraction[]
+    try {
+      results = await this.artifactTextExtractor.extract(pending.map(({ artifact, type }) => ({ name: artifact.name, type, bytes: artifact.bytes })))
+    } catch (error) {
+      console.warn(`artifact text extraction unavailable; binary artifacts are published without text: ${error instanceof Error ? error.message : String(error)}`)
+      return
+    }
+    for (const [index, { artifact }] of pending.entries()) {
+      const result = results[index]
+      if (!result) continue
+      if (result.ok) artifact.text = binaryArtifactText(artifact.fileId, result)
+      else artifact.textFailure = { detectedType: result.detectedType, code: result.code, message: result.message }
+    }
   }
 
   async getRunInputFileIds(runId: string, attemptId?: string | null) {
@@ -2296,7 +2417,7 @@ function detectedType(extension: string): 'pdf' | 'docx' | 'xlsx' | 'csv' | 'tex
  * still published, it just cannot be attached to a later message.
  */
 function artifactInputText(type: Artifact['type'], bytes: Buffer, fileId: string): ArtifactInputText | null {
-  // 二进制成果（Office、PDF、图片）的解析文本由 2b-3 的解析器生成；不能把原始字节当文本挂载。
+  // 二进制成果（Office、PDF）的解析文本由容器解析器生成（attachBinaryArtifactTexts）；不能把原始字节当文本挂载。
   if (!isTextArtifactType(type)) return null
   let content: string
   try {
@@ -2307,11 +2428,25 @@ function artifactInputText(type: Artifact['type'], bytes: Buffer, fileId: string
   content = content.replaceAll('\r\n', '\n').replaceAll('\r', '\n')
   if (!content.trim() || content.length > 512_000) return null
   return {
+    extractorVersion: 'm4-basic-v1',
     content,
     sha256: createHash('sha256').update(content).digest('hex'),
     storageKey: join('extractions', fileId, 'm4-basic-v1.txt'),
     detectedType: type === 'csv' ? 'csv' : 'text',
     rowCount: content.split('\n').length,
+  }
+}
+
+function binaryArtifactText(fileId: string, extraction: Extract<ArtifactTextExtraction, { ok: true }>): ArtifactInputText {
+  return {
+    extractorVersion: CONTAINER_EXTRACTOR_VERSION,
+    content: extraction.text,
+    sha256: createHash('sha256').update(extraction.text).digest('hex'),
+    storageKey: join('extractions', fileId, `${CONTAINER_EXTRACTOR_VERSION}.txt`),
+    detectedType: extraction.detectedType,
+    rowCount: extraction.rowCount,
+    pageCount: extraction.pageCount,
+    sheetCount: extraction.sheetCount,
   }
 }
 

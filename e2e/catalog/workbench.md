@@ -137,7 +137,7 @@ P1/P2 的执行结果须单独记录数据库、身份、Runtime/DSH 版本和�
 **前置数据：** 一次成功 Run 的 `output/` 中同时有合规的 xlsx/docx/pptx/pdf/png/jpg、文本类成果，以及不合规的文件（不支持的格式、子目录、隐藏文件、超过 20 MB、扩展名与文件头不符、含宏或脚本等活动内容）<br>
 **spec：** `server/src/modules/workbench/application/artifact-file-policy.test.ts`、`server/src/infrastructure/postgres/m3-orchestration.integration.test.ts`、`server/src/domain/task-result.test.ts`、`server/src/modules/runtime/runtime-adapter.test.ts`、`apps/workbench-web/src/components/conversation/conversation-components.test.ts`
 
-1. 合规文件登记为成果，回答照常提交；二进制成果卡片只提供下载，暂不提供“查看正文”与“继续修改”。
+1. 合规文件登记为成果，回答照常提交；二进制成果卡片提供下载，“继续修改”见 EX-ARTIFACT-04，暂不提供“查看正文”（2b-5）。
 2. 不合规文件不登记、不落盘，其余成果不受影响；该轮回答下方列出未登记的文件及原因（如“格式不支持”“含宏或脚本等活动内容”“超过 20 MB”），结果核验标为未完全达成。
 3. Office 文件允许普通超链接；含宏、ActiveX、嵌入的 OLE 对象、外部数据连接、打开时取远程内容的外部关系，或 PDF 脚本、启动动作、嵌入文件时不登记；无法完整检查的文件按不合规处理。
 4. 单个成果不超过 20 MB、每轮合计不超过 50 MB、最多 20 个；超出部分按文件名顺序跳过并说明。
@@ -153,7 +153,7 @@ P1/P2 的执行结果须单独记录数据库、身份、Runtime/DSH 版本和�
 
 1. 本轮装配了 `bash` 时，所选附件除解析文本（`input/*.txt`）外，另以只读方式挂载原始文件（`input/original/`）；二进制成果没有解析文本，只挂原始文件。运行说明分别列出两类路径。
 2. 执行容器模式可用时，二进制成果卡片提供“继续修改”；引用后模型把修改后的完整文件写入 `output/<原名>`，平台登记为该成果的下一版本，旧版本仍可下载。原样复制、内容未变的文件不产生新版本。
-3. 未装配 `bash`（执行容器不可用或被紧急停用）时，二进制成果不能作为本轮输入，提交前提示原因，不创建 Attempt；文本类附件照常只挂解析文本。
+3. 未装配 `bash`（执行容器不可用或被紧急停用）时，有解析文本的二进制成果只挂解析文本，运行说明告知只能参考、不能修改；没有解析文本的二进制成果不能作为本轮输入，提交前提示原因，不创建 Attempt（见 EX-ARTIFACT-06）；文本类附件照常只挂解析文本。
 4. 原始文件在 Attempt 开始时按 Run 绑定读取，校验摘要与大小，不一致即失败；不属于本 Run 的文件不能被读取。
 
 **验收：** 上述测试通过。P2 另需在目标环境用真实 DSH 修改一个 xlsx 成果的指定单元格，下载 V1、V2 核对差异，并留证 Run/Attempt 与 DSH 版本。
@@ -169,6 +169,19 @@ P1/P2 的执行结果须单独记录数据库、身份、Runtime/DSH 版本和�
 3. 在执行容器内，模型用 Python 生成含中文的 xlsx，经 LibreOffice 转为 PDF 写入 `output/`，PDF 中文使用简体字形；再把 PDF 页面转为图片。
 
 **验收：** 上述测试通过；旧镜像的检查输出被判为缺少 `soffice`、`pdftoppm`（单元测试，未以旧镜像实际启动服务）。P2 另需在目标环境用真实 DSH 生成含中文的 xlsx/docx 并转为 PDF，下载核对字形与内容。
+
+### EX-ARTIFACT-06 Office/PDF 成果在隔离容器中解析，可作为后续对话的文本参考（执行隔离 2b-3）
+
+**优先级：** P1 · **角色：** 员工 · **运行层级：** 解析端口单元测试（容器以测试替身代替）、一次性 PostgreSQL 与成果发布服务（解析器测试替身）、Runtime Adapter；真实 Docker 解析用例为 opt-in（`DSH_WORK_EXECUTION_E2E_IMAGE`）；真实模型基于解析文本作答属 P2<br>
+**前置数据：** 执行容器模式可用；一次运行在 `output/` 写出 xlsx、docx、pptx、pdf 与一个 Markdown 文件，其中 PDF 无法读取<br>
+**spec：** `server/src/modules/workbench/application/container-artifact-text-extractor.test.ts`、`server/src/infrastructure/postgres/m3-orchestration.integration.test.ts`、`server/src/modules/runtime/runtime-adapter.test.ts`、`server/src/modules/runtime/execution-container.e2e.test.ts`
+
+1. 成果登记时，本轮的 Office/PDF 成果在一个与外界隔离的一次性容器中解析出文本，服务本身不打开这些文件；Markdown 等文本成果照旧以原文作为解析文本。
+2. 解析失败的文件（如无法读取的 PDF）照常登记为成果，只是不能作为文本参考，下次不再重试；解析容器本身无法运行时成果照常登记，服务重启后在后台补齐解析。
+3. 执行容器不可用时，有解析文本的 Office 成果可以作为新对话的参考资料，运行说明告知只能参考、不能修改；对话中的“继续修改”仍只在执行容器可用时提供。执行容器可用时同时提供解析文本与原始文件。
+4. 解析文本中，表格按工作表列出（没有计算结果的公式显示公式本身），演示文稿按页列出文字、表格与备注；容器写出的链接文件或非 UTF-8 内容不被采信。
+
+**验收：** 上述测试通过；真实 Docker 用例用执行镜像生成的真实 Office 文件核对解析文本。P2 另需在目标环境用真实 DSH 生成 xlsx 后，在下一轮只引用它请模型复述其中数字，核对与表格一致。
 
 ### EX-CONTEXT-01 长对话保留首条约束并使用对话摘要
 

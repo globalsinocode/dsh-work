@@ -54,6 +54,7 @@ output_created=true
 mkdir -p \
   "${bundle}/server" \
   "${bundle}/server/config/dsh" \
+  "${bundle}/server/config/execution" \
   "${bundle}/apps/workbench-web" \
   "${bundle}/apps/admin-web" \
   "${bundle}/scripts/deploy" \
@@ -67,6 +68,11 @@ cp "${project_root}/server/config/dsh/acp-managed-credentials.cordis.yml" "${bun
 cp "${project_root}/server/config/dsh/acp-managed-credentials.legacy.cordis.yml" "${bundle}/server/config/dsh/"
 cp "${project_root}/server/config/dsh/dsh-work-tool-policy.js" "${bundle}/server/config/dsh/"
 cp "${project_root}/server/config/dsh/runtime-lock.json" "${bundle}/server/config/dsh/"
+# Execution container mode (execution isolation): the overlay template and remote subprocess plugin
+# for DSH, and the artifact text extraction script run in a disposable container.
+cp "${project_root}/server/config/dsh/execution-container.cordis.patch.yml" "${bundle}/server/config/dsh/"
+cp "${project_root}/server/config/dsh/dsh-work-remote-subprocess.js" "${bundle}/server/config/dsh/"
+cp "${project_root}/server/config/execution/extract_artifact_text.py" "${bundle}/server/config/execution/"
 cp -R "${server_stage}/node_modules" "${bundle}/server/node_modules"
 cp -R "${project_root}/apps/workbench-web/dist" "${bundle}/apps/workbench-web/dist"
 cp -R "${project_root}/apps/admin-web/dist" "${bundle}/apps/admin-web/dist"

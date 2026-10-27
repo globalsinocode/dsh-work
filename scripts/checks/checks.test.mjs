@@ -14,7 +14,8 @@ function fixture(t) {
   for (const path of [
     'AGENTS.md', 'README.md', 'package.json', '.env.example', '.github/workflows/ci.yml', 'docs',
     'server/package.json', 'server/config', 'server/src', 'server/migrations',
-    'deploy/runtime.env.example', 'deploy/execution-image', '.github/workflows/execution-image.yml', 'scripts/deploy/preflight.sh', 'scripts/runtime/probe.ts', 'scripts/runtime/run-timings.ts',
+    'deploy/runtime.env.example', 'deploy/execution-image', '.github/workflows/execution-image.yml', 'scripts/deploy/preflight.sh',
+    'scripts/release/build-release.sh', 'scripts/runtime/probe.ts', 'scripts/runtime/run-timings.ts',
     'scripts/checks/contracts.mjs', 'scripts/testing/p0-smoke-server.ts',
     'apps/workbench-web/vitest.config.ts', 'apps/admin-web/vitest.config.ts', 'playwright.config.ts',
     'e2e/mvp-smoke.spec.ts', 'e2e/TEST-CATALOG.md', 'e2e/catalog', 'e2e/automation-smoke.spec.ts',
@@ -88,6 +89,14 @@ test('runtime checks reject unpinned execution image inputs', t => {
   assert.match(result, /依赖必须固定版本：requests>=2/)
   assert.match(result, /未包含 matplotlib/)
   assert.match(result, /Action 必须固定带版本注释的 Commit SHA：actions\/attest@v4/)
+})
+
+test('runtime checks reject a release bundle that leaves out runtime config', t => {
+  const root = fixture(t)
+  const build = join(root, 'scripts/release/build-release.sh')
+  writeFileSync(build, readFileSync(build, 'utf8').split('\n').filter(line => !line.includes('dsh-work-remote-subprocess.js')).join('\n'))
+  assert.match(failures(root, 'runtime'), /发布包未复制运行时配置 server\/config\/dsh\/dsh-work-remote-subprocess\.js/)
+  assert.doesNotMatch(failures(root, 'runtime'), /dsh-work-remote-subprocess\.test\.js/, 'tests do not ship')
 })
 
 test('project checks reject dangling docs and tests disconnected from CI', t => {
