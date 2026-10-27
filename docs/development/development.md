@@ -60,6 +60,7 @@ pnpm test:e2e
 | 权限与安全 | `pnpm test:m5:security`、`pnpm test:m5:security:integration` |
 | 故障与恢复 | `pnpm test:m5:faults`、`pnpm test:m5:faults:integration` |
 | 容量 | `pnpm test:m5:capacity:integration` |
+| 执行容器（真实 Docker 与真实 DSH，opt-in，不进 CI） | `DSH_WORK_EXECUTION_E2E_IMAGE=<执行镜像引用> pnpm --filter @dsh-work/server test:execution-container:e2e`；需要 `DSH_RUNTIME_HOME`、本机 Docker 与 `DSH_WORK_TEST_DATABASE_URL`，镜像用[执行镜像工作流](../../.github/workflows/execution-image.yml)产出的引用（先按摘要拉取）。DSH 要求 Node 22.19+ 或 24+，更低版本会在建会话时报 `no adapter registered for provider` |
 | 浏览器冒烟 | `pnpm exec playwright install chromium`、`pnpm test:e2e` |
 | Agent 验证与发布（冻结、后台并行验证、判定、发布、回滚、重启收敛与车道容量；隔离 PostgreSQL） | `pnpm test:agent-release:integration` |
 | Agent 独立执行身份 P1 浏览器集成 | `pnpm test:e2e:agent-principal`（专用可丢弃 PostgreSQL 与受控服务，不并入 P0 冒烟） |

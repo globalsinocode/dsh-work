@@ -1,5 +1,6 @@
 import { request } from 'node:http'
 import { createHash } from 'node:crypto'
+import { appendFileSync } from 'node:fs'
 import { appendFile, mkdir, rename, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { createInterface } from 'node:readline'
@@ -26,6 +27,8 @@ const permissionPrompts = new Map<number, PendingPrompt>()
 const initDelayArg = process.argv.find(arg => arg.startsWith('--delay-init='))
 const initDelayMs = initDelayArg ? Number(initDelayArg.slice('--delay-init='.length)) : 0
 
+// Lets tests read the system prompt the Adapter handed to this Worker.
+if (process.env.MOCK_SYSTEM_PROMPT_LOG) appendFileSync(process.env.MOCK_SYSTEM_PROMPT_LOG, `${process.env.DSH_AGENT_SYSTEM_PROMPT ?? ''}\n`)
 const lines = createInterface({ input: process.stdin, crlfDelay: Infinity })
 
 lines.on('line', (line) => {

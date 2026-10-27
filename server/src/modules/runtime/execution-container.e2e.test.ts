@@ -15,8 +15,9 @@ import { minimalXlsx } from '../../testing/office-fixtures.ts'
 
 /**
  * P1-style check through real DSH and real Docker (no model vendor: a scripted
- * OpenAI-compatible fake). Opt-in: set DSH_WORK_EXECUTION_E2E_IMAGE to an image
- * pinned by digest or local ID that contains `rg`, and DSH_RUNTIME_HOME to the DSH checkout.
+ * OpenAI-compatible fake). Opt-in: set DSH_WORK_EXECUTION_E2E_IMAGE to an execution image
+ * pinned by digest or local ID that passes the startup toolchain check (bash, rg, LibreOffice,
+ * poppler; the image built by .github/workflows/execution-image.yml), and DSH_RUNTIME_HOME to the DSH checkout.
  */
 const image = process.env.DSH_WORK_EXECUTION_E2E_IMAGE?.trim()
 const skip = !image ? 'DSH_WORK_EXECUTION_E2E_IMAGE is not set'
@@ -47,7 +48,9 @@ test('DSH glob/grep/bash run inside the Attempt execution container and stay con
 
   const backend = new DockerExecutionBackend()
   const containers = new AttemptExecutionContainers(backend, { image: image!, user: resolveExecutionContainerUser() })
-  await backend.inspectExecutionImage(containers.image, containers.user)
+  // The same startup check main.ts runs: the image must provide the Office toolchain (2b-1).
+  const toolchain = await backend.inspectExecutionImage(containers.image, containers.user)
+  for (const id of ['bash', 'rg', 'soffice', 'pdftoppm']) assert.ok(toolchain.some(tool => tool.id === id), id)
   await backend.detectFeatures()
 
   const dshHome = join(root, 'dsh-home')
@@ -58,6 +61,16 @@ test('DSH glob/grep/bash run inside the Attempt execution container and stay con
     // The model writes and runs a script; its output lands in the shared workspace.
     probe('script', 'mkdir -p work && printf "print(sum(range(101)))" > work/s.py && python3 work/s.py > output/sum.txt && cat output/sum.txt && id -u'),
     probe('original', 'python3 -c "import zipfile; print(sorted(zipfile.ZipFile(\'input/original/01-data.xlsx\').namelist()))"'),
+    // 2b-1: LibreOffice and poppler work under the container posture (read-only root, HOME tmpfs,
+    // uid without a passwd entry): a workbook written with openpyxl becomes a PDF artifact with
+    // Simplified Chinese glyphs, and a page image.
+    probe('office', [
+      'python3 -c "import openpyxl; book = openpyxl.Workbook(); book.active.append([\'区域\', \'收入\']); book.active.append([\'华东\', 1200]); book.save(\'work/营收.xlsx\')"',
+      'soffice --headless --convert-to pdf --outdir output work/营收.xlsx > work/soffice.log 2>&1; test -s output/营收.pdf || cat work/soffice.log',
+      'head -c 5 output/营收.pdf; echo',
+      'pdffonts output/营收.pdf | grep -oE "NotoSansCJK[a-z]+" | sort -u',
+      'pdftoppm -png -r 30 -singlefile output/营收.pdf work/page && test -s work/page.png && echo PNG_OK',
+    ].join('\n')),
     // Fixed environment: no Worker variables, no DSH_HOME, no bridge socket, no other workspaces or host files.
     probe('env', [
       'env; echo ---',
@@ -149,7 +162,7 @@ test('DSH glob/grep/bash run inside the Attempt execution container and stay con
     await client.initialize()
     const sessionId = await client.newSession(workspace)
     await client.prompt(sessionId, 'run the checks')
-    const [globResult, grepResult, scriptResult, originalResult, envResult, networkResult, leftoverResult, leftoverCheck, timeoutResult, timeoutCheck, backgroundResult] = toolResults
+    const [globResult, grepResult, scriptResult, originalResult, officeResult, envResult, networkResult, leftoverResult, leftoverCheck, timeoutResult, timeoutCheck, backgroundResult] = toolResults
     assert.match(globResult ?? '', /a\.txt/)
     assert.match(globResult ?? '', /notes\/b\.txt/)
     assert.doesNotMatch(globResult ?? '', /c\.md/)
@@ -160,6 +173,11 @@ test('DSH glob/grep/bash run inside the Attempt execution container and stay con
     assert.match(scriptResult ?? '', new RegExp(`5050\\s+${resolveExecutionContainerUser().split(':')[0]}`))
     assert.equal((await readFile(join(workspace, 'output', 'sum.txt'), 'utf8')).trim(), '5050')
     assert.match(originalResult ?? '', /xl\/workbook\.xml/, 'the container reads the read-only original input')
+    assert.match(officeResult ?? '', /%PDF-/, 'soffice converted the workbook under the container posture')
+    assert.match(officeResult ?? '', /NotoSansCJKsc/)
+    assert.doesNotMatch(officeResult ?? '', /NotoSansCJK(jp|kr|tc|hk)/)
+    assert.match(officeResult ?? '', /PNG_OK/)
+    assert.equal((await readFile(join(workspace, 'output', '营收.pdf'))).subarray(0, 5).toString(), '%PDF-')
     assert.equal(permissionRequests, 0, 'approval follows the Agent mode (never here); DSH adds no prompt of its own')
 
     assert.match(envResult ?? '', /ENV_DONE/)

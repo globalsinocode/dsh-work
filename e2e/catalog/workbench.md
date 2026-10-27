@@ -158,6 +158,18 @@ P1/P2 的执行结果须单独记录数据库、身份、Runtime/DSH 版本和�
 
 **验收：** 上述测试通过。P2 另需在目标环境用真实 DSH 修改一个 xlsx 成果的指定单元格，下载 V1、V2 核对差异，并留证 Run/Attempt 与 DSH 版本。
 
+### EX-ARTIFACT-05 执行镜像的 Office 工具链：启动检查与运行说明（执行隔离 2b-1）
+
+**优先级：** P1 · **角色：** 平台管理员、员工 · **运行层级：** 工具链检查与 Runtime 说明单元测试、Runtime Adapter（受控 Worker）；真实 Docker + DSH 端到端与服务启动检查为 opt-in（`DSH_WORK_EXECUTION_E2E_IMAGE` 指向执行镜像工作流产出的镜像）；真实模型生成 Office 文件属 P2<br>
+**前置数据：** 执行容器模式开启；一个摘要锁定的执行镜像（含 LibreOffice、poppler、pandoc 与 Python 包）；只含 `rg` 的旧镜像以其工具链检查的实际输出作为单元测试数据<br>
+**spec：** `server/src/modules/runtime/execution-toolchain.test.ts`、`server/src/modules/runtime/runtime-adapter.test.ts`、`server/src/modules/runtime/execution-container.e2e.test.ts`、`server/src/infrastructure/postgres/execution-container-startup.integration.test.ts`
+
+1. 服务启动时在与执行容器相同的隔离条件下检查镜像：缺少 `bash`、`rg`、LibreOffice 或 `pdftoppm` 任一项时，执行容器显示不可用，员工对话不装配 `bash`；服务日志说明缺少哪些程序。
+2. 检查通过时，服务日志列出检查到的程序与版本；员工运行装配 `bash` 时，运行说明列出这些程序的用途与版本（含 pandas 等 Python 包），并说明镜像内置中文字体；未检查到的可选程序不出现在说明中。
+3. 在执行容器内，模型用 Python 生成含中文的 xlsx，经 LibreOffice 转为 PDF 写入 `output/`，PDF 中文使用简体字形；再把 PDF 页面转为图片。
+
+**验收：** 上述测试通过；旧镜像的检查输出被判为缺少 `soffice`、`pdftoppm`（单元测试，未以旧镜像实际启动服务）。P2 另需在目标环境用真实 DSH 生成含中文的 xlsx/docx 并转为 PDF，下载核对字形与内容。
+
 ### EX-CONTEXT-01 长对话保留首条约束并使用对话摘要
 
 **优先级：** P1 · **角色：** 员工 · **运行层级：** 一次性 PostgreSQL、受控 Runtime、Manifest 编译器<br>

@@ -14,6 +14,7 @@ import { createPlatformToolBridge, type PlatformToolOperationLifecycle } from '.
 import { createRemoteSubprocessGateway, type ContainerCommandAudit } from './remote-subprocess-gateway.ts'
 import { assertRealWorkspaceDirectory } from '../../infrastructure/storage/workspace-directory.ts'
 import type { ContainerCommand, ContainerCommandResult } from './execution-backend.ts'
+import { describeExecutionToolchain, type ExecutionTool } from './execution-toolchain.ts'
 import { formatExecutionTime } from '../../domain/execution-time.ts'
 import {
   MAX_TOOL_CALL_EVENTS,
@@ -166,6 +167,8 @@ export interface DshAcpRuntimeAdapterConfiguration {
     /** 静止保证（方案 3.7）：命令及其后的静止确认都结束前为 busy；静止无法恢复时为 failed。 */
     waitUntilIdle(attemptId: string, timeoutMs: number): Promise<'idle' | 'busy' | 'failed'>
     release(attemptId: string): Promise<void>
+    /** 启动检查在执行镜像中找到的程序（2b-1），写入 Runtime 说明。 */
+    readonly toolchain?: readonly ExecutionTool[]
   }
   /** 执行容器内每条命令的审计摘要；不含输出正文。 */
   recordContainerCommand?: (manifest: RuntimeManifest, audit: ContainerCommandAudit) => Promise<void>
@@ -680,7 +683,7 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
             DSH_PERMISSION_MODE: 'workspace-write',
             DSH_SNAPSHOT: 'record',
             DSH_SNAPSHOT_SESSIONS_ROOT: join(record.snapshot.attemptDirectory, 'sessions'),
-            DSH_AGENT_SYSTEM_PROMPT: renderSystemPrompt(record.manifest),
+            DSH_AGENT_SYSTEM_PROMPT: renderSystemPrompt(record.manifest, { executionToolchain: remoteExecution?.toolchain }),
             DSH_ALLOWED_TOOLS_JSON: JSON.stringify(record.manifest.tools.map(tool => tool.id)),
             DSH_MAX_TOOL_CALLS: String(record.manifest.limits.max_tool_calls),
             DSH_WORKSPACE_ROOT: workspaceDirectory,
@@ -1367,7 +1370,8 @@ export function renderUserPrompt(manifest: RuntimeManifest) {
   ].join('\n')
 }
 
-export function renderSystemPrompt(manifest: RuntimeManifest) {
+/** `executionToolchain`: what the execution container's startup check found; listed when bash is assembled. */
+export function renderSystemPrompt(manifest: RuntimeManifest, options: { executionToolchain?: readonly ExecutionTool[] } = {}) {
   const sections = [manifest.agent_configuration.system_prompt.trim()]
   sections.push([
     '# 本次执行的实际能力边界',
@@ -1446,6 +1450,10 @@ export function renderSystemPrompt(manifest: RuntimeManifest) {
       '# 运行命令',
       'bash 在本次运行专用的执行容器中执行：不能联网，只能使用镜像中已安装的程序与 Python 包，不能安装新依赖；每次一条前台命令，单条命令有时限，不支持后台运行；工作目录就是当前会话工作区，文件读写与工具看到的是同一份。',
       '命令产生的中间文件放在工作区其他目录（例如 work/）或 /tmp，不要放进 output。output 只放要交付给用户的顶层文件：Markdown、纯文本、CSV、HTML，以及 xlsx、docx、pptx、pdf、png、jpg；单个不超过 20 MB、合计不超过 50 MB、最多 20 个。含宏、脚本或会访问外部内容的文件，以及其他格式、子目录和隐藏文件都不会登记为成果，回答下方会列出未登记的文件。',
+      ...(options.executionToolchain?.length ? [
+        '执行镜像中已安装的程序（平台启动时检查得出；清单之外的程序不要假定存在，需要时先用 command -v 确认）：',
+        ...describeExecutionToolchain(options.executionToolchain),
+      ] : []),
     ].join('\n'))
   }
   if (manifest.agent_configuration.skill_instructions.length > 0) {

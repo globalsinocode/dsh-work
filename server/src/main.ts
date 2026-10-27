@@ -197,6 +197,7 @@ async function start() {
       dshInstallation = probed.value.installation
       attemptContainers = probed.value.containers
       attemptContainers.startMaintenance()
+      console.warn(`execution container toolchain: ${attemptContainers.toolchain.map(tool => tool.version ? `${tool.id} ${tool.version}` : tool.id).join(', ')}`)
     }
     executionContainerCapability = probed.state
   } else if (!dshInstallation && executionContainerSwitch && executionContainerSwitch !== 'off') {

@@ -3,6 +3,7 @@ import { realpathSync } from 'node:fs'
 import { dependencyUnavailable, invalidRequest, stateConflict } from '../../domain/request-errors.ts'
 import { builtinTools } from './builtin-tools.ts'
 import type { ContainerCommand, ContainerCommandResult, ExecutionBackend } from './execution-backend.ts'
+import type { ExecutionTool } from './execution-toolchain.ts'
 import type { RuntimeToolDescriptor } from './runtime-types.ts'
 
 /** A registry digest (`name@sha256:…`) or a local image ID (`sha256:…`); both are immutable. */
@@ -66,6 +67,8 @@ export type ExecutionContainerIdleState = 'idle' | 'busy' | 'failed'
 export class AttemptExecutionContainers {
   readonly image: string
   readonly user: string
+  /** Programs the startup check found in the image; listed in the Runtime instructions. Empty before preflight. */
+  toolchain: readonly ExecutionTool[] = []
   private readonly backend: ExecutionBackend
   private readonly attempts = new Map<string, AttemptState>()
   private readonly pendingRemoval = new Set<string>()
@@ -82,9 +85,9 @@ export class AttemptExecutionContainers {
   get activeAttempts(): string[] { return [...this.attempts.entries()].filter(([, state]) => state.container).map(([id]) => id) }
   get pendingRemovals(): string[] { return [...this.pendingRemoval] }
 
-  /** Image check (including `rg`), feature detection and the startup orphan sweep (single service instance). */
+  /** Image and toolchain check, feature detection and the startup orphan sweep (single service instance). */
   async preflight() {
-    await this.backend.inspectExecutionImage(this.image, this.user)
+    this.toolchain = await this.backend.inspectExecutionImage(this.image, this.user)
     await this.backend.detectFeatures()
     await this.backend.removeOrphans()
   }

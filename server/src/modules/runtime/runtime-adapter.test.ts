@@ -402,7 +402,45 @@ describe('DSH ACP Runtime Adapter', () => {
     assert.match(withBash, /不支持后台运行/)
     assert.match(withBash, /中间文件放在工作区其他目录/)
     assert.match(withBash, /xlsx、docx、pptx、pdf、png、jpg/)
+    assert.doesNotMatch(withBash, /执行镜像中已安装的程序/, 'no list without a startup check result')
     assert.doesNotMatch(renderSystemPrompt(compileRuntimeManifest(base).manifest), /# 运行命令/)
+
+    // 2b-1: the toolchain the startup check found is listed, with platform text and probed versions.
+    const executionToolchain = [
+      { id: 'bash', version: '5.2.37' }, { id: 'rg', version: '15.0.0' }, { id: 'soffice', version: '25.2.3.2' },
+      { id: 'pdftoppm', version: '25.03.0' }, { id: 'python3', version: '3.12.15' }, { id: 'pandas', version: '3.0.6' },
+      { id: 'noto-cjk-sc', version: null },
+    ] as const
+    const listed = renderSystemPrompt(compileRuntimeManifest({ ...base, tools: [...base.tools, { id: 'bash', version: '1.0.0' }] }).manifest, { executionToolchain })
+    assert.match(listed, /执行镜像中已安装的程序/)
+    assert.match(listed, /- LibreOffice（soffice） 25\.2\.3\.2：Office 文件转换/)
+    assert.match(listed, /- python3 3\.12\.15：.*已安装 pandas 3\.0\.6$/m)
+    assert.match(listed, /Noto CJK，默认简体字形/)
+    assert.doesNotMatch(listed, /pandoc/, 'only what the check found')
+    assert.doesNotMatch(renderSystemPrompt(compileRuntimeManifest(base).manifest, { executionToolchain }), /执行镜像中已安装的程序/)
+  })
+  it('passes the execution container toolchain into the Worker system prompt (2b-1)', async () => {
+    const log = join(await mkdtemp(join(tmpdir(), 'dsh-work-prompt-log-')), 'prompt.log')
+    const remoteExecution = {
+      exec: async () => { throw new Error('unused') },
+      waitUntilIdle: async () => 'idle' as const,
+      release: async () => undefined,
+      toolchain: [{ id: 'soffice', version: '25.2.3.2' }, { id: 'pdftoppm', version: '25.03.0' }] as const,
+    }
+    const adapter = await createAdapter(500, undefined, async () => ({ published: [], skipped: [], skippedTotal: 0 }), {
+      remoteExecution,
+      process: {
+        command: process.execPath, args: ['--experimental-strip-types', mockWorker], cwd: process.cwd(),
+        env: { MOCK_SYSTEM_PROMPT_LOG: log },
+      },
+    })
+    const input = manifest('run-toolchain-prompt', 'attempt-toolchain-prompt')
+    input.tools = [...input.tools, { id: 'bash', version: '1.0.0' }]
+    const result = await (await adapter.execute(input)).done
+    assert.equal(result.status, 'completed', result.errorMessage ?? undefined)
+    const prompt = await readFile(log, 'utf8')
+    assert.match(prompt, /- LibreOffice（soffice） 25\.2\.3\.2：/)
+    assert.match(prompt, /- pdftoppm 25\.03\.0：/)
   })
   it('discovers the session-scoped tool schemas from an isolated active DSH Profile', async () => {
     const root = await mkdtemp(join(tmpdir(), 'dsh-work-runtime-catalog-test-'))

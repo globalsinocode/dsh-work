@@ -14,7 +14,7 @@ class FakeBackend implements ExecutionBackend {
   private readonly exits = new Map<string, (code: number) => void>()
 
   async inspectImage() {}
-  async inspectExecutionImage() {}
+  async inspectExecutionImage() { return [] }
   async detectFeatures() {}
   async removeOrphans() {}
   async startExecutionContainer(): Promise<{ keeperPid: number }> { throw new Error('not used by these tests') }

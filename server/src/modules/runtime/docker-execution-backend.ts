@@ -14,6 +14,7 @@ import {
   type PythonSandboxSpec,
   type RunningSandbox,
 } from './execution-backend.ts'
+import { parseToolchainProbe, TOOLCHAIN_PROBE_SCRIPT } from './execution-toolchain.ts'
 
 export const PYTHON_CONTAINER_NAME_PATTERN = /^dsh-py-[0-9a-f]{16}$/
 export const EXECUTION_CONTAINER_NAME_PATTERN = /^dsh-exec-[0-9a-f]{16}$/
@@ -117,12 +118,9 @@ export class DockerExecutionBackend implements ExecutionBackend {
 
   async inspectExecutionImage(image: string, user: string) {
     await this.inspectImage(image)
-    if (!SANDBOX_USER_PATTERN.test(user)) throw invalidRequest('执行容器用户必须是非 root 的 uid:gid')
-    const probe = await runCommand(this.command, [
-      'run', '--rm', '--pull', 'never', '--network', 'none', '--read-only', '--cap-drop', 'ALL',
-      '--security-opt', 'no-new-privileges', '--user', user, '--entrypoint', 'rg', image, '--version',
-    ], 30_000)
-    if (probe.exitCode !== 0) throw dependencyUnavailable(`执行镜像缺少 rg，glob/grep 无法在容器内运行：${brief(probe.stderr) || image}`)
+    const probe = await runCommand(this.command, buildToolchainProbeArguments(image, user), 60_000)
+    if (probe.exitCode !== 0) throw dependencyUnavailable(`执行镜像无法运行工具检查（需要 bash）：${brief(probe.stderr) || image}`)
+    return parseToolchainProbe(probe.stdout)
   }
 
   async detectFeatures() {
@@ -300,6 +298,24 @@ export function buildPythonSandboxArguments(
     '--mount', `type=bind,src=${inputRoot},dst=/input,readonly`,
     '--mount', `type=bind,src=${outputRoot},dst=/output`,
     '--workdir', '/skill', image, 'python', '-I', '-B', entry, ...args,
+  ]
+}
+
+/** One throwaway container under the execution-container posture that reports the image's toolchain. */
+export function buildToolchainProbeArguments(image: string, user: string) {
+  if (!SANDBOX_USER_PATTERN.test(user)) throw invalidRequest('执行容器用户必须是非 root 的 uid:gid')
+  const [uid, gid] = user.split(':')
+  const limits = EXECUTION_CONTAINER_LIMITS
+  return [
+    'run', '--rm', '--pull', 'never', '--network', 'none', '--read-only', '--cap-drop', 'ALL',
+    '--security-opt', 'no-new-privileges', '--security-opt', 'seccomp=builtin',
+    '--pids-limit', limits.pidsLimit, '--memory', limits.memory, '--cpus', limits.cpus,
+    '--user', user,
+    '--tmpfs', `/tmp:rw,nosuid,nodev,size=${limits.tmpfsSize},mode=1777`,
+    // soffice --version may set up its profile under HOME, as in a real execution container.
+    '--tmpfs', `${EXECUTION_CONTAINER_HOME}:rw,nosuid,nodev,size=${limits.homeSize},uid=${uid},gid=${gid},mode=0700`,
+    ...EXECUTION_COMMAND_ENV.flatMap(value => ['-e', value]),
+    '--entrypoint', 'bash', image, '-c', TOOLCHAIN_PROBE_SCRIPT,
   ]
 }
 

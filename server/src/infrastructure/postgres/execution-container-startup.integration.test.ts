@@ -11,7 +11,8 @@ import { createThrowawayDatabase, type ThrowawayDatabase } from './test-database
 
 /**
  * 执行隔离 1b：执行容器模式在服务启动时确定。需要真实 DSH 与 Docker，
- * 并用 DSH_WORK_EXECUTION_E2E_IMAGE 指定含 rg、按摘要或本地镜像 ID 锁定的镜像；缺少任一项则跳过。
+ * 并用 DSH_WORK_EXECUTION_E2E_IMAGE 指定能通过工具链检查（bash、rg、LibreOffice、pdftoppm）、按摘要或本地镜像 ID
+ * 锁定的执行镜像（执行镜像工作流产出的镜像即可）；缺少任一项则跳过。
  */
 const image = process.env.DSH_WORK_EXECUTION_E2E_IMAGE?.trim()
 const skip = !image ? 'DSH_WORK_EXECUTION_E2E_IMAGE is not set'
@@ -30,6 +31,7 @@ test('container mode on: health reports it available and every DSH process gets 
     const health = await waitForHealth(app)
     assert.equal(health.data.executionCapabilities.dsh.status, 'available')
     assert.equal(health.data.executionCapabilities.executionContainer.status, 'available', app.output())
+    assert.match(app.output(), /execution container toolchain: bash [\d.]+, rg [\d.]+, soffice [\d.]+, pdftoppm [\d.]+/)
     const overlay = await readFile(join(app.root, 'dsh-config/execution-container.cordis.patch.yml'), 'utf8')
     assert.match(overlay, /dsh-work-remote-subprocess\.js/)
   } finally { await app.close() }

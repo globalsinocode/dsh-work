@@ -1,6 +1,6 @@
 # 执行隔离与受控 Shell 方案
 
-**状态：** 阶段 1a 已实施（2026-10-26）；阶段 1b 的 subprocess 部分已实施（2026-10-26，开关 `DSH_WORK_EXECUTION_CONTAINER` 默认关闭；单元、集成、本机真实 Docker 与真实 DSH 端到端用例通过），`python_execute` 并入执行容器另作 1b②，待确定脚本路径契约（4.4）；1c（“静止”保证，3.7、4.1）已实施（2026-10-26，单元、集成、本机真实 Docker 与真实 DSH 端到端用例通过；Mac mini 验收未执行）；阶段 2a（C 档单次 `bash`，3.8）已实施（2026-10-27，同上，Mac mini 验收未执行）；2b（Office 工具链与二进制成果）已定案（2026-10-27，4.6），其中 2b-2（成果收集与校验、不合规文件跳过并提示）与 2b-4（原始文件挂载与跨轮修改）已实施（2026-10-27，单元、集成与本机真实 Docker 用例通过），2b-1 的 Dockerfile 与构建流水线已进入仓库（2026-10-27，镜像尚未构建，预检与 Runtime 说明的工具链清单待镜像摘要产出后实施），其余未实施；Mac mini 验收均未执行。可执行能力已定以 **C 档**（单次 `bash` 与 Office 工具链）为目标，D 档（后台任务）暂缓（第 6 节）；阶段 2 前置事项已于 2026-10-26 定案（第 6 节）。执行容器模式默认关闭，在阶段 2b 完成并通过第 9 节 P2 验收前不在生产开启。<br>
+**状态：** 阶段 1a 已实施（2026-10-26）；阶段 1b 的 subprocess 部分已实施（2026-10-26，开关 `DSH_WORK_EXECUTION_CONTAINER` 默认关闭；单元、集成、本机真实 Docker 与真实 DSH 端到端用例通过），`python_execute` 并入执行容器另作 1b②，待确定脚本路径契约（4.4）；1c（“静止”保证，3.7、4.1）已实施（2026-10-26，单元、集成、本机真实 Docker 与真实 DSH 端到端用例通过；Mac mini 验收未执行）；阶段 2a（C 档单次 `bash`，3.8）已实施（2026-10-27，同上，Mac mini 验收未执行）；2b（Office 工具链与二进制成果）已定案（2026-10-27，4.6），其中 2b-2（成果收集与校验、不合规文件跳过并提示）与 2b-4（原始文件挂载与跨轮修改）已实施（2026-10-27，单元、集成与本机真实 Docker 用例通过），2b-1（执行镜像、启动时工具链检查与 Runtime 说明的工具清单）已实施（2026-10-27，镜像经 CI 构建推送 GHCR，本机真实 Docker 与真实 DSH 用例通过），其余未实施；Mac mini 验收均未执行。可执行能力已定以 **C 档**（单次 `bash` 与 Office 工具链）为目标，D 档（后台任务）暂缓（第 6 节）；阶段 2 前置事项已于 2026-10-26 定案（第 6 节）。执行容器模式默认关闭，在阶段 2b 完成并通过第 9 节 P2 验收前不在生产开启。<br>
 **更新日期：** 2026-10-26（按 KnowWork 源码复核修订：执行通道经平台中转、阶段重排、容器粒度与并发、产品决策新增中间选项；评审修订：审批保留在工具层、路径一致与可执行文件映射、宿主侧符号链接防护、阶段 1 拆分、档位按隔离要求重评；决定以 C 档为目标；简化：执行器改为服务内模块、只实现 docker 后端、容器按一次性容器管理、文件工具审计复用工具层记录、容器环境变量固定、非 C 档内容移至第 10 节后续方向；1c 定案为“静止”保证、不移植 remote fs）<br>
 **依据：** 当前 Runtime Adapter、Platform Tool Bridge、DSH 工具策略与 Python 执行代码；DSH `0.1.2-rc.1`（`76fda72979`）的 `dsh-sandbox*`、`dsh-fs*`、`dsh-subprocess*`、`dsh-shell*`、`dsh-e2b` 系列源码与 README；KnowWork v0.0.2（`83c763e`）runtime-host 与会话沙箱实现（对照参考）；2026-10-25 两次本地探针（第 3 节）。<br>
 **执行基线：** 每个 Attempt 一个独立 DSH ACP Worker，不改变进程模型；不新增执行循环。
@@ -152,7 +152,7 @@ patch 不能替换已有条目的包名（`name mismatch … skipping`），替�
 
 ### 3.6 未覆盖
 
-- **正式执行镜像**：中文字体、工具链显式清单与 `rg` 版本是否与 DSH 依赖对齐（探针为 14.1.1，DSH 自带 15.0.0）；真实业务文档的转换耗时与内存；多 Attempt 并发时的总内存。
+- **正式执行镜像**：真实业务文档的转换耗时与内存；多 Attempt 并发时的总内存。（中文字体、工具链显式清单与 `rg` 版本对齐已随 2b-1 解决，见 4.6。）
 
 ### 3.7 探针四：1c 前提（2026-10-26）
 
@@ -290,7 +290,7 @@ DSH Worker（每 Attempt 一个，宿主进程）
 
 `ExecutionBackend` 端口保留，首版只实现 `docker`：Mac mini 使用 Docker Desktop（OrbStack、colima 的 docker CLI 兼容）。端口职责：创建/删除执行容器、挂载 Attempt 工作区、按 Manifest 设置资源、取消时整组回收、启动时报告能力（容器运行时与合规镜像是否可用）。能力不满足时可执行工具不出现在模型可见工具中（第 6 节）。Kubernetes、Linux rootless 等实现在出现对应部署形态时再加（第 10 节）。
 
-### 4.6 阶段 2b：Office 工具链与二进制成果（已定案；2b-2、2b-4 已实施，2b-1 部分实施）
+### 4.6 阶段 2b：Office 工具链与二进制成果（已定案；2b-1、2b-2、2b-4 已实施）
 
 2a 放开了 `bash`，但 C 档的主要价值（生成与转换 Office 文件）还到不了用户手里：成果只收 `output/` 顶层的 Markdown、文本、CSV、HTML，引用到下一轮的输入只有解析文本。2b 把执行镜像、成果收集、引用与预览一起补齐。以下“现状”均为 2026-10-27 核对代码的结论。
 
@@ -307,7 +307,7 @@ DSH Worker（每 Attempt 一个，宿主进程）
 
 **设计（按依赖顺序；每步单独提交与验证）：**
 
-1. **2b-1 执行镜像**（部分实施，2026-10-27）。[deploy/execution-image](../../deploy/execution-image/Dockerfile) 与 [执行镜像工作流](../../.github/workflows/execution-image.yml) 已进入仓库：基础镜像 `python:3.12-slim` 按摘要锁定，apt 固定为基础镜像自身记录的快照时间 `20261020T213255Z`；`rg` 取 DSH 依赖的 `@vscode/ripgrep` 1.18.0（ripgrep 15.0.0），按 DSH `pnpm-lock.yaml` 的 integrity 校验；Python 依赖由 `uv pip compile` 生成 linux/aarch64 的哈希锁（截至快照日期）；`soffice`/`libreoffice` 包装脚本位于 `/usr/local/bin`；构建时生成字体缓存（运行时根文件系统只读）；未标注语言的中文默认使用 Noto CJK SC（[fontconfig 规则](../../deploy/execution-image/fontconfig-cjk-sc.conf)：LibreOffice 为汉字回退字体时只传 `zh`，Debian 自带规则不匹配，首次构建落到了香港字形），显式标注繁体中文、日文、韩文的文本仍用对应字形。流水线在 `ubuntu-24.04-arm` 上构建后，按执行容器姿态（断网、只读根、无 capabilities、无 `passwd` 条目的 uid、tmpfs `/tmp` 与 HOME）运行 [smoke-test.sh](../../deploy/execution-image/smoke-test.sh)：核对工具链与 `rg` 版本，把含中文的 docx/xlsx/pptx 转为 PDF 与 PNG，并核对 PDF 嵌入的是 SC 字形（标注 `zh-TW` 的文档为 TC 字形）；PR 只构建与检查，`main` 才推送 GHCR 并附来源证明，摘要写入运行 Summary。`pnpm verify` 的 runtime 组检查各项输入均已锁定。**尚未完成：** 镜像未构建过；执行容器预检与 Runtime 说明的工具链清单等镜像摘要产出、真实 Docker 端到端用例换用该镜像后再实施（提前实施会使现有本机测试镜像无法通过启动检查）。
+1. **2b-1 执行镜像**（已实施，2026-10-27）。[deploy/execution-image](../../deploy/execution-image/Dockerfile) 与 [执行镜像工作流](../../.github/workflows/execution-image.yml) 已进入仓库：基础镜像 `python:3.12-slim` 按摘要锁定，apt 固定为基础镜像自身记录的快照时间 `20261020T213255Z`；`rg` 取 DSH 依赖的 `@vscode/ripgrep` 1.18.0（ripgrep 15.0.0），按 DSH `pnpm-lock.yaml` 的 integrity 校验；Python 依赖由 `uv pip compile` 生成 linux/aarch64 的哈希锁（截至快照日期）；`soffice`/`libreoffice` 包装脚本位于 `/usr/local/bin`；构建时生成字体缓存（运行时根文件系统只读）；未标注语言的中文默认使用 Noto CJK SC（[fontconfig 规则](../../deploy/execution-image/fontconfig-cjk-sc.conf)：LibreOffice 为汉字回退字体时只传 `zh`，Debian 自带规则不匹配，首次构建落到了香港字形），显式标注繁体中文、日文、韩文的文本仍用对应字形。流水线在 `ubuntu-24.04-arm` 上构建后，按执行容器姿态（断网、只读根、无 capabilities、无 `passwd` 条目的 uid、tmpfs `/tmp` 与 HOME）运行 [smoke-test.sh](../../deploy/execution-image/smoke-test.sh)：核对工具链与 `rg` 版本，把含中文的 docx/xlsx/pptx 转为 PDF 与 PNG，并核对 PDF 嵌入的是 SC 字形（标注 `zh-TW` 的文档为 TC 字形）；PR 只构建与检查，`main` 才推送 GHCR 并附来源证明，摘要写入运行 Summary。`pnpm verify` 的 runtime 组检查各项输入均已锁定。首个镜像 `ghcr.io/tonycc/dsh-work/execution@sha256:a59f988be919b4332a79d5a4ad92fff3af542e56cbffbb58dc47bf6be195f42c`（arm64，约 1.1 GB，GHCR 包公开）。首次构建暴露两个问题并已修复：快照源大批量下载时重置连接（改为分别按退避重试 `apt-get update` 与仅下载）；未标注语言的中文落到 Noto CJK 香港字形（新增 fontconfig 规则）。启动检查改为在一次性容器（执行容器姿态）中探测工具链（[execution-toolchain.ts](../../server/src/modules/runtime/execution-toolchain.ts)）：`bash`、`rg`、`soffice`、`pdftoppm` 缺一即执行容器不可用，`pdftotext`、`pandoc`、`python3`、四个 Python 包与 Noto CJK SC 字体为可选（找到字体才在说明中声明内置中文字体）；只从镜像取工具标识与版本号，Runtime 说明“运行命令”一节列出平台撰写的工具说明与版本（pandas 3 等版本差异由此告知模型），并说明内置中文字体；服务日志记录检查结果。只含 `rg` 的旧测试镜像不再通过启动检查。真实 Docker 端到端用例改用该镜像，并在 Attempt 执行容器内用 openpyxl 生成工作簿、`soffice` 转 PDF（嵌入 SC 字形）、`pdftoppm` 转 PNG。注意：DSH 要求 Node `^22.19.0` 或 `>=24`，用更低版本运行真实 DSH 用例会在建会话时报 `no adapter registered for provider`。
    - 仓库内维护 Dockerfile：基础镜像按摘要锁定，apt 按快照源（`snapshot.debian.org` 固定日期）安装，pip 依赖按版本与哈希锁定；构建产物按摘要锁定后填入 `DSH_WORK_EXECUTION_IMAGE`，运行时 `--pull never`。
    - 工具链：`bash`、`rg`（与 DSH 依赖的版本对齐）、原生 LibreOffice（writer/calc/impress，nogui）、poppler-utils、pandoc，Python 包 pandas、openpyxl、python-docx、python-pptx；字体见决策 2。
    - `soffice` 包装脚本固定加 `-env:UserInstallation=file://$HOME/.lo-profile`（3.5：容器 uid 无 `passwd` 条目时默认配置失败）。

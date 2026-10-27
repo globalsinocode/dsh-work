@@ -7,6 +7,7 @@
  * Lifecycle policy (slots, abort, cleanup, removal retry) lives in
  * ContainerExecutor, not here.
  */
+import type { ExecutionTool } from './execution-toolchain.ts'
 
 /** Host-side output budget. Per-file ulimit is one byte higher so a truncated write is larger than anything we keep. */
 export const PYTHON_SANDBOX_LIMITS = {
@@ -100,8 +101,11 @@ export interface ContainerCommandResult {
 export interface ExecutionBackend {
   /** Fails when the image is not present locally or the runtime is unreachable. */
   inspectImage(image: string): Promise<void>
-  /** Fails unless the execution image provides the executables DSH tools need (`rg`). */
-  inspectExecutionImage(image: string, user: string): Promise<void>
+  /**
+   * Runs the toolchain probe in the execution image and returns what it found; fails unless the
+   * required tools are present (bash and `rg` for DSH tools, LibreOffice and poppler for 2b).
+   */
+  inspectExecutionImage(image: string, user: string): Promise<ExecutionTool[]>
   /** Detects optional runtime features (swap accounting, AppArmor) used by the fixed posture. */
   detectFeatures(): Promise<void>
   /** Startup only: removes every container this service manages. Assumes a single service instance. */

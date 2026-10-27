@@ -16,6 +16,7 @@ import {
   type ExecutionBackend,
   type ExecutionContainerSpec,
 } from './execution-backend.ts'
+import type { ExecutionTool } from './execution-toolchain.ts'
 import { createPlatformToolBridge } from './platform-tool-bridge.ts'
 import { createRemoteSubprocessGateway, mapExecutable, type ContainerCommandAudit } from './remote-subprocess-gateway.ts'
 
@@ -33,7 +34,8 @@ class FakeExecBackend implements ExecutionBackend {
   readonly quiesced: string[] = []
 
   async inspectImage() {}
-  async inspectExecutionImage() {}
+  toolchain: ExecutionTool[] = [{ id: 'bash', version: '5.2.37' }, { id: 'rg', version: '15.0.0' }]
+  async inspectExecutionImage() { return this.toolchain }
   async detectFeatures() {}
   async removeOrphans() {}
   startPythonSandbox(): never { throw new Error('not used') }
