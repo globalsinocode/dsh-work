@@ -620,7 +620,6 @@ export class PostgresConversationRepository {
         sessionId: input.sessionId,
         runId: input.runId,
         requestedBy: input.requestedBy,
-        actorUserId: 'system',
         dedupeKey: input.dedupeKey,
         agentDisplayName: input.agentDisplayName,
       }, transaction)
