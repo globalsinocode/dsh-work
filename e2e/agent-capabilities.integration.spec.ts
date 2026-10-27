@@ -22,27 +22,26 @@ test('P1 Agent work procedures, default tools, and MCP scopes use the same persi
   await create.getByRole('textbox', { name: 'Agent 名称' }).fill(name)
   await create.getByRole('textbox', { name: 'Agent 说明' }).fill('验证工作规程、默认 DSH 工具与 MCP Connector 选择随 Agent 草稿保存。')
   await create.getByRole('textbox', { name: /SOUL\.md/ }).fill('你是独立的 AI 员工，只能处理获准的业务数据，并为每个结论留下可核对的依据。')
-  await create.getByRole('textbox', { name: /AGENTS\.md/ }).fill(procedures)
-  await create.getByRole('button', { name: '下一步' }).click()
-  await create.getByRole('radio', { name: '仅使用选定 MCP' }).press('Space')
-  const choice = create.getByRole('combobox', { name: '选择 MCP Connector' })
-  await choice.press('Enter')
-  await expect(page.getByRole('option', { name: new RegExp(connectorName) })).toBeVisible()
-  await choice.press('ArrowDown')
-  await choice.press('Enter')
-  await create.getByRole('button', { name: '下一步' }).click()
-  await expect(create).toContainText('MCP：1 个选定')
   const agentCreatePosts: string[] = []
   page.on('request', request => {
     if (request.method() !== 'POST') return
     if (new URL(request.url()).pathname !== '/api/admin/v1/agents') return
     agentCreatePosts.push(request.postData() ?? '')
   })
-  await create.getByRole('button', { name: '完成创建' }).click()
-  await expect(page.getByRole('dialog', { name: 'Agent 草稿已保存' })).toBeVisible()
+  await create.getByRole('button', { name: '创建并继续配置' }).click()
+  await expect(page).toHaveURL(/\/agents\/[^/]+\/draft\?step=profile/)
   expect(agentCreatePosts).toHaveLength(1)
   const createdDraft = JSON.parse(agentCreatePosts[0] ?? '') as { id?: string }
   expect(createdDraft.id).toBeTruthy()
+
+  await page.getByRole('textbox', { name: /AGENTS\.md/ }).fill(procedures)
+  await page.getByRole('button', { name: '能力', exact: true }).click()
+  await page.getByRole('radio', { name: '仅使用选定 MCP' }).click()
+  const choice = page.getByRole('combobox', { name: '选择 MCP Connector' })
+  await choice.click()
+  await page.getByRole('option', { name: new RegExp(connectorName) }).click()
+  await expect(page.getByText('已保存', { exact: true })).toBeVisible()
+
   const versionCount = async (agentId: string) => {
     const listed = await data<Array<{ agentId: string }>>(await page.request.get('/api/admin/v1/agent-versions'))
     return listed.filter(item => item.agentId === agentId).length
@@ -64,8 +63,7 @@ test('P1 Agent work procedures, default tools, and MCP scopes use the same persi
   expect(exported.ok(), await exported.text()).toBeTruthy()
   expect(exported.headers()['content-type']).toContain('application/zip')
   expect((await exported.body()).subarray(0, 2).toString()).toBe('PK')
-  await page.getByRole('dialog', { name: 'Agent 草稿已保存' }).getByRole('button', { name: '关闭' }).click()
-  await page.getByRole('row', { name: new RegExp(name) }).getByRole('button', { name: '查看' }).click()
+  await page.goto(`/agents/${agentId}`)
   await page.getByRole('tab', { name: /版本历史/ }).click()
   const download = page.waitForEvent('download')
   await page.getByRole('button', { name: '导出包' }).click()

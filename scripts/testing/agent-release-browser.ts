@@ -17,6 +17,7 @@ import { PostgresAgentAccessService } from '../../server/src/modules/agent/agent
 import { PostgresAgentValidationService } from '../../server/src/modules/agent/agent-validation-service.ts'
 import { PostgresAgentRunHistory } from '../../server/src/modules/agent/agent-run-history.ts'
 import { PostgresMcpConnectorService } from '../../server/src/modules/tool/postgres-mcp-connector-service.ts'
+import { PostgresToolConnectorService } from '../../server/src/modules/tool/postgres-tool-connector-service.ts'
 import { PostgresSkillService } from '../../server/src/modules/skill/postgres-skill-service.ts'
 import { PostgresAuthorizationService } from '../../server/src/modules/authorization/postgres-authorization-service.ts'
 import { PostgresRunRepository } from '../../server/src/modules/run/postgres-run-repository.ts'
@@ -145,8 +146,9 @@ class SyntheticTrialRuntime implements AgentRuntimePort {
 const runtime = new SyntheticTrialRuntime()
 const authorization = new PostgresAuthorizationService(database.client)
 const mcp = new PostgresMcpConnectorService(database.client, runtime)
+const toolService = new PostgresToolConnectorService(database.client, runtime)
 const skills = new PostgresSkillService(database.client)
-const agents = new PostgresAgentService(database.client, undefined, skills, mcp)
+const agents = new PostgresAgentService(database.client, undefined, skills, toolService)
 const orchestration = new RunOrchestrationService(
   new PostgresRunRepository(database.client),
   new PostgresConversationRepository(database.client),
@@ -179,7 +181,7 @@ router.get(`${base}/identity/roles`, async () => envelope('admin', await databas
 `, 'postgres'))
 registerAgentRoutes(router, agents, new PostgresAgentAccessService(database.client))
 registerAgentValidationRoutes(router, agents, validation, new PostgresAgentRunHistory(database.client))
-registerToolRoutes(router, new PostgresToolConnectorService(database.client, runtime))
+registerToolRoutes(router, toolService)
 router.get('/health', () => ({ status: 'ok', testOnly: true, runtime: 'synthetic-agent-release-trial' }))
 
 const server = createServer((request, response) => void router.handle(request, response))
