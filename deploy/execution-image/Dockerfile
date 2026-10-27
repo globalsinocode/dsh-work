@@ -47,6 +47,9 @@ RUN set -eux; \
     # Build the font cache now: at run time the root is read-only and HOME is a small tmpfs.
     fc-cache -f
 
+# Han characters without a declared East Asian language render with the Simplified Chinese variant.
+COPY fontconfig-cjk-sc.conf /etc/fonts/conf.d/64-dsh-work-cjk-sc.conf
+
 # ripgrep 15.0.0, the same build DSH uses for glob/grep (@vscode/ripgrep 1.18.0).
 COPY install-ripgrep.py /tmp/install-ripgrep.py
 ARG TARGETARCH

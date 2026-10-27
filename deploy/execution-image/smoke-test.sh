@@ -12,6 +12,14 @@ user=65534:65534
 checks=$(cat <<'CHECKS'
 set -euo pipefail
 step() { printf '== %s\n' "$1"; }
+# Every Noto CJK face embedded in a PDF must be the expected regional variant (sc, tc, ...).
+expect_cjk() {
+  local fonts
+  fonts=$(pdffonts "$1" | grep -oE 'Noto(Sans|Serif|SansMono)CJK[a-z]+' | sort -u || true)
+  echo "$1:" ${fonts}
+  [ -n "${fonts}" ] || { echo "no Noto CJK font embedded in $1" >&2; return 1; }
+  if grep -qvE "CJK$2\$" <<<"${fonts}"; then echo "$1 uses a Noto CJK variant other than $2" >&2; return 1; fi
+}
 
 step 'toolchain'
 bash --version | head -n 1
@@ -23,12 +31,15 @@ python -I -c 'import pandas, openpyxl, docx, pptx; print("pandas", pandas.__vers
 
 step 'CJK fonts'
 fc-list :lang=zh family | grep -i 'noto'
+fc-match 'Calibri:charset=4e2d' family
 
 step 'office conversion'
 mkdir -p /tmp/smoke/out
 cd /tmp/smoke
 python -I - <<'PY'
 import docx, openpyxl, pptx
+from docx.oxml import OxmlElement
+from docx.oxml.ns import qn
 document = docx.Document()
 document.add_heading('季度经营报告', level=1)
 document.add_paragraph('华东区收入同比增长 12%。')
@@ -41,12 +52,24 @@ deck = pptx.Presentation()
 slide = deck.slides.add_slide(deck.slide_layouts[1])
 slide.shapes.title.text = '经营概览'
 deck.save('overview.pptx')
+# Text explicitly tagged Traditional Chinese keeps its regional variant.
+traditional = docx.Document()
+run = traditional.add_paragraph().add_run('繁體中文營運報告')
+language = OxmlElement('w:lang')
+language.set(qn('w:eastAsia'), 'zh-TW')
+run._r.get_or_add_rPr().append(language)
+traditional.save('traditional.docx')
 PY
-soffice --headless --convert-to pdf --outdir out report.docx revenue.xlsx overview.pptx
+soffice --headless --convert-to pdf --outdir out report.docx revenue.xlsx overview.pptx traditional.docx
 pdftotext out/report.pdf - | grep '季度经营报告'
 pdftotext out/revenue.pdf - | grep '华东'
 pdftotext out/overview.pdf - | grep '经营概览'
-pdffonts out/report.pdf | grep -i 'noto'
+pdftotext out/traditional.pdf - | grep '繁體中文營運報告'
+# Untagged Chinese renders with Simplified Chinese glyphs (fontconfig-cjk-sc.conf).
+expect_cjk out/report.pdf sc
+expect_cjk out/revenue.pdf sc
+expect_cjk out/overview.pdf sc
+expect_cjk out/traditional.pdf tc
 pdftoppm -png -r 50 -singlefile out/report.pdf out/report
 test -s out/report.png
 
