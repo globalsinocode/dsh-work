@@ -12,10 +12,24 @@ const moduleDirectory = fileURLToPath(new URL('.', import.meta.url))
 const fixturesRoot = resolve(moduleDirectory, '../../../../docs/development/fixtures/skill-plaza-candidates')
 const packagesRoot = join(fixturesRoot, 'packages')
 
+const ADMISSION_REJECTED_IDS = new Set([
+  'plaza-anth-docx',
+  'plaza-sp-brainstorming',
+  'plaza-wb-deep-research',
+  'plaza-wb-excalidraw-diagram',
+  'plaza-wb-fbs-bookwriter',
+])
+
 interface SourceIndex {
   batch: string
   skillCount: number
+  repos: Record<string, { license: string }>
   skills: Array<{ id: string; repo: string; sourcePath: string }>
+}
+
+function acceptableRepositoryLicense(repos: SourceIndex['repos'], repoKey: string): boolean {
+  const license = repos[repoKey]?.license ?? ''
+  return license.length > 0 && !/^none\b/i.test(license)
 }
 
 function zipDirectory(packageId: string): Uint8Array {
@@ -44,12 +58,23 @@ const packageIds = existsSync(packagesRoot)
       .sort()
   : []
 
+test('skill-plaza：候选准入策略与 SOURCE/packages 一致', () => {
+  for (const skill of source.skills) {
+    assert.ok(!ADMISSION_REJECTED_IDS.has(skill.id), `${skill.id} 不应进入已选候选`)
+    assert.ok(acceptableRepositoryLicense(source.repos, skill.repo), `${skill.id} 的仓库许可证不可接受`)
+  }
+  assert.equal(new Set(source.skills.map(item => item.id)).size, source.skills.length, 'SOURCE 中 id 必须唯一')
+  assert.equal(packageIds.length, source.skillCount, '请先运行 fetch + package 脚本生成 fixtures')
+  assert.equal(packageIds.length, source.skills.length)
+  const indexIds = new Set(source.skills.map(item => item.id))
+  const dirIds = new Set(packageIds)
+  for (const id of packageIds) assert.ok(indexIds.has(id), `SOURCE.json 缺少 ${id}`)
+  for (const id of indexIds) assert.ok(dirIds.has(id), `packages 缺少 ${id}`)
+})
+
 test('skill-plaza：目录数与 SOURCE.json 一致且均可 parseSkillPackage', () => {
   assert.equal(source.skillCount, source.skills.length)
-  assert.equal(packageIds.length, source.skillCount, '请先运行 fetch + package 脚本生成 fixtures')
-  const indexIds = new Set(source.skills.map(item => item.id))
   for (const id of packageIds) {
-    assert.ok(indexIds.has(id), `SOURCE.json 缺少 ${id}`)
     assert.match(id, /^plaza-[a-z0-9-]+$/)
     const parsed = parseSkillPackage(zipDirectory(id))
     assert.ok(parsed.name.length > 0)

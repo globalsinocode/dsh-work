@@ -59,7 +59,23 @@ const SUPER_SKILLS = [
 
 const ANTH_SKILLS = ['docx', 'pdf', 'pptx', 'xlsx', 'doc-coauthoring', 'internal-comms']
 
+/** WorkBuddy entries are generated only for admission review; none are admitted in batch-01. */
 const WB_SKILLS = ['deep-research', 'excalidraw-diagram', 'fbs-bookwriter']
+
+/** @type {Readonly<Record<string, string>>} */
+export const ADMISSION_EXCLUDED_SKILL_IDS = {
+  'plaza-anth-docx': 'retained XML templates are outside the current package allowlist',
+  'plaza-sp-brainstorming': 'HTML/JS/CJS/shell assets require a separate executable-content review',
+  'plaza-wb-deep-research': 'the pinned repository declares no repository license',
+  'plaza-wb-excalidraw-diagram': 'the pinned repository declares no repository license',
+  'plaza-wb-fbs-bookwriter': 'the pinned repository declares no repository license',
+}
+
+/** @param {keyof typeof REPOS} repoKey */
+export function hasAcceptableRepositoryLicense(repoKey) {
+  const license = REPOS[repoKey]?.license ?? ''
+  return license.length > 0 && !/^none\b/i.test(license)
+}
 
 /** @returns {SkillEntry[]} */
 export function staticSkillEntries() {
@@ -80,7 +96,7 @@ export function staticSkillEntries() {
   for (const name of WB_SKILLS) {
     out.push({ id: `plaza-wb-${name}`, repo: 'workbuddy', sourcePath: `skills/${name}` })
   }
-  return out
+  return out.filter(entry => !Object.hasOwn(ADMISSION_EXCLUDED_SKILL_IDS, entry.id))
 }
 
 /** @param {string} plugin @param {string} skillDir */

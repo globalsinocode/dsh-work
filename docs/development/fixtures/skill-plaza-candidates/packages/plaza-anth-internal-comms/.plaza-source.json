@@ -1,0 +1,15 @@
+{
+  "id": "plaza-anth-internal-comms",
+  "repo": "skills",
+  "sourcePath": "skills/internal-comms",
+  "commit": "dbd4588f9e1033efb41dad4bef2f7947c8993d44",
+  "notes": null,
+  "files": [
+    "LICENSE.txt",
+    "SKILL.md",
+    "examples/3p-updates.md",
+    "examples/company-newsletter.md",
+    "examples/faq-answers.md",
+    "examples/general-comms.md"
+  ]
+}

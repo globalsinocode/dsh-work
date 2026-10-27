@@ -1,0 +1,600 @@
+{
+  "generatedAt": "2026-10-27T01:08:09.007Z",
+  "batch": "batch-01",
+  "entries": [
+    {
+      "id": "plaza-sp-writing-plans",
+      "status": "draft",
+      "fileCount": 1,
+      "skipped": true
+    },
+    {
+      "id": "plaza-sp-executing-plans",
+      "status": "draft",
+      "fileCount": 3,
+      "skipped": true
+    },
+    {
+      "id": "plaza-sp-systematic-debugging",
+      "status": "draft",
+      "fileCount": 9,
+      "skipped": true
+    },
+    {
+      "id": "plaza-sp-test-driven-development",
+      "status": "draft",
+      "fileCount": 2,
+      "skipped": true
+    },
+    {
+      "id": "plaza-sp-requesting-code-review",
+      "status": "draft",
+      "fileCount": 2,
+      "skipped": true
+    },
+    {
+      "id": "plaza-sp-receiving-code-review",
+      "status": "draft",
+      "fileCount": 1,
+      "skipped": true
+    },
+    {
+      "id": "plaza-sp-verification-before-completion",
+      "status": "draft",
+      "fileCount": 1,
+      "skipped": true
+    },
+    {
+      "id": "plaza-sp-finishing-a-development-branch",
+      "status": "draft",
+      "fileCount": 1,
+      "skipped": true
+    },
+    {
+      "id": "plaza-anth-pdf",
+      "status": "draft",
+      "fileCount": 12,
+      "skipped": true
+    },
+    {
+      "id": "plaza-anth-pptx",
+      "status": "draft",
+      "fileCount": 17,
+      "skipped": true
+    },
+    {
+      "id": "plaza-anth-xlsx",
+      "status": "draft",
+      "fileCount": 14,
+      "skipped": true
+    },
+    {
+      "id": "plaza-anth-doc-coauthoring",
+      "status": "draft",
+      "fileCount": 1,
+      "skipped": true
+    },
+    {
+      "id": "plaza-anth-internal-comms",
+      "status": "draft",
+      "fileCount": 6,
+      "skipped": true
+    },
+    {
+      "id": "plaza-kwp-finance-audit-support",
+      "status": "draft",
+      "fileCount": 1,
+      "skipped": true
+    },
+    {
+      "id": "plaza-kwp-finance-close-management",
+      "status": "draft",
+      "fileCount": 1,
+      "skipped": true
+    },
+    {
+      "id": "plaza-kwp-finance-financial-statements",
+      "status": "draft",
+      "fileCount": 1,
+      "skipped": true
+    },
+    {
+      "id": "plaza-kwp-finance-journal-entry",
+      "status": "draft",
+      "fileCount": 1,
+      "skipped": true
+    },
+    {
+      "id": "plaza-kwp-finance-journal-entry-prep",
+      "status": "draft",
+      "fileCount": 1,
+      "skipped": true
+    },
+    {
+      "id": "plaza-kwp-finance-reconciliation",
+      "status": "draft",
+      "fileCount": 1,
+      "skipped": true
+    },
+    {
+      "id": "plaza-kwp-finance-sox-testing",
+      "status": "draft",
+      "fileCount": 1,
+      "skipped": true
+    },
+    {
+      "id": "plaza-kwp-finance-variance-analysis",
+      "status": "draft",
+      "fileCount": 1,
+      "skipped": true
+    },
+    {
+      "id": "plaza-kwp-legal-brief",
+      "status": "draft",
+      "fileCount": 1,
+      "skipped": true
+    },
+    {
+      "id": "plaza-kwp-legal-compliance-check",
+      "status": "draft",
+      "fileCount": 1,
+      "skipped": true
+    },
+    {
+      "id": "plaza-kwp-legal-legal-response",
+      "status": "draft",
+      "fileCount": 1,
+      "skipped": true
+    },
+    {
+      "id": "plaza-kwp-legal-legal-risk-assessment",
+      "status": "draft",
+      "fileCount": 1,
+      "skipped": true
+    },
+    {
+      "id": "plaza-kwp-legal-meeting-briefing",
+      "status": "draft",
+      "fileCount": 1,
+      "skipped": true
+    },
+    {
+      "id": "plaza-kwp-legal-review-contract",
+      "status": "draft",
+      "fileCount": 1,
+      "skipped": true
+    },
+    {
+      "id": "plaza-kwp-legal-signature-request",
+      "status": "draft",
+      "fileCount": 1,
+      "skipped": true
+    },
+    {
+      "id": "plaza-kwp-legal-triage-nda",
+      "status": "draft",
+      "fileCount": 1,
+      "skipped": true
+    },
+    {
+      "id": "plaza-kwp-legal-vendor-check",
+      "status": "draft",
+      "fileCount": 1,
+      "skipped": true
+    },
+    {
+      "id": "plaza-kwp-product-management-competitive-brief",
+      "status": "draft",
+      "fileCount": 1,
+      "skipped": true
+    },
+    {
+      "id": "plaza-kwp-product-management-metrics-review",
+      "status": "draft",
+      "fileCount": 1,
+      "skipped": true
+    },
+    {
+      "id": "plaza-kwp-product-management-product-brainstorming",
+      "status": "draft",
+      "fileCount": 1,
+      "skipped": true
+    },
+    {
+      "id": "plaza-kwp-product-management-roadmap-update",
+      "status": "draft",
+      "fileCount": 1,
+      "skipped": true
+    },
+    {
+      "id": "plaza-kwp-product-management-sprint-planning",
+      "status": "draft",
+      "fileCount": 1,
+      "skipped": true
+    },
+    {
+      "id": "plaza-kwp-product-management-stakeholder-update",
+      "status": "draft",
+      "fileCount": 1,
+      "skipped": true
+    },
+    {
+      "id": "plaza-kwp-product-management-synthesize-research",
+      "status": "draft",
+      "fileCount": 1,
+      "skipped": true
+    },
+    {
+      "id": "plaza-kwp-product-management-write-spec",
+      "status": "draft",
+      "fileCount": 1,
+      "skipped": true
+    },
+    {
+      "id": "plaza-kwp-operations-capacity-plan",
+      "status": "draft",
+      "fileCount": 1,
+      "skipped": true
+    },
+    {
+      "id": "plaza-kwp-operations-change-request",
+      "status": "draft",
+      "fileCount": 1,
+      "skipped": true
+    },
+    {
+      "id": "plaza-kwp-operations-compliance-tracking",
+      "status": "draft",
+      "fileCount": 1,
+      "skipped": true
+    },
+    {
+      "id": "plaza-kwp-operations-process-doc",
+      "status": "draft",
+      "fileCount": 1,
+      "skipped": true
+    },
+    {
+      "id": "plaza-kwp-operations-process-optimization",
+      "status": "draft",
+      "fileCount": 1,
+      "skipped": true
+    },
+    {
+      "id": "plaza-kwp-operations-risk-assessment",
+      "status": "draft",
+      "fileCount": 1,
+      "skipped": true
+    },
+    {
+      "id": "plaza-kwp-operations-runbook",
+      "status": "draft",
+      "fileCount": 1,
+      "skipped": true
+    },
+    {
+      "id": "plaza-kwp-operations-status-report",
+      "status": "draft",
+      "fileCount": 1,
+      "skipped": true
+    },
+    {
+      "id": "plaza-kwp-operations-vendor-review",
+      "status": "draft",
+      "fileCount": 1,
+      "skipped": true
+    },
+    {
+      "id": "plaza-kwp-sales-account-context",
+      "status": "draft",
+      "fileCount": 1,
+      "skipped": true
+    },
+    {
+      "id": "plaza-kwp-sales-account-plan",
+      "status": "draft",
+      "fileCount": 1,
+      "skipped": true
+    },
+    {
+      "id": "plaza-kwp-sales-account-research",
+      "status": "draft",
+      "fileCount": 1,
+      "skipped": true
+    },
+    {
+      "id": "plaza-kwp-sales-account-tiering",
+      "status": "draft",
+      "fileCount": 1,
+      "skipped": true
+    },
+    {
+      "id": "plaza-kwp-sales-call-prep",
+      "status": "draft",
+      "fileCount": 1,
+      "skipped": true
+    },
+    {
+      "id": "plaza-kwp-sales-call-summary",
+      "status": "draft",
+      "fileCount": 1,
+      "skipped": true
+    },
+    {
+      "id": "plaza-kwp-sales-close-plan",
+      "status": "draft",
+      "fileCount": 1,
+      "skipped": true
+    },
+    {
+      "id": "plaza-kwp-sales-competitive-intelligence",
+      "status": "draft",
+      "fileCount": 1,
+      "skipped": true
+    },
+    {
+      "id": "plaza-kwp-sales-create-an-asset",
+      "status": "draft",
+      "fileCount": 1,
+      "skipped": true
+    },
+    {
+      "id": "plaza-kwp-sales-crm-hygiene-check",
+      "status": "draft",
+      "fileCount": 1,
+      "skipped": true
+    },
+    {
+      "id": "plaza-kwp-sales-customer-health",
+      "status": "draft",
+      "fileCount": 1,
+      "skipped": true
+    },
+    {
+      "id": "plaza-kwp-sales-customer-voice",
+      "status": "draft",
+      "fileCount": 1,
+      "skipped": true
+    },
+    {
+      "id": "plaza-kwp-sales-daily-briefing",
+      "status": "draft",
+      "fileCount": 1,
+      "skipped": true
+    },
+    {
+      "id": "plaza-kwp-sales-deal-advance-gap",
+      "status": "draft",
+      "fileCount": 1,
+      "skipped": true
+    },
+    {
+      "id": "plaza-kwp-sales-deal-review",
+      "status": "draft",
+      "fileCount": 1,
+      "skipped": true
+    },
+    {
+      "id": "plaza-kwp-sales-deal-signals",
+      "status": "draft",
+      "fileCount": 1,
+      "skipped": true
+    },
+    {
+      "id": "plaza-kwp-sales-deal-slip-scenario",
+      "status": "draft",
+      "fileCount": 1,
+      "skipped": true
+    },
+    {
+      "id": "plaza-kwp-sales-draft-outreach",
+      "status": "draft",
+      "fileCount": 1,
+      "skipped": true
+    },
+    {
+      "id": "plaza-kwp-sales-end-of-day",
+      "status": "draft",
+      "fileCount": 1,
+      "skipped": true
+    },
+    {
+      "id": "plaza-kwp-sales-expansion-whitespace",
+      "status": "draft",
+      "fileCount": 1,
+      "skipped": true
+    },
+    {
+      "id": "plaza-kwp-sales-forecast",
+      "status": "draft",
+      "fileCount": 1,
+      "skipped": true
+    },
+    {
+      "id": "plaza-kwp-sales-handle-objection",
+      "status": "draft",
+      "fileCount": 1,
+      "skipped": true
+    },
+    {
+      "id": "plaza-kwp-sales-inbox-sweep",
+      "status": "draft",
+      "fileCount": 1,
+      "skipped": true
+    },
+    {
+      "id": "plaza-kwp-sales-lead-triage",
+      "status": "draft",
+      "fileCount": 1,
+      "skipped": true
+    },
+    {
+      "id": "plaza-kwp-sales-log-activity",
+      "status": "draft",
+      "fileCount": 1,
+      "skipped": true
+    },
+    {
+      "id": "plaza-kwp-sales-pipeline-review",
+      "status": "draft",
+      "fileCount": 1,
+      "skipped": true
+    },
+    {
+      "id": "plaza-kwp-sales-renewal-radar",
+      "status": "draft",
+      "fileCount": 1,
+      "skipped": true
+    },
+    {
+      "id": "plaza-kwp-sales-rep-context",
+      "status": "draft",
+      "fileCount": 1,
+      "skipped": true
+    },
+    {
+      "id": "plaza-kwp-sales-setup",
+      "status": "draft",
+      "fileCount": 1,
+      "skipped": true
+    },
+    {
+      "id": "plaza-kwp-sales-stakeholder-map",
+      "status": "draft",
+      "fileCount": 1,
+      "skipped": true
+    },
+    {
+      "id": "plaza-kwp-sales-team-pipeline",
+      "status": "draft",
+      "fileCount": 1,
+      "skipped": true
+    },
+    {
+      "id": "plaza-kwp-sales-update-opportunity",
+      "status": "draft",
+      "fileCount": 1,
+      "skipped": true
+    },
+    {
+      "id": "plaza-kwp-sales-weekly-wrap",
+      "status": "draft",
+      "fileCount": 1,
+      "skipped": true
+    },
+    {
+      "id": "plaza-kwp-sales-win-loss-review",
+      "status": "draft",
+      "fileCount": 1,
+      "skipped": true
+    },
+    {
+      "id": "plaza-kwp-customer-support-customer-escalation",
+      "status": "draft",
+      "fileCount": 1,
+      "skipped": true
+    },
+    {
+      "id": "plaza-kwp-customer-support-customer-research",
+      "status": "draft",
+      "fileCount": 1,
+      "skipped": true
+    },
+    {
+      "id": "plaza-kwp-customer-support-draft-response",
+      "status": "draft",
+      "fileCount": 1,
+      "skipped": true
+    },
+    {
+      "id": "plaza-kwp-customer-support-kb-article",
+      "status": "draft",
+      "fileCount": 1,
+      "skipped": true
+    },
+    {
+      "id": "plaza-kwp-customer-support-ticket-triage",
+      "status": "draft",
+      "fileCount": 1,
+      "skipped": true
+    },
+    {
+      "id": "plaza-kwp-productivity-memory-management",
+      "status": "draft",
+      "fileCount": 1,
+      "skipped": true
+    },
+    {
+      "id": "plaza-kwp-productivity-start",
+      "status": "draft",
+      "fileCount": 1,
+      "skipped": true
+    },
+    {
+      "id": "plaza-kwp-productivity-task-management",
+      "status": "draft",
+      "fileCount": 1,
+      "skipped": true
+    },
+    {
+      "id": "plaza-kwp-productivity-update",
+      "status": "draft",
+      "fileCount": 1,
+      "skipped": true
+    },
+    {
+      "id": "plaza-kwp-human-resources-comp-analysis",
+      "status": "draft",
+      "fileCount": 1,
+      "skipped": true
+    },
+    {
+      "id": "plaza-kwp-human-resources-draft-offer",
+      "status": "draft",
+      "fileCount": 1,
+      "skipped": true
+    },
+    {
+      "id": "plaza-kwp-human-resources-interview-prep",
+      "status": "draft",
+      "fileCount": 1,
+      "skipped": true
+    },
+    {
+      "id": "plaza-kwp-human-resources-onboarding",
+      "status": "draft",
+      "fileCount": 1,
+      "skipped": true
+    },
+    {
+      "id": "plaza-kwp-human-resources-org-planning",
+      "status": "draft",
+      "fileCount": 1,
+      "skipped": true
+    },
+    {
+      "id": "plaza-kwp-human-resources-people-report",
+      "status": "draft",
+      "fileCount": 1,
+      "skipped": true
+    },
+    {
+      "id": "plaza-kwp-human-resources-performance-review",
+      "status": "draft",
+      "fileCount": 1,
+      "skipped": true
+    },
+    {
+      "id": "plaza-kwp-human-resources-policy-lookup",
+      "status": "draft",
+      "fileCount": 1,
+      "skipped": true
+    },
+    {
+      "id": "plaza-kwp-human-resources-recruiting-pipeline",
+      "status": "draft",
+      "fileCount": 1,
+      "skipped": true
+    }
+  ]
+}

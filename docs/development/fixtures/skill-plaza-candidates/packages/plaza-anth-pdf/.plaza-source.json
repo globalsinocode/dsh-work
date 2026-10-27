@@ -1,0 +1,21 @@
+{
+  "id": "plaza-anth-pdf",
+  "repo": "skills",
+  "sourcePath": "skills/pdf",
+  "commit": "dbd4588f9e1033efb41dad4bef2f7947c8993d44",
+  "notes": "source-available; may require python_execute after import",
+  "files": [
+    "LICENSE.txt",
+    "SKILL.md",
+    "forms.md",
+    "reference.md",
+    "scripts/check_bounding_boxes.py",
+    "scripts/check_fillable_fields.py",
+    "scripts/convert_pdf_to_images.py",
+    "scripts/create_validation_image.py",
+    "scripts/extract_form_field_info.py",
+    "scripts/extract_form_structure.py",
+    "scripts/fill_fillable_fields.py",
+    "scripts/fill_pdf_form_with_annotations.py"
+  ]
+}

@@ -9,37 +9,30 @@ const fixturesRoot = join(repoRoot, 'docs/development/fixtures/skill-plaza-candi
 const packagesRoot = join(fixturesRoot, 'packages')
 const superpowersCache = join(fixturesRoot, '.cache/repos/obra__superpowers')
 
-const ANTH_WITH_OFFICE_SCHEMAS = new Set(['plaza-anth-docx', 'plaza-anth-pptx', 'plaza-anth-xlsx'])
-const WB_TOOL_PATCH = new Set(['plaza-wb-deep-research', 'plaza-wb-excalidraw-diagram', 'plaza-wb-fbs-bookwriter'])
+const ANTH_WITH_OFFICE_SCHEMAS = new Set(['plaza-anth-pptx', 'plaza-anth-xlsx'])
 
 const SDD_SCRIPT_NAMES = ['task-brief', 'sdd-workspace', 'review-package']
 
-const BOOKWRITER_STUB = `---
-name: fbs-bookwriter
-description: "广场精简版：福帮手长文档工作流摘要（完整包见 WorkBuddy 市场）。书籍、手册、白皮书与长篇报道的结构化写作与分层审校指引。"
-version: 2.1.2-plaza-stub
-allowed-tools: Read, Glob, Grep
----
-
-# FBS BookWriter（广场精简版）
-
-本包为 **Skill 广场待验证草稿**，仅保留核心工作流说明，不含原参考文件树与构建脚本。
-
-## 适用场景
-
-书籍、手册、白皮书、行业指南、长篇报道与深度专题。
-
-## 推荐流程
-
-1. 澄清目标读者、体裁、篇幅与交付格式（MD/HTML）。
-2. 产出大纲与章节分工，确认后逐章撰写。
-3. 分层审校：结构 → 事实 → 文风 → 排版。
-4. 导出前做中文排版与引用检查。
-
-## 完整能力
-
-生产环境请使用原 WorkBuddy \`fbs-bookwriter\` 技能包。本广场版用于流程预览与 \`parseSkillPackage\` 合规校验。
-`
+/** Avoid false `scripts/…` / `assets/…` path matches inside upstream prose (e.g. `transcripts/docs`). */
+function sanitizePlazaSkillReferenceFalsePositives(markdown, skillId) {
+  let text = markdown
+    .replace(/subscripts\/superscripts/g, 'subscripts and superscripts')
+    .replace(/transcripts\/threads/gi, 'transcripts and threads')
+    .replace(/transcripts\/notes/gi, 'transcripts and notes')
+    .replace(/transcripts\/chat/gi, 'transcripts and chat')
+    .replace(/transcripts\/docs/gi, 'transcripts and docs')
+    .replace(/transcripts\//gi, 'transcripts, ')
+    .replace(/crm\/transcripts/gi, 'crm and transcripts')
+    .replace(/crm\/email/gi, 'crm and email')
+    .replace(/docs\/crm/gi, 'docs and crm')
+    .replace(/docs\/email/gi, 'docs and email')
+    .replace(/email\/transcripts/gi, 'email and transcripts')
+  if (skillId === 'plaza-sp-executing-plans') {
+    text = text.replace(/`scripts\/review-package/g, '`references/code-reviewer.md')
+    text = text.replace(/scripts\/review-package/g, 'references/code-reviewer.md')
+  }
+  return text
+}
 
 export async function refreshPlazaMeta(outDir) {
   const files = []
@@ -58,17 +51,6 @@ export async function refreshPlazaMeta(outDir) {
   const meta = JSON.parse(await readFile(metaPath, 'utf8'))
   meta.files = files
   await writeFile(metaPath, `${JSON.stringify(meta, null, 2)}\n`, 'utf8')
-}
-
-function normalizeAllowedTools(markdown) {
-  const match = markdown.match(/^---\r?\n([\s\S]*?)\r?\n---/)
-  if (!match) return markdown
-  let yaml = match[1]
-  // Block list form and scalar lines; last key may lack trailing newline before closing ---
-  yaml = yaml.replace(/^allowed-tools:\s*\n(?:[ \t]+-\s+.+\n)+/gm, '')
-  yaml = yaml.replace(/^allowed-tools:.*(?:\r?\n|$)/gm, '')
-  yaml = `${yaml.trimEnd()}\nallowed-tools: Read, Glob, Grep\n`
-  return markdown.replace(match[0], `---\n${yaml}\n---`)
 }
 
 async function firstExisting(paths) {
@@ -115,20 +97,31 @@ async function postProcessExecutingPlans(outDir) {
   let skill = await readFile(join(outDir, 'SKILL.md'), 'utf8')
   skill = skill.replaceAll('../subagent-driven-development/scripts/', 'scripts/')
   await writeFile(join(outDir, 'SKILL.md'), skill)
+  await normalizeExecutingPlanScriptFiles(outDir)
+}
+
+/** Plaza parser only accepts documented text extensions; shell helpers ship as `.txt` stubs. */
+async function normalizeExecutingPlanScriptFiles(outDir) {
+  const names = ['sdd-workspace', 'task-start', 'task-done', 'task-brief', 'review-package']
+  let skill = await readFile(join(outDir, 'SKILL.md'), 'utf8')
+  for (const name of names) {
+    const scriptPath = join(outDir, 'scripts', name)
+    try {
+      await access(scriptPath)
+    } catch {
+      continue
+    }
+    const body = await readFile(scriptPath, 'utf8')
+    await writeFile(join(outDir, 'scripts', `${name}.txt`), body)
+    await rm(scriptPath, { force: true })
+    skill = skill.replaceAll(new RegExp(`scripts/${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?!\\.txt)`, 'g'), `scripts/${name}.txt`)
+  }
+  skill = skill.replaceAll(/\.txt\.txt/g, '.txt')
+  await writeFile(join(outDir, 'SKILL.md'), skill)
 }
 
 async function postProcessAnthOffice(outDir) {
   await rm(join(outDir, 'scripts/office/schemas'), { recursive: true, force: true })
-}
-
-async function postProcessBookwriterStub(outDir) {
-  for (const ent of await readdir(outDir, { withFileTypes: true })) {
-    if (ent.name === '.plaza-source.json') continue
-    const full = join(outDir, ent.name)
-    if (ent.isDirectory()) await rm(full, { recursive: true, force: true })
-    else await rm(full, { force: true })
-  }
-  await writeFile(join(outDir, 'SKILL.md'), BOOKWRITER_STUB)
 }
 
 export async function postProcessSkillPackage(skillId, outDir) {
@@ -137,17 +130,14 @@ export async function postProcessSkillPackage(skillId, outDir) {
   } catch {
     return
   }
+  const skillPath = join(outDir, 'SKILL.md')
+  const sanitized = sanitizePlazaSkillReferenceFalsePositives(await readFile(skillPath, 'utf8'), skillId)
+  await writeFile(skillPath, sanitized)
   if (skillId === 'plaza-sp-executing-plans') {
     await postProcessExecutingPlans(outDir)
   }
   if (ANTH_WITH_OFFICE_SCHEMAS.has(skillId)) {
     await postProcessAnthOffice(outDir)
-  }
-  if (skillId === 'plaza-wb-fbs-bookwriter') {
-    await postProcessBookwriterStub(outDir)
-  } else if (WB_TOOL_PATCH.has(skillId)) {
-    const skill = normalizeAllowedTools(await readFile(join(outDir, 'SKILL.md'), 'utf8'))
-    await writeFile(join(outDir, 'SKILL.md'), skill)
   }
   await refreshPlazaMeta(outDir)
 }

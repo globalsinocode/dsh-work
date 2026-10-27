@@ -1,0 +1,26 @@
+{
+  "id": "plaza-anth-pptx",
+  "repo": "skills",
+  "sourcePath": "skills/pptx",
+  "commit": "dbd4588f9e1033efb41dad4bef2f7947c8993d44",
+  "notes": "source-available; may require python_execute after import",
+  "files": [
+    "LICENSE.txt",
+    "SKILL.md",
+    "scripts/__init__.py",
+    "scripts/add_slide.py",
+    "scripts/clean.py",
+    "scripts/office/helpers/__init__.py",
+    "scripts/office/helpers/pptx_chart.py",
+    "scripts/office/helpers/pptx_slide.py",
+    "scripts/office/helpers/pptx_theme.py",
+    "scripts/office/soffice.py",
+    "scripts/office/validate.py",
+    "scripts/office/validators/__init__.py",
+    "scripts/office/validators/base.py",
+    "scripts/office/validators/docx.py",
+    "scripts/office/validators/pptx.py",
+    "scripts/office/validators/redlining.py",
+    "scripts/thumbnail.py"
+  ]
+}

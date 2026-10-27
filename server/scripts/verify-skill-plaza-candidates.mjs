@@ -11,6 +11,19 @@ const fixturesRoot = join(repoRoot, 'docs/development/fixtures/skill-plaza-candi
 const zipDir = join(repoRoot, 'dist/skill-plaza-packages')
 
 const source = JSON.parse(await readFile(join(fixturesRoot, 'SOURCE.json'), 'utf8'))
+
+function acceptableRepositoryLicense(repoKey) {
+  const license = source.repos?.[repoKey]?.license ?? ''
+  return license.length > 0 && !/^none\b/i.test(license)
+}
+
+const licenseRejected = source.skills.filter(skill => !acceptableRepositoryLicense(skill.repo))
+if (licenseRejected.length) {
+  console.error('SOURCE.json contains skills from repositories without an acceptable license:')
+  for (const skill of licenseRejected) console.error(`  - ${skill.id} (${skill.repo})`)
+  process.exit(1)
+}
+
 const zipNames = (await readdir(zipDir)).filter(n => n.endsWith('.zip')).sort()
 const zipIds = new Set(zipNames.map(n => n.replace(/\.zip$/, '')))
 const expectedIds = source.skills.map(s => s.id).sort()
@@ -64,7 +77,6 @@ function publishBlockers(pkg, skill) {
   if (pkg.compatibility.status === 'needs_review') blockers.push('needs_review')
   if (pkg.files.some(f => f.path.endsWith('.py'))) blockers.push('python_execute')
   if (skill.notes?.license === 'source-available') blockers.push('source_available_license')
-  if (skill.repo === 'workbuddy') blockers.push('no_repo_license')
   blockers.push('batch_01_manual_signoff')
   return blockers
 }
@@ -101,7 +113,6 @@ const reportLines = [
   '',
   '- 含 `.py` 的文档技能需在受控环境执行 `python_execute` 试运行后再考虑发布。',
   '- KWP 技能若引用 Slack/日历等连接器，仅作写作流程使用，不宣称已接通外部系统。',
-  '- WorkBuddy 补充包无仓库许可证，发布前需法务确认。',
   '',
   '## 明细',
   '',
