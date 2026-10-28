@@ -63,7 +63,8 @@ function accessFixture(overrides: Partial<AgentAccess> = {}): AgentAccess {
   return {
     agentId: draftAgent.id, revision: 2, principalId: `principal-agent-${draftAgent.id}`, principalStatus: 'active',
     visibleRoleIds: ['role-employee'], roleIds: ['role-employee'], dataScopes: [],
-    roleOptions: [{ id: 'role-employee', name: '普通员工', status: 'active' }], scopeOptions: [],
+    roleOptions: [{ id: 'role-employee', name: '普通员工', status: 'active', privileged: false }], scopeOptions: [],
+    capabilities: [],
     routines: [],
     ...overrides,
   }
