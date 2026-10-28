@@ -22,7 +22,7 @@ MVP 聚焦三类业务场景：
 MVP 明确不包含：
 
 - 员工自建 Tool、Connector、插件或 MCP；
-- 任意 Shell、任意 SQL 或 DSH Web UI 直达（执行容器内的受控单次 `bash` 已实现但随执行容器模式默认关闭，Mac mini 验收前不在生产开启，见[执行隔离方案](../design/execution-isolation-plan.md)）；
+- 任意 Shell、任意 SQL 或 DSH Web UI 直达（执行容器内的受控单次 `bash` 已实现，随执行容器模式默认关闭；C 档 P2 已于 2026-10-28 在 Mac mini 验收通过，生产开启仍需单独批准，见[执行隔离方案](../design/execution-isolation-plan.md)）；
 - 写入 ERP/MES 等高风险业务操作；
 - PPT 生成、开放式 Agent 市场和跨企业多租户 SaaS；
 - 为了形式上的“平台化”拆分业务微服务。
