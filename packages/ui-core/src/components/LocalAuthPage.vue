@@ -26,13 +26,34 @@ const returnTo = (() => {
 })()
 const loginLink = `/login?return_to=${encodeURIComponent(returnTo)}`
 
+const configurationPath = `/auth/${props.audience}/configuration`
+const configurationAttempts = 12
+const configurationRetryMs = 1_000
+
+async function loadConfiguration(): Promise<{ mode: string; localEnabled?: boolean; aiHubEnabled?: boolean }> {
+  let lastError: Error | undefined
+  for (let attempt = 1; attempt <= configurationAttempts; attempt += 1) {
+    try {
+      const response = await fetch(configurationPath, { credentials: 'same-origin' })
+      if (!response.ok) throw new Error('暂时无法加载登录配置，请重试')
+      return await response.json() as { mode: string; localEnabled?: boolean; aiHubEnabled?: boolean }
+    } catch (cause) {
+      lastError = cause instanceof Error ? cause : new Error('登录服务暂不可用')
+      if (attempt < configurationAttempts) {
+        await new Promise(resolve => window.setTimeout(resolve, configurationRetryMs))
+        continue
+      }
+    }
+  }
+  throw new Error('暂时无法加载登录配置，请确认后端已启动后重试')
+}
+
 async function initialize() {
   loading.value = true
   error.value = ''
+  ready.value = false
   try {
-    const response = await fetch(`/auth/${props.audience}/configuration`, { credentials: 'same-origin' })
-    if (!response.ok) throw new Error('暂时无法加载登录配置，请重试')
-    const configuration = await response.json() as { mode: string; localEnabled?: boolean; aiHubEnabled?: boolean }
+    const configuration = await loadConfiguration()
     if (!['prototype', 'local', 'oidc'].includes(configuration.mode)) throw new Error('登录配置无效，请联系管理员')
     if (configuration.mode === 'prototype') {
       window.location.replace(props.audience === 'admin' ? '/overview' : '/workbench')

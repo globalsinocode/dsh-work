@@ -7,6 +7,7 @@ import {
   parseCookies, resolveRequestOrigin, serializeCookie, validateRequestOrigin,
 } from './auth-service.ts'
 import { lockPlatformAdminInvariant, requireAnotherPlatformAdmin } from './administration-service.ts'
+import { resolveLocalLoginRejection } from './local-login-rejection.ts'
 import { hashPassword, normalizeUsername, verifyPassword } from './password.ts'
 import { loginAccountCandidates, normalizeLoginAccount } from './login-account.ts'
 import { hashOpaque, randomOpaque } from './secure-values.ts'
@@ -20,6 +21,7 @@ interface CredentialRow {
   passwordHash: string
   mustChangePassword: boolean
   active: boolean
+  identityProvider: string
 }
 
 export interface LocalAccountInput {
@@ -68,11 +70,11 @@ export class LocalAuthService {
     const accountKey = `login:${username}`
     await this.rateLimit(accountKey)
     // Derive outside the transaction so no row lock or pooled connection is held during scrypt.
-    const [candidate] = await this.database<{ passwordHash: string }[]>`
-      select c.password_hash as "passwordHash"
+    const [candidate] = await this.database<{ passwordHash: string; identityProvider: string }[]>`
+      select c.password_hash as "passwordHash", u.identity_provider as "identityProvider"
         from local_user_credentials c
         join users u on u.tenant_id = c.tenant_id and u.id = c.user_id
-       where c.tenant_id = ${tenantId} and c.username = ${username} and u.identity_provider = 'local'
+       where c.tenant_id = ${tenantId} and c.username = ${username}
     `
     const valid = await verifyPassword(input.password, candidate?.passwordHash ?? null)
     const sessionToken = randomOpaque()
@@ -81,15 +83,17 @@ export class LocalAuthService {
       const [credential] = await transaction<CredentialRow[]>`
         select c.user_id as "userId", c.password_hash as "passwordHash",
                c.must_change_password as "mustChangePassword", u.external_subject as subject,
+               u.identity_provider as "identityProvider",
                (u.status = 'active' and u.business_user and t.status = 'active') as active
           from local_user_credentials c
           join users u on u.tenant_id = c.tenant_id and u.id = c.user_id
           join tenants t on t.id = u.tenant_id
-         where c.tenant_id = ${tenantId} and c.username = ${username} and u.identity_provider = 'local'
+         where c.tenant_id = ${tenantId} and c.username = ${username}
          for update of u, c
       `
       // Recheck under the lock: a concurrent password change or reset invalidates the verified hash.
-      if (!valid || !credential?.active || credential.passwordHash !== candidate?.passwordHash) {
+      if (!credential || credential.identityProvider !== 'local' || !credential.active
+        || !valid || credential.passwordHash !== candidate?.passwordHash) {
         await localAudit(transaction, credential?.userId ?? 'anonymous', 'identity.login', 'failed')
         return null
       }
@@ -111,7 +115,7 @@ export class LocalAuthService {
       await localAudit(transaction, credential.userId, 'identity.login', 'success', { audience })
       return { mustChangePassword: credential.mustChangePassword }
     })
-    if (!result) throw new IdentityAccessError(401, 'invalid_credentials', '账号或密码错误，或账号已停用')
+    if (!result) throw await resolveLocalLoginRejection(this.database, username, input.password)
     await this.clearRateLimit(accountKey)
     const returnTo = normalizeReturnTo(typeof input.returnTo === 'string' ? input.returnTo : null, origin)
     const location = result.mustChangePassword

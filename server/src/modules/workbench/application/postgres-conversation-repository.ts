@@ -167,6 +167,7 @@ interface SourceRow {
 }
 
 interface AttachmentRow {
+  id: string
   name: string
 }
 
@@ -1662,7 +1663,7 @@ export class PostgresConversationRepository {
     const evidence = await this.loadTaskResultEvidence(row, committedMessageIds)
     const attachments = row.currentAttemptId
       ? await this.database<AttachmentRow[]>`
-          select f.original_name as name from run_input_files rif
+          select f.id as id, f.original_name as name from run_input_files rif
           join file_objects f on f.tenant_id = rif.tenant_id and f.id = rif.file_id
            where rif.tenant_id = ${tenantId} and rif.run_id = ${row.id}
              and rif.attempt_id = ${row.currentAttemptId}
@@ -1711,8 +1712,9 @@ export class PostgresConversationRepository {
       result,
       artifacts: runArtifacts.map(artifact => mapArtifactRow(artifact, row.id)),
       // Run 详情里的 attachments 是文件名列表（既有契约：客户端按扩展名渲染芯片，
-      // m4-file-analysis 直接断言字符串数组）。需要文件 id 的调用方走 artifacts / 文件接口。
+      // m4-file-analysis 直接断言字符串数组）。需要 file_objects.id 的调用方读 inputFiles。
       attachments: attachments.map(attachment => attachment.name),
+      inputFiles: attachments.map(attachment => ({ id: attachment.id, name: attachment.name })),
       skill: row.selectedSkillId && row.selectedSkillName && row.selectedSkillVersion
         ? { id: row.selectedSkillId, name: row.selectedSkillName, version: row.selectedSkillVersion }
         : undefined,

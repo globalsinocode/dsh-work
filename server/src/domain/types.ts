@@ -124,6 +124,8 @@ export interface TaskRun {
   messages: ChatMessage[]
   steps: RunStep[]
   attachments: string[]
+  /** 本轮 Run 输入文件（含 file_objects.id），供客户端预览/下载；attachments 仍为文件名列表契约。 */
+  inputFiles?: Array<{ id: string; name: string }>
   /**
    * 展示视图：该 Run 全部 Attempt 产出的成果、每成果最新版本（26-10-24 起随
    * run 详情返回），供对话页芯片/详情抽屉消费。result.artifacts 保持核验口径

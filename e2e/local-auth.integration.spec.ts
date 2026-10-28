@@ -22,7 +22,7 @@ test('LOCAL-AUTH-P1 administrator provisions an employee, changes revoke session
   await page.goto(`${adminUrl}/identity`)
   await expect(page.getByRole('heading', { name: '登录运营平台' })).toBeVisible()
   await signIn(page, 'browser.admin@example.invalid', 'intentionally wrong')
-  await expect(page.getByRole('alert')).toContainText('账号或密码错误')
+  await expect(page.getByRole('alert')).toContainText('密码错误')
   await signIn(page, 'browser.admin@example.invalid', 'AdminPass123')
   await expect(page).toHaveURL(`${adminUrl}/identity`)
   await expect(page.getByRole('button', { name: '同步员工', exact: true })).toHaveCount(0)
@@ -116,7 +116,7 @@ test('LOCAL-AUTH-P1 administrator provisions an employee, changes revoke session
     await employee.reload()
     await expect(employee.getByRole('heading', { name: '登录员工工作台' })).toBeVisible()
     await signIn(employee, username, privatePassword)
-    await expect(employee.getByRole('alert')).toContainText('账号或密码错误')
+    await expect(employee.getByRole('alert')).toContainText('密码错误')
 
     await drawer.getByRole('button', { name: '启用账号', exact: true }).click()
     await page.getByRole('dialog', { name: '确认启用账号' }).getByRole('button', { name: '确认', exact: true }).click()

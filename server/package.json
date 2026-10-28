@@ -81,6 +81,7 @@
     "test:review:p2:skill:integration": "node --env-file-if-exists=../.env --experimental-strip-types --test src/infrastructure/postgres/review-p2-skill-errors.integration.test.ts",
     "test:review:p2:logging": "node --env-file-if-exists=../.env --experimental-strip-types --test src/http/review-p2-error-logging.test.ts",
     "auth:bootstrap": "node --env-file-if-exists=../.env --experimental-strip-types src/modules/identity/local-bootstrap.ts",
+    "auth:import-ai-hub-local": "node --env-file-if-exists=../.env --experimental-strip-types src/modules/identity/import-ai-hub-local-password.ts",
     "test:builtin-tools:integration": "node --env-file-if-exists=../.env --experimental-strip-types --test src/infrastructure/postgres/builtin-tools.integration.test.ts",
     "test:s5:conversation-targets:integration": "node --env-file-if-exists=../.env --experimental-strip-types --test src/http/conversation-targets-api.integration.test.ts",
     "test:s5:timeline:integration": "node --env-file-if-exists=../.env --experimental-strip-types --test src/http/workspace-timeline-api.integration.test.ts",
