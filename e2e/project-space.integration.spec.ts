@@ -317,25 +317,28 @@ test.describe('MODE-E2E-09/10 协作模式群聊（S5d）', () => {
 
     // 只有一个可发起的 Agent 时预选它；改为讨论后发送不产生执行。
     const discussion = uniqueTitle('MODE-09 讨论')
+    const entriesBefore = await chat.getByTestId('group-run-entry').count()
     const preset = page.getByRole('button', { name: '改为讨论' })
     if (await preset.isVisible()) await preset.click()
     await page.getByLabel('对话输入').fill(discussion)
     await page.getByRole('button', { name: '发送消息', exact: true }).click()
     await expect(chat.locator('.user-message', { hasText: discussion })).toBeVisible()
-    await expect(chat.getByTestId('group-run-record').filter({ hasText: discussion })).toHaveCount(0)
+    await expect(chat.getByTestId('group-run-entry')).toHaveCount(entriesBefore)
 
-    // @Agent：出现执行记录，Agent 回复进入时间线；续写最近一段讨论（不新增话题）。
+    // @Agent：回复进入时间线并标注发起人，问题与回复之间不再单独显示执行记录（D36）；续写最近一段讨论（不新增话题）。
     const dividers = await chat.locator('.collab-group-timeline__divider').count()
     const ask = uniqueTitle('MODE-09 执行')
     await page.getByRole('button', { name: /^交给 @/ }).click()
     await page.getByLabel('对话输入').fill(ask)
     await page.getByRole('button', { name: '发送消息', exact: true }).click()
-    await expect(chat.getByTestId('group-run-record').last()).toBeVisible()
     await expect(chat.getByText(/受控测试运行已完成/).last()).toBeVisible({ timeout: 20_000 })
+    await expect(chat.getByTestId('group-run-entry')).toHaveCount(entriesBefore)
     expect(await chat.locator('.collab-group-timeline__divider').count()).toBe(dividers)
 
-    // 执行记录进入群组内的执行详情（与工作模式同一页面）。
-    await chat.getByTestId('group-run-record').last().click()
+    // 回复下的“查看执行详情”进入群组内的执行详情（与工作模式同一页面）。
+    const reply = chat.locator('.conversation-message--assistant:not([data-testid="group-run-entry"])', { hasText: '受控测试运行已完成' }).last()
+    await expect(reply).toContainText('发起')
+    await reply.getByRole('button', { name: '查看执行详情' }).click()
     await expect(page).toHaveURL(new RegExp(`/c/chats/group/${seed.workspaceId}/conversations/run-`))
     await page.getByRole('tab', { name: '对话' }).click()
 

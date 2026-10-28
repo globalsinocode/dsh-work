@@ -264,7 +264,17 @@ test('MODE-E2E-09/10: a group shows its chat timeline, the shared tabs and the g
   // 冒烟夹具的空间没有 Agent 成员：按 12.8 提示先添加 Agent。
   await expect(page.getByTestId('group-no-agent-notice')).toBeVisible()
 
-  await chat.getByTestId('group-run-record').first().click()
+  // D36：执行记录并入 Agent 回复——有回复的执行不再单独占一行；执行中的执行以 Agent 条目显示进度。
+  const answered = chat.locator('.conversation-message--assistant', { hasText: '本月华东区共有 126 张在制订单' })
+  await expect(answered).toContainText('由 林岚 发起')
+  await expect(answered.getByRole('button', { name: '查看执行详情' })).toBeVisible()
+  const running = chat.getByTestId('group-run-entry')
+  await expect(running).toHaveCount(1)
+  await expect(running).toContainText('由 林岚 发起')
+  await expect(running).toContainText(/执行中 · 已用/)
+  await expect(running.getByRole('list', { name: '执行步骤' })).toBeVisible()
+  await expect(running.getByRole('button', { name: '停止' })).toBeVisible()
+  await running.getByRole('button', { name: '查看执行详情' }).click()
   await expect(page).toHaveURL(/\/c\/chats\/group\/ws-supply\/conversations\/run-/)
 
   await page.getByRole('tab', { name: /^文件/ }).click()

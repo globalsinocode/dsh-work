@@ -3,10 +3,10 @@ import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { Close, Document } from '@element-plus/icons-vue'
-import { StatusTag } from '@dsh-work/ui-core'
 import { TaskComposer, describeWorkspaceActivity } from '@dsh-work/workbench-components'
 
 import ConversationMessageItem from '@/components/conversation/ConversationMessageItem.vue'
+import CollabGroupRunEntry from './CollabGroupRunEntry.vue'
 import { workbenchApi } from '@/api/client'
 import { collabSpaceRoutes } from '@/composables/space-routes'
 import { useAuthStore } from '@/stores/auth'
@@ -19,7 +19,8 @@ import '@/styles/conversation-thread.css'
 
 /**
  * 群聊（S5d，D26～D28）：一个群组的讨论话题连续显示（段首“话题 · 时间”），任务以卡片出现，
- * 夹有执行记录与系统记录。发言规则与 A 的共享讨论一致（3.4）：不 @ 是讨论，@ Agent 才执行，
+ * 夹有系统记录。执行记录并入 Agent 回复：已有回复的执行只由回复（“由某人发起”“查看执行详情”）
+ * 表示，还没有回复的执行以 Agent 条目显示进度或结果。发言规则与 A 的共享讨论一致（3.4）：不 @ 是讨论，@ Agent 才执行，
  * 只有一个可发起的 Agent 时预选它且可取消；发送续写最近一段讨论，没有讨论时开启第一段。
  * 任务卡片进入群组的任务详情，执行记录进入群组内的执行详情（与 A 同一页面）。
  */
@@ -58,11 +59,17 @@ const preselect = ref(true)
 watch(singleAgent, () => { preselect.value = true })
 
 type DisplayItem = WorkspaceTimelineItem & { divider?: string }
+type RunItem = Extract<WorkspaceTimelineItem, { kind: 'run' }>
 
-/** 旧到新显示；讨论消息与执行记录换到另一段会话时插入“话题 · 时间”分隔。 */
+/** 已加载范围内有 Agent 回复的执行：执行记录由回复代表，不再单独显示。 */
+const repliedRunIds = computed(() => new Set(items.value.flatMap(item =>
+  item.kind === 'message' && item.role === 'assistant' && item.runId ? [item.runId] : [])))
+const runsById = computed(() => new Map(items.value.flatMap(item => item.kind === 'run' ? [[item.runId, item] as const] : [])))
+
+/** 旧到新显示；讨论消息与执行换到另一段会话时插入“话题 · 时间”分隔。 */
 const displayItems = computed<DisplayItem[]>(() => {
   let session: string | undefined
-  return [...items.value].reverse().map(item => {
+  return [...items.value].reverse().filter(item => item.kind !== 'run' || !repliedRunIds.value.has(item.runId)).map(item => {
     if (item.kind !== 'message' && item.kind !== 'run') return item
     if (item.sessionId === session) return item
     session = item.sessionId
@@ -129,6 +136,50 @@ function isOwnMessage(item: Extract<WorkspaceTimelineItem, { kind: 'message' }>)
 
 function openRun(runId: string) {
   void router.push(collabSpaceRoutes.conversation(props.workspaceId, runId))
+}
+
+/** 尚未结束的执行（与执行详情一致）。 */
+const activeRunStatuses = ['queued', 'running', 'awaiting_approval', 'waiting', 'cancel_requested']
+
+/** 回复所属执行还没结束或没有正常完成时（等待确认、失败、停止后仍有回复），在身份行标出。 */
+function replyTag(item: Extract<WorkspaceTimelineItem, { kind: 'message' }>) {
+  const run = item.role === 'assistant' && item.runId ? runsById.value.get(item.runId) : undefined
+  if (run?.status === 'queued' || run?.status === 'running') return '执行中'
+  if (run?.status === 'awaiting_approval' || run?.status === 'waiting') return '等待确认'
+  if (run?.status === 'cancel_requested') return '正在停止'
+  if (run?.status === 'failed') return '执行失败'
+  if (run?.status === 'cancelled') return run.stoppedByName ? `${run.stoppedByName} 停止` : '已停止'
+  return undefined
+}
+
+/**
+ * 还在进行的执行读取 Run 详情并订阅其事件，Agent 条目据此显示步骤与计时；本人发起的执行
+ * 已在发送时订阅。读取失败时条目只显示状态。
+ */
+watch(
+  () => items.value.flatMap(item => item.kind === 'run' && activeRunStatuses.includes(item.status) ? [item.runId] : []),
+  (runIds) => {
+    for (const runId of runIds) {
+      if (!taskStore.getTask(runId)) void taskStore.loadTask(runId).catch(() => undefined)
+    }
+  },
+)
+
+const stoppingRunIds = ref<Set<string>>(new Set())
+
+async function stopRun(item: RunItem) {
+  if (stoppingRunIds.value.has(item.runId)) return
+  stoppingRunIds.value = new Set([...stoppingRunIds.value, item.runId])
+  try {
+    await taskStore.cancelTask(item.runId)
+    await reloadNewest()
+  } catch (cause) {
+    notifyActionFailure('停止执行', `${item.agentName ?? 'Agent'} 的执行`, cause, '稍后重试，或在执行详情中停止。')
+  } finally {
+    const next = new Set(stoppingRunIds.value)
+    next.delete(item.runId)
+    stoppingRunIds.value = next
+  }
 }
 
 function openTask(item: Extract<WorkspaceTimelineItem, { kind: 'task' }>) {
@@ -306,7 +357,7 @@ onBeforeUnmount(() => {
             </p>
 
             <div v-if="item.kind === 'message'" class="collab-group-timeline__message">
-              <ConversationMessageItem :message="{ ...item, createdAt: formatTime(item.at) }" :own="isOwnMessage(item)">
+              <ConversationMessageItem :message="{ ...item, createdAt: formatTime(item.at) }" :own="isOwnMessage(item)" :tag="replyTag(item)">
                 <button
                   v-if="item.runId"
                   type="button"
@@ -316,19 +367,19 @@ onBeforeUnmount(() => {
               </ConversationMessageItem>
             </div>
 
-            <button
+            <CollabGroupRunEntry
               v-else-if="item.kind === 'run'"
-              type="button"
-              class="collab-group-timeline__record collab-group-timeline__record--run"
-              data-testid="group-run-record"
-              @click="openRun(item.runId)"
-            >
-              <StatusTag :status="item.status" dot />
-              <span>
-                {{ item.requesterName }} 让 {{ item.agentName ?? 'Agent' }} 执行<template v-if="item.stoppedByName"> · {{ item.stoppedByName }} 停止</template>
-              </span>
-              <span class="collab-group-timeline__record-time">{{ formatTime(item.at) }}</span>
-            </button>
+              :status="item.status"
+              :agent-name="item.agentName"
+              :requester-name="item.requesterName"
+              :stopped-by-name="item.stoppedByName"
+              :time="formatTime(item.at)"
+              :task="taskStore.getTask(item.runId)"
+              :can-stop="canWrite && !archived"
+              :stopping="stoppingRunIds.has(item.runId)"
+              @open="openRun(item.runId)"
+              @stop="stopRun(item)"
+            />
 
             <article
               v-else-if="item.kind === 'task'"
@@ -467,22 +518,6 @@ onBeforeUnmount(() => {
   cursor: pointer;
   font-size: var(--dsh-font-size-caption);
 }
-
-.collab-group-timeline__record--run {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  align-self: flex-start;
-  padding: 6px 12px;
-  border: 1px solid var(--dsh-color-border);
-  border-radius: 999px;
-  color: var(--dsh-color-text);
-  background: var(--collab-canvas, var(--dsh-color-canvas));
-  cursor: pointer;
-  font-size: var(--dsh-font-size-caption);
-}
-
-.collab-group-timeline__record-time { color: var(--dsh-color-muted); }
 
 .collab-task-card {
   align-self: stretch;
