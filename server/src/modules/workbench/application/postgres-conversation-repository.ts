@@ -1300,9 +1300,12 @@ export class PostgresConversationRepository {
     })
     const hasMoreMessages = loaded.length > sessionThreadMessageLimit
     const messages = hasMoreMessages ? loaded.slice(1) : loaded
-    const attachmentsByRun = await this.loadRunAttachments([
-      ...new Set(messages.map(message => message.runId).filter((id): id is string => Boolean(id))),
-    ])
+    const pageRunIds = [...new Set(messages.map(message => message.runId).filter((id): id is string => Boolean(id)))]
+    const attachmentsByRun = await this.loadRunAttachments(pageRunIds)
+    // 本页各 Run 当前 Attempt 登记的成果（带 runId），供任务对话把成果卡挂在对应回复下；
+    // 与 Run 详情的成果同源，读取权限由调用方对会话的校验覆盖。
+    const artifacts = (await this.loadThreadArtifactsForRuns(pageRunIds))
+      .map(artifact => mapArtifactRow(artifact, artifact.sourceRunId))
     const runs = await this.database<{
       id: string
       status: RunState
@@ -1352,6 +1355,7 @@ export class PostgresConversationRepository {
       latestRun: runs.length > 0
         ? { id: runs[runs.length - 1]!.id, status: runs[runs.length - 1]!.status }
         : null,
+      artifacts,
       // 「加载更早」契约（评审中3）：hasMoreMessages 为 true 时，用
       // messagesCursor（本页最旧一条消息的 id）作 before 参数再取上一页。
       hasMoreMessages,

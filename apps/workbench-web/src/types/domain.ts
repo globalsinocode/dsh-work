@@ -240,6 +240,8 @@ export interface SessionThread {
     stoppedByName?: string | null
     createdAt: string
   }>
+  /** 本页消息所属各 Run 当前 Attempt 登记的成果（带 runId）；旧服务端缺省。 */
+  artifacts?: Artifact[]
   /** 还有更早的消息页时 true；用 messagesCursor 作 before 翻页。 */
   hasMoreMessages?: boolean
   messagesCursor?: string | null

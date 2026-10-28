@@ -228,9 +228,35 @@ const isConversationThreadRoute = computed(() => spaceView(route) === 'conversat
 /** 项目任务详情（含其任务线程子路由）：始终停留在“任务”页签。 */
 const taskDetailId = computed(() =>
   spaceView(route) === 'task' || spaceView(route) === 'task-thread' ? String(route.params.taskId ?? '') : null)
-/** 任务信息卡片的传送目标：任务详情且右栏可见时为右栏顶部的占位元素。 */
+/**
+ * 任务信息卡片的传送目标：任务详情且右栏可见时为右栏里的占位元素。用元素本身而不是选择器：
+ * 右栏与卡片在同一次更新里出现时，选择器还找不到目标（Teleport 报错且卡片留在主区）；
+ * 占位元素挂载后 ref 才有值，卡片在下一次更新移过去。
+ */
+const taskInfoAnchor = ref<HTMLElement | null>(null)
 const taskInfoTarget = computed(() =>
-  taskDetailId.value && !panelCollapsed.value && wideLayout.value ? '#workspace-task-info' : null)
+  taskDetailId.value && !panelCollapsed.value && wideLayout.value && taskInfoAnchor.value ? taskInfoAnchor.value : null)
+
+/**
+ * 协作模式任务详情（D37）：右栏默认打开并显示“任务信息”，任务对话与任务信息并列；右栏顶部可切到
+ * “群信息”。宿主的“群信息”按钮（infoOpen）对应切到群信息，关闭时回到任务信息。
+ */
+const collabTaskDetail = computed(() => collab.value && Boolean(taskDetailId.value))
+const asideView = ref<'task' | 'space'>(props.infoOpen ? 'space' : 'task')
+watch(collabTaskDetail, (inDetail) => {
+  if (!collab.value || !wideLayout.value) return
+  if (inDetail) {
+    asideView.value = props.infoOpen ? 'space' : 'task'
+    panelCollapsed.value = false
+  } else {
+    panelCollapsed.value = !props.infoOpen
+  }
+}, { immediate: true })
+
+function openTaskInfo() {
+  asideView.value = 'task'
+  panelCollapsed.value = false
+}
 
 const workspaceId = computed(() => String(route.params.id ?? ''))
 const {
@@ -924,13 +950,23 @@ watch(
 // collab：信息栏由宿主的“群信息”按钮控制；宽屏为右栏，窄屏为抽屉。收起后回传给宿主。
 watch(() => props.infoOpen, (open) => {
   if (!collab.value) return
-  if (wideLayout.value) panelCollapsed.value = !open
-  else mobileInfoOpen.value = open
+  if (!wideLayout.value) {
+    mobileInfoOpen.value = open
+    return
+  }
+  // 任务详情里右栏常开：群信息按钮只在“任务信息 / 群信息”之间切换（D37）。
+  if (collabTaskDetail.value) {
+    asideView.value = open ? 'space' : 'task'
+    if (open) panelCollapsed.value = false
+    return
+  }
+  panelCollapsed.value = !open
 })
-watch([panelCollapsed, mobileInfoOpen], ([collapsed, mobileOpen]) => {
-  if (!collab.value) return
-  const open = wideLayout.value ? !collapsed : mobileOpen
-  if (open !== props.infoOpen) emit('update:infoOpen', open)
+const collabInfoShown = computed(() => wideLayout.value
+  ? !panelCollapsed.value && (!collabTaskDetail.value || asideView.value === 'space')
+  : mobileInfoOpen.value)
+watch(collabInfoShown, (open) => {
+  if (collab.value && open !== props.infoOpen) emit('update:infoOpen', open)
 })
 watch(() => props.addMembersRequest, (request, previous) => {
   if (collab.value && request > (previous ?? 0)) addMembersDialogOpen.value = true
@@ -979,8 +1015,8 @@ const chatScope = computed(() => ({
   >
     <main class="workspace-context-page__main">
       <slot v-if="collab" name="header" v-bind="headerScope" />
-      <!-- B 群组页只在任务详情时显示面包屑（返回任务列表），群组名称与页签由宿主头部给出。 -->
-      <div v-if="!collab || taskDetailId" class="workspace-context-page__topbar">
+      <!-- B 群组页不显示面包屑：群组名称与页签由宿主头部给出，任务详情经“任务”页签返回列表（D37）。 -->
+      <div v-if="!collab" class="workspace-context-page__topbar">
         <nav class="workspace-context-crumbs" aria-label="当前位置">
           <template v-if="!collab">
             <el-icon class="workspace-context-crumbs__icon" aria-hidden="true"><FolderOpened /></el-icon>
@@ -1079,6 +1115,9 @@ const chatScope = computed(() => ({
           :files="workspace.files"
           :detail-task-id="taskDetailId"
           :task-info-target="taskInfoTarget"
+          :collab="collab"
+          :can-open-info="collab && wideLayout"
+          @open-info="openTaskInfo"
           @count="projectTaskCount = $event"
           @detail-title="taskDetailTitle = $event"
           @stale="onProjectContentStale"
@@ -1293,7 +1332,43 @@ const chatScope = computed(() => ({
     </main>
 
     <aside v-if="!panelCollapsed" class="workspace-context-page__aside">
+      <!-- 协作模式任务详情（D37）：右栏在“任务信息 / 群信息”之间切换；任务信息的占位元素常驻，切到群信息时只隐藏。 -->
+      <div v-if="collabTaskDetail" class="workspace-aside-switch">
+        <div class="workspace-aside-switch__tabs" role="tablist" aria-label="信息栏内容">
+          <button
+            type="button"
+            role="tab"
+            data-testid="aside-tab-task"
+            :aria-selected="asideView === 'task'"
+            :class="{ 'is-active': asideView === 'task' }"
+            @click="asideView = 'task'"
+          >
+            任务信息
+          </button>
+          <button
+            type="button"
+            role="tab"
+            data-testid="aside-tab-space"
+            :aria-selected="asideView === 'space'"
+            :class="{ 'is-active': asideView === 'space' }"
+            @click="asideView = 'space'"
+          >
+            群信息
+          </button>
+        </div>
+        <button class="workspace-aside-switch__collapse" type="button" aria-label="收起信息栏" @click="panelCollapsed = true">
+          <el-icon><ArrowRight /></el-icon>
+        </button>
+      </div>
+      <div
+        v-if="collabTaskDetail"
+        v-show="asideView === 'task'"
+        ref="taskInfoAnchor"
+        class="workspace-context-page__task-pane"
+        data-testid="task-info-pane"
+      ></div>
       <WorkspaceInfoPanel
+        v-if="!collabTaskDetail || asideView === 'space'"
         class="workspace-context-page__info"
         :workspace="workspace"
         :data-scopes="authStore.user.dataScopes"
@@ -1309,8 +1384,9 @@ const chatScope = computed(() => ({
         :usage-summary="usageSummary"
         :usage-loading="usageLoading"
         :usage-error="usageError"
-        :compact="Boolean(taskDetailId)"
-        :title="taskDetailId ? '任务信息' : collab ? '群信息' : '工作空间信息'"
+        :compact="Boolean(taskDetailId) && !collab"
+        :title="taskDetailId && !collab ? '任务信息' : collab ? '群信息' : '工作空间信息'"
+        :headerless="collabTaskDetail"
         collapsible
         @collapse="panelCollapsed = true"
         @manage-members="memberDialogOpen = true"
@@ -1325,8 +1401,8 @@ const chatScope = computed(() => ({
       >
         <template v-if="isTeam" #lead>
           <!-- 任务详情：任务信息卡片传送到这里，其下是所属空间的简报与摘要。 -->
-          <template v-if="taskDetailId">
-            <div id="workspace-task-info" class="workspace-context-page__task-info"></div>
+          <template v-if="taskDetailId && !collab">
+            <div id="workspace-task-info" ref="taskInfoAnchor" class="workspace-context-page__task-info"></div>
             <span class="workspace-context-page__space-label">所属空间 · {{ workspace.name }}</span>
           </template>
           <ProjectBriefCard
@@ -1859,6 +1935,72 @@ const chatScope = computed(() => ({
   flex-direction: column;
   overflow: hidden;
   border-left: 1px solid #ececee;
+}
+
+/* 协作模式任务详情（D37）：右栏顶部的“任务信息 / 群信息”切换与收起。 */
+.workspace-aside-switch {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 12px 10px;
+}
+
+.workspace-aside-switch__tabs {
+  display: inline-flex;
+  flex: 1 1 auto;
+  padding: 2px;
+  border-radius: 8px;
+  background: #eceef1;
+}
+
+.workspace-aside-switch__tabs button {
+  flex: 1 1 0;
+  padding: 5px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #667085;
+  font: inherit;
+  font-size: var(--dsh-font-size-caption);
+  cursor: pointer;
+}
+
+.workspace-aside-switch__tabs button.is-active {
+  background: #fff;
+  color: var(--dsh-color-ink);
+  font-weight: 600;
+  box-shadow: 0 1px 2px rgb(16 24 40 / 8%);
+}
+
+.workspace-aside-switch__tabs button:focus-visible,
+.workspace-aside-switch__collapse:focus-visible {
+  outline: 2px solid var(--dsh-color-brand);
+  outline-offset: 2px;
+}
+
+.workspace-aside-switch__collapse {
+  display: inline-flex;
+  width: 28px;
+  height: 28px;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #667085;
+  cursor: pointer;
+}
+
+.workspace-aside-switch__collapse:hover {
+  background: #eceef1;
+}
+
+.workspace-context-page__task-pane {
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: 0 12px 12px;
 }
 
 /* 右栏整体是一列卡片（简报经插槽排在面板标题之下），由信息面板统一滚动。 */

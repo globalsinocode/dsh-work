@@ -7,6 +7,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   ArrowDown,
   ArrowLeft,
+  CopyDocument,
   DataLine,
   Document,
   RefreshRight,
@@ -18,14 +19,16 @@ import { useAuthStore } from '@/stores/auth'
 import { useContentStore } from '@/stores/content'
 import { useTaskStore } from '@/stores/tasks'
 import type { Artifact, ProjectTask, ProjectTaskEvent, SessionThread, SessionThreadMessage, TaskSource, TeamMemberRole, WorkspaceAgentMember } from '@/types/domain'
-import { TaskComposer } from '@dsh-work/workbench-components'
 import { notifyActionFailure } from '@/utils/feedback'
 import { continueChoice, type ContinueChoice } from '@/utils/continue-intent'
 import { scheduleLabel, scheduleReasonLabel } from '@/utils/project-task-schedule'
 import ArtifactPreviewPanel from '@/components/conversation/ArtifactPreviewPanel.vue'
 import ConversationMessageItem from '@/components/conversation/ConversationMessageItem.vue'
+import RunArtifactCards from '@/components/conversation/RunArtifactCards.vue'
 import RunComposer from '@/components/conversation/RunComposer.vue'
 import RunMessageList from '@/components/conversation/RunMessageList.vue'
+import RunProgressCard from '@/components/conversation/RunProgressCard.vue'
+import RunStepsDisclosure from '@/components/conversation/RunStepsDisclosure.vue'
 import SessionDiscussionList from '@/components/conversation/SessionDiscussionList.vue'
 import { useMediaQuery } from '@/composables/useMediaQuery'
 import { useRunActions } from '@/composables/useRunActions'
@@ -327,9 +330,10 @@ const sendMode = ref<'agent' | 'comment'>('agent')
 const agentTaskDone = computed(() => isAgentTaskConversation.value && conversationTask.value?.status === 'done')
 const effectiveSendMode = computed<'agent' | 'comment'>(() =>
   !isAgentTaskConversation.value || threadHasActiveRun.value || agentTaskDone.value ? 'comment' : sendMode.value)
-/** S4：两类任务都可在对话中“标记完成”。 */
+/** S4：两类任务都可在对话中“标记完成”；协作模式改由任务详情的操作菜单提供（D37）。 */
 const canCompleteFromConversation = computed(() =>
-  inTaskConversation.value && conversationTask.value?.status !== 'done' && Boolean(taskDetail?.can('complete')))
+  inTaskConversation.value && !taskDetail?.completeInMenu && conversationTask.value?.status !== 'done'
+  && Boolean(taskDetail?.can('complete')))
 const canStartFromConversation = computed(() => taskNotStarted.value && Boolean(taskDetail?.can('start')))
 const taskComposerPlaceholder = computed(() => {
   if (!inTaskConversation.value) return ''
@@ -447,6 +451,52 @@ function formatTimelineTime(value: string) {
   return Number.isNaN(date.getTime()) ? '' : date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false })
 }
 
+/** D37：每次执行的最后一条回复下挂该次执行登记的成果、执行步骤与复制。 */
+const threadLastReplyIdByRun = computed(() => {
+  const map = new Map<string, string>()
+  for (const message of sessionThread.value?.messages ?? []) {
+    if (message.role === 'assistant' && message.runId) map.set(message.runId, message.id)
+  }
+  return map
+})
+
+function isLastRunReply(message: SessionThreadMessage) {
+  return Boolean(message.runId && threadLastReplyIdByRun.value.get(message.runId) === message.id)
+}
+
+function threadArtifactsFor(message: SessionThreadMessage) {
+  if (!isLastRunReply(message)) return []
+  return (sessionThread.value?.artifacts ?? []).filter(artifact => artifact.runId === message.runId)
+}
+
+/**
+ * D37：排队或执行中的执行与会话页同样显示进度卡片：读取 Run 详情并订阅其事件（本人刚发起的
+ * 执行已在发送时订阅）；读取失败时只保留执行记录。结束后卡片消失，由回复与成果取代。
+ */
+const LIVE_RUN_STATUSES = ['queued', 'running']
+const threadLiveRunIds = computed(() => inTaskConversation.value
+  ? (sessionThread.value?.runs ?? []).filter(run => LIVE_RUN_STATUSES.includes(run.status)).map(run => run.runId)
+  : [])
+watch(threadLiveRunIds, (runIds) => {
+  for (const runId of runIds) {
+    if (!taskStore.getTask(runId)) void taskStore.loadTask(runId).catch(() => undefined)
+  }
+}, { immediate: true })
+
+function liveRun(runId: string) {
+  const run = taskStore.getTask(runId)
+  return run && LIVE_RUN_STATUSES.includes(run.status) ? run : undefined
+}
+
+/** 继续修改只用于下一条交给 Agent 的消息：执行中或任务已完成时只能评论，不提供。 */
+const canContinueEditingInThread = computed(() =>
+  canWriteSession.value && isAgentTaskConversation.value && !threadHasActiveRun.value && !agentTaskDone.value)
+
+function continueEditingInThread(artifact: Artifact) {
+  continueEditing(artifact)
+  sendMode.value = 'agent'
+}
+
 /** 任务对话的首条消息是任务标题与说明（创建任务时写入），不算评论。 */
 const briefMessageId = computed(() =>
   sessionThread.value && !sessionThread.value.hasMoreMessages ? sessionThread.value.messages[0]?.id ?? null : null)
@@ -495,11 +545,17 @@ async function submitTaskConversation(
         const createdRun = await taskStore.startRunWithSessionFiles(sessionId, {
           prompt: payload.prompt,
           attachments: payload.files,
+          referencedFileIds: referencedArtifacts.value.map(item => item.fileId),
           workspaceAgentMemberId: taskThreadAgentId.value,
         })
+        referencedArtifacts.value = []
         taskStore.subscribe(createdRun.id)
       }
     } else {
+      if (referencedArtifacts.value.length) {
+        ElMessage.warning('引用的成果需要交给 Agent 处理；只评论时请先移除引用。')
+        return
+      }
       if (payload.files.length) {
         ElMessage.warning(isAgentTaskConversation.value
           ? '评论不支持附件；需要 Agent 处理文件时请选择“交给 Agent”。'
@@ -897,20 +953,46 @@ watch(
                 :own="isOwnMessage(item.message)"
                 :tag="messageTag(item.message)"
                 :show-requester="false"
-              />
-              <button
-                v-else-if="item.kind === 'run'"
-                type="button"
-                class="task-conversation-record task-conversation-record--run"
-                :class="`task-conversation-record--${runRecordTone(item.run)}`"
-                data-testid="task-conversation-run"
-                :title="'查看执行详情'"
-                @click="openSessionRun(item.run.runId)"
               >
-                <span class="task-conversation-record__line" aria-hidden="true"></span>
-                <span>{{ formatTimelineTime(item.run.createdAt) }} · {{ runRecordText(item.run) }}</span>
-                <span class="task-conversation-record__line" aria-hidden="true"></span>
-              </button>
+                <template v-if="isLastRunReply(item.message)" #before>
+                  <RunStepsDisclosure :run-id="item.message.runId!" />
+                </template>
+                <template v-if="isLastRunReply(item.message)">
+                  <RunArtifactCards
+                    :artifacts="threadArtifactsFor(item.message)"
+                    :can-continue-editing="canContinueEditingInThread"
+                    :referenced-file-ids="referencedArtifacts.map(reference => reference.fileId)"
+                    :preview-key="previewKey"
+                    @preview="openPreview"
+                    @download="download"
+                    @continue-editing="continueEditingInThread"
+                  />
+                  <div class="assistant-actions">
+                    <button type="button" aria-label="复制回答" @click="copyAnswer(item.message.content)">
+                      <el-icon><CopyDocument /></el-icon>
+                    </button>
+                  </div>
+                </template>
+              </ConversationMessageItem>
+              <template v-else-if="item.kind === 'run'">
+                <button
+                  type="button"
+                  class="task-conversation-record task-conversation-record--run"
+                  :class="`task-conversation-record--${runRecordTone(item.run)}`"
+                  data-testid="task-conversation-run"
+                  :title="'查看执行详情'"
+                  @click="openSessionRun(item.run.runId)"
+                >
+                  <span class="task-conversation-record__line" aria-hidden="true"></span>
+                  <span>{{ formatTimelineTime(item.run.createdAt) }} · {{ runRecordText(item.run) }}</span>
+                  <span class="task-conversation-record__line" aria-hidden="true"></span>
+                </button>
+                <RunProgressCard
+                  v-if="liveRun(item.run.runId)"
+                  :task="liveRun(item.run.runId)!"
+                  @open-details="openSessionRun(item.run.runId)"
+                />
+              </template>
               <div v-else class="task-conversation-event" data-testid="task-conversation-event">
                 <p class="task-conversation-record">
                   <span class="task-conversation-record__line" aria-hidden="true"></span>
@@ -993,12 +1075,13 @@ watch(
               标记完成
             </el-button>
           </div>
-          <TaskComposer
+          <RunComposer
             v-if="canWriteSession"
-            compact
+            :referenced-artifacts="inTaskConversation ? referencedArtifacts : []"
             :mention-options="isTeamSession && !inTaskConversation ? mentionOptions : []"
             :files-require-mention="isTeamSession && !taskThreadAgentId && !inTaskConversation"
             :placeholder="taskComposerPlaceholder"
+            @remove-reference="removeReferencedArtifact"
             @submit="submitSessionMessage"
           />
           <p v-else-if="sessionArchived" data-testid="conversation-archived-notice" class="conversation-archived-notice">
@@ -1010,6 +1093,14 @@ watch(
           <p>AI 生成内容可能存在误差，重要业务结论请结合来源与企业制度确认。</p>
         </div>
       </div>
+
+      <ArtifactPreviewPanel
+        v-if="inTaskConversation"
+        class="conversation-preview"
+        :artifact="previewArtifact"
+        :docked="previewDocked"
+        @close="previewArtifact = null"
+      />
     </template>
 
     <el-result

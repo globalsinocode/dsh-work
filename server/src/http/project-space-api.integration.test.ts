@@ -894,6 +894,46 @@ test('Agent 任务：执行携带当前档案版本，成功后成果交给档�
   assert.deepEqual(versions[0]!.sourceTasks.map(item => item.id), [task.id])
 })
 
+test('任务对话：带回本页各次执行登记的成果（按 runId），只读成员可读，非成员拒绝（D37）', async () => {
+  await drainRuntime()
+  const ws = await seedSpace('thread-artifacts')
+  const agentMemberId = await joinAgent(ws, 'thread-artifacts')
+  const created = await api('POST', `${base}/workspaces/${ws.id}/project-tasks`, {
+    as: ws.member, body: { title: '输出库存周报', assignee: { type: 'agent', id: agentMemberId } },
+  })
+  const task = created.body.data as TaskView
+  const started = await api('POST', `${base}/workspaces/${ws.id}/project-tasks/${task.id}/start`, {
+    as: ws.member, body: { idempotencyKey: `thread-artifacts-start-${task.id}` },
+  })
+  const running = started.body.data as TaskView
+  await waitForManifest(running.latestRunId!)
+  await seedArtifact({
+    workspaceId: ws.id, sessionId: running.sessionId!, runId: running.latestRunId!, createdBy: ws.member, label: 'weekly', currentAttempt: true,
+  })
+  // 同一空间其他讨论里的成果不进入这个任务对话。
+  const discussion = await api('POST', `${base}/sessions`, { as: ws.other, body: { title: '临时讨论', workspaceId: ws.id } })
+  const discussionId = (discussion.body.data as { id: string }).id
+  const asked = await api('POST', `${base}/sessions/${discussionId}/runs`, {
+    as: ws.other, body: { prompt: '@助手 汇总一下', idempotencyKey: `thread-artifacts-ask-${discussionId}`, workspaceAgentMemberId: agentMemberId },
+  })
+  const askedRunId = (asked.body.data as { runId?: string; id?: string }).runId ?? (asked.body.data as { id: string }).id
+  await waitForManifest(askedRunId)
+  await seedArtifact({ workspaceId: ws.id, sessionId: discussionId, runId: askedRunId, createdBy: ws.other, label: 'other', currentAttempt: true })
+  runtime.releaseAll()
+  await waitForRun(running.latestRunId!)
+
+  const thread = await api('GET', `${base}/sessions/${running.sessionId}`, { as: ws.viewer })
+  assert.equal(thread.status, 200, JSON.stringify(thread.body))
+  const artifacts = (thread.body.data as { artifacts: Array<{ name: string; runId: string; fileId: string; version: number }> }).artifacts
+  assert.deepEqual(artifacts.map(artifact => [artifact.name, artifact.runId, artifact.version]), [
+    [`${ws.id}-weekly.txt`, running.latestRunId, 1],
+  ])
+  assert.equal(artifacts[0]!.fileId, `file-${ws.id}-weekly`)
+  assert.equal((await api('GET', `${base}/sessions/${running.sessionId}`, { as: ws.outsider })).status, 403)
+  // 任务对话展开执行步骤时读取 Run 详情：只读成员同样可读。
+  assert.equal((await api('GET', `${base}/runs/${running.latestRunId}`, { as: ws.viewer })).status, 200)
+})
+
 test('团队成果：标注所属项目任务、承接 Agent 版本与发起人，任务移除后不再标注', async () => {
   await drainRuntime()
   const ws = await seedSpace('artifact-origin')
@@ -1037,7 +1077,7 @@ async function drainRuntime(timeoutMs = 10_000) {
   throw new Error('等待受控 Runtime 清空超时')
 }
 
-async function seedArtifact(input: { workspaceId: string; sessionId: string; runId: string; createdBy: string; label: string }) {
+async function seedArtifact(input: { workspaceId: string; sessionId: string; runId: string; createdBy: string; label: string; currentAttempt?: boolean }) {
   const fileId = `file-${input.workspaceId}-${input.label}`
   const artifactId = `artifact-${input.workspaceId}-${input.label}`
   await database`
@@ -1057,6 +1097,15 @@ async function seedArtifact(input: { workspaceId: string; sessionId: string; run
     insert into artifact_versions (id, tenant_id, artifact_id, version_no, file_object_id, source_run_id)
     values (${`${artifactId}-v1`}, ${tenantId}, ${artifactId}, 1, ${fileId}, ${input.runId})
   `
+  // 登记到 Run 当前 Attempt（Runtime 正常发布成果的形态）：任务对话按当前 Attempt 取成果。
+  if (input.currentAttempt) {
+    await database`
+      update artifact_versions av set source_attempt_id = r.current_attempt_id
+        from runs r
+       where av.tenant_id = ${tenantId} and av.id = ${`${artifactId}-v1`}
+         and r.tenant_id = av.tenant_id and r.id = av.source_run_id
+    `
+  }
 }
 
 async function completeEmployeeTask(ws: { id: string; member: string; admin: string }, title: string, note: string): Promise<TaskView> {

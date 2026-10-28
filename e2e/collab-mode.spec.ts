@@ -327,11 +327,75 @@ test('MODE-E2E-10: task details open inside the group and map to work mode', asy
   await page.goto('/c/chats/group/ws-supply?tab=tasks')
   await page.getByTestId('project-task-open').filter({ hasText: 'MODE-10 冒烟任务' }).click()
   await expect(page).toHaveURL(new RegExp(`/c/chats/group/ws-supply/tasks/${taskId}$`))
-  await expect(page.getByTestId('workspace-crumb-task')).toHaveText('MODE-10 冒烟任务')
-  await page.getByTestId('workspace-crumb-tasks').click()
+  await expect(page.getByTestId('project-task-detail')).toContainText('MODE-10 冒烟任务')
+  // D37：群组任务详情不显示面包屑，经“任务”页签返回列表。
+  await expect(page.getByTestId('workspace-crumb-tasks')).toHaveCount(0)
+  await page.getByRole('tablist', { name: '群组内容' }).getByRole('tab', { name: /^任务/ }).click()
   await expect(page).toHaveURL(/\/c\/chats\/group\/ws-supply\?tab=tasks$/)
   await page.goto(`/workspaces/ws-supply/tasks/${taskId}`)
   await expect(page).toHaveURL(new RegExp(`/c/chats/group/ws-supply/tasks/${taskId}$`))
+})
+
+test('MODE-E2E-16: group task details show the task info beside the task conversation', async ({ page }) => {
+  const created = await page.request.post('/api/workbench/v1/workspaces/ws-supply/project-tasks', {
+    data: { title: 'MODE-16 冒烟任务', description: 'MODE-16 任务说明', assignee: { type: 'employee', id: 'U00001' } },
+  })
+  expect(created.ok()).toBeTruthy()
+  const taskId = (await created.json()).data.id as string
+  await switchToCollab(page)
+  await page.goto(`/c/chats/group/ws-supply/tasks/${taskId}`)
+
+  // 宽屏：右栏默认显示任务信息（含任务说明），与任务对话并列；标题行没有“执行详情”。
+  const taskTab = page.getByRole('tab', { name: '任务信息' })
+  const info = page.getByTestId('task-info-pane').getByTestId('project-task-info')
+  await expect(taskTab).toHaveAttribute('aria-selected', 'true')
+  await expect(info).toBeVisible()
+  await expect(info.getByTestId('project-task-description')).toHaveText(/MODE-16 任务说明/)
+  await expect(info.getByRole('button', { name: '编辑' })).toHaveCount(0)
+  await expect(page.getByTestId('project-task-run-detail')).toHaveCount(0)
+
+  // 写操作在“更多任务操作”菜单里；“标记完成”打开完成弹窗。
+  await page.getByRole('button', { name: '更多任务操作' }).click()
+  await expect(page.getByRole('menuitem', { name: '编辑任务' })).toBeVisible()
+  await expect(page.getByRole('menuitem', { name: '移除任务' })).toBeVisible()
+  await page.getByRole('menuitem', { name: '标记完成' }).click()
+  const complete = page.getByRole('dialog', { name: /完成任务/ })
+  await expect(complete).toBeVisible()
+  await complete.getByRole('button', { name: '取消' }).click()
+  await expect(complete).toBeHidden()
+
+  // 群信息：右栏切到群信息，再点回到任务信息。
+  await page.getByRole('button', { name: '群信息', exact: true }).click()
+  await expect(page.getByRole('tab', { name: '群信息' })).toHaveAttribute('aria-selected', 'true')
+  await expect(info).toBeHidden()
+  await page.getByRole('button', { name: '群信息', exact: true }).click()
+  await expect(taskTab).toHaveAttribute('aria-selected', 'true')
+  await expect(info).toBeVisible()
+
+  // 收起右栏：任务对话上方出现一行摘要，“显示任务信息”重新展开。
+  await page.getByRole('button', { name: '收起信息栏' }).click()
+  const summary = page.getByTestId('project-task-summary')
+  await expect(summary).toContainText('待办')
+  await summary.getByRole('button', { name: '显示任务信息' }).click()
+  await expect(info).toBeVisible()
+  await expect(summary).toHaveCount(0)
+})
+
+test('MODE-E2E-16: on narrow screens the task summary expands in place', async ({ page }) => {
+  const created = await page.request.post('/api/workbench/v1/workspaces/ws-supply/project-tasks', {
+    data: { title: 'MODE-16 窄屏任务', assignee: { type: 'employee', id: 'U00001' } },
+  })
+  const taskId = (await created.json()).data.id as string
+  await switchToCollab(page)
+  await page.setViewportSize({ width: 1000, height: 760 })
+  await page.goto(`/c/chats/group/ws-supply/tasks/${taskId}`)
+  const summary = page.getByTestId('project-task-summary')
+  await expect(summary).toContainText('待办')
+  await expect(page.getByTestId('project-task-info')).toHaveCount(0)
+  await summary.getByRole('button', { name: '全部任务信息' }).click()
+  await expect(page.getByTestId('project-task-info')).toContainText('交付文件')
+  await summary.getByRole('button', { name: '收起任务信息' }).click()
+  await expect(page.getByTestId('project-task-info')).toHaveCount(0)
 })
 
 test('MODE-E2E-11: AI colleague and group directories open the matching chats', async ({ page }) => {

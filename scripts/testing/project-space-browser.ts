@@ -48,7 +48,7 @@ interface ArchiveExecution {
 
 /** 普通运行交给合成 Runtime；档案整理运行返回可解析的整理结果。 */
 class ProjectSpaceBrowserRuntime implements AgentRuntimePort {
-  private readonly base = new PersonalBrowserRuntime()
+  readonly base = new PersonalBrowserRuntime()
   private readonly archives = new Map<string, ArchiveExecution>()
 
   async execute(manifest: RuntimeManifest) {
@@ -116,12 +116,29 @@ class ProjectSpaceBrowserRuntime implements AgentRuntimePort {
   }
 }
 
+const runtime = new ProjectSpaceBrowserRuntime()
 const fixture = await personalWorkbenchFixture('dsh_ps_p1_browser', {
   port,
-  runtime: new ProjectSpaceBrowserRuntime(),
+  runtime,
   browser: true,
   projectSpace: true,
 })
+
+// MODE-E2E-16：带 `P1-成果达成` 的执行登记一个文本成果（含 source_attempt_id），对应真实 Adapter
+// 在 run.completed 前登记成果；成果名带 runId，重跑与多次执行时可区分。
+runtime.base.hooks.registerArtifact = async manifest => {
+  if (!manifest.session_id) throw new Error('P1 成果登记需要会话内的 Attempt')
+  const name = `P1-任务成果-${manifest.run_id.slice(-6)}.txt`
+  const file = await fixture.content.storeSessionFile(
+    manifest.session_id, name, 'text/plain',
+    Buffer.from(`P1 registered artifact, not a real DSH output: ${manifest.input.message}`), manifest.user_context.user_id,
+  )
+  const artifact = `artifact-${randomUUID()}`
+  await fixture.db.client`insert into artifacts(id,tenant_id,workspace_id,session_id,name,artifact_type,created_by)
+    values(${artifact},${testTenant},${manifest.workspace_id},${manifest.session_id},${name},'text',${manifest.user_context.user_id})`
+  await fixture.db.client`insert into artifact_versions(id,tenant_id,artifact_id,version_no,file_object_id,source_run_id,source_attempt_id)
+    values(${randomUUID()},${testTenant},${artifact},1,${file.id},${manifest.run_id},${manifest.attempt_id})`
+}
 
 const { db, content, agents } = fixture
 const projects = fixture.projects!

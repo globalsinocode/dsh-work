@@ -1,15 +1,14 @@
 <script setup lang="ts">
 import { computed, toRef } from 'vue'
-import { Close, CopyDocument, Document, Download, EditPen, Lock, RefreshRight, Share, Warning } from '@element-plus/icons-vue'
+import { Close, CopyDocument, Lock, RefreshRight, Share, Warning } from '@element-plus/icons-vue'
 import { StatusTag } from '@dsh-work/ui-core'
 
-import ArtifactImageThumb from './ArtifactImageThumb.vue'
 import ConversationMessageItem from './ConversationMessageItem.vue'
+import RunArtifactCards from './RunArtifactCards.vue'
 import RunProgressCard from './RunProgressCard.vue'
 import RunProgressSummary from './RunProgressSummary.vue'
 import { resultOutcomeLabels, useRunProgress } from '@/composables/useRunProgress'
 import type { Artifact, ChatMessage, TaskRun } from '@/types/domain'
-import { isImageArtifact, isOfficeArtifact, unavailableTextNote } from '@/utils/artifact-preview'
 import '@/styles/conversation-thread.css'
 
 /**
@@ -69,10 +68,6 @@ function belongsToCurrentRun(message: ChatMessage) {
   return message.runId === task.value.id
 }
 
-function isReferenced(artifact: Artifact) {
-  return Boolean(artifact.fileId && props.referencedFileIds.includes(artifact.fileId))
-}
-
 function artifactsForMessage(message: ChatMessage) {
   if (message.role !== 'assistant' || !message.runId) return []
   if (lastAssistantIdByRun.value.get(message.runId) !== message.id) return []
@@ -93,15 +88,6 @@ function messageMeta(message: ChatMessage) {
   if (message.id !== lastAssistantMessageId.value || !belongsToCurrentRun(message) || !isTerminalRun.value) return undefined
   return `${resultOutcomeLabels[task.value.result.outcome]}${task.value.duration ? ` · ${task.value.duration}` : ''}`
 }
-
-/** Office/PDF 成果没有可用解析文本时，在卡片旁说明；点开右栏同样说明并提供下载。 */
-function bodyUnavailableNote(artifact: Artifact) {
-  return isOfficeArtifact(artifact.type) && artifact.textPreview !== 'available' ? unavailableTextNote(artifact) : ''
-}
-
-function isPreviewing(artifact: Artifact) {
-  return props.previewKey === `${artifact.id}@${artifact.version}`
-}
 </script>
 
 <template>
@@ -115,67 +101,15 @@ function isPreviewing(artifact: Artifact) {
     <template v-if="isTerminalRun && message.id === firstAssistantMessageId" #before>
       <RunProgressSummary :task="task" />
     </template>
-    <div
-      v-if="artifactsForMessage(message).length"
-      class="answer-artifacts"
-      data-testid="answer-artifacts"
-    >
-      <div
-        v-for="artifact in artifactsForMessage(message)"
-        :key="artifact.id"
-        class="answer-artifact"
-        :data-testid="`answer-artifact-${artifact.id}`"
-      >
-        <div class="answer-artifact__row">
-          <button
-            type="button"
-            class="answer-artifact__open"
-            :class="{ 'is-active': isPreviewing(artifact) }"
-            :aria-label="`预览成果 ${artifact.name}`"
-            :aria-pressed="isPreviewing(artifact)"
-            :data-testid="`preview-artifact-${artifact.id}`"
-            @click="emit('preview', artifact)"
-          >
-            <span><el-icon><Document /></el-icon></span>
-            <span>
-              <strong>{{ artifact.name }}</strong>
-              <small>{{ artifact.size }} · V{{ artifact.version }}</small>
-            </span>
-            <span class="answer-artifact__state">{{ isPreviewing(artifact) ? '预览中' : '预览' }}</span>
-          </button>
-          <button
-            type="button"
-            class="answer-artifact__download"
-            :aria-label="`下载成果 ${artifact.name}`"
-            @click="emit('download', artifact)"
-          >
-            <el-icon><Download /></el-icon>
-          </button>
-          <button
-            v-if="canFollowUp && artifact.canReference && artifact.fileId && belongsToCurrentRun(message)"
-            type="button"
-            class="answer-artifact__revise"
-            :data-testid="`continue-editing-${artifact.id}`"
-            :disabled="isReferenced(artifact)"
-            @click="emit('continue-editing', artifact)"
-          >
-            <el-icon><EditPen /></el-icon>
-            {{ isReferenced(artifact) ? '已引用' : '继续修改' }}
-          </button>
-        </div>
-        <p
-          v-if="bodyUnavailableNote(artifact)"
-          class="answer-artifact__unavailable"
-          :data-testid="`artifact-body-unavailable-${artifact.id}`"
-        >{{ bodyUnavailableNote(artifact) }}</p>
-        <ArtifactImageThumb
-          v-if="isImageArtifact(artifact.type)"
-          :artifact="artifact"
-          :active="isPreviewing(artifact)"
-          @open="emit('preview', artifact)"
-        />
-      </div>
-    </div>
+    <RunArtifactCards
+      :artifacts="artifactsForMessage(message)"
+      :can-continue-editing="canFollowUp && belongsToCurrentRun(message)"
+      :referenced-file-ids="referencedFileIds"
+      :preview-key="previewKey"
+      @preview="emit('preview', $event)"
+      @download="emit('download', $event)"
+      @continue-editing="emit('continue-editing', $event)"
+    />
 
     <div
       v-if="skippedArtifactsForMessage(message).length"

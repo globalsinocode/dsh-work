@@ -356,13 +356,87 @@ test.describe('MODE-E2E-09/10 协作模式群聊（S5d）', () => {
     await page.getByRole('tab', { name: '对话' }).click()
     await page.getByRole('button', { name: `打开任务：${title}` }).click()
     await expect(page).toHaveURL(new RegExp(`/c/chats/group/${seed.workspaceId}/tasks/[^/]+`))
-    await expect(page.getByTestId('workspace-crumb-task')).toHaveText(title)
     await expect(page.getByTestId('project-task-detail')).toContainText(title)
 
-    // 群信息展开 A 的右栏（简报、成员与 Agent）。
+    // D37：右栏默认显示任务信息，与任务对话并列；头部“群信息”切到群信息（A 的右栏：简报、成员与 Agent）。
+    await expect(page.getByRole('tab', { name: '任务信息' })).toHaveAttribute('aria-selected', 'true')
+    await expect(page.getByTestId('task-info-pane').getByTestId('project-task-info')).toBeVisible()
     await page.getByRole('button', { name: '群信息', exact: true }).click()
     await expect(page).toHaveURL(/info=1/)
-    await expect(page.getByText('群信息', { exact: true }).or(page.getByText('任务信息', { exact: true })).first()).toBeVisible()
+    await expect(page.getByRole('tab', { name: '群信息' })).toHaveAttribute('aria-selected', 'true')
+  })
+})
+
+test.describe('MODE-E2E-16 协作模式群组任务详情（D37）', () => {
+  test.use({ extraHTTPHeaders: { 'x-test-user-id': 'U00002' } })
+
+  test.beforeEach(async ({ page }) => {
+    await page.request.put('/api/workbench/v1/me/preferences', { data: { uiMode: 'collab' } })
+  })
+  test.afterEach(async ({ page }) => {
+    await page.request.put('/api/workbench/v1/me/preferences', { data: { uiMode: 'work' } })
+  })
+
+  test('任务对话与任务信息并列；回复下有成果与执行步骤，继续修改带着引用交给 Agent', async ({ page }) => {
+    const seed = await loadSeed(page)
+    // 标题带 `P1-成果达成`：合成 Runtime 为这次执行登记一个成果（测试夹具，非真实 DSH 产出）。
+    const title = uniqueTitle('MODE-16 P1-成果达成')
+    const created = await page.request.post(`/api/workbench/v1/workspaces/${seed.workspaceId}/project-tasks`, {
+      data: { title, description: 'MODE-16 任务说明', assignee: { type: 'agent', id: seed.agentMemberId } },
+    })
+    expect(created.ok()).toBeTruthy()
+    const taskId = (await created.json()).data.id as string
+    const started = await page.request.post(`/api/workbench/v1/workspaces/${seed.workspaceId}/project-tasks/${taskId}/start`, {
+      data: { idempotencyKey: `mode-16-${taskId}` },
+    })
+    expect(started.ok()).toBeTruthy()
+
+    await page.goto(`/c/chats/group/${seed.workspaceId}/tasks/${taskId}`)
+    await expect(page).toHaveURL(new RegExp(`/c/chats/group/${seed.workspaceId}/tasks/${taskId}/thread/session-`))
+    const thread = page.getByRole('main', { name: '对话内容' })
+    const reply = thread.locator('.conversation-message--assistant', { hasText: '成果已登记' })
+    await expect(reply).toBeVisible({ timeout: 20_000 })
+
+    // 任务信息与任务对话同时可见；不再有面包屑与“执行详情”按钮。
+    const info = page.getByTestId('task-info-pane').getByTestId('project-task-info')
+    await expect(info).toBeVisible()
+    await expect(info.getByTestId('project-task-description')).toContainText('MODE-16 任务说明')
+    await expect(page.getByTestId('workspace-crumb-task')).toHaveCount(0)
+    await expect(page.getByTestId('project-task-run-detail')).toHaveCount(0)
+    await page.getByRole('button', { name: '更多任务操作' }).click()
+    await expect(page.getByRole('menuitem', { name: '编辑任务' })).toBeVisible()
+    await expect(page.getByRole('menuitem', { name: '标记完成' })).toBeVisible()
+    await page.keyboard.press('Escape')
+    await expect(page.getByTestId('task-complete-from-conversation')).toHaveCount(0)
+
+    // 回复下：这次执行登记的成果与可展开的执行步骤。
+    const preview = reply.getByRole('button', { name: /^预览成果 P1-任务成果-/ })
+    await expect(preview).toBeVisible()
+    await preview.click()
+    const closePreview = page.getByRole('button', { name: '关闭成果预览' })
+    await expect(closePreview).toBeVisible()
+    await expect(preview).toHaveAttribute('aria-pressed', 'true')
+    await closePreview.click()
+    await expect(closePreview).toBeHidden()
+    const steps = reply.getByTestId('run-steps-disclosure').locator('summary')
+    await steps.click()
+    await expect(steps).toHaveText(/已完成 \d+ 个步骤|这次执行没有记录步骤/)
+
+    // 继续修改：成果作为引用随下一条交给 Agent 的消息发送。
+    await reply.getByRole('button', { name: '继续修改' }).click()
+    await expect(page.getByTestId('referenced-artifacts')).toContainText('P1-任务成果-')
+    const runRequest = page.waitForRequest(request => request.method() === 'POST' && /\/sessions\/[^/]+\/runs$/.test(request.url()))
+    // “对话”页签的群聊输入框隐藏但仍在页面里：限定在任务详情的任务对话内。
+    const taskThread = page.locator('.project-task-detail__thread')
+    await taskThread.getByLabel('对话输入').fill('MODE-16 补充华南')
+    await taskThread.getByRole('button', { name: '发送消息', exact: true }).click()
+    expect(((await runRequest).postDataJSON() as { fileIds: string[] }).fileIds).toHaveLength(1)
+    await expect(page.getByTestId('referenced-artifacts')).toHaveCount(0)
+
+    // “最近执行”进入该次执行详情。
+    await expect(info.getByTestId('project-task-latest-run-link')).toBeVisible({ timeout: 20_000 })
+    await info.getByTestId('project-task-latest-run-link').click()
+    await expect(page).toHaveURL(new RegExp(`/c/chats/group/${seed.workspaceId}/tasks/${taskId}/thread/run-`))
   })
 })
 
