@@ -115,4 +115,12 @@ jobs:
           gh release edit "${tag}" --draft=false --latest
           test "$(gh release view "${tag}" --json isImmutable --jq .isImmutable)" = true \
             || { echo "Release immutability is not enabled for ${tag}" >&2; exit 1; }
-          gh release verify "${tag}"
+          # GitHub 在发布后才异步生成 Release 证明，刚发布时 verify 可能报“no attestations”；
+          # 短暂重试，最终仍失败则视为发布不可信。
+          for attempt in 1 2 3 4 5 6; do
+            gh release verify "${tag}" && exit 0
+            echo "Release attestation not verifiable yet (attempt ${attempt}/6)" >&2
+            sleep 10
+          done
+          echo "Release attestation verification failed for ${tag}" >&2
+          exit 1
