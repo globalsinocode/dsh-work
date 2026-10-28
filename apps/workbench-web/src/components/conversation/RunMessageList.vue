@@ -1,23 +1,19 @@
 <script setup lang="ts">
-import { computed, reactive, ref, toRef } from 'vue'
-import { ArrowDown, ArrowUp, Close, CopyDocument, Document, EditPen, Lock, RefreshRight, Share, Warning, View } from '@element-plus/icons-vue'
-import { AssistantMessageContent, StatusTag } from '@dsh-work/ui-core'
+import { computed, toRef } from 'vue'
+import { Close, CopyDocument, Document, Download, EditPen, Lock, RefreshRight, Share, Warning } from '@element-plus/icons-vue'
+import { StatusTag } from '@dsh-work/ui-core'
 
 import ArtifactImageThumb from './ArtifactImageThumb.vue'
 import ConversationMessageItem from './ConversationMessageItem.vue'
-import { workbenchApi } from '@/api/client'
-import ArtifactContentDialog from '@/components/ArtifactContentDialog.vue'
-import ArtifactTextView from '@/components/ArtifactTextView.vue'
 import { resultOutcomeLabels, useRunProgress } from '@/composables/useRunProgress'
 import type { Artifact, ChatMessage, TaskRun } from '@/types/domain'
-import { isImageArtifact, isOfficeArtifact, unavailableTextNote, type OfficeArtifactType } from '@/utils/artifact-preview'
-import { notifyActionFailure } from '@/utils/feedback'
+import { isImageArtifact, isOfficeArtifact, unavailableTextNote } from '@/utils/artifact-preview'
 import '@/styles/conversation-thread.css'
 
 /**
- * 一次执行（Run）的消息流（S5b 从 ConversationView 拆出）：消息、本轮成果卡片（下载 /
+ * 一次执行（Run）的消息流（S5b 从 ConversationView 拆出）：消息、本轮成果卡片（预览 / 下载 /
  * 继续修改）、执行中状态、审批等待、失败与结论提示。A 的对话详情与 B 的对话页（每段会话）
- * 共用；操作只发事件，写权限与导航由调用方决定。
+ * 共用；操作只发事件，写权限、导航与预览右栏由调用方决定。
  *
  * 个人会话详情可能含多轮 Run 的消息：成果优先取 threadArtifacts，并按 artifact.runId
  * 挂到该 Run 最后一条助手回复下，避免只展示最新 Run 的 result.artifacts。
@@ -30,9 +26,12 @@ const props = withDefaults(defineProps<{
   canRetry?: boolean
   /** 已在输入区引用的成果文件，对应卡片显示“已引用”。 */
   referencedFileIds?: string[]
-}>(), { canFollowUp: false, canRetry: false, referencedFileIds: () => [] })
+  /** 右栏正在预览的成果版本（`id@version`），对应卡片标为选中。 */
+  previewKey?: string | null
+}>(), { canFollowUp: false, canRetry: false, referencedFileIds: () => [], previewKey: null })
 
 const emit = defineEmits<{
+  preview: [artifact: Artifact]
   download: [artifact: Artifact]
   'continue-editing': [artifact: Artifact]
   'copy-answer': [content: string]
@@ -89,67 +88,13 @@ function messageMeta(message: ChatMessage) {
   return `${resultOutcomeLabels[task.value.result.outcome]}${task.value.duration ? ` · ${task.value.duration}` : ''}`
 }
 
-/**
- * 成果就地展开正文：Markdown/文本读原文，Office/PDF 读解析文本（执行隔离 2b-5）。加载失败时在原处
- * 提示，再次展开会重新加载。
- */
-const previewState = reactive<Record<string, { open: boolean; loading: boolean; text: string; error: string; officeType?: OfficeArtifactType }>>({})
-
-/** 可展开正文：文本类成果，以及解析文本可用的 Office/PDF 成果。 */
-function canViewBody(artifact: Artifact) {
-  return artifact.type === 'markdown' || artifact.type === 'text'
-    || (isOfficeArtifact(artifact.type) && artifact.textPreview === 'available')
-}
-
-/** Office/PDF 成果没有可用解析文本时，代替“查看正文”的说明。 */
+/** Office/PDF 成果没有可用解析文本时，在卡片旁说明；点开右栏同样说明并提供下载。 */
 function bodyUnavailableNote(artifact: Artifact) {
   return isOfficeArtifact(artifact.type) && artifact.textPreview !== 'available' ? unavailableTextNote(artifact) : ''
 }
 
-/** 图片成果点击缩略图后放大查看。 */
-const imageDialogOpen = ref(false)
-const imageArtifact = ref<Artifact | null>(null)
-function openImage(artifact: Artifact) {
-  imageArtifact.value = artifact
-  imageDialogOpen.value = true
-}
-
-function previewKey(artifact: Artifact) {
-  return `${artifact.id}@${artifact.version}`
-}
-
-function isPreviewOpen(artifact: Artifact) {
-  return Boolean(previewState[previewKey(artifact)]?.open)
-}
-
-async function togglePreview(artifact: Artifact) {
-  if (!canViewBody(artifact)) return
-  const key = previewKey(artifact)
-  const current = previewState[key]
-  if (current?.open) {
-    current.open = false
-    return
-  }
-  if (current?.text) {
-    current.open = true
-    return
-  }
-  previewState[key] = { open: true, loading: true, text: '', error: '' }
-  try {
-    if (isOfficeArtifact(artifact.type)) {
-      const preview = await workbenchApi.getArtifactText(artifact.id, artifact.version)
-      previewState[key] = preview.status === 'available'
-        ? { open: true, loading: false, text: preview.text, error: '', officeType: artifact.type }
-        : { open: true, loading: false, text: '', error: unavailableTextNote({ textPreview: preview.status, textPreviewError: preview.status === 'failed' ? preview.message : undefined }) }
-      return
-    }
-    const blob = await workbenchApi.downloadArtifact(artifact.id, artifact.version)
-    const text = await blob.text()
-    previewState[key] = { open: true, loading: false, text, error: '' }
-  } catch (cause) {
-    previewState[key] = { open: true, loading: false, text: '', error: '预览加载失败' }
-    notifyActionFailure('预览成果', `成果“${artifact.name}”V${artifact.version}`, cause, '可改用下载后本地打开；若仍失败，请联系工作空间管理员。')
-  }
+function isPreviewing(artifact: Artifact) {
+  return props.previewKey === `${artifact.id}@${artifact.version}`
 }
 </script>
 
@@ -175,34 +120,28 @@ async function togglePreview(artifact: Artifact) {
         <div class="answer-artifact__row">
           <button
             type="button"
-            class="answer-artifact__download"
-            :aria-label="`下载成果 ${artifact.name}`"
-            @click="emit('download', artifact)"
+            class="answer-artifact__open"
+            :class="{ 'is-active': isPreviewing(artifact) }"
+            :aria-label="`预览成果 ${artifact.name}`"
+            :aria-pressed="isPreviewing(artifact)"
+            :data-testid="`preview-artifact-${artifact.id}`"
+            @click="emit('preview', artifact)"
           >
             <span><el-icon><Document /></el-icon></span>
             <span>
               <strong>{{ artifact.name }}</strong>
               <small>{{ artifact.size }} · V{{ artifact.version }}</small>
             </span>
-            <el-icon><ArrowDown /></el-icon>
+            <span class="answer-artifact__state">{{ isPreviewing(artifact) ? '预览中' : '预览' }}</span>
           </button>
           <button
-            v-if="canViewBody(artifact)"
             type="button"
-            class="answer-artifact__preview"
-            :aria-label="isPreviewOpen(artifact) ? `收起 ${artifact.name} 正文` : `展开 ${artifact.name} 正文`"
-            :aria-expanded="isPreviewOpen(artifact)"
-            :data-testid="`preview-artifact-${artifact.id}`"
-            @click="togglePreview(artifact)"
+            class="answer-artifact__download"
+            :aria-label="`下载成果 ${artifact.name}`"
+            @click="emit('download', artifact)"
           >
-            <el-icon><component :is="isPreviewOpen(artifact) ? ArrowUp : View" /></el-icon>
-            {{ isPreviewOpen(artifact) ? '收起正文' : '查看正文' }}
+            <el-icon><Download /></el-icon>
           </button>
-          <span
-            v-else-if="bodyUnavailableNote(artifact)"
-            class="answer-artifact__unavailable"
-            :data-testid="`artifact-body-unavailable-${artifact.id}`"
-          >{{ bodyUnavailableNote(artifact) }}</span>
           <button
             v-if="canFollowUp && artifact.canReference && artifact.fileId && belongsToCurrentRun(message)"
             type="button"
@@ -215,24 +154,17 @@ async function togglePreview(artifact: Artifact) {
             {{ isReferenced(artifact) ? '已引用' : '继续修改' }}
           </button>
         </div>
-        <div
-          v-if="previewState[`${artifact.id}@${artifact.version}`]?.open"
-          class="answer-artifact__body"
-          :data-testid="`artifact-body-${artifact.id}`"
-        >
-          <p v-if="previewState[`${artifact.id}@${artifact.version}`]?.loading" class="answer-artifact__body-status">正在加载正文…</p>
-          <p v-else-if="previewState[`${artifact.id}@${artifact.version}`]?.error" class="answer-artifact__body-status">{{ previewState[`${artifact.id}@${artifact.version}`].error }}</p>
-          <ArtifactTextView
-            v-else-if="previewState[`${artifact.id}@${artifact.version}`]?.officeType"
-            :type="previewState[`${artifact.id}@${artifact.version}`]!.officeType!"
-            :text="previewState[`${artifact.id}@${artifact.version}`]?.text || ''"
-          />
-          <AssistantMessageContent
-            v-else
-            :text="previewState[`${artifact.id}@${artifact.version}`]?.text || ''"
-          />
-        </div>
-        <ArtifactImageThumb v-if="isImageArtifact(artifact.type)" :artifact="artifact" @open="openImage(artifact)" />
+        <p
+          v-if="bodyUnavailableNote(artifact)"
+          class="answer-artifact__unavailable"
+          :data-testid="`artifact-body-unavailable-${artifact.id}`"
+        >{{ bodyUnavailableNote(artifact) }}</p>
+        <ArtifactImageThumb
+          v-if="isImageArtifact(artifact.type)"
+          :artifact="artifact"
+          :active="isPreviewing(artifact)"
+          @open="emit('preview', artifact)"
+        />
       </div>
     </div>
 
@@ -343,5 +275,4 @@ async function togglePreview(artifact: Artifact) {
     本轮执行已由 {{ task.stoppedBy }} 停止
   </p>
 
-  <ArtifactContentDialog v-model:open="imageDialogOpen" :artifact="imageArtifact" />
 </template>

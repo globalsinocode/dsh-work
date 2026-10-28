@@ -2,8 +2,8 @@
 import { useArtifactImage } from '@/composables/useArtifactImage'
 import type { Artifact } from '@/types/domain'
 
-/** 执行隔离 2b-5：图片成果在回复下直接显示缩略图，点击放大；加载失败时说明并保留下载入口。 */
-const props = defineProps<{ artifact: Artifact }>()
+/** 执行隔离 2b-5：图片成果在回复下直接显示缩略图，点击在右栏看原图；加载失败时说明并保留下载入口。 */
+const props = defineProps<{ artifact: Artifact; active?: boolean }>()
 const emit = defineEmits<{ open: [] }>()
 
 const { url, loading, error } = useArtifactImage(() => props.artifact)
@@ -14,7 +14,9 @@ const { url, loading, error } = useArtifactImage(() => props.artifact)
     v-if="url"
     type="button"
     class="artifact-thumb"
-    :aria-label="`放大查看 ${artifact.name}`"
+    :class="{ 'is-active': active }"
+    :aria-label="`预览图片 ${artifact.name}`"
+    :aria-pressed="active"
     :data-testid="`artifact-thumb-${artifact.id}`"
     @click="emit('open')"
   >
@@ -34,7 +36,12 @@ const { url, loading, error } = useArtifactImage(() => props.artifact)
   border: 1px solid #e2e4e1;
   border-radius: 10px;
   background: #ffffff;
-  cursor: zoom-in;
+  cursor: pointer;
+}
+
+.artifact-thumb.is-active {
+  border-color: #356858;
+  box-shadow: 0 0 0 2px rgb(53 104 88 / 12%);
 }
 
 .artifact-thumb img {

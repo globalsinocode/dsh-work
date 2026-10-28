@@ -75,7 +75,7 @@ describe('ArtifactContentDialog (2b-5)', () => {
     await flushPromises()
     expect(dialogText()).toContain('成果内容加载失败')
     expect(notifyActionFailure).toHaveBeenCalledTimes(1)
-    ;(document.querySelector('[data-testid="artifact-content-retry"]') as HTMLButtonElement).click()
+    ;(document.querySelector('[data-testid="artifact-preview-retry"]') as HTMLButtonElement).click()
     await flushPromises()
     expect(spy).toHaveBeenCalledTimes(2)
     expect(dialogText()).toContain('季度报告正文')
@@ -91,7 +91,7 @@ describe('ArtifactContentDialog (2b-5)', () => {
     await flushPromises()
     expect(workbenchApi.downloadArtifact).toHaveBeenCalledWith('artifact-png', 1)
     expect(create).toHaveBeenCalledTimes(1)
-    const image = document.querySelector('.artifact-content__image') as HTMLImageElement
+    const image = document.querySelector('.artifact-preview-body__image') as HTMLImageElement
     expect(image.getAttribute('src')).toBe('blob:chart')
     expect(image.getAttribute('alt')).toBe('营收趋势.png')
     expect(text).not.toHaveBeenCalled()

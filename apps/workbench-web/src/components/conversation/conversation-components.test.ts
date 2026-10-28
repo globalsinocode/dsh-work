@@ -134,20 +134,21 @@ describe('RunMessageList', () => {
     expect(wrapper.text()).toContain('目标已达成 · 1 分 5 秒')
     expect(wrapper.text()).toContain('1,200 Token · inventory')
 
-    await wrapper.get('.answer-artifact__download').trigger('click')
+    await wrapper.get('[data-testid="preview-artifact-artifact-1"]').trigger('click')
+    await wrapper.get('button[aria-label="下载成果 库存周报.md"]').trigger('click')
     await wrapper.get('[data-testid="continue-editing-artifact-1"]').trigger('click')
     await wrapper.get('button[aria-label="复制回答"]').trigger('click')
     await wrapper.get('button[aria-label="复制对话链接"]').trigger('click')
+    expect(wrapper.emitted('preview')).toEqual([[file]])
     expect(wrapper.emitted('download')).toEqual([[file]])
     expect(wrapper.emitted('continue-editing')).toEqual([[file]])
     expect(wrapper.emitted('copy-answer')).toEqual([['分析完成']])
     expect(wrapper.emitted('copy-link')).toHaveLength(1)
   })
 
-  it('attaches threadArtifacts to each run’s last assistant reply and expands markdown body', async () => {
+  it('attaches threadArtifacts to each run’s last assistant reply; any of them opens the preview', async () => {
     const older = artifact({ id: 'artifact-old', name: '周会纪要.md', runId: 'run-old', type: 'markdown' })
     const newer = artifact({ id: 'artifact-new', name: '备忘.md', runId: 'run-1', type: 'markdown' })
-    downloadArtifact.mockResolvedValue(new Blob(['# 周会纪要\n\n- 项'], { type: 'text/markdown' }))
     const wrapper = mount(RunMessageList, {
       global,
       props: {
@@ -173,20 +174,27 @@ describe('RunMessageList', () => {
     expect(wrapper.find('[data-testid="continue-editing-artifact-old"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="continue-editing-artifact-new"]').exists()).toBe(true)
 
-    await wrapper.get('[data-testid="preview-artifact-artifact-old"]').trigger('click')
-    await flushPromises()
-    expect(wrapper.get('[data-testid="artifact-body-artifact-old"]').text()).toContain('周会纪要')
+    // EX-ARTIFACT-08：较早一轮的成果同样可预览；正文在宿主的右栏中显示，不在回复内展开。
+    const card = () => wrapper.get('[data-testid="preview-artifact-artifact-old"]')
+    expect(card().attributes('aria-label')).toBe('预览成果 周会纪要.md')
+    expect(card().attributes('aria-pressed')).toBe('false')
+    await card().trigger('click')
+    expect(wrapper.emitted('preview')).toEqual([[older]])
+    expect(downloadArtifact).not.toHaveBeenCalled()
+
+    // 宿主回传正在预览的版本后，对应卡片标为选中；同 id 的其他版本不算。
+    await wrapper.setProps({ previewKey: 'artifact-old@1' })
+    expect(card().attributes('aria-pressed')).toBe('true')
+    expect(card().text()).toContain('预览中')
+    await wrapper.setProps({ previewKey: 'artifact-old@2' })
+    expect(card().attributes('aria-pressed')).toBe('false')
   })
 
-  it('2b-5: Office artifacts open their extracted text; failed or pending ones explain; images show a thumbnail', async () => {
+  it('2b-5: every artifact opens the preview; failed or pending text is explained beside the card; images show a thumbnail', async () => {
     const sheet = artifact({ id: 'a-xlsx', name: '营收.xlsx', type: 'xlsx', textPreview: 'available' })
     const report = artifact({ id: 'a-pdf', name: '报告.pdf', type: 'pdf', textPreview: 'failed', textPreviewError: 'PDF 无法读取' })
     const notes = artifact({ id: 'a-docx', name: '说明.docx', type: 'docx', textPreview: 'pending' })
     const chart = artifact({ id: 'a-png', name: '趋势.png', type: 'png' })
-    getArtifactText.mockResolvedValue({
-      status: 'available', type: 'xlsx', pageCount: null, sheetCount: 2, rowCount: 2,
-      text: '# XLSX 文件摘要\n工作表：2\n\n## 营收\n区域\t收入\n华东\t1200\n\n## 明细\n月份\t收入\n7月\t380',
-    })
     downloadArtifact.mockResolvedValue(new Blob(['png'], { type: 'image/png' }))
     const create = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:chart')
     const wrapper = mount(RunMessageList, {
@@ -195,53 +203,28 @@ describe('RunMessageList', () => {
     })
     await flushPromises()
 
-    // 解析失败与尚未解析的不提供“查看正文”，原处说明。
-    expect(wrapper.find('[data-testid="preview-artifact-a-pdf"]').exists()).toBe(false)
+    // 解析失败与尚未解析的在卡片旁说明，仍可点开预览（右栏同样说明并提供下载）。
     expect(wrapper.get('[data-testid="artifact-body-unavailable-a-pdf"]').text()).toBe('无法生成正文：PDF 无法读取，请下载查看')
     expect(wrapper.get('[data-testid="artifact-body-unavailable-a-docx"]').text()).toBe('正文暂未生成，请稍后再看或下载查看')
-    expect(wrapper.find('[data-testid="preview-artifact-a-png"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="artifact-body-unavailable-a-xlsx"]').exists()).toBe(false)
+    for (const id of ['a-xlsx', 'a-pdf', 'a-docx', 'a-png']) {
+      await wrapper.get(`[data-testid="preview-artifact-${id}"]`).trigger('click')
+    }
+    expect(wrapper.emitted('preview')).toEqual([[sheet], [report], [notes], [chart]])
+    // 列表本身不读正文：解析文本由右栏读取。
+    expect(getArtifactText).not.toHaveBeenCalled()
+    expect(wrapper.find('.artifact-text').exists()).toBe(false)
 
-    // 表格就地展开为表格，工作表可切换。
-    await wrapper.get('[data-testid="preview-artifact-a-xlsx"]').trigger('click')
-    await flushPromises()
-    expect(getArtifactText).toHaveBeenCalledWith('a-xlsx', 1)
-    expect(downloadArtifact).not.toHaveBeenCalledWith('a-xlsx', 1)
-    const body = () => wrapper.get('[data-testid="artifact-body-a-xlsx"]')
-    expect(body().text()).toContain('解析文本 · 只含单元格内容')
-    expect(body().find('table').text()).toContain('华东')
-    const tabs = body().findAll('.artifact-text__tab')
-    expect(tabs.map(tab => tab.text())).toEqual(['营收', '明细'])
-    await tabs[1]!.trigger('click')
-    expect(body().find('table').text()).toContain('7月')
-    expect(body().find('table').text()).not.toContain('华东')
-
-    // 图片经鉴权下载显示缩略图，可放大。
+    // 图片经鉴权下载显示缩略图，点击同样在右栏打开。
     expect(downloadArtifact).toHaveBeenCalledWith('a-png', 1)
     const thumb = wrapper.get('[data-testid="artifact-thumb-a-png"]')
-    expect(thumb.attributes('aria-label')).toBe('放大查看 趋势.png')
+    expect(thumb.attributes('aria-label')).toBe('预览图片 趋势.png')
     expect(thumb.get('img').attributes('src')).toBe('blob:chart')
+    await thumb.trigger('click')
+    expect(wrapper.emitted('preview')).toHaveLength(5)
+    expect(wrapper.emitted('preview')![4]).toEqual([chart])
+    expect(wrapper.find('[role="dialog"]').exists()).toBe(false)
     create.mockRestore()
-  })
-
-  it('shows a failed markdown preview inline and reloads when expanded again', async () => {
-    const file = artifact({ type: 'markdown', name: '备忘.md' })
-    downloadArtifact.mockRejectedValueOnce(new Error('network down')).mockResolvedValueOnce(new Blob(['# 备忘正文']))
-    const wrapper = mount(RunMessageList, {
-      global,
-      props: { task: run({ result: result({ artifacts: [file] }) }), isOwn: m => m.role === 'user', canFollowUp: true },
-    })
-    const toggle = () => wrapper.get('[data-testid="preview-artifact-artifact-1"]').trigger('click')
-
-    await toggle()
-    await flushPromises()
-    expect(wrapper.get('[data-testid="artifact-body-artifact-1"]').text()).toContain('预览加载失败')
-
-    await toggle()
-    expect(wrapper.find('[data-testid="artifact-body-artifact-1"]').exists()).toBe(false)
-    await toggle()
-    await flushPromises()
-    expect(downloadArtifact).toHaveBeenCalledTimes(2)
-    expect(wrapper.get('[data-testid="artifact-body-artifact-1"]').text()).toContain('备忘正文')
   })
 
   it('lists files that were not registered as artifacts under the run’s last reply', () => {
@@ -261,8 +244,6 @@ describe('RunMessageList', () => {
     expect(note.text()).toContain('以下文件未登记为成果')
     expect(note.text()).toContain('“宏.xlsx”未登记为成果：含宏、脚本或会访问外部内容的组件')
     expect(note.text()).not.toContain('其他待核验事项')
-    // 二进制成果在 2b-3 之前只能下载：没有“查看正文”。
-    expect(wrapper.find('[data-testid="preview-artifact-artifact-1"]').exists()).toBe(false)
 
     const clean = mount(RunMessageList, { global, props: { task: run({ result: result({ artifacts: [artifact()] }) }), isOwn: () => false } })
     expect(clean.find('[data-testid="artifact-skipped"]').exists()).toBe(false)

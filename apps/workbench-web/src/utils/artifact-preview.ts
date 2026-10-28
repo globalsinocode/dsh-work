@@ -26,6 +26,16 @@ export function artifactPreview(artifact: Pick<Artifact, 'type' | 'textPreview' 
   return { kind: null, note: artifact.textPreview === 'failed' ? `无法预览：${artifact.textPreviewError || '文件解析失败'}` : '正文暂未生成' }
 }
 
+/** 预览正文的取法：html 沙箱渲染原文，text 为 Office/PDF 解析文本，raw 为 Markdown/文本/CSV 原文，image 为原图。 */
+export type ArtifactBodyKind = 'html' | 'text' | 'raw' | 'image'
+
+export function artifactBodyKind(type: Artifact['type']): ArtifactBodyKind {
+  if (type === 'html') return 'html'
+  if (isImageArtifact(type)) return 'image'
+  if (isOfficeArtifact(type)) return 'text'
+  return 'raw'
+}
+
 const PERSONAL_FILE_TYPES: Record<string, Artifact['type']> = {
   XLSX: 'xlsx', DOCX: 'docx', PPTX: 'pptx', PDF: 'pdf', PNG: 'png', JPG: 'jpg', JPEG: 'jpg',
 }

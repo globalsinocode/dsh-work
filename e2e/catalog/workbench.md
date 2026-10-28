@@ -125,11 +125,11 @@ P1/P2 的执行结果须单独记录数据库、身份、Runtime/DSH 版本和�
 
 1. 员工在个人空间同一对话中先后发送两条会生成成果的任务；两轮完成后重新打开该对话（刷新页面）。
 2. 每轮的成果卡显示在该轮助手回复下方，较早一轮的成果仍可见，不因后续追问而消失。
-3. 「继续修改」只出现在当前（最新一轮）的成果上；较早一轮的成果可下载、可查看正文，不能直接引用续写。
-4. Markdown 与文本成果提供「查看正文」：展开后在回复内显示该版本的完整正文，可收起；读取失败时在原处提示“预览加载失败”，再次展开会重新读取。
+3. 「继续修改」只出现在当前（最新一轮）的成果上；较早一轮的成果可下载、可预览，不能直接引用续写。
+4. 点击 Markdown 与文本成果在右栏预览该版本的完整正文（见 EX-ARTIFACT-08）；读取失败时在右栏提示，可重试。
 5. 协作模式与 AI 同事的单聊使用同一消息列表，行为一致；团队/项目空间对话不在本条范围内。
 
-**验收：** 刷新后两轮成果分别位于对应回复下，正文与各自一轮的输入对应；「继续修改」仅一处；读取失败可原处提示并重试成功。P2 另需在目标环境用真实 DSH 两轮各生成一份 Markdown，刷新后核对两份正文。
+**验收：** 刷新后两轮成果分别位于对应回复下，正文与各自一轮的输入对应；「继续修改」仅一处；读取失败可在右栏提示并重试成功。P2 另需在目标环境用真实 DSH 两轮各生成一份 Markdown，刷新后核对两份正文。
 
 ### EX-ARTIFACT-03 运行命令生成的 Office 等成果登记；不合规文件跳过并提示（执行隔离 2b-2）
 
@@ -189,13 +189,29 @@ P1/P2 的执行结果须单独记录数据库、身份、Runtime/DSH 版本和�
 **前置数据：** `personalWorkbenchFixture` 一次性库；合成 Runtime 对含 `P1-办公成果` 的 prompt 经真实成果发布流程登记 xlsx（两个工作表）、docx、pptx、无法解析的 pdf 与 png，解析文本由测试替身给出<br>
 **spec：** `e2e/personal-integration/artifact-preview.spec.ts`、`apps/workbench-web/src/components/conversation/conversation-components.test.ts`、`apps/workbench-web/src/components/ArtifactContentDialog.test.ts`、`apps/workbench-web/src/components/ArtifactCard.test.ts`、`apps/workbench-web/src/utils/artifact-preview.test.ts`、`server/src/infrastructure/postgres/m3-orchestration.integration.test.ts`
 
-1. 对话回复下，表格、文档、演示稿成果提供“查看正文”：就地展开解析文本，顶部说明不含版式等内容；表格按工作表以表格显示并可切换工作表，演示稿按页列出文字与备注；可收起。
-2. 解析失败的成果（如无法读取的 PDF）不提供“查看正文”，原处说明原因并提示下载；尚未解析的说明正文暂未生成。
-3. 图片成果在回复下直接显示缩略图，点击放大，可下载、可关闭；图片只经鉴权下载取得，不拼接直链。
+1. 对话回复下，点击表格、文档、演示稿成果在右栏（EX-ARTIFACT-08）显示解析文本，顶部说明不含版式等内容；表格按工作表以表格显示并可切换工作表，演示稿按页列出文字与备注。
+2. 解析失败的成果（如无法读取的 PDF）在成果卡旁说明原因并提示下载，右栏同样说明；尚未解析的说明正文暂未生成。
+3. 图片成果在回复下直接显示缩略图，点击在右栏显示原图，可下载、可关闭；图片只经鉴权下载取得，不拼接直链。
 4. “我的文件”中，解析成功的表格、文档、演示稿与图片类生成成果提供“预览”：对话框中显示解析文本（表格依次列出全部工作表）或图片；解析失败的不提供（列表已说明“解析失败，原文件仍可下载”）。项目空间的成果卡同样提供“预览”，解析失败的卡片显示“无法预览”与原因；HTML 成果仍在隔离沙箱中渲染。
 5. 解析文本的读取权限与下载相同；读取失败时在原处提示，可重试。
 
 **验收：** 上述测试通过；浏览器中逐项点开核对显示与可访问名称。P2 另需在目标环境用真实 DSH 生成 xlsx/docx/pptx 与图片，核对查看正文与预览的内容与原文件一致。
+
+### EX-ARTIFACT-08 点击成果在右栏预览
+
+**优先级：** P1 · **角色：** 员工（A 工作模式对话、B 协作模式与 AI 同事单聊） · **运行层级：** 一次性 PostgreSQL、合成 Runtime（不调用模型）与测试用解析器替身、真实 HTTP 接口与浏览器；组件测试<br>
+**前置数据：** `personalWorkbenchFixture` 一次性库；合成 Runtime 对含 `P1-办公成果` 的 prompt 登记 xlsx（两个工作表）、docx、pptx、无法解析的 pdf 与 png；对含 `P1-成果达成` 的 prompt 登记文本成果<br>
+**spec：** `e2e/personal-integration/artifact-preview.spec.ts`、`e2e/personal-integration/thread-artifacts.spec.ts`、`apps/workbench-web/src/components/conversation/conversation-components.test.ts`、`apps/workbench-web/src/components/conversation/ArtifactPreviewPanel.test.ts`、`apps/workbench-web/src/components/ArtifactPreviewBody.test.ts`
+
+1. 回复下的成果卡整体是“预览”入口，卡旁另有下载按钮与（可引用时）“继续修改”；不再就地展开正文，图片缩略图点击也不再弹窗，二者都在右栏打开。
+2. 宽屏（≥1280px）右栏与对话并排，对话区相应变窄，输入框不被遮挡；右栏顶部显示“成果预览”、文件名与版本、下载和“关闭成果预览”。正在预览的成果卡标为选中。
+3. 点击另一个成果时右栏替换为该成果（版本不同视为不同成果），先显示加载中；晚到的旧内容不得出现在新成果名下。
+4. 按类型显示：Markdown/文本为正文；表格、文档、演示稿与 PDF 为解析文本（同 EX-ARTIFACT-07）；HTML 在隔离沙箱中渲染，可切换“源代码”；图片为原图。解析失败或尚未解析的说明原因并提供下载；空文件说明没有可显示的内容；读取失败提示并可重试。
+5. 窄屏（721–1279px）以及项目空间内嵌的对话中，右栏改为覆盖在对话上的抽屉；手机宽度（≤720px，协作模式 ≤820px）全屏。抽屉可点遮罩、关闭按钮或按 Esc 收起。
+6. 打开“对话详情”时收起成果预览，打开成果预览时收起“对话详情”；切换到别的对话时右栏关闭。
+7. 协作模式与 AI 同事的单聊同样在右栏预览。
+
+**验收：** 上述测试通过；浏览器中在宽屏、窄屏与手机宽度下逐项核对布局、可访问名称与加载/失败/无正文状态。下载仍走鉴权通道，HTML 沙箱不带 `allow-same-origin`，Office/PDF 只显示解析文本。P2 另需在目标环境用真实 DSH 生成各类成果后逐个预览核对。
 
 ### EX-SHELL-01 运行命令的工作区容量上限与回收（执行隔离 4.7）
 

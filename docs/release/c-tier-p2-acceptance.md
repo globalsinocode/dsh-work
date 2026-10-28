@@ -64,7 +64,7 @@ curl --fail --silent --show-error --max-time 30 http://127.0.0.1:4190/health
 
 另需在员工端人工走一遍（不由脚本覆盖）：
 
-- 对话回复下的 xlsx/docx/pdf 成果“查看正文”可展开解析文本；“我的文件”中同一成果可预览。
+- 对话回复下点击 xlsx/docx/pdf 成果，右栏显示解析文本；“我的文件”中同一成果可预览。
 - 运行一个较长命令的任务时取消 Run，确认对话显示已取消、`docker ps --filter name=dsh-exec-` 中该 Attempt 的容器随后消失。
 
 工作区 2 GB 上限与“超过 4 GB 令 Attempt 失败”不在 Mac mini 上用真实写满验证，以本机真实 Docker 用例（`execution-container.e2e.test.ts`）与单元测试为证，在记录中注明。

@@ -1,0 +1,102 @@
+import ElementPlus from 'element-plus'
+import { flushPromises, mount } from '@vue/test-utils'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+import type { Artifact } from '@/types/domain'
+import ArtifactPreviewPanel from './ArtifactPreviewPanel.vue'
+
+const { downloadArtifact, getArtifactText } = vi.hoisted(() => ({ downloadArtifact: vi.fn(), getArtifactText: vi.fn() }))
+vi.mock('@/api/client', () => ({ workbenchApi: { downloadArtifact, getArtifactText } }))
+const downloadArtifactFile = vi.hoisted(() => vi.fn())
+vi.mock('@/utils/feedback', () => ({ downloadArtifactFile, notifyActionFailure: vi.fn() }))
+
+// EX-ARTIFACT-08：对话中点击成果后的预览右栏。
+
+function artifact(overrides: Partial<Artifact> = {}): Artifact {
+  return {
+    id: 'a-md', name: '库存周报.md', type: 'markdown', version: 2, size: '2 KB', createdAt: '', runId: 'run-1',
+    workspaceId: 'ws-personal', summary: '', ...overrides,
+  }
+}
+
+function mountPanel(props: { artifact: Artifact | null; docked: boolean }) {
+  return mount(ArtifactPreviewPanel, { props, global: { plugins: [ElementPlus] }, attachTo: document.body })
+}
+
+describe('ArtifactPreviewPanel', () => {
+  beforeEach(() => {
+    downloadArtifact.mockReset()
+    getArtifactText.mockReset()
+    downloadArtifactFile.mockReset()
+  })
+  afterEach(() => {
+    vi.restoreAllMocks()
+    document.body.innerHTML = ''
+  })
+
+  it('docks beside the conversation with the file name, version, download and close', async () => {
+    downloadArtifact.mockResolvedValue(new Blob(['# 周报正文']))
+    const file = artifact()
+    const wrapper = mountPanel({ artifact: file, docked: true })
+    await flushPromises()
+
+    const aside = wrapper.get('aside')
+    expect(aside.attributes('aria-label')).toBe('成果预览：库存周报.md')
+    expect(aside.text()).toContain('库存周报.md')
+    expect(aside.text()).toContain('V2 · 2 KB')
+    expect(aside.text()).toContain('周报正文')
+    expect(document.querySelector('[role="dialog"]')).toBeNull()
+
+    await wrapper.get('[data-testid="artifact-panel-download"]').trigger('click')
+    expect(downloadArtifactFile).toHaveBeenCalledWith(file)
+    await wrapper.get('button[aria-label="关闭成果预览"]').trigger('click')
+    await aside.trigger('keydown', { key: 'Escape' })
+    expect(wrapper.emitted('close')).toHaveLength(2)
+    wrapper.unmount()
+  })
+
+  it('replaces the content when another artifact is chosen', async () => {
+    downloadArtifact.mockImplementation(async (id: string) => new Blob([`正文 ${id}`]))
+    const wrapper = mountPanel({ artifact: artifact({ id: 'a-1', name: '甲.md' }), docked: true })
+    await flushPromises()
+    expect(wrapper.get('aside').text()).toContain('正文 a-1')
+
+    await wrapper.setProps({ artifact: artifact({ id: 'a-2', name: '乙.md' }) })
+    expect(wrapper.get('aside').text()).not.toContain('正文 a-1')
+    await flushPromises()
+    expect(wrapper.get('aside').attributes('aria-label')).toBe('成果预览：乙.md')
+    expect(wrapper.get('aside').text()).toContain('正文 a-2')
+    wrapper.unmount()
+  })
+
+  it('marks Office text as extracted and offers the HTML source view', async () => {
+    getArtifactText.mockResolvedValue({ status: 'available', type: 'docx', text: '季度报告正文', pageCount: null, sheetCount: null, rowCount: null })
+    const doc = mountPanel({ artifact: artifact({ type: 'docx', name: '报告.docx', textPreview: 'available' }), docked: true })
+    await flushPromises()
+    expect(doc.get('aside').text()).toContain('V2 · 2 KB · 解析文本')
+    expect(doc.find('[aria-label="预览方式"]').exists()).toBe(false)
+    doc.unmount()
+
+    downloadArtifact.mockResolvedValue(new Blob(['<h1>看板</h1>']))
+    const html = mountPanel({ artifact: artifact({ type: 'html', name: '看板.html' }), docked: true })
+    await flushPromises()
+    expect(html.find('[data-testid="artifact-preview-frame"]').attributes('sandbox')).toBe('allow-scripts')
+    await html.findAll('[aria-label="预览方式"] input[type="radio"]')[1]!.setValue()
+    expect(html.get('[data-testid="artifact-preview-source"]').text()).toContain('<h1>看板</h1>')
+    html.unmount()
+  })
+
+  it('opens as a labelled drawer over the conversation when it cannot dock', async () => {
+    downloadArtifact.mockResolvedValue(new Blob(['# 周报正文']))
+    const wrapper = mountPanel({ artifact: artifact(), docked: false })
+    await flushPromises()
+    const dialog = document.querySelector('[role="dialog"]')
+    expect(dialog?.getAttribute('aria-label')).toBe('成果预览：库存周报.md')
+    expect(dialog?.textContent).toContain('周报正文')
+    expect(wrapper.find('aside.artifact-panel').exists()).toBe(false)
+
+    ;(document.querySelector('button[aria-label="关闭成果预览"]') as HTMLButtonElement).click()
+    expect(wrapper.emitted('close')).toHaveLength(1)
+    wrapper.unmount()
+  })
+})

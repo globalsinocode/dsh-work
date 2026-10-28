@@ -124,6 +124,9 @@ describe('ArtifactPreviewDialog 竞态', () => {
     )
     notifyActionFailure.mockClear()
     const wrapper = mountDialog()
+    // 等正文组件发出请求，再在请求途中关闭。
+    await flushPromises()
+    expect(workbenchApi.downloadArtifact).toHaveBeenCalledTimes(1)
 
     await wrapper.setProps({ open: false })
     rejectRequest(new Error('boom'))

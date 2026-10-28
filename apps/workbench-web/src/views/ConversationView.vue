@@ -17,15 +17,17 @@ import { workbenchApi } from '@/api/client'
 import { useAuthStore } from '@/stores/auth'
 import { useContentStore } from '@/stores/content'
 import { useTaskStore } from '@/stores/tasks'
-import type { ProjectTask, ProjectTaskEvent, SessionThread, SessionThreadMessage, TaskSource, TeamMemberRole, WorkspaceAgentMember } from '@/types/domain'
+import type { Artifact, ProjectTask, ProjectTaskEvent, SessionThread, SessionThreadMessage, TaskSource, TeamMemberRole, WorkspaceAgentMember } from '@/types/domain'
 import { TaskComposer } from '@dsh-work/workbench-components'
 import { notifyActionFailure } from '@/utils/feedback'
 import { continueChoice, type ContinueChoice } from '@/utils/continue-intent'
 import { scheduleLabel, scheduleReasonLabel } from '@/utils/project-task-schedule'
+import ArtifactPreviewPanel from '@/components/conversation/ArtifactPreviewPanel.vue'
 import ConversationMessageItem from '@/components/conversation/ConversationMessageItem.vue'
 import RunComposer from '@/components/conversation/RunComposer.vue'
 import RunMessageList from '@/components/conversation/RunMessageList.vue'
 import SessionDiscussionList from '@/components/conversation/SessionDiscussionList.vue'
+import { useMediaQuery } from '@/composables/useMediaQuery'
 import { useRunActions } from '@/composables/useRunActions'
 import { resultOutcomeLabels, useRunProgress } from '@/composables/useRunProgress'
 import '@/styles/conversation-thread.css'
@@ -70,6 +72,20 @@ const embeddedWorkspaceId = computed(() =>
   isEmbeddedInWorkspace.value ? String(route.params.id) : '')
 const routeTargetId = computed(() =>
   isEmbeddedInWorkspace.value ? String(route.params.conversationId) : String(route.params.id))
+
+/**
+ * EX-ARTIFACT-08：点击成果在右栏预览。宽屏（≥1280px）与对话并排；窄屏与空间内嵌时为抽屉。
+ * 右栏与「对话详情」抽屉同在右侧，打开一个就收起另一个；切换到别的对话时关闭。
+ */
+const previewArtifact = ref<Artifact | null>(null)
+const wideForPreview = useMediaQuery('(min-width: 1280px)', true)
+const previewDocked = computed(() => wideForPreview.value && !isEmbeddedInWorkspace.value)
+const previewKey = computed(() => previewArtifact.value ? `${previewArtifact.value.id}@${previewArtifact.value.version}` : null)
+function openPreview(artifact: Artifact) {
+  detailsOpen.value = false
+  previewArtifact.value = artifact
+}
+watch(detailsOpen, (open) => { if (open) previewArtifact.value = null })
 
 function conversationPath(target: string) {
   if (isTaskThreadRoute.value) {
@@ -169,6 +185,13 @@ const mentionOptions = computed(() =>
  */
 const projectTask = ref<ProjectTask | null>(null)
 const currentSessionId = computed(() => task.value?.sessionId ?? sessionThread.value?.sessionId ?? null)
+/** 追问会换到新 Run 的地址但仍是同一对话：只在换到别的会话时关闭成果预览。 */
+let previewSessionId: string | null = null
+watch(currentSessionId, (sessionId) => {
+  if (!sessionId) return
+  if (previewSessionId && sessionId !== previewSessionId) previewArtifact.value = null
+  previewSessionId = sessionId
+}, { immediate: true })
 const taskThreadAgentId = computed(() =>
   projectTask.value?.assignee.type === 'agent' ? projectTask.value.assignee.agentMemberId : undefined)
 const taskThreadAgentName = computed(() =>
@@ -839,7 +862,14 @@ watch(
 </script>
 
 <template>
-  <div class="conversation-page" :class="{ 'conversation-page--embedded': isEmbeddedInWorkspace, 'conversation-page--task': inTaskConversation }">
+  <div
+    class="conversation-page"
+    :class="{
+      'conversation-page--embedded': isEmbeddedInWorkspace,
+      'conversation-page--task': inTaskConversation,
+      'conversation-page--previewing': Boolean(task && previewArtifact && previewDocked),
+    }"
+  >
     <div v-if="(taskStore.loading || targetLoading) && !task && !sessionThread && !threadMissing" class="conversation-state">
       <el-skeleton :rows="8" animated />
     </div>
@@ -1074,6 +1104,8 @@ watch(
             :can-follow-up="canFollowUp"
             :can-retry="canRetry"
             :referenced-file-ids="referencedArtifacts.map(item => item.fileId)"
+            :preview-key="previewKey"
+            @preview="openPreview"
             @download="download"
             @continue-editing="continueEditing"
             @copy-answer="copyAnswer"
@@ -1229,6 +1261,12 @@ watch(
         </section>
       </el-drawer>
 
+      <ArtifactPreviewPanel
+        class="conversation-preview"
+        :artifact="previewArtifact"
+        :docked="previewDocked"
+        @close="previewArtifact = null"
+      />
     </template>
   </div>
 </template>
@@ -1336,6 +1374,29 @@ watch(
   width: min(100%, 920px);
   min-height: calc(100vh - 330px);
   margin: 0 auto;
+}
+
+/* EX-ARTIFACT-08：成果预览右栏与对话并排，标题栏、对话与输入区让出右栏宽度。 */
+.conversation-page--previewing {
+  --conversation-preview-width: clamp(380px, 36vw, 520px);
+}
+
+.conversation-page--previewing .conversation-header,
+.conversation-page--previewing .conversation-composer-dock {
+  right: var(--conversation-preview-width);
+}
+
+.conversation-page--previewing .conversation-scroll {
+  margin-right: var(--conversation-preview-width);
+}
+
+.conversation-page > .conversation-preview {
+  position: absolute;
+  z-index: 13;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: var(--conversation-preview-width);
 }
 
 /* TW-10 空间内嵌套：高度收敛到空间页对话面板，不再占满视口。 */
