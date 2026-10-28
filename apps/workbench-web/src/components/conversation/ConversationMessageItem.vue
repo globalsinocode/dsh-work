@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import { Paperclip } from '@element-plus/icons-vue'
 import { AssistantMessageContent } from '@dsh-work/ui-core'
 
 import '@/styles/conversation-thread.css'
@@ -12,6 +13,8 @@ export interface ConversationMessageView {
   senderName?: string | null
   agentName?: string | null
   runRequesterName?: string | null
+  /** 用户消息随发送附带的文件名。 */
+  attachments?: string[] | null
 }
 
 /**
@@ -53,6 +56,12 @@ const name = computed(() => isUser.value ? props.message.senderName ?? '我' : p
     </div>
     <div v-if="isUser" class="assistant-answer user-message">
       <p>{{ message.content }}</p>
+      <ul v-if="message.attachments?.length" class="message-attachments" aria-label="附带文件">
+        <li v-for="(fileName, index) in message.attachments" :key="`${index}:${fileName}`" class="message-attachment" :title="fileName">
+          <el-icon><Paperclip /></el-icon>
+          <span>{{ fileName }}</span>
+        </li>
+      </ul>
     </div>
     <div v-else class="assistant-answer">
       <AssistantMessageContent :text="message.content" />

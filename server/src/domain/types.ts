@@ -96,6 +96,8 @@ export interface ChatMessage {
   runRequesterId?: string
   runRequesterName?: string
   agentName?: string
+  /** 用户消息随发送附带的输入文件名（上传附件与引用文件）；无文件时缺省。 */
+  attachments?: string[]
 }
 
 /** Run 失败的结构化错误（错误目录投影；I-06 起收敛进 TaskResult.error）。 */

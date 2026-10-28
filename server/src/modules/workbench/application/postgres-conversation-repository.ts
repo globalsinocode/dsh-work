@@ -175,6 +175,7 @@ interface SourceRow {
 }
 
 interface AttachmentRow {
+  runId: string
   name: string
 }
 
@@ -1299,6 +1300,9 @@ export class PostgresConversationRepository {
     })
     const hasMoreMessages = loaded.length > sessionThreadMessageLimit
     const messages = hasMoreMessages ? loaded.slice(1) : loaded
+    const attachmentsByRun = await this.loadRunAttachments([
+      ...new Set(messages.map(message => message.runId).filter((id): id is string => Boolean(id))),
+    ])
     const runs = await this.database<{
       id: string
       status: RunState
@@ -1326,7 +1330,7 @@ export class PostgresConversationRepository {
       creatorName: row.creatorName,
       createdAt: row.createdAt.toISOString(),
       lastActiveAt: row.lastActiveAt.toISOString(),
-      messages: messages.map(message => ({
+      messages: withRunAttachments(messages.map(message => ({
         ...mapMessage(message),
         // createdAt 是展示用的时分；sentAt 供前端把消息与执行记录、任务事件按时间合并排序。
         sentAt: message.createdAt.toISOString(),
@@ -1336,7 +1340,7 @@ export class PostgresConversationRepository {
         runRequesterId: message.runRequesterId,
         runRequesterName: message.runRequesterName,
         agentName: message.agentName,
-      })),
+      })), attachmentsByRun),
       runs: runs.map(run => ({
         runId: run.id,
         status: run.status,
@@ -1471,6 +1475,25 @@ export class PostgresConversationRepository {
     `
   }
 
+  /**
+   * 各 Run 的输入文件名（上传附件与引用文件），按 runId 分组。取该 Run 所有 Attempt 的去重并集：
+   * 审批恢复新建的 Attempt 不重新登记输入文件，只看当前 Attempt 会让已发送的文件从消息下消失。
+   */
+  private async loadRunAttachments(runIds: string[]): Promise<Map<string, string[]>> {
+    const byRun = new Map<string, string[]>()
+    if (!runIds.length) return byRun
+    const rows = await this.database<AttachmentRow[]>`
+      select rif.run_id as "runId", f.original_name as name
+        from run_input_files rif
+        join file_objects f on f.tenant_id = rif.tenant_id and f.id = rif.file_id
+       where rif.tenant_id = ${tenantId} and rif.run_id = any(${runIds})
+       group by rif.run_id, rif.file_id, f.original_name
+       order by min(rif.created_at), f.original_name
+    `
+    for (const row of rows) byRun.set(row.runId, [...(byRun.get(row.runId) ?? []), row.name])
+    return byRun
+  }
+
   private async mapTask(row: TaskRow): Promise<TaskRun> {
     // 团队 Run 详情只取该 Run 的消息（评审 M8）：共享会话里全会话加载会把
     // 几百条无关讨论一并载入。个人 Run 详情保持 AC-23 原契约——返回会话的
@@ -1491,15 +1514,7 @@ export class PostgresConversationRepository {
     const threadArtifacts = row.workspaceType === 'personal' && threadRunIds.length > 1
       ? (await this.loadThreadArtifactsForRuns(threadRunIds)).map(artifact => mapArtifactRow(artifact, artifact.sourceRunId))
       : evidence.artifacts.map(item => item.artifact)
-    const attachments = row.currentAttemptId
-      ? await this.database<AttachmentRow[]>`
-          select f.original_name as name from run_input_files rif
-          join file_objects f on f.tenant_id = rif.tenant_id and f.id = rif.file_id
-           where rif.tenant_id = ${tenantId} and rif.run_id = ${row.id}
-             and rif.attempt_id = ${row.currentAttemptId}
-           order by rif.created_at
-        `
-      : []
+    const attachmentsByRun = await this.loadRunAttachments([...new Set([row.id, ...threadRunIds])])
     const prompt = runMessages.find((message) => message.role === 'user')?.content ?? row.title
     return {
       id: row.id,
@@ -1518,11 +1533,11 @@ export class PostgresConversationRepository {
       owner: row.owner,
       requestedBy: row.requestedBy,
       stoppedBy: row.stoppedByName,
-      messages: messages.map(mapMessage),
+      messages: withRunAttachments(messages.map(mapMessage), attachmentsByRun),
       steps: mapSteps(row.id, evidence.events, row.status),
       threadArtifacts,
       result: deriveTaskResult(evidence),
-      attachments: attachments.map(attachment => attachment.name),
+      attachments: attachmentsByRun.get(row.id) ?? [],
       skill: row.selectedSkillId && row.selectedSkillName && row.selectedSkillVersion
         ? { id: row.selectedSkillId, name: row.selectedSkillName, version: row.selectedSkillVersion }
         : undefined,
@@ -1640,6 +1655,20 @@ export function toRunError(runId: string, errorCode: string | null | undefined):
     retryable: true,
   }
   return { code, object: `运行 ${runId}`, ...detail }
+}
+
+/** 输入文件挂到各 Run 的第一条用户消息上，消息流里随发送的那句话一起展示。 */
+function withRunAttachments<T extends Pick<ChatMessage, 'role' | 'runId'>>(
+  messages: T[],
+  attachmentsByRun: Map<string, string[]>,
+): Array<T & { attachments?: string[] }> {
+  const attached = new Set<string>()
+  return messages.map((message) => {
+    if (message.role !== 'user' || !message.runId || attached.has(message.runId)) return message
+    attached.add(message.runId)
+    const attachments = attachmentsByRun.get(message.runId)
+    return attachments?.length ? { ...message, attachments } : message
+  })
 }
 
 function mapMessage(row: MessageRow): ChatMessage {

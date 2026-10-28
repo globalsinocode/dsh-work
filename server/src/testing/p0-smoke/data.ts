@@ -341,6 +341,7 @@ export const mockTasks: TaskRun[] = [
         role: 'user',
         content: '分析上传的八月生产计划，结合当前库存标出下周可能缺料的订单。',
         createdAt: '昨天 16:08',
+        attachments: ['八月生产计划_v3.xlsx'],
       },
       {
         id: 'msg-22',

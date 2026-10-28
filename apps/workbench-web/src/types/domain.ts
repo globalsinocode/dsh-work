@@ -186,6 +186,8 @@ export interface ChatMessage {
   runRequesterId?: string
   runRequesterName?: string
   agentName?: string
+  /** 用户消息随发送附带的输入文件名（上传附件与引用文件）；无文件时缺省。 */
+  attachments?: string[]
 }
 
 /**
@@ -206,6 +208,8 @@ export interface SessionThreadMessage {
   runRequesterId: string | null
   runRequesterName: string | null
   agentName: string | null
+  /** 用户消息随发送附带的输入文件名；无文件时缺省。 */
+  attachments?: string[]
 }
 
 export interface SessionThread {
@@ -854,6 +858,7 @@ export type WorkspaceTimelineItem =
       kind: 'message'; id: string; at: string; sessionId: string; sessionTitle: string
       role: 'user' | 'assistant'; content: string; senderId: string | null; senderName: string | null
       agentName: string | null; runId: string | null; runRequesterName: string | null
+      attachments?: string[] | null
     }
   | {
       kind: 'run'; id: string; at: string; sessionId: string; sessionTitle: string; runId: string

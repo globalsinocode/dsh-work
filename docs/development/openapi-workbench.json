@@ -4361,6 +4361,16 @@
                   "string",
                   "null"
                 ]
+              },
+              "attachments": {
+                "type": [
+                  "array",
+                  "null"
+                ],
+                "items": {
+                  "type": "string"
+                },
+                "description": "用户发言触发 Run 时附带的输入文件名；无文件时为 null"
               }
             }
           },

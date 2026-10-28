@@ -131,6 +131,19 @@ P1/P2 的执行结果须单独记录数据库、身份、Runtime/DSH 版本和�
 
 **验收：** 刷新后两轮成果分别位于对应回复下，正文与各自一轮的输入对应；「继续修改」仅一处；读取失败可在右栏提示并重试成功。P2 另需在目标环境用真实 DSH 两轮各生成一份 Markdown，刷新后核对两份正文。
 
+### EX-ATTACH-01 对话中上传的文件显示在发送它的消息下
+
+**优先级：** P1 · **角色：** 员工 · **运行层级：** 一次性 PostgreSQL、合成 Runtime（不调用模型）、真实 HTTP 接口与浏览器<br>
+**前置数据：** `personalWorkbenchFixture` 一次性库；两份合成 CSV 文件<br>
+**spec：** `e2e/personal-integration/message-attachments.spec.ts`、`apps/workbench-web/src/components/conversation/conversation-components.test.ts`、`server/src/infrastructure/postgres/m4-file-analysis.integration.test.ts`（含审批恢复后的新 Attempt）、`server/src/http/workspace-timeline-api.integration.test.ts`（群组时间线）
+
+1. 员工在新对话中从「添加内容 → 上传本地文件」选择一个文件并发送。
+2. 对话列表中该条消息下方列出所附文件名；文件随消息进入本轮输入（上传附件与引用的文件、成果都按本轮实际输入列出）。
+3. 在同一对话中再附一个文件追问；两轮消息各自列出自己的文件，较早一轮的文件不因追问消失。
+4. 刷新页面后两轮的文件仍在各自的消息下。协作模式的单聊与群组对话使用同一消息组件，行为一致。
+
+**验收：** 每条消息下列出的文件与该轮实际输入一致，刷新后不变；没有附件的消息不显示文件区。P2 另需在目标环境用真实 DSH 上传一个文件并追问一轮，刷新后核对两轮文件。
+
 ### EX-ARTIFACT-03 运行命令生成的 Office 等成果登记；不合规文件跳过并提示（执行隔离 2b-2）
 
 **优先级：** P1 · **角色：** 员工 · **运行层级：** 一次性 PostgreSQL 与成果发布服务、校验模块单元测试、员工端组件测试；真实 DSH 生成 Office 文件属 P2<br>

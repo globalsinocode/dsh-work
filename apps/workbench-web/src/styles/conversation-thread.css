@@ -31,6 +31,36 @@
   white-space: pre-wrap;
 }
 
+/* 用户消息附带的文件：与输入区已选文件同样的标签样式，长文件名截断并以 title 显示全名。 */
+.message-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.message-attachment {
+  display: inline-flex;
+  align-items: center;
+  max-width: 280px;
+  min-height: 29px;
+  gap: 6px;
+  padding: 3px 8px;
+  border: 1px solid #dedfdd;
+  border-radius: 7px;
+  color: #4e554f;
+  background: #f7f8f6;
+  font-size: var(--dsh-font-size-caption);
+}
+
+.message-attachment > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .conversation-message--own .assistant-identity {
   flex-direction: row-reverse;
 }

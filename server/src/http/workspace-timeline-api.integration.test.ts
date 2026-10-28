@@ -75,9 +75,12 @@ test('时间线按时间倒序合并讨论、执行记录、任务卡片与系�
   assert.equal(ask.sessionTitle, '第一段讨论')
   assert.equal(ask.senderName, '林岚')
   assert.equal(ask.runId, 's5d-run-d1')
+  assert.deepEqual(ask.attachments, ['库存清单.csv'])
   const reply = items.find(item => item.id === 'm:s5d-m-reply')!
   assert.equal(reply.role, 'assistant')
   assert.equal(reply.runRequesterName, '林岚')
+  assert.equal(reply.attachments, null, '附件只挂在发言上')
+  assert.equal(items.find(item => item.id === 'm:s5d-m-d1')!.attachments, null)
   const run = items.find(item => item.id === 'r:s5d-run-d1')!
   assert.equal(run.status, 'succeeded')
   assert.equal(run.requesterName, '林岚')
@@ -202,6 +205,21 @@ async function seed() {
   await run('s5d-run-d1', 's5d-d1', owner, 'succeeded', '2026-10-03T01:00:00Z')
   await message('s5d-m-ask', 's5d-d1', 'user', '@库存助手 分析一下', '2026-10-03T01:00:01Z', owner, 's5d-run-d1')
   await message('s5d-m-reply', 's5d-d1', 'assistant', '分析完成', '2026-10-03T01:02:00Z', null, 's5d-run-d1')
+  // 触发发言附带的会话附件：作为该 Run 的输入文件，显示在发言下。
+  await database`
+    insert into file_objects (id, tenant_id, workspace_id, session_id, storage_key, original_name, mime_type,
+      size_bytes, sha256, scan_status, uploaded_by)
+    values ('s5d-file-ask', ${tenantId}, ${workspaceId}, 's5d-d1', 'storage/s5d-file-ask', '库存清单.csv', 'text/csv',
+      64, ${'a'.repeat(64)}, 'clean', ${owner})
+  `
+  await database`
+    insert into run_attempts (id, tenant_id, run_id, attempt_no, runtime_id, manifest, manifest_sha256, model_route_snapshot, status)
+    values ('s5d-attempt-d1', ${tenantId}, 's5d-run-d1', 1, 'runtime-local-01', ${database.json({})}, 'x', ${database.json({})}, 'succeeded')
+  `
+  await database`
+    insert into run_input_files (id, tenant_id, run_id, attempt_id, file_id, extraction_id, mount_path)
+    values ('s5d-input-ask', ${tenantId}, 's5d-run-d1', 's5d-attempt-d1', 's5d-file-ask', null, '/workspace/input/original/库存清单.csv')
+  `
 
   // Agent 任务（任务对话不进群聊）：一次手动执行、一次定时“无变化”。
   await session('s5d-task-session', '库存周报', '2026-10-04T00:00:00Z')

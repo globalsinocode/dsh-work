@@ -2410,6 +2410,13 @@
               "null"
             ],
             "description": "回复的 Agent 名称"
+          },
+          "attachments": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "用户消息随发送附带的输入文件名（上传附件与引用文件）；无文件时缺省"
           }
         }
       },
@@ -2565,6 +2572,13 @@
               "null"
             ],
             "description": "该消息所属的 Run；共享讨论消息为 null"
+          },
+          "attachments": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "用户消息随发送附带的输入文件名（上传附件与引用文件）；无文件时缺省"
           }
         }
       },

@@ -122,6 +122,19 @@ describe('ConversationMessageItem', () => {
     expect(wrapper.text()).not.toContain('由 林岚 发起')
     expect(wrapper.get('[data-testid="task-conversation-tag"]').text()).toBe('补充要求')
   })
+
+  it('lists the files sent with a user message', () => {
+    const wrapper = mount(ConversationMessageItem, {
+      global,
+      props: { message: { ...messages[0]!, attachments: ['八月生产计划.xlsx', '库存.csv'] }, own: true },
+    })
+    const list = wrapper.get('[aria-label="附带文件"]')
+    expect(list.findAll('li').map(item => item.text())).toEqual(['八月生产计划.xlsx', '库存.csv'])
+    expect(wrapper.find('.user-message p').text()).toBe('分析库存')
+
+    const plain = mount(ConversationMessageItem, { global, props: { message: messages[0]! } })
+    expect(plain.find('[aria-label="附带文件"]').exists()).toBe(false)
+  })
 })
 
 describe('RunMessageList', () => {
