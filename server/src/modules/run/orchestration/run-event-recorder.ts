@@ -131,6 +131,8 @@ export class RunEventRecorder {
       await this.deps.persistentWait?.cancelPreparingForAttempt({ runId: run.id, attemptId: event.attempt_id })
       await this.deps.delegation?.cancelActiveDescendants(run.taskId, '父任务已取消，终止所有活动子任务')
       await this.deps.delegation?.observeChildTerminal(run.id)
+      // 无 Session 的系统运行（档案整理、会话摘要）需要收敛自己的认领，否则空间一直显示“整理中”。
+      if (!run.sessionId) await this.onSystemRunTerminal(run, 'cancelled', '')
     } else if (event.event_type === 'run.failed') {
       const code = typeof event.safe_metadata['error_code'] === 'string'
         ? event.safe_metadata['error_code']
@@ -159,6 +161,8 @@ export class RunEventRecorder {
           kind: 'run_failed',
           dedupeKey: `run-terminal:${event.event_id}`,
         })
+      } else {
+        await this.onSystemRunTerminal(run, 'failed', '')
       }
     } else if (event.event_type === 'run.completed') {
       const attempt = await this.deps.runs.getAttempt(tenantId, event.attempt_id)
@@ -183,8 +187,14 @@ export class RunEventRecorder {
       await this.deps.operations?.appendAudit('system', 'run.completed', run.id, 'success', event.trace_id, 'DSH Runtime 执行完成')
       await this.deps.delegation?.cancelActiveDescendants(run.taskId, '父任务已结束，终止未收敛的活动子任务')
       await this.deps.delegation?.observeChildTerminal(run.id)
-      if (assistantRawOutput) {
-        await this.deps.projectArchivist?.afterTaskRun(run, assistantRawOutput)
+      // 任务线程的一次执行成功后交给档案员整理（非任务线程时无操作）。
+      if (run.sessionId) {
+        if (assistantRawOutput) await this.deps.projectArchivist?.afterTaskRun(run, assistantRawOutput)
+        // EX-02：会话 Run 结束后按需在后台生成摘要。
+        void this.deps.sessionSummaries?.scheduleAfterRun(run)
+      } else {
+        // 无 Session 的系统运行可能就是档案整理或摘要运行本身：把结果交给对应入口保存。
+        await this.onSystemRunTerminal(run, 'succeeded', assistantOutput)
       }
       if (run.sessionId) {
         await this.deps.conversations.writeRunTerminalNotificationIfTeam({
@@ -219,6 +229,19 @@ export class RunEventRecorder {
         result: decision === 'allow_once' ? 'success' : 'blocked',
       })
     }
+  }
+
+  /**
+   * 无 Session 的系统运行（项目档案整理、会话摘要）结束时，交给对应入口保存结果。
+   * 合并时这一层被丢掉：档案整理 Run 一直停在“整理中”，摘要运行也从未落盘。
+   */
+  private async onSystemRunTerminal(
+    run: RunRecord,
+    status: 'succeeded' | 'failed' | 'cancelled',
+    output: string,
+  ) {
+    if (await this.deps.projectArchivist?.onRunTerminal(run, status, output)) return
+    await this.deps.sessionSummaries?.onRunTerminal(run, status, output)
   }
 
   private async transitionIfNeeded(runId: string, attemptId: string, state: 'cancel_requested' | 'cancelled') {

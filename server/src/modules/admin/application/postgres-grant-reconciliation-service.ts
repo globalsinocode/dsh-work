@@ -1,5 +1,5 @@
 import type { DatabaseClient, DatabaseTransaction } from '../../../infrastructure/postgres/database.ts'
-import { authorizationDenied } from '../../../domain/authorization-errors.ts'
+import { adminAccessDenied } from '../../../domain/authorization-errors.ts'
 import type { PostgresOperationsService } from './postgres-operations-service.ts'
 import { invalidRequest, notFound, stateConflict } from '../../../domain/request-errors.ts'
 
@@ -238,7 +238,7 @@ export class PostgresGrantReconciliationService {
               and (r.permissions ? 'admin:*' or r.permissions ? 'admin:write')
          )
     `
-    if (!row) throw authorizationDenied('操作人不存在、已停用或不是平台管理员')
+    if (!row) throw adminAccessDenied('操作人不存在、已停用或不是平台管理员')
     return row.id
   }
 }

@@ -31,7 +31,7 @@ import {
 import { compileRuntimeManifest } from './manifest-compiler.ts'
 import { canonicalJson, mcpToolSchemaDigest } from './canonical-json.ts'
 import { isSafeResumeWorkspacePath } from './resume-workspace-path.ts'
-import { isResolvedPathInsideDirectory } from './contained-resolved-path.ts'
+import { isStrictResolvedPathInside } from './contained-resolved-path.ts'
 import { ExecutionCapabilityUnavailableError } from './execution-capabilities.ts'
 import { redactSensitiveText, sanitizeSafeMetadata } from '../../security/safe-observability.ts'
 import type {
@@ -55,6 +55,9 @@ import { isDshBuiltinTool } from './builtin-tools.ts'
 
 const execFileAsync = promisify(execFile)
 const DEFAULT_SETUP_TIMEOUT_MS = 120_000
+
+/** 26-10-24 二期：思考过程转发上限（字符），防止失控流占用事件通道 */
+const MAX_REASONING_CHARS = 65536
 
 interface ExecutionRecord {
   manifest: RuntimeManifest
@@ -81,6 +84,9 @@ interface ExecutionRecord {
   bridge?: Awaited<ReturnType<typeof createPlatformToolBridge>>
   durableWait?: DurableWaitDecision
   toolCallsReported?: boolean
+  /** 26-10-24 二期：思考过程累积文本与截断标记（不落库，仅流式展示） */
+  reasoningText: string
+  reasoningTruncated: boolean
   /** EX-01 live steps: calls DSH reported during the Attempt, keyed by ACP toolCallId. */
   liveToolCalls: Map<string, { toolName: string; completed: boolean }>
   /** `tool.completed` events emitted so far (live and end-of-run), bounded per Attempt. */
@@ -238,14 +244,14 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
     for (const file of compiled.manifest.resume?.checkpoint_context.workspace_files ?? []) {
       if (!isSafeResumeWorkspacePath(file.path)) throw new Error(`Unsafe checkpoint workspace path: ${file.path}`)
       const target = resolve(workspaceDirectory, file.path)
-      if (!isResolvedPathInsideDirectory(outputDirectory, target)) throw new Error(`Unsafe checkpoint workspace path: ${file.path}`)
+      if (!isStrictResolvedPathInside(outputDirectory, target)) throw new Error(`Unsafe checkpoint workspace path: ${file.path}`)
       await mkdir(dirname(target), { recursive: true })
       await writeFile(target, file.content, { flag: 'wx', mode: 0o600 })
     }
     for (const mount of compiled.manifest.input.file_mounts) {
       const relativePath = mount.mount_path.slice('/workspace/'.length)
       const target = resolve(workspaceDirectory, relativePath)
-      if (!isResolvedPathInsideDirectory(workspaceDirectory, target)) throw new Error(`Unsafe file mount path: ${mount.mount_path}`)
+      if (!isStrictResolvedPathInside(workspaceDirectory, target)) throw new Error(`Unsafe file mount path: ${mount.mount_path}`)
       await mkdir(dirname(target), { recursive: true })
       await writeFile(target, mount.content, { flag: 'wx', mode: 0o400 })
       await chmod(target, 0o400)
@@ -253,7 +259,7 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
     for (const attachment of compiled.manifest.input.attachments ?? []) {
       const relativePath = attachment.mount_path.slice('/workspace/'.length)
       const target = resolve(workspaceDirectory, relativePath)
-      if (!isResolvedPathInsideDirectory(workspaceDirectory, target)) throw new Error(`Unsafe attachment path: ${attachment.mount_path}`)
+      if (!isStrictResolvedPathInside(workspaceDirectory, target)) throw new Error(`Unsafe attachment path: ${attachment.mount_path}`)
       const bytes = Buffer.from(attachment.content_base64, 'base64')
       if (createHash('sha256').update(bytes).digest('hex') !== attachment.content_sha256) {
         throw new Error(`Attachment checksum mismatch: ${attachment.name}`)
@@ -278,7 +284,7 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
         if (skill.artifact_ref && (!expected || expected.sha256 !== file.sha256 || expected.size !== file.size)) throw new Error(`Skill 文件索引不匹配：${file.path}`)
         const root = join(workspaceDirectory, 'skills', safeSegment(skill.id))
         const target = resolve(root, file.path)
-        if (!isResolvedPathInsideDirectory(root, target)) throw new Error('Unsafe Skill resource path')
+        if (!isStrictResolvedPathInside(root, target)) throw new Error('Unsafe Skill resource path')
         await mkdir(dirname(target), { recursive: true })
         await writeFile(target, file.content, { flag: 'wx', mode: 0o400 })
       }
@@ -317,6 +323,8 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
       liveToolCalls: new Map(),
       toolEventsEmitted: 0,
       materializedSkills,
+      reasoningText: '',
+      reasoningTruncated: false,
     }
     this.executions.set(manifest.run_id, record)
     this.emit(record, 'run.queued', '任务已进入 Runtime 队列', { manifest_sha256: compiled.sha256 })
@@ -922,6 +930,10 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
       return
     }
     const content = notification.update['content']
+    if (updateType === 'agent_thought_chunk') {
+      this.onThoughtChunk(record, content)
+      return
+    }
     if (updateType !== 'agent_message_chunk' || !isRecord(content) || content['type'] !== 'text') return
     const text = content['text']
     if (typeof text !== 'string' || text.length === 0) return
@@ -938,6 +950,22 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
     if (bounded.length < text.length) record.outputTruncated = true
     record.assistantText += bounded
     if (bounded.length > 0) this.emit(record, 'assistant.delta', bounded, { committed_block: true })
+  }
+
+  /** 26-10-24 二期：思考块转发为 assistant.reasoning 增量事件（有界，不落库正文） */
+  private onThoughtChunk(record: ExecutionRecord, content: unknown): void {
+    if (!isRecord(content) || content['type'] !== 'text') return
+    const text = content['text']
+    if (typeof text !== 'string' || text.length === 0) return
+    const remaining = MAX_REASONING_CHARS - record.reasoningText.length
+    if (remaining <= 0) {
+      record.reasoningTruncated = true
+      return
+    }
+    const bounded = text.slice(0, remaining)
+    if (bounded.length < text.length) record.reasoningTruncated = true
+    record.reasoningText += bounded
+    this.emit(record, 'assistant.reasoning', bounded, { committed_block: true })
   }
 
   private async onPermissionRequest(

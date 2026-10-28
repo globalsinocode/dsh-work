@@ -6,7 +6,8 @@
 export const ACTION_GUARD_DEBOUNCE_MS = 600
 
 interface KeyedGuardState {
-  inFlight?: Promise<void>
+  /** 被合并的重复调用拿到的是同一次执行的结果，因此保留原返回类型。 */
+  inFlight?: Promise<unknown>
   lastAt: number
 }
 
@@ -28,21 +29,21 @@ export interface RunGuardedActionOptions {
 /**
  * 按 key 合并并发执行，并在距上次触发后的防抖窗口内忽略重复调用（含完成后冷却）。
  */
-export function runGuardedAction(
+export function runGuardedAction<T>(
   key: string,
-  action: () => Promise<void>,
+  action: () => Promise<T>,
   options: RunGuardedActionOptions = {},
-): Promise<void> {
+): Promise<T | void> {
   const debounceMs = options.debounceMs ?? ACTION_GUARD_DEBOUNCE_MS
   const state = keyedStore(key)
 
-  if (state.inFlight) return state.inFlight
+  if (state.inFlight) return state.inFlight as Promise<T | void>
 
   const now = Date.now()
   if (state.lastAt > 0 && now - state.lastAt < debounceMs) return Promise.resolve()
 
   state.lastAt = now
-  const job = action().finally(() => {
+  const job: Promise<T | void> = action().finally(() => {
     state.inFlight = undefined
   })
   state.inFlight = job

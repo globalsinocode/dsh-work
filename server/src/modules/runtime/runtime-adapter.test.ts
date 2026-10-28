@@ -1823,3 +1823,62 @@ describe('ACP 模型路由取值（T4 回归修复）', () => {
     assert.doesNotMatch(template, /config: \{\}/)
   })
 })
+
+
+describe('26-10-24 二期：会话更新转发（reasoning / 工具生命周期）', () => {
+  it('agent_thought_chunk 转发为 assistant.reasoning 增量事件', async () => {
+    const adapter = await createAdapter()
+    const input = manifest('run-reasoning-fwd', 'attempt-1', '[reasoning] think then answer')
+    const events: RuntimeEvent[] = []
+    const handle = await adapter.execute(input)
+    adapter.subscribe(input.run_id, event => { events.push(event) })
+
+    const result = await handle.done
+    assert.equal(result.status, 'completed', result.errorMessage ?? undefined)
+    const reasoning = events.filter(event => event.event_type === 'assistant.reasoning')
+    assert.equal(reasoning.length, 2)
+    assert.equal(reasoning[0]?.display_message, '先分析库存数据。')
+    assert.equal(reasoning[1]?.display_message, '再对比上月。')
+    assert.equal(reasoning[0]?.safe_metadata['committed_block'], true)
+    // 正文流不受思考转发影响
+    const deltas = events.filter(event => event.event_type === 'assistant.delta').map(e => e.display_message).join('')
+    assert.equal(deltas, '分析完成，结论如下。')
+  })
+
+  it('tool_call 生命周期转发为 tool.started 与 tool.completed 且不双报', async () => {
+    const adapter = await createAdapter()
+    const input = manifest('run-tool-lifecycle-fwd', 'attempt-1', '[tool-lifecycle] run a tool')
+    const events: RuntimeEvent[] = []
+    const handle = await adapter.execute(input)
+    adapter.subscribe(input.run_id, event => { events.push(event) })
+
+    const result = await handle.done
+    assert.equal(result.status, 'completed', result.errorMessage ?? undefined)
+    const started = events.filter(event => event.event_type === 'tool.started')
+    assert.equal(started.length, 1)
+    assert.equal(started[0]?.display_message, 'fs_write：正在调用')
+    assert.equal(started[0]?.safe_metadata['call_id'], 'call-tool-1')
+    assert.equal(started[0]?.safe_metadata['tool_name'], 'fs_write')
+    assert.equal(started[0]?.safe_metadata['status'], 'running')
+    assert.equal(started[0]?.safe_metadata['live'], true)
+
+    const completed = events.filter(event => event.event_type === 'tool.completed')
+    assert.equal(completed.length, 1, '实时上报后终态批量上报必须跳过该 call')
+    assert.equal(completed[0]?.safe_metadata['call_id'], 'call-tool-1')
+    assert.equal(completed[0]?.safe_metadata['status'], 'succeeded')
+    assert.equal(completed[0]?.display_message, 'fs_write：调用成功')
+  })
+
+  it('重复 tool_call 开始推送只转发一次', async () => {
+    const adapter = await createAdapter()
+    const input = manifest('run-tool-dup-start', 'attempt-1', '[tool-dup-start] run twice')
+    const events: RuntimeEvent[] = []
+    const handle = await adapter.execute(input)
+    adapter.subscribe(input.run_id, event => { events.push(event) })
+
+    const result = await handle.done
+    assert.equal(result.status, 'completed', result.errorMessage ?? undefined)
+    const started = events.filter(event => event.event_type === 'tool.started')
+    assert.equal(started.length, 1)
+  })
+})

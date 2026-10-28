@@ -270,7 +270,8 @@ async function inspectConnector(connector: ConnectorDefinition) {
       { label: '能力状态', value: connector.mcp.capabilityDigest === connector.mcp.approvedDigest ? '已同步生效' : '待重新检查' },
       { label: '能力摘要', value: connector.mcp.capabilityDigest ?? '尚未发现' },
       { label: 'Tool 描述与输入 Schema', value: formatMcpCapabilities(connector) },
-      { label: '适用 Agent', value: '全部 Agent' },
+      // 0102 起 MCP 工具不再对全部 Agent 开放：连接器下发后由 Agent 能力配置按需选择。
+      { label: '适用 Agent', value: '在 Agent 能力配置中选择' },
       { label: '最近调用', value: invocationSummary },
     ] : []),
   ], 'connector', connector.id)
@@ -994,7 +995,7 @@ onUnmounted(() => clearSkillTestPoll())
       </el-form>
       <el-alert v-if="mcpTestResult" type="success" :closable="false" show-icon :title="`连通测试成功：${mcpTestResult.latencyMs} ms，发现 ${mcpTestResult.capabilityCount} 个 Tool`" />
       <el-alert v-else-if="mcpTestError" type="error" :closable="false" show-icon :title="mcpTestError.title" :description="mcpTestError.description" />
-      <el-alert v-else type="info" :closable="false" show-icon title="先通过 DSH 测试 Streamable HTTP 连通性并发现 Tool；登记复核成功后连接器与 Tool 清单立即生效，并对全部 Agent 开放。" />
+      <el-alert v-else type="info" :closable="false" show-icon title="先通过 DSH 测试 Streamable HTTP 连通性并发现 Tool；登记复核成功后连接器与 Tool 清单立即生效，并由 Agent 能力配置按需选择。" />
       <template #footer><el-button @click="mcpCreateDialogOpen = false">取消</el-button><el-button :loading="mcpTesting" :disabled="!mcpConnectionInputReady || mcpCreating" data-action="test-mcp-connection" @click="testMcpConnection">测试连接</el-button><el-button type="primary" :loading="mcpCreating" :disabled="!mcpCanRegister || mcpTesting" data-action="confirm-add-mcp-connector" @click="registerMcpConnector">添加 MCP</el-button></template>
     </el-dialog>
 

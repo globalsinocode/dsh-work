@@ -1172,6 +1172,26 @@ test('deleting a conversation archives it only after active Runs stop', async ()
   await assert.rejects(conversations.requireSession(session.id, 'U00001'), /不存在或不可访问/)
 })
 
+test('createRun promotes a draft Session created with clientIntentId to active', async () => {
+  const session = await orchestration.createSession({
+    userId: 'U00001',
+    title: 'M3 草稿首跑',
+    clientIntentId: `intent-draft-run-${randomUUID()}`,
+  })
+  assert.equal(session.status, 'draft')
+  const run = await runs.createRun({
+    tenantId: 'tenant-dsh-work',
+    sessionId: session.id,
+    requestedBy: 'U00001',
+    idempotencyKey: randomUUID(),
+  })
+  assert.ok(run.id)
+  const [row] = await database<{ status: string }[]>`
+    select status from sessions where tenant_id = 'tenant-dsh-work' and id = ${session.id}
+  `
+  assert.equal(row?.status, 'active')
+})
+
 test('archiving a conversation and creating a Run are serialized by the Session lock', async () => {
   const session = await orchestration.createSession({ userId: 'U00001', title: 'M3 删除并发保护' })
   const archive = beginSessionArchive(session.id)

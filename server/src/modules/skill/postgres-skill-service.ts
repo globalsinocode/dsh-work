@@ -1,4 +1,4 @@
-import { authorizationDenied } from '../../domain/authorization-errors.ts'
+import { adminAccessDenied } from '../../domain/authorization-errors.ts'
 import { RequestError } from '../../domain/request-errors.ts'
 import { skillNotFound, skillConflict, skillInvalid, skillUnavailable, skillInternalFailure } from './skill-errors.ts'
 import { ExecutionCapabilityUnavailableError } from '../runtime/execution-capabilities.ts'
@@ -1070,7 +1070,7 @@ export class PostgresSkillService {
               and (r.permissions ? 'admin:*' or r.permissions ? 'admin:write')
          )
     `
-    if (!actor) throw authorizationDenied(`操作人不存在、已停用或不是平台管理员：${userId}`)
+    if (!actor) throw adminAccessDenied(`操作人不存在、已停用或不是平台管理员：${userId}`)
     return actor
   }
 

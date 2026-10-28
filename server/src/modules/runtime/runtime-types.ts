@@ -15,6 +15,7 @@ export type RuntimeEventType =
   | 'run.queued'
   | 'run.started'
   | 'assistant.delta'
+  | 'assistant.reasoning'
   | 'assistant.completed'
   | 'tool.started'
   | 'tool.completed'

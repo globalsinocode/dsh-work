@@ -111,14 +111,21 @@ export class PostgresRunRepository implements RunRepository {
       if (input.sessionId) await lockActiveWorkspaceForSession(transaction, input.tenantId, input.sessionId)
       else if (input.workspaceId) await lockActiveWorkspace(transaction, input.tenantId, input.workspaceId)
       const [session] = input.sessionId
-        ? await transaction<{ id: string; workspaceId: string | null }[]>`
-            select id, workspace_id as "workspaceId" from sessions
+        ? await transaction<{ id: string; workspaceId: string | null; status: string }[]>`
+            select id, workspace_id as "workspaceId", status from sessions
              where tenant_id = ${input.tenantId} and id = ${input.sessionId}
-               and status = 'active'
+               and status in ('active', 'draft')
              for update
           `
         : []
       if (input.sessionId && !session) throw accessDenied(`Session 不存在或不可访问：${input.sessionId}`)
+      if (session?.status === 'draft') {
+        await transaction`
+          update sessions
+             set status = 'active', last_active_at = now()
+           where tenant_id = ${input.tenantId} and id = ${input.sessionId} and status = 'draft'
+        `
+      }
       const workspaceId = session?.workspaceId ?? input.workspaceId ?? null
       if (!input.sessionId && !workspaceId) throw new TypeError('无 Session Run 必须提供 workspaceId')
       if (!input.sessionId && !input.taskId && (!input.taskSourceType || input.taskSourceType === 'session')) {

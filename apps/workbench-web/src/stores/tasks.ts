@@ -527,7 +527,7 @@ export const useTaskStore = defineStore('tasks', () => {
 
     if (event.event_type === 'tool.started' || event.event_type === 'tool.completed') {
       applyToolEvent(task, event)
-    } else if (!['assistant.delta', 'assistant.completed'].includes(event.event_type)) {
+    } else if (!['assistant.delta', 'assistant.completed', 'assistant.reasoning'].includes(event.event_type)) {
       const step = task.steps.find((item) => item.id === event.event_id)
       if (!step) {
         task.steps.push({

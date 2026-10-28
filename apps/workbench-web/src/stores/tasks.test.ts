@@ -712,3 +712,33 @@ describe('task store', () => {
     expect(store.tasks[0]?.steps.some(step => step.status === 'running')).toBe(false)
   })
 })
+
+
+describe('26-10-24 二期新事件对 PC 时间线的兼容守卫', () => {
+  it('assistant.reasoning 与 tool.started 不进入执行时间线（保持二期前行为）', async () => {
+    const { useTaskStore } = await import('./tasks')
+    const running = structuredClone(baseTask)
+    api.getTasks.mockResolvedValue([running])
+    api.getRun.mockResolvedValue(running)
+    const store = useTaskStore()
+    await store.load()
+    const stream = FakeEventSource.instances[0]
+    const stepsBefore = store.tasks[0]?.steps.length ?? 0
+
+    stream?.emit('assistant.reasoning', {
+      event_id: 'event-reasoning-1', run_id: baseTask.id, attempt_id: 'attempt-001',
+      sequence: 90, event_type: 'assistant.reasoning', occurred_at: new Date().toISOString(),
+      display_message: '先分析库存数据。', safe_metadata: { committed_block: true }, trace_id: 'trace-1',
+    })
+    stream?.emit('tool.started', {
+      event_id: 'event-tool-start-1', run_id: baseTask.id, attempt_id: 'attempt-001',
+      sequence: 91, event_type: 'tool.started', occurred_at: new Date().toISOString(),
+      display_message: 'fs_write：开始执行',
+      safe_metadata: { call_id: 'call-1', tool_name: 'fs_write', status: 'running' }, trace_id: 'trace-1',
+    })
+    await new Promise(resolve => setTimeout(resolve, 150))
+
+    expect(store.tasks[0]?.steps.length ?? 0).toBe(stepsBefore)
+    store.reset()
+  })
+})
