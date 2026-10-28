@@ -167,6 +167,7 @@ interface SourceRow {
 }
 
 interface AttachmentRow {
+  id: string
   name: string
 }
 
@@ -1663,7 +1664,7 @@ export class PostgresConversationRepository {
     const evidence = await this.loadTaskResultEvidence(row, committedMessageIds)
     const attachments = row.currentAttemptId
       ? await this.database<AttachmentRow[]>`
-          select f.original_name as name from run_input_files rif
+          select f.id as id, f.original_name as name from run_input_files rif
           join file_objects f on f.tenant_id = rif.tenant_id and f.id = rif.file_id
            where rif.tenant_id = ${tenantId} and rif.run_id = ${row.id}
              and rif.attempt_id = ${row.currentAttemptId}
@@ -1711,7 +1712,7 @@ export class PostgresConversationRepository {
       steps: mapSteps(row.id, evidence.events, row.status),
       result,
       artifacts: runArtifacts.map(artifact => mapArtifactRow(artifact, row.id)),
-      attachments: attachments.map(attachment => attachment.name),
+      attachments: attachments.map(attachment => ({ id: attachment.id, name: attachment.name })),
       skill: row.selectedSkillId && row.selectedSkillName && row.selectedSkillVersion
         ? { id: row.selectedSkillId, name: row.selectedSkillName, version: row.selectedSkillVersion }
         : undefined,
