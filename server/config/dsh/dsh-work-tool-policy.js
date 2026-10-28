@@ -563,7 +563,7 @@ function registerPlatformTools(ctx) {
   })
   registerPlatformTool(ctx, socketPath, {
     name: 'project_task_create',
-    description: 'Create a project task in this project space on behalf of the member who asked you, within that member\'s permissions. The task is written immediately and shown in the group chat. A task assigned to an Agent gets a manual schedule and is not started automatically. dueDate is YYYY-MM-DD in the run timezone and must not be earlier than today; when a relative date such as "this Friday" has already passed, use the next one or ask the member first.',
+    description: 'Create a project task in this project space on behalf of the member who asked you, within that member\'s permissions. Call it only when the member explicitly asks you to add or create a task; never create tasks on your own initiative, to track your own work, or to turn the current conversation into a task. The task is written immediately and shown in the group chat. A task assigned to an Agent gets a manual schedule and is not started automatically. dueDate is YYYY-MM-DD in the run timezone and must not be earlier than today; when a relative date such as "this Friday" has already passed, use the next one or ask the member first.',
     parameters: {
       type: 'object',
       properties: {

@@ -1219,15 +1219,6 @@
         }
       }
     },
-    "/workspaces/{workspaceId}/sessions/{sessionId}/project-task": {
-      "parameters": [{ "name": "workspaceId", "in": "path", "required": true, "schema": { "type": "string" } }, { "name": "sessionId", "in": "path", "required": true, "schema": { "type": "string" } }],
-      "post": {
-        "operationId": "markSessionAsProjectTask",
-        "summary": "把讨论线程设为任务（非只读成员）",
-        "description": "项目空间 S1：负责人为该线程最近一次执行的 Agent 成员，可选 title（默认取线程标题）。未经 @Agent 执行的线程或已是任务的线程返回 409。",
-        "responses": { "201": { "$ref": "#/components/responses/Ok" }, "403": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" }, "422": { "$ref": "#/components/responses/Error" } }
-      }
-    },
     "/workspaces/{workspaceId}/agent-members/{id}": {
       "parameters": [
         {

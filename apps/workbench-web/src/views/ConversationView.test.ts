@@ -29,7 +29,6 @@ const api = vi.hoisted(() => ({
   postSessionMessage: vi.fn(),
   listWorkspaceAgentMembers: vi.fn(),
   listProjectTasks: vi.fn(),
-  markSessionAsProjectTask: vi.fn(),
   startRun: vi.fn(),
   cancelRun: vi.fn(),
   retryRun: vi.fn(),
@@ -717,7 +716,6 @@ describe('ConversationView 归档只读态（design §2.7 / AC-23）', () => {
     expect(api.listProjectTasks).toHaveBeenCalledWith('ws-team', { sessionId: 'session-001', limit: 1 })
     expect(wrapper.get('[data-testid="task-thread-notice"]').text()).toContain('“缺货分析助手”')
     expect(wrapper.get('[data-testid="task-thread-badge"]').text()).toContain('分析缺货原因')
-    expect(wrapper.find('[data-testid="mark-as-task"]').exists()).toBe(false)
     wrapper.getComponent(TaskComposer).vm.$emit('submit', {
       prompt: '再看看华南', files: [], workspaceId: 'ws-team', mentions: [],
     })
@@ -743,20 +741,16 @@ describe('ConversationView 归档只读态（design §2.7 / AC-23）', () => {
     expect(api.startRun).not.toHaveBeenCalled()
   })
 
-  it('offers “设为任务” on an Agent-executed shared thread that is not yet a task', async () => {
+  it('does not offer turning an Agent-executed shared thread into a task', async () => {
     route.params = { id: 'session-001' }
     api.getSessionThread.mockResolvedValue(sessionThread({
       runs: [{ runId: 'run-9', status: 'succeeded', requestedBy: 'U00002', requesterName: '周航', createdAt: '2026-09-10T10:00:00.000Z' }],
     }))
-    api.markSessionAsProjectTask.mockResolvedValue(projectTask({ title: '供应商讨论' }))
     const { wrapper } = await mountView({ item: null })
 
-    await wrapper.get('[data-testid="mark-as-task"]').trigger('click')
-    await flushPromises()
-    expect(api.markSessionAsProjectTask).toHaveBeenCalledWith('ws-team', 'session-001')
-    expect(router.replace).toHaveBeenCalledWith(`/workspaces/ws-team/tasks/${projectTask({ title: '供应商讨论' }).id}/thread/session-001`)
-    expect(wrapper.find('[data-testid="mark-as-task"]').exists()).toBe(false)
-    expect(wrapper.find('[data-testid="task-thread-notice"]').exists()).toBe(true)
+    // 任务只在成员明确新建时产生：讨论线程不提供“设为任务”。
+    expect(wrapper.text()).not.toContain('设为任务')
+    expect(wrapper.find('[data-testid="task-thread-notice"]').exists()).toBe(false)
   })
 
   it('renders session run statuses as links in the shared discussion thread', async () => {

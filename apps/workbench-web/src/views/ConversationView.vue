@@ -196,15 +196,8 @@ const taskThreadAgentId = computed(() =>
   projectTask.value?.assignee.type === 'agent' ? projectTask.value.assignee.agentMemberId : undefined)
 const taskThreadAgentName = computed(() =>
   projectTask.value?.assignee.type === 'agent' ? projectTask.value.assignee.name : '')
-const markingAsTask = ref(false)
 const projectTaskLoading = ref(false)
 const projectTaskError = ref('')
-/** 已经过 @Agent 执行、但还不是任务的团队线程，可由非只读成员设为任务。 */
-const canMarkAsTask = computed(() => {
-  if (!isTeamSession.value || projectTask.value || !currentSessionId.value) return false
-  if (task.value) return canOperateRun.value
-  return canWriteSession.value && (sessionThread.value?.runs.length ?? 0) > 0
-})
 
 async function loadProjectTask(workspaceId: string | undefined) {
   const sessionId = currentSessionId.value
@@ -239,26 +232,6 @@ async function loadProjectTask(workspaceId: string | undefined) {
 function reloadProjectTask() {
   const workspaceId = task.value?.workspaceId ?? sessionThread.value?.workspaceId ?? currentWorkspace.value?.id
   void loadProjectTask(workspaceId)
-}
-
-async function markAsTask() {
-  const workspaceId = task.value?.workspaceId ?? sessionThread.value?.workspaceId
-  const sessionId = currentSessionId.value
-  if (!workspaceId || !sessionId || markingAsTask.value) return
-  markingAsTask.value = true
-  try {
-    const marked = await workbenchApi.markSessionAsProjectTask(workspaceId, sessionId)
-    projectTask.value = marked
-    ElMessage.success('已设为任务')
-    // 任务线程在所属任务的详情里继续（“任务”页签），与任务信息和操作放在一起。
-    if (!isTaskThreadRoute.value) {
-      await router.replace(spaceRoutes.taskThread(workspaceId, marked.id, routeTargetId.value))
-    }
-  } catch (error) {
-    notifyActionFailure('设为任务', '当前线程', error, '确认该线程已由 Agent 执行过且尚未设为任务后重试。')
-  } finally {
-    markingAsTask.value = false
-  }
 }
 
 async function loadAgentMembers(workspaceId: string | undefined) {
@@ -884,9 +857,6 @@ watch(
           <span class="conversation-skill"><span>发起人</span>{{ sessionThread.creatorName }}</span>
           <span v-if="projectTask && !isTaskThreadRoute" class="conversation-skill" data-testid="task-thread-badge"><span>任务</span>{{ projectTask.title }}</span>
         </div>
-        <div v-if="canMarkAsTask" class="conversation-header__actions">
-          <el-button data-testid="mark-as-task" text :loading="markingAsTask" @click="markAsTask">设为任务</el-button>
-        </div>
       </header>
 
       <main
@@ -1075,7 +1045,6 @@ watch(
         </div>
         <div class="conversation-header__actions">
           <span v-if="projectTask && !isTaskThreadRoute" class="conversation-skill" data-testid="task-thread-badge"><span>任务</span>{{ projectTask.title }}</span>
-          <el-button v-if="canMarkAsTask" data-testid="mark-as-task" text :loading="markingAsTask" @click="markAsTask">设为任务</el-button>
           <StatusTag :status="task.status" dot />
           <el-button text :icon="DataLine" @click="detailsOpen = true">
             <span class="header-action-label">对话详情</span>

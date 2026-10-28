@@ -58,7 +58,7 @@ export const builtinTools: readonly BuiltinTool[] = [
   { name: 'propose_memory', label: '提出经验申请', source: 'platform', effect: 'write', risk: 'low', assembly: 'runtime', constraints: ['只生成待管理员审核的申请'] },
   { name: 'project_tasks_list', label: '查看项目任务', source: 'platform', effect: 'read', risk: 'low', assembly: 'workspace', constraints: [projectOnly, '不返回任务对话内容'] },
   { name: 'project_task_get', label: '查看任务详情', source: 'platform', effect: 'read', risk: 'low', assembly: 'workspace', constraints: [projectOnly, '不返回任务对话内容'] },
-  { name: 'project_task_create', label: '新建项目任务', source: 'platform', effect: 'write', risk: 'medium', assembly: 'workspace', constraints: [projectOnly, actorLimited, 'Agent 任务执行规则为手动，不自动执行'] },
+  { name: 'project_task_create', label: '新建项目任务', source: 'platform', effect: 'write', risk: 'medium', assembly: 'workspace', constraints: [projectOnly, actorLimited, '仅在成员明确要求新建任务时调用', 'Agent 任务执行规则为手动，不自动执行'] },
   { name: 'project_task_update', label: '修改项目任务', source: 'platform', effect: 'write', risk: 'medium', assembly: 'workspace', constraints: [projectOnly, actorLimited, '不能移除任务'] },
   { name: 'prepare_skill_installation', label: '准备 Skill 安装', source: 'platform', effect: 'read', risk: 'low', assembly: 'purpose', constraints: ['仅管理端安装助手'] },
   { name: 'inspect_admin_state', label: '查看平台状态', source: 'platform', effect: 'read', risk: 'low', assembly: 'purpose', constraints: ['仅管理助手'] },

@@ -484,11 +484,6 @@ export const workbenchApi = {
     request<ProjectTask>(`/workspaces/${encodeURIComponent(workspaceId)}/project-tasks/${encodeURIComponent(taskId)}/schedule/resume`, {
       method: 'POST',
     }),
-  markSessionAsProjectTask: (workspaceId: string, sessionId: string, title?: string) =>
-    request<ProjectTask>(`/workspaces/${encodeURIComponent(workspaceId)}/sessions/${encodeURIComponent(sessionId)}/project-task`, {
-      method: 'POST',
-      body: JSON.stringify(title ? { title } : {}),
-    }),
   previewMemberDisclosureImpact: (workspaceId: string, userId: string) =>
     request<MemberDisclosureImpact[]>(
       `/workspaces/${encodeURIComponent(workspaceId)}/agent-members/disclosure-impact?userId=${encodeURIComponent(userId)}`,
