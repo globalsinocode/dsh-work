@@ -86,6 +86,31 @@ describe('ArtifactPreviewPanel', () => {
     html.unmount()
   })
 
+  it('expands to full screen, leaves it on Escape before closing, and starts docked again next time', async () => {
+    downloadArtifact.mockResolvedValue(new Blob(['# 周报正文']))
+    const wrapper = mountPanel({ artifact: artifact(), docked: true })
+    await flushPromises()
+    const aside = () => wrapper.get('aside')
+
+    await wrapper.get('button[aria-label="全屏查看"]').trigger('click')
+    expect(aside().classes()).toContain('artifact-panel--expanded')
+    expect(wrapper.find('button[aria-label="全屏查看"]').exists()).toBe(false)
+
+    await aside().trigger('keydown', { key: 'Escape' })
+    expect(aside().classes()).not.toContain('artifact-panel--expanded')
+    expect(wrapper.emitted('close')).toBeUndefined()
+
+    await wrapper.get('button[aria-label="全屏查看"]').trigger('click')
+    await wrapper.get('button[aria-label="退出全屏"]').trigger('click')
+    expect(aside().classes()).not.toContain('artifact-panel--expanded')
+
+    await wrapper.get('button[aria-label="全屏查看"]').trigger('click')
+    await wrapper.setProps({ artifact: null })
+    await wrapper.setProps({ artifact: artifact() })
+    expect(aside().classes()).not.toContain('artifact-panel--expanded')
+    wrapper.unmount()
+  })
+
   it('opens as a labelled drawer over the conversation when it cannot dock', async () => {
     downloadArtifact.mockResolvedValue(new Blob(['# 周报正文']))
     const wrapper = mountPanel({ artifact: artifact(), docked: false })
@@ -94,6 +119,13 @@ describe('ArtifactPreviewPanel', () => {
     expect(dialog?.getAttribute('aria-label')).toBe('成果预览：库存周报.md')
     expect(dialog?.textContent).toContain('周报正文')
     expect(wrapper.find('aside.artifact-panel').exists()).toBe(false)
+    expect((dialog as HTMLElement).style.width).not.toBe('100%')
+
+    // 抽屉同样可以全屏展开。
+    ;(document.querySelector('button[aria-label="全屏查看"]') as HTMLButtonElement).click()
+    await flushPromises()
+    expect((document.querySelector('[role="dialog"]') as HTMLElement).style.width).toBe('100%')
+    expect(document.querySelector('button[aria-label="退出全屏"]')).not.toBeNull()
 
     ;(document.querySelector('button[aria-label="关闭成果预览"]') as HTMLButtonElement).click()
     expect(wrapper.emitted('close')).toHaveLength(1)

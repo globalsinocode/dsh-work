@@ -84,6 +84,15 @@ test('P1: the preview gives way to 对话详情 and becomes a drawer on narrow s
   const panelBox = (await panel.boundingBox())!
   const composerBox = (await page.getByLabel('对话输入').boundingBox())!
   expect(composerBox.x + composerBox.width).toBeLessThanOrEqual(panelBox.x)
+  // 全屏查看：盖住整个窗口；Esc 先退出全屏，右栏仍在。
+  await panel.getByRole('button', { name: '全屏查看' }).click()
+  await expect(panel.getByRole('button', { name: '退出全屏' })).toBeVisible()
+  const viewport = page.viewportSize()!
+  await expect.poll(async () => (await panel.boundingBox())?.width).toBe(viewport.width)
+  await page.keyboard.press('Escape')
+  await expect(panel.getByRole('button', { name: '全屏查看' })).toBeVisible()
+  await expect.poll(async () => (await panel.boundingBox())?.x).toBe(panelBox.x)
+
   await page.getByRole('button', { name: '对话详情' }).click()
   await expect(page.getByRole('dialog', { name: '对话详情' })).toBeVisible()
   await expect(panel).toHaveCount(0)

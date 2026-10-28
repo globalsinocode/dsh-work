@@ -1,15 +1,20 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { Close, Document, Download } from '@element-plus/icons-vue'
+import { Close, Document, Download, FullScreen, ScaleToOriginal } from '@element-plus/icons-vue'
 
 import ArtifactPreviewBody from '@/components/ArtifactPreviewBody.vue'
 import type { Artifact } from '@/types/domain'
 import { isOfficeArtifact } from '@/utils/artifact-preview'
 import { downloadArtifactFile } from '@/utils/feedback'
 
-/** 对话右栏的成果预览内容：标题与版本、下载、关闭，正文复用 ArtifactPreviewBody。摆放见 ArtifactPreviewPanel。 */
-const props = defineProps<{ artifact: Artifact }>()
-const emit = defineEmits<{ close: [] }>()
+/** 对话右栏的成果预览内容：标题与版本、全屏、下载、关闭，正文复用 ArtifactPreviewBody。摆放见 ArtifactPreviewPanel。 */
+const props = withDefaults(defineProps<{
+  artifact: Artifact
+  /** 是否提供全屏展开；已经全屏的手机宽度不提供。 */
+  canExpand?: boolean
+  expanded?: boolean
+}>(), { canExpand: false, expanded: false })
+const emit = defineEmits<{ close: []; 'toggle-expand': [] }>()
 
 const htmlView = ref<'preview' | 'source'>('preview')
 const meta = computed(() =>
@@ -26,6 +31,16 @@ const meta = computed(() =>
         <small>{{ meta }}</small>
       </div>
       <el-button text :icon="Download" data-testid="artifact-panel-download" @click="downloadArtifactFile(artifact)">下载</el-button>
+      <button
+        v-if="canExpand"
+        type="button"
+        class="artifact-pane__close"
+        :aria-label="expanded ? '退出全屏' : '全屏查看'"
+        :title="expanded ? '退出全屏' : '全屏查看'"
+        @click="emit('toggle-expand')"
+      >
+        <el-icon><component :is="expanded ? ScaleToOriginal : FullScreen" /></el-icon>
+      </button>
       <button type="button" class="artifact-pane__close" aria-label="关闭成果预览" @click="emit('close')">
         <el-icon><Close /></el-icon>
       </button>
