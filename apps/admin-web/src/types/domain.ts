@@ -313,6 +313,16 @@ export interface AgentJoinedWorkspaceRecord {
 }
 
 /** S2 岗位权限：谁可以向 Agent 请求工作、它持有哪些岗位角色、能接触哪些数据。属于 Agent，修改立即生效。 */
+export interface AgentCapabilityRequirement {
+  reference: string
+  name: string
+  source: 'declared' | 'default'
+  requiredRoleIds: string[]
+  requiredScopes: string[]
+  missingRole: boolean
+  missingScopes: string[]
+}
+
 export interface AgentAccess {
   agentId: string
   /** 乐观并发修订号，保存时回传为 expectedRevision。 */
@@ -324,6 +334,7 @@ export interface AgentAccess {
   dataScopes: string[]
   roleOptions: AgentAccessRoleOption[]
   scopeOptions: string[]
+  capabilities: AgentCapabilityRequirement[]
   routines: Array<{
     id: string; name: string; status: string; schedule: Partial<AgentRoutineSchedule>
     recipientUserId: string; recipientName: string

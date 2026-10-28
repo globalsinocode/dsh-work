@@ -25,6 +25,14 @@ const tenantId = 'tenant-dsh-work'
 /** 平台拥有的绑定记录在非管理员上下文首次物化时归属到 bootstrap 平台管理员。 */
 const PLATFORM_BOOTSTRAP_ACTOR = 'U00008'
 
+export interface ToolAuthorizationRequirement {
+  reference: string
+  name: string
+  source: 'declared' | 'default'
+  requiredRoleIds: string[]
+  requiredScopes: string[]
+}
+
 interface BindingRow {
   id: string
   toolId: string
@@ -673,11 +681,12 @@ export class PostgresToolConnectorService {
       await transaction`
         insert into mcp_connector_profiles (
           tenant_id, connector_id, server_name, approval_status,
-          capability_digest, approved_digest, capability_snapshot,
+          capability_digest, capability_snapshot, approved_digest, approved_snapshot,
           reviewed_by, reviewed_at, discovered_at, updated_at
         ) values (
           ${tenantId}, ${id}, ${inspected.serverName}, 'approved',
-          ${digest}, ${digest}, ${transaction.json(asJson(inspected.capabilities))},
+          ${digest}, ${transaction.json(asJson(inspected.capabilities))},
+          ${digest}, ${transaction.json(asJson(inspected.capabilities))},
           ${actor.id}, now(), now(), now()
         )
       `
@@ -1105,6 +1114,7 @@ export class PostgresToolConnectorService {
           update mcp_connector_profiles
              set capability_snapshot = ${transaction.json(asJson(capabilities))}, capability_digest = ${digest},
                  approval_status = 'approved', approved_digest = ${digest},
+                 approved_snapshot = ${transaction.json(asJson(capabilities))},
                  reviewed_by = ${actor.id}, reviewed_at = now(), discovered_at = now(), updated_at = now()
            where tenant_id = ${tenantId} and connector_id = ${input.connectorId}
         `
@@ -1400,6 +1410,44 @@ export class PostgresToolConnectorService {
 
   async assertAvailableReferences(references: string[]): Promise<void> {
     return this.assertReferences(references, true)
+  }
+
+  async describeAuthorizationRequirements(references: string[]): Promise<ToolAuthorizationRequirement[]> {
+    const declared = unique(references).filter(reference => !DSH_WORK_EXECUTION_TOOL_REFS.has(reference))
+    const rows = await this.database<{
+      id: string; version: string; name: string; connectorId: string; dshToolName: string | null
+      allowedRoleIds: string[]; requiredScopes: string[]
+    }[]>`
+      select distinct on (t.id) t.id, tv.version, t.name,
+             t.connector_id as "connectorId", t.dsh_tool_name as "dshToolName",
+             t.allowed_role_ids as "allowedRoleIds", t.data_scopes as "requiredScopes"
+        from tools t
+        join tool_versions tv on tv.tenant_id = t.tenant_id and tv.tool_id = t.id
+       where t.tenant_id = ${tenantId} and t.connector_id = ${DSH_RUNTIME_CONNECTOR_ID}
+         and t.admission_status = 'approved'
+         and ((t.id || '@' || tv.version) = any(${declared})
+           or (t.dsh_tool_name = any(${[...defaultAgentDshToolNames]}) and t.status = 'available' and tv.status = 'published'))
+       order by t.id, ((t.id || '@' || tv.version) = any(${declared})) desc,
+                split_part(tv.version, '.', 1)::integer desc,
+                split_part(tv.version, '.', 2)::integer desc,
+                split_part(tv.version, '.', 3)::integer desc
+    `
+    return rows
+      .filter(row => !isDefaultRunLocalAgentTool({
+        connectorId: row.connectorId, dshToolName: row.dshToolName,
+        allowedRoleIds: row.allowedRoleIds, dataScopes: row.requiredScopes,
+      }))
+      .map(row => {
+        const reference = `${row.id}@${row.version}`
+        return {
+          reference,
+          name: row.name,
+          source: declared.includes(reference) ? 'declared' as const : 'default' as const,
+          requiredRoleIds: unique(row.allowedRoleIds),
+          requiredScopes: unique(row.requiredScopes),
+        }
+      })
+      .sort((left, right) => left.source.localeCompare(right.source) || left.reference.localeCompare(right.reference))
   }
 
   /**

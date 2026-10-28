@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { after, before, test } from 'node:test'
 
 import { PostgresMcpConnectorService } from '../../modules/tool/postgres-mcp-connector-service.ts'
+import { PostgresToolConnectorService } from '../../modules/tool/postgres-tool-connector-service.ts'
 import { PostgresEncryptedCredentialStore } from '../../modules/tool/postgres-encrypted-credential-store.ts'
 import { MAX_MCP_CONNECTIONS_PER_ATTEMPT, type AgentRuntimePort, type McpInspectionResult, type McpRuntimeConnection, type RuntimeManifest } from '../../modules/runtime/runtime-types.ts'
 import type { DatabaseClient } from './database.ts'
@@ -590,4 +591,31 @@ test('PF-03 has no tenant-wide Connector cap; the per-Attempt limit applies to e
   assert.ok(final!.connectorCount > MAX_MCP_CONNECTIONS_PER_ATTEMPT)
   await assert.rejects(service.resolveConnections({ mode: 'selected', connectorIds: ids }), { status: 422 })
   assert.equal((await service.resolveConnections({ mode: 'selected', connectorIds: ids.slice(0, MAX_MCP_CONNECTIONS_PER_ATTEMPT) })).length, MAX_MCP_CONNECTIONS_PER_ATTEMPT)
+})
+
+test('Tool service registration, credential rotation and check keep approved snapshot resolvable', async () => {
+  const managed = new PostgresToolConnectorService(database, runtime, undefined, credentialSecrets)
+  const runtimeScope = new PostgresMcpConnectorService(database, runtime, undefined, credentialSecrets)
+  const suffix = randomUUID().slice(0, 8)
+  discovered = [
+    { name: 'customer_get', description: '读取客户', inputSchema: { type: 'object', properties: { id: { type: 'string' } } } },
+    { name: 'customer_search', description: '搜索客户', inputSchema: { type: 'object', properties: { query: { type: 'string' } } } },
+  ]
+  const connector = await managed.registerMcpConnector({
+    name: `跨服务 MCP ${suffix}`,
+    endpoint: `https://cross-service-${suffix}.example.test/rpc`,
+    authType: 'bearer',
+    bearerToken: `initial-${suffix}`,
+    scopeDescription: '跨服务生效快照测试',
+    actor: 'U00008',
+  })
+  await managed.rotateMcpCredential({ connectorId: connector.id, bearerToken: `rotated-${suffix}`, actor: 'U00008' })
+  await managed.checkMcpConnector({ connectorId: connector.id, actor: 'U00008' })
+  const resolved = await runtimeScope.resolveConnections({ mode: 'selected', connectorIds: [connector.id] })
+  assert.equal(resolved.length, 1)
+  const [profile] = await database<{ approvedLength: number }[]>`
+    select jsonb_array_length(approved_snapshot) as "approvedLength"
+      from mcp_connector_profiles where tenant_id = 'tenant-dsh-work' and connector_id = ${connector.id}
+  `
+  assert.ok((profile?.approvedLength ?? 0) > 0)
 })

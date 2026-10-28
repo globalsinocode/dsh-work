@@ -26,6 +26,18 @@
 - `0091_agent_validations.sql` 可新增 `agent_validations` 表，**不得**删除 `agent_release_submissions` 与发布证据表。
 - 若新实现无法在不删除受保护能力的前提下工作，按停止条件暂停集成。
 
+## release 2026.10.26-01 工具治理终局（2026-10-28，选择 R：保留治理）
+
+| 决策点 | R：保留治理（已选） | D：删除治理（未选） |
+| --- | --- | --- |
+| 普通 DSH 业务工具 | `tools` / `tool_versions` / Binding 修订为发布、授权与审计权威 | 代码注册表权威，需删表并重写发布 |
+| dsh-work 内置工具 | 代码注册表 + Runtime `disabled_tools` | 同左 |
+| MCP | Connector / Profile / `approved_snapshot` 权威，不生成平台 Tool Binding | 同左 |
+| 工作空间工具授权 | 不恢复 `capability_type = 'tool'` | 同左 |
+| 岗位权限能力摘要 | 从 Tool 表 `allowed_role_ids` / `data_scopes` 投影 | 须另立 SDD 定义等价元数据 |
+
+**理由：** `0104` 与三方合并决策已保留治理表；删除血脉的集成断言与生产代码互斥。`connector-dsh-workspace` 种子连接器是否保留以当前迁移为准，不作为“删表成功”的判据。
+
 ## 验收映射（摘要）
 
 | 能力 | 生产者/消费者 | 迁移 | 证据 |
