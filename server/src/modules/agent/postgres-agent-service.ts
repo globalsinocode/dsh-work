@@ -483,7 +483,15 @@ export class PostgresAgentService {
       ? { roleIds: current.roleIds, dataScopes: current.dataScopes, visibility: toAgentDefinition(current).visibility }
       : {}
     const configuration = normalizeConfiguration(
-      { ...input, ...publicationScope, id: input.agentId, mcpScope: input.mcpScope ?? current.mcpScope },
+      {
+        ...input,
+        ...publicationScope,
+        id: input.agentId,
+        mcpScope: input.mcpScope ?? current.mcpScope,
+        // 管理端编辑器不再携带工具选择：省略时沿用版本上已有的 tool_refs，
+        // 避免一次与工具无关的保存把历史 Agent 的工具引用清空。
+        tools: input.tools ?? current.tools,
+      },
       current.owner,
       current.department,
     )

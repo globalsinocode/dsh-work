@@ -30,6 +30,7 @@ function readSharedDraft(record: Record<string, unknown>) {
   const visibility = readOptionalString(record, 'visibility')
   const roleIds = readOptionalStringArray(record, 'roleIds')
   const dataScopes = readOptionalStringArray(record, 'dataScopes')
+  const tools = readOptionalStringArray(record, 'tools')
   return {
     name: requireString(record, 'name'),
     description: requireString(record, 'description'),
@@ -46,7 +47,9 @@ function readSharedDraft(record: Record<string, unknown>) {
     maxToolCalls: requirePositiveSafeInteger(record, 'maxToolCalls'),
     timeoutSeconds: requirePositiveSafeInteger(record, 'timeoutSeconds'),
     skills: requireStringArray(record, 'skills'),
-    tools: requireStringArray(record, 'tools'),
+    // 0104 起内置工具由代码注册，管理端不再选择工具：省略时留空交给服务层
+    // （编辑沿用已有 tool_refs），显式传错类型仍按 422 拒绝。
+    ...(tools !== undefined ? { tools } : {}),
     ...domainPassthrough(record),
     changeSummary: requireString(record, 'changeSummary'),
   }

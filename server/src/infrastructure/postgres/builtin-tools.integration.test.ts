@@ -30,15 +30,15 @@ after(async () => {
   await throwaway.dispose()
 })
 
-test('迁移后工具治理表与 DSH 内置工具连接器不再存在', async () => {
+test('内置工具代码化后仍保留普通工具治理与 Binding 表', async () => {
   const tables = await database<{ name: string }[]>`
     select table_name as name from information_schema.tables
      where table_schema = current_schema()
-       and table_name in ('tools', 'tool_versions', 'agent_version_tools', 'tool_binding_revisions')
+       and table_name in ('tools', 'tool_versions', 'tool_binding_revisions')
   `
-  assert.equal(tables.length, 0)
-  const connectors = await database<{ id: string }[]>`select id from connectors where id = 'connector-dsh-workspace'`
-  assert.equal(connectors.length, 0)
+  assert.deepEqual(tables.map(item => item.name).sort(), [
+    'tool_binding_revisions', 'tool_versions', 'tools',
+  ])
   const [column] = await database<{ name: string }[]>`
     select column_name as name from information_schema.columns
      where table_name = 'tool_audit_logs' and column_name = 'tool_name'

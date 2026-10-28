@@ -23,6 +23,7 @@ import { PostgresEncryptedCredentialStore } from '../../server/src/modules/tool/
 import type { AgentRuntimePort, McpInspectionResult } from '../../server/src/modules/runtime/runtime-types.ts'
 import { registerToolRoutes } from '../../server/src/http/admin/tool-routes.ts'
 import { registerAgentRoutes } from '../../server/src/http/admin/agent-routes.ts'
+import { registerAgentAccessRoutes } from '../../server/src/http/admin/agent-access-routes.ts'
 import { registerAgentValidationRoutes } from '../../server/src/http/admin/agent-validation-routes.ts'
 import { registerAgentRoutineRoutes } from '../../server/src/http/admin/agent-routine-routes.ts'
 import { PostgresAuthorizationService } from '../../server/src/modules/authorization/postgres-authorization-service.ts'
@@ -94,7 +95,8 @@ router.get(`${base}/tasks`, () => envelope('admin', [], 'postgres'))
 router.get(`${base}/runtimes`, () => envelope('admin', [], 'postgres'))
 router.get(`${base}/workspaces`, () => envelope('admin', [], 'postgres'))
 registerIdentityAdministrationRoutes(router, new IdentityAdministrationService(database.client))
-registerAgentRoutes(router, agents, new PostgresAgentAccessService(database.client))
+registerAgentRoutes(router, agents)
+registerAgentAccessRoutes(router, new PostgresAgentAccessService(database.client, toolService))
 const routineRuns = new PostgresRunRepository(database.client)
 const routineConversations = new PostgresConversationRepository(database.client)
 const routineOrchestration = new RunOrchestrationService(routineRuns, routineConversations,
@@ -144,13 +146,9 @@ router.get(`${base}/test/agent-principal/evidence`, async (_request, context) =>
   }
 })
 
-/** 选定该连接器的 Agent 在新 Attempt 中能解析到的连接；不可用时为空。 */
+/** 选定该连接器的 Agent 在新 Attempt 中能解析到的连接；不可用时抛出，便于 P1 诊断。 */
 async function selectedConnections(connectorId: string) {
-  try {
-    return await mcpService.resolveConnections({ mode: 'selected', connectorIds: [connectorId] })
-  } catch {
-    return []
-  }
+  return await mcpService.resolveConnections({ mode: 'selected', connectorIds: [connectorId] })
 }
 
 router.post(`${base}/test/mcp/capabilities`, async (request) => {
@@ -191,11 +189,15 @@ router.get(`${base}/test/mcp/deletion-evidence`, async (_request, context) => {
      where c.tenant_id = 'tenant-dsh-work' and c.id = ${connectorId}
   `
   assert.ok(evidence)
-  const connections = await selectedConnections(connectorId)
-  return envelope('admin', {
-    ...evidence,
-    resolvedConnectionCount: connections.filter(connection => connection.connector_id === connectorId).length,
-  }, 'postgres')
+  try {
+    const connections = await selectedConnections(connectorId)
+    return envelope('admin', {
+      ...evidence,
+      resolvedConnectionCount: connections.filter(connection => connection.connector_id === connectorId).length,
+    }, 'postgres')
+  } catch {
+    return envelope('admin', { ...evidence, resolvedConnectionCount: 0 }, 'postgres')
+  }
 })
 router.get('/health', () => ({ status: 'ok', testOnly: true, runtime: 'synthetic-mcp-inspection' }))
 

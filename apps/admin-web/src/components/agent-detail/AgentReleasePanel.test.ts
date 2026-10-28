@@ -74,7 +74,8 @@ async function mountView() {
   const access: AgentAccess = {
     agentId, revision: 1, principalId: `principal-agent-${agentId}`, principalStatus: 'active',
     visibleRoleIds: ['role-employee'], roleIds: [], dataScopes: [],
-    roleOptions: [{ id: 'role-employee', name: '员工', status: 'active' }], scopeOptions: [],
+    roleOptions: [{ id: 'role-employee', name: '员工', status: 'active', privileged: false }], scopeOptions: [],
+    capabilities: [],
     routines: [],
   }
   vi.spyOn(adminApi, 'getAgentAccess').mockResolvedValue(access)

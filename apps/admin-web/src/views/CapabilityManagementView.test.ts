@@ -303,7 +303,7 @@ describe('Skill installation sibling tab', () => {
     await wrapper.get('[data-action="view-connector"]').trigger('click')
     await flushPromises()
     expect(wrapper.text()).toContain('适用 Agent')
-    expect(wrapper.text()).toContain('全部 Agent')
+    expect(wrapper.text()).toContain('在 Agent 能力配置中选择')
     await wrapper.get('[data-action="view-mcp-tools"]').trigger('click')
     await flushPromises()
     expect(wrapper.get('[aria-label="MCP 工具清单"]').text()).toContain('query')

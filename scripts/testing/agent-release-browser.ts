@@ -26,6 +26,7 @@ import { ModelGovernanceService } from '../../server/src/modules/model/model-gov
 import { PostgresModelGovernanceRepository } from '../../server/src/modules/model/postgres-model-governance-repository.ts'
 import { PostgresConversationRepository } from '../../server/src/modules/workbench/application/postgres-conversation-repository.ts'
 import { registerAgentRoutes } from '../../server/src/http/admin/agent-routes.ts'
+import { registerAgentAccessRoutes } from '../../server/src/http/admin/agent-access-routes.ts'
 import { registerAgentValidationRoutes } from '../../server/src/http/admin/agent-validation-routes.ts'
 import { registerToolRoutes } from '../../server/src/http/admin/tool-routes.ts'
 import { PostgresToolConnectorService } from '../../server/src/modules/tool/postgres-tool-connector-service.ts'
@@ -179,7 +180,8 @@ router.get(`${base}/identity/roles`, async () => envelope('admin', await databas
     '[]'::jsonb as "dataScopes", 0 as "userCount", false as system, now() as "updatedAt"
     from roles where tenant_id = 'tenant-dsh-work' order by name
 `, 'postgres'))
-registerAgentRoutes(router, agents, new PostgresAgentAccessService(database.client))
+registerAgentRoutes(router, agents)
+registerAgentAccessRoutes(router, new PostgresAgentAccessService(database.client))
 registerAgentValidationRoutes(router, agents, validation, new PostgresAgentRunHistory(database.client))
 registerToolRoutes(router, toolService)
 router.get('/health', () => ({ status: 'ok', testOnly: true, runtime: 'synthetic-agent-release-trial' }))

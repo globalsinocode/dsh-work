@@ -38,6 +38,10 @@ async function assertGovernanceSurfaces(database: DatabaseClient) {
     ) as exists
   `
   assert.equal(visibleRoles?.exists, true)
+  await assert.rejects(database`
+    insert into workspace_capability_grants (tenant_id, workspace_id, capability_type, capability_version_id)
+    values ('tenant-dsh-work', 'ws-supply', 'tool', 'read')
+  `, /capability_type_check|violates/)
 }
 
 let freshThrowaway: ThrowawayDatabase

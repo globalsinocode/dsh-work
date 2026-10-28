@@ -36,6 +36,11 @@ const [seed] = await fixture.db.client<{ workspaceId: string; agentId: string; v
 `
 if (!seed) throw new Error('自动任务 P1 夹具缺少个人空间或已发布 Agent')
 
+await fixture.db.client`
+  update agents set visible_role_ids = ${fixture.db.client.json(['role-employee'])}
+   where tenant_id = ${testTenant} and id = ${seed.agentId}
+`
+
 // This harness exercises employee-owned automations; Agent-owned results have
 // their own PostgreSQL integration coverage and are empty for these fixtures.
 fixture.router.get('/api/workbench/v1/agent-routine-results', () => envelope('workbench', []))
