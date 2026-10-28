@@ -370,11 +370,17 @@ export class RunOrchestrationService {
       ...input.authorizationContext,
     })
     await this.deps.runtime.assertAvailable?.()
+    // 附件跨轮延续：本轮没有选择文件时沿用上一轮的会话附件，追问仍能就同一文件作答。本轮选择了
+    // 文件时只用本轮文件，“这个文件”不会指代不清；定时触发无人在场，不隐式带入。
+    const carriedFileIds = this.deps.content && !input.scheduled && !input.fileIds?.length
+      ? await this.deps.content.listCarriedSessionFileIds({ sessionId: session.id, userId: input.userId })
+      : []
     const preparedFiles = this.deps.content
       ? await this.deps.content.prepareRuntimeFiles({
           sessionId: session.id,
           fileIds: input.fileIds ?? [],
           userId: input.userId,
+          carriedFileIds,
         })
       : []
     const run = await this.deps.runs.createRun({
@@ -403,7 +409,7 @@ export class RunOrchestrationService {
         workspaceId: session.workspaceId,
         agentVersionId,
         userId: input.userId,
-        fileIds: input.fileIds ?? [],
+        fileIds: preparedFiles.map(file => file.fileId),
         preparedFiles,
         authorization,
         additionalSkillReferences,

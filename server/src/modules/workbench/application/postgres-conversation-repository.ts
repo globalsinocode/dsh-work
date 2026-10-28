@@ -1476,8 +1476,9 @@ export class PostgresConversationRepository {
   }
 
   /**
-   * 各 Run 的输入文件名（上传附件与引用文件），按 runId 分组。取该 Run 所有 Attempt 的去重并集：
-   * 审批恢复新建的 Attempt 不重新登记输入文件，只看当前 Attempt 会让已发送的文件从消息下消失。
+   * 各 Run 随消息发送的输入文件名（上传附件与引用文件），按 runId 分组。取该 Run 所有 Attempt
+   * 的去重并集：审批恢复新建的 Attempt 不重新登记输入文件，只看当前 Attempt 会让已发送的文件
+   * 从消息下消失。同一会话更早的 Run 已用过的文件是跨轮延续带入的，不算本轮发送。
    */
   private async loadRunAttachments(runIds: string[]): Promise<Map<string, string[]>> {
     const byRun = new Map<string, string[]>()
@@ -1485,8 +1486,15 @@ export class PostgresConversationRepository {
     const rows = await this.database<AttachmentRow[]>`
       select rif.run_id as "runId", f.original_name as name
         from run_input_files rif
+        join runs r on r.tenant_id = rif.tenant_id and r.id = rif.run_id
         join file_objects f on f.tenant_id = rif.tenant_id and f.id = rif.file_id
        where rif.tenant_id = ${tenantId} and rif.run_id = any(${runIds})
+         and not exists (
+           select 1 from run_input_files earlier
+             join runs er on er.tenant_id = earlier.tenant_id and er.id = earlier.run_id
+            where earlier.tenant_id = rif.tenant_id and earlier.file_id = rif.file_id
+              and er.session_id = r.session_id and er.created_at < r.created_at
+         )
        group by rif.run_id, rif.file_id, f.original_name
        order by min(rif.created_at), f.original_name
     `

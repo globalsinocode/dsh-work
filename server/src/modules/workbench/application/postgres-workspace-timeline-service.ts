@@ -150,7 +150,8 @@ export class PostgresWorkspaceTimelineService {
                  'senderId', coalesce(m.sender_user_id, r.requested_by), 'senderName', su.display_name,
                  'agentName', case when m.role = 'assistant' then mag.name end,
                  'runId', m.run_id, 'runRequesterName', ru.display_name,
-                 -- 输入文件取该 Run 所有 Attempt 的去重并集（审批恢复的 Attempt 不重新登记输入文件）。
+                 -- 输入文件取该 Run 所有 Attempt 的去重并集（审批恢复的 Attempt 不重新登记输入文件）；
+                 -- 同一会话更早的 Run 已用过的文件是跨轮延续带入的，不算本条发言发送。
                  'attachments', case when m.role = 'user' then (
                    select jsonb_agg(input.name order by input.at, input.name)
                      from (
@@ -158,6 +159,12 @@ export class PostgresWorkspaceTimelineService {
                          from run_input_files rif
                          join file_objects f on f.tenant_id = rif.tenant_id and f.id = rif.file_id
                         where rif.tenant_id = r.tenant_id and rif.run_id = r.id
+                          and not exists (
+                            select 1 from run_input_files earlier
+                              join runs er on er.tenant_id = earlier.tenant_id and er.id = earlier.run_id
+                             where earlier.tenant_id = rif.tenant_id and earlier.file_id = rif.file_id
+                               and er.session_id = r.session_id and er.created_at < r.created_at
+                          )
                         group by rif.file_id, f.original_name
                      ) input
                  ) end) as payload

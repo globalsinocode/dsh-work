@@ -29,6 +29,9 @@ import { assertRealWorkspaceDirectory } from '../../../infrastructure/storage/wo
 
 const tenantId = 'tenant-dsh-work'
 const allowedExtensions = new Set(['.pdf', '.docx', '.xlsx', '.csv', '.txt', '.md'])
+/** 每次 Run 的输入文件上限：文件数与解析文本合计字节。 */
+const maxRuntimeFiles = 5
+const maxRuntimeTextBytes = 1024 * 1024
 
 interface FileRow {
   id: string
@@ -1639,49 +1642,113 @@ export class PostgresContentService {
     sessionId: string
     fileIds: string[]
     userId: string
+    /**
+     * 附件跨轮延续：上一轮的会话附件（listCarriedSessionFileIds）。只在剩余名额与解析文本额度内
+     * 挂载；不可访问、已移除、没有解析文本或超出额度的跳过，不使本轮失败。显式文件仍按原规则
+     * 失败即拒绝。
+     */
+    carriedFileIds?: string[]
   }): Promise<PreparedRuntimeFile[]> {
     const fileIds = [...new Set(input.fileIds.map(id => id.trim()).filter(Boolean))]
-    if (fileIds.length > 5) throw invalidRequest('每次 Run 最多分析 5 个文件')
+    if (fileIds.length > maxRuntimeFiles) throw invalidRequest('每次 Run 最多分析 5 个文件')
     const prepared: PreparedRuntimeFile[] = []
     let totalBytes = 0
     for (const [index, fileId] of fileIds.entries()) {
       const row = await this.resolveRuntimeFile({ sessionId: input.sessionId, fileId, userId: input.userId })
-      const safeName = safeMountName(row.originalName, index)
-      const revision = row.artifactId && row.artifactVersion
-        ? { artifact_revision: { artifact_id: row.artifactId, version: row.artifactVersion } }
-        : {}
-      let mount: FileMount | null = null
-      if (row.textStorageKey && row.textSha256) {
-        const content = (await this.storage.get(row.textStorageKey)).toString('utf8')
-        totalBytes += Buffer.byteLength(content)
-        if (totalBytes > 1024 * 1024) throw invalidRequest('本次 Run 的文件解析文本合计超过 1 MB，请减少或拆分文件')
-        mount = {
+      const file = await this.toPreparedRuntimeFile(row, index)
+      totalBytes += file.textBytes
+      if (totalBytes > maxRuntimeTextBytes) throw invalidRequest('本次 Run 的文件解析文本合计超过 1 MB，请减少或拆分文件')
+      prepared.push(file.prepared)
+    }
+    for (const fileId of input.carriedFileIds ?? []) {
+      if (prepared.length >= maxRuntimeFiles) break
+      if (fileIds.includes(fileId)) continue
+      const row = await this.resolveRuntimeFile({ sessionId: input.sessionId, fileId, userId: input.userId })
+        .catch((error: unknown) => {
+          if (isAuthorizationDenial(error)) return null
+          throw error
+        })
+      if (!row?.textStorageKey) continue
+      const file = await this.toPreparedRuntimeFile(row, prepared.length)
+      if (totalBytes + file.textBytes > maxRuntimeTextBytes) continue
+      totalBytes += file.textBytes
+      prepared.push(file.prepared)
+    }
+    return prepared
+  }
+
+  private async toPreparedRuntimeFile(row: RuntimeFileRow, index: number): Promise<{ prepared: PreparedRuntimeFile; textBytes: number }> {
+    const safeName = safeMountName(row.originalName, index)
+    const revision = row.artifactId && row.artifactVersion
+      ? { artifact_revision: { artifact_id: row.artifactId, version: row.artifactVersion } }
+      : {}
+    let mount: FileMount | null = null
+    let textBytes = 0
+    if (row.textStorageKey && row.textSha256) {
+      const content = (await this.storage.get(row.textStorageKey)).toString('utf8')
+      textBytes = Buffer.byteLength(content)
+      mount = {
+        file_id: row.fileId,
+        mount_path: `/workspace/input/${safeName}.txt`,
+        access: 'read_only',
+        source_name: row.originalName,
+        media_type: row.mimeType,
+        content_sha256: row.textSha256,
+        content,
+        ...revision,
+      }
+    }
+    const extension = extname(row.originalName).toLowerCase()
+    const original: OriginalFileMount | null = row.sha256 && ORIGINAL_MOUNT_EXTENSIONS.has(extension) && row.sizeBytes > 0
+      ? {
           file_id: row.fileId,
-          mount_path: `/workspace/input/${safeName}.txt`,
+          mount_path: `/workspace/input/original/${safeName}${extension}`,
           access: 'read_only',
           source_name: row.originalName,
           media_type: row.mimeType,
-          content_sha256: row.textSha256,
-          content,
+          sha256: row.sha256,
+          size_bytes: row.sizeBytes,
           ...revision,
         }
-      }
-      const extension = extname(row.originalName).toLowerCase()
-      const original: OriginalFileMount | null = row.sha256 && ORIGINAL_MOUNT_EXTENSIONS.has(extension) && row.sizeBytes > 0
-        ? {
-            file_id: row.fileId,
-            mount_path: `/workspace/input/original/${safeName}${extension}`,
-            access: 'read_only',
-            source_name: row.originalName,
-            media_type: row.mimeType,
-            sha256: row.sha256,
-            size_bytes: row.sizeBytes,
-            ...revision,
-          }
-        : null
-      prepared.push({ fileId: row.fileId, sourceName: row.originalName, extractionId: row.extractionId, mount, original })
+      : null
+    return {
+      prepared: { fileId: row.fileId, sourceName: row.originalName, extractionId: row.extractionId, mount, original },
+      textBytes,
     }
-    return prepared
+  }
+
+  /**
+   * 附件跨轮延续：本轮没有选择文件时，沿用本人在该会话最近一轮有输入文件的执行所用的会话附件，
+   * 追问仍能就同一文件作答；那一轮本身是延续来的也照样沿用，因此会一直延续到用户发送新文件为止。
+   * 只取上传到本会话的附件；成果版本经“继续修改”显式引用，不隐式延续；他人在共享会话中发送的
+   * 附件不带入。本轮选择了文件时调用方不调用本方法，避免“这个文件”指代不清。
+   */
+  async listCarriedSessionFileIds(input: { sessionId: string; userId: string }): Promise<string[]> {
+    const rows = await this.database<{ fileId: string }[]>`
+      with latest as (
+        select r.id from runs r
+         where r.tenant_id = ${tenantId} and r.session_id = ${input.sessionId}
+           and r.requested_by = ${input.userId}
+           and exists (
+             select 1 from run_input_files any_input
+              where any_input.tenant_id = r.tenant_id and any_input.run_id = r.id
+           )
+         order by r.created_at desc, r.id desc
+         limit 1
+      )
+      select rif.file_id as "fileId"
+        from latest
+        join run_input_files rif on rif.tenant_id = ${tenantId} and rif.run_id = latest.id
+        join file_objects f on f.tenant_id = rif.tenant_id and f.id = rif.file_id
+       where f.session_id = ${input.sessionId} and f.removed_at is null
+         and not exists (
+           select 1 from artifact_versions av
+            where av.tenant_id = f.tenant_id and av.file_object_id = f.id
+         )
+       group by rif.file_id
+       order by min(rif.created_at), rif.file_id
+    `
+    return rows.map(row => row.fileId)
   }
 
   /**

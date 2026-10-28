@@ -135,6 +135,43 @@ test('uploaded Session file is extracted, snapshotted and injected as an immutab
   const resumed = await conversations.getTask(followUp.id, 'U00001')
   assert.deepEqual(resumed?.messages.find(message => message.content === '再结合订单看看')?.attachments, ['orders.csv'])
   assert.deepEqual(resumed?.attachments, ['orders.csv'])
+
+  // 附件跨轮延续：本轮选择了文件时只用本轮文件；不选文件的追问沿用上一轮的附件，消息下只列本轮发送的文件。
+  const mountedNames = (runId: string) => runtime.manifest(runId)?.input.file_mounts.map(mount => mount.source_name)
+  assert.deepEqual(mountedNames(followUp.id), ['orders.csv'])
+  const third = await orchestration.startRun({
+    userId: 'U00001', sessionId: session.id, prompt: '第三轮不带文件', idempotencyKey: randomUUID(),
+  })
+  assert.ok(third)
+  const thirdTask = await waitForTask(third.id)
+  assert.deepEqual(mountedNames(third.id), ['orders.csv'])
+  assert.deepEqual(thirdTask.attachments, [])
+  assert.equal(thirdTask.messages.find(message => message.content === '第三轮不带文件')?.attachments, undefined)
+  assert.deepEqual(
+    thirdTask.messages.filter(message => message.attachments).map(message => message.attachments),
+    [['inventory.csv'], ['orders.csv']],
+  )
+
+  // 已移除的附件不再带入，本轮照常执行；更早轮次的附件（inventory.csv）也不会补上。
+  await database`update file_objects set removed_at = now() where tenant_id = 'tenant-dsh-work' and id = ${followUpFile.id}`
+  const fourth = await orchestration.startRun({
+    userId: 'U00001', sessionId: session.id, prompt: '第四轮', idempotencyKey: randomUUID(),
+  })
+  assert.ok(fourth)
+  await waitForTask(fourth.id)
+  assert.deepEqual(mountedNames(fourth.id), [])
+
+  // 本轮选择了文件：只挂载本轮文件。
+  const fresh = await Promise.all([1, 2, 3, 4, 5].map(n => content.storeSessionFile(
+    session.id, `batch-${n}.csv`, 'text/csv', Buffer.from(`编号\n${n}\n`), 'U00001',
+  )))
+  const fifth = await orchestration.startRun({
+    userId: 'U00001', sessionId: session.id, prompt: '第五轮', idempotencyKey: randomUUID(),
+    fileIds: fresh.map(file => file.id),
+  })
+  assert.ok(fifth)
+  await waitForTask(fifth.id)
+  assert.deepEqual(mountedNames(fifth.id), ['batch-1.csv', 'batch-2.csv', 'batch-3.csv', 'batch-4.csv', 'batch-5.csv'])
 })
 
 test('file authorization and parser failures are fail-closed and traceable', async () => {
