@@ -75,7 +75,6 @@ export type WorkspaceNotifiableEvent =
     sessionId: string
     runId: string
     requestedBy: string
-    actorUserId: 'system'
     /** Terminal run event id — idempotency source for the activity row. */
     dedupeKey: string
     agentDisplayName?: string
@@ -213,11 +212,12 @@ export async function writeNotifiableEvent(
   const created = await insertActivity(transaction, {
     workspaceId: event.workspaceId,
     kind: event.kind,
-    actorUserId: event.actorUserId,
+    actorUserId: event.requestedBy,
     objectType: 'run',
     objectId: event.runId,
     dedupeKey: event.dedupeKey,
     metadata: {
+      actor: 'system',
       sessionId: event.sessionId,
       runId: event.runId,
       ...(event.agentDisplayName ? { agentDisplayName: event.agentDisplayName } : {}),

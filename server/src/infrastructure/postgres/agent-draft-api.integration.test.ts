@@ -42,6 +42,30 @@ after(async () => {
   await throwaway?.dispose()
 })
 
+test('minimal create dialog shape omits access fields and persists empty grants', async () => {
+  const agentId = `agent-minimal-${randomUUID().slice(0, 8)}`
+  const created = await api('POST', '/api/admin/v1/agents', {
+    id: agentId,
+    name: '最小创建助手',
+    description: '用于验证管理端创建弹窗只提交基础字段时仍可创建草稿。',
+    owner: '陈默',
+    department: '数字化中心',
+    welcomeMessage: '你好，我是最小创建助手。',
+    examplePrompts: ['请介绍你能提供哪些帮助'],
+    systemPrompt: '你是最小创建助手，只能根据当前授权数据回答，并且必须给出简洁、可验证的结论。',
+    maxOutputBytes: 65536,
+    maxToolCalls: 20,
+    timeoutSeconds: 300,
+    skills: [],
+    changeSummary: '创建 Agent 初始版本',
+  })
+  assert.equal(created.status, 201)
+  const [access] = await database<{ visibleRoleIds: string[] }[]>`
+    select visible_role_ids as "visibleRoleIds" from agents where tenant_id = ${tenantId} and id = ${agentId}
+  `
+  assert.deepEqual(access?.visibleRoleIds ?? [], [])
+})
+
 test('creating an Agent returns 201, and a duplicate id is a state conflict with one row', async () => {
   const agentId = `agent-draft-dup-${randomUUID().slice(0, 8)}`
   const body = validDraft(agentId)

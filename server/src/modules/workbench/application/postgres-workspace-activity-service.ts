@@ -479,16 +479,17 @@ export class PostgresWorkspaceActivityService {
     userId: string,
   ): Promise<AccountNotificationItem | null> {
     if (!(await this.canReadWorkspaceNotifications(row.workspaceId, userId))) return null
+    const metadata = row.metadata && typeof row.metadata === 'object' ? row.metadata as Record<string, unknown> : {}
     return {
       id: row.activityId,
       workspaceId: row.workspaceId,
       sequence: Number(row.sequence),
       kind: row.kind,
       actorUserId: row.actorUserId,
-      actorDisplayName: row.actorDisplayName,
+      actorDisplayName: resolveActorDisplayName(row.kind, row.actorDisplayName, metadata),
       objectType: row.objectType,
       objectId: row.objectId,
-      safeMetadata: row.metadata && typeof row.metadata === 'object' ? row.metadata : {},
+      safeMetadata: metadata,
       occurredAt: row.occurredAt.toISOString(),
     }
   }
@@ -555,12 +556,25 @@ function toPage(workspaceId: string, rows: ActivityRow[], limit: number): Worksp
   }
 }
 
+function resolveActorDisplayName(
+  kind: ActivityRow['kind'],
+  joinedDisplayName: string,
+  metadata: Record<string, unknown>,
+): string {
+  if ((kind === 'run_completed' || kind === 'run_failed') && metadata.actor === 'system') {
+    const agentName = typeof metadata.agentDisplayName === 'string' ? metadata.agentDisplayName.trim() : ''
+    return agentName || '系统'
+  }
+  return joinedDisplayName
+}
+
 function toItem(row: ActivityRow): WorkspaceActivityItem {
+  const metadata = row.metadata && typeof row.metadata === 'object' ? row.metadata as Record<string, unknown> : {}
   return {
     id: row.id,
     kind: row.kind,
     actorUserId: row.actorUserId,
-    actorDisplayName: row.actorDisplayName,
+    actorDisplayName: resolveActorDisplayName(row.kind, row.actorDisplayName, metadata),
     objectType: row.objectType,
     objectId: row.objectId,
     // safe_metadata is written by our own emitters; never spread an unknown row

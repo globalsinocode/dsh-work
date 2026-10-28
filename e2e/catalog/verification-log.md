@@ -2,6 +2,18 @@
 
 历史验证记录：每次实施的阶段、已运行的测试与未覆盖项。只追加，新记录写在最前面；不是验收标准。证据层级与写法见[验收目录索引](../TEST-CATALOG.md)。
 
+### 2026-10-27：发版阻塞缺陷修复（dev@1768573）
+
+**环境：** Windows 10，Node 24；本机 shell 无 `pnpm` 可执行文件（`corepack pnpm typecheck` 失败）；`DSH_WORK_TEST_DATABASE_URL` 未用于本轮本地集成。
+
+| 命令 | 结果 | 备注 |
+| --- | --- | --- |
+| `node --test agent-draft-input.test.ts` + `run-orchestration-session-activation.test.ts` | 11/11 通过 | 草稿缺省字段与讨论消息激活 |
+| `vitest run ConversationView.test.ts` | 58/58 通过 | 含 S3 任务对话状态矩阵 |
+| `pnpm typecheck` / `pnpm verify` / Playwright 七套件 | 未运行 | 待 CI 或配置 pnpm + 可丢弃 PG + Edge |
+
+**层级：** 以上为单元/组件 P0；P1 浏览器与 PostgreSQL 集成待在专用环境复跑。未宣称真实 DSH/OIDC 已通过。
+
 ### 2026-10-27：M6 第二轮红灯修复
 
 **环境：** Windows 10，Node v24.14.1，`corepack pnpm`（若可用）；PostgreSQL 依赖 `DSH_WORK_TEST_DATABASE_URL`（集成未在本轮全量执行）。

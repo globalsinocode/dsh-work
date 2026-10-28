@@ -68,7 +68,7 @@ test('AU-01 archive hides task from active list but keeps history readable', asy
   const name = `P1-归档-${randomUUID().slice(0, 8)}`
   const task = await createAutomation(page.request, name, 'P1-普通完成')
   await enableFromPage(page, name)
-  await page.getByRole('region', { name: `自动任务：${name}`, exact: true }).getByRole('button', { name: '归档', exact: true }).click()
+  await taskCard(page, name).getByRole('button', { name: '归档', exact: true }).click()
   await page.getByRole('button', { name: '归档', exact: true }).last().click()
   await expect(taskCard(page, name)).toHaveCount(0)
   await page.getByRole('combobox', { name: '任务状态筛选' }).click()

@@ -16,10 +16,12 @@ import { PostgresAgentAccessService } from '../../server/src/modules/agent/agent
 import { PostgresAgentValidationService } from '../../server/src/modules/agent/agent-validation-service.ts'
 import { PostgresAgentRunHistory } from '../../server/src/modules/agent/agent-run-history.ts'
 import { PostgresMcpConnectorService } from '../../server/src/modules/tool/postgres-mcp-connector-service.ts'
+import { PostgresToolConnectorService } from '../../server/src/modules/tool/postgres-tool-connector-service.ts'
+import { IdentityAdministrationService } from '../../server/src/modules/identity/administration-service.ts'
+import { registerIdentityAdministrationRoutes } from '../../server/src/http/admin/identity-routes.ts'
 import { PostgresEncryptedCredentialStore } from '../../server/src/modules/tool/postgres-encrypted-credential-store.ts'
 import type { AgentRuntimePort, McpInspectionResult } from '../../server/src/modules/runtime/runtime-types.ts'
 import { registerToolRoutes } from '../../server/src/http/admin/tool-routes.ts'
-import { PostgresToolConnectorService } from '../../server/src/modules/tool/postgres-tool-connector-service.ts'
 import { registerAgentRoutes } from '../../server/src/http/admin/agent-routes.ts'
 import { registerAgentValidationRoutes } from '../../server/src/http/admin/agent-validation-routes.ts'
 import { registerAgentRoutineRoutes } from '../../server/src/http/admin/agent-routine-routes.ts'
@@ -74,7 +76,8 @@ const credentialSecrets = new PostgresEncryptedCredentialStore(database.client, 
   keyId: 'p1-browser-v1',
 })
 const mcpService = new PostgresMcpConnectorService(database.client, runtime, undefined, credentialSecrets)
-const agents = new PostgresAgentService(database.client, undefined, undefined, mcpService)
+const toolService = new PostgresToolConnectorService(database.client, runtime, undefined, credentialSecrets)
+const agents = new PostgresAgentService(database.client, undefined, undefined, toolService)
 const router = new Router({ authenticateApi: testApiAuthenticator })
 const base = '/api/admin/v1'
 
@@ -90,6 +93,7 @@ router.get(`${base}/session`, (_request, context) => {
 router.get(`${base}/tasks`, () => envelope('admin', [], 'postgres'))
 router.get(`${base}/runtimes`, () => envelope('admin', [], 'postgres'))
 router.get(`${base}/workspaces`, () => envelope('admin', [], 'postgres'))
+registerIdentityAdministrationRoutes(router, new IdentityAdministrationService(database.client))
 registerAgentRoutes(router, agents, new PostgresAgentAccessService(database.client))
 const routineRuns = new PostgresRunRepository(database.client)
 const routineConversations = new PostgresConversationRepository(database.client)
@@ -125,7 +129,7 @@ router.get(`${base}/platform-status`, () => envelope('admin', {
 router.get(`${base}/assistant/sessions`, () => envelope('admin', [], 'postgres'))
 // 内置工具状态改由 PostgresToolConnectorService 读取（0104 起内置工具在代码里定义），
 // 仅注册 MCP 的旧 service 没有 getBuiltinToolStatus，会 500。
-registerToolRoutes(router, new PostgresToolConnectorService(database.client, runtime, undefined, credentialSecrets))
+registerToolRoutes(router, toolService)
 
 router.get(`${base}/test/agent-principal/evidence`, async (_request, context) => {
   const agentVersionId = context.url.searchParams.get('agent_version_id') ?? ''
