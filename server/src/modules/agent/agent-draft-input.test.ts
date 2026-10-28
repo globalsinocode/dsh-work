@@ -46,7 +46,9 @@ const createStringFields = [
 ] as const
 const optionalAccessFields = ['visibility', 'roleIds', 'dataScopes'] as const
 const updateStringFields = ['agentId', ...createStringFields.filter(field => field !== 'id'), 'expectedRevision'] as const
-const arrayFields = ['examplePrompts', 'skills', 'tools'] as const
+// tools 自 0104 起由代码注册的内置工具提供，管理端不再传；省略按空列表处理。
+const arrayFields = ['examplePrompts', 'skills'] as const
+const omittedArrayFields = ['tools'] as const
 const quotaFields = ['maxOutputBytes', 'maxToolCalls', 'timeoutSeconds'] as const
 const optionalArrayFields = ['executionRoleIds', 'executionDataScopes'] as const
 const leaked = 'secret-leak-value'
@@ -163,6 +165,19 @@ test('update parser rejects undefined, objects, and non-string array items', () 
   }
   for (const value of ['', '   ']) {
     assertInvalid(() => parseUpdateAgentDraftInput({ ...updateDraft, expectedRevision: value }), 'expectedRevision')
+  }
+})
+
+test('tools may be omitted but still rejects non-string values', () => {
+  // 管理端创建/编辑不再携带工具；省略时按空列表处理，错误类型仍需 422。
+  // 解析层不做默认值：创建时由 normalizeConfiguration 落成 []，编辑时沿用已有 tool_refs。
+  assert.equal(parseCreateAgentDraftInput({ ...createDraft, tools: undefined }).tools, undefined)
+  assert.equal(parseUpdateAgentDraftInput({ ...updateDraft, tools: undefined }).tools, undefined)
+  for (const field of omittedArrayFields) {
+    assertInvalid(() => parseCreateAgentDraftInput({ ...createDraft, [field]: { leak: leaked } }), field)
+    assertInvalid(() => parseCreateAgentDraftInput({ ...createDraft, [field]: ['ok', { leak: leaked }] }), field)
+    assertInvalid(() => parseUpdateAgentDraftInput({ ...updateDraft, [field]: { leak: leaked } }), field)
+    assertInvalid(() => parseUpdateAgentDraftInput({ ...updateDraft, [field]: ['ok', { leak: leaked }] }), field)
   }
 })
 

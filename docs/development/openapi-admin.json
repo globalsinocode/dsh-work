@@ -23,173 +23,10 @@
       "patch": {
         "operationId": "updateAgentPublicationScope",
         "summary": "在发布试运行前配置员工可见角色与可选的平台数据授权上限；变更使旧试运行证据失效",
-        "parameters": [{ "$ref": "#/components/parameters/AgentId" }],
-        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "additionalProperties": false, "required": ["roleIds", "dataScopes"], "properties": { "roleIds": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string" } }, "dataScopes": { "type": "array", "uniqueItems": true, "items": { "type": "string" } } } } } } },
-        "responses": { "200": { "$ref": "#/components/responses/Ok" }, "403": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" }, "422": { "$ref": "#/components/responses/Error" } }
-      }
-    },
-    "/agents/{agentId}/release/case-trials": {
-      "post": {
-        "operationId": "startAgentReleaseTrial",
-        "summary": "自动检查并只执行第一项发布验证案例",
-        "parameters": [{ "$ref": "#/components/parameters/AgentId" }],
-        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "additionalProperties": false, "required": ["caseId"], "properties": { "caseId": { "type": "string" } } } } } },
-        "responses": { "201": { "$ref": "#/components/responses/Ok" }, "409": { "$ref": "#/components/responses/Error" }, "422": { "$ref": "#/components/responses/Error" } }
-      }
-    },
-    "/agents/{agentId}/release/trials/{trialId}/cases": {
-      "post": {
-        "operationId": "continueAgentReleaseTrialCase",
-        "summary": "上一项经人工确认通过后保存并执行下一项案例",
-        "parameters": [{ "$ref": "#/components/parameters/AgentId" }, { "name": "trialId", "in": "path", "required": true, "schema": { "type": "string" } }],
-        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "additionalProperties": false, "required": ["caseId", "input", "rubric"], "properties": { "caseId": { "type": "string" }, "input": { "type": "string" }, "rubric": { "type": "string" } } } } } },
-        "responses": { "200": { "$ref": "#/components/responses/Ok" }, "409": { "$ref": "#/components/responses/Error" }, "422": { "$ref": "#/components/responses/Error" } }
-      }
-    },
-    "/agents/{agentId}/release/trials/{trialId}/confirm": {
-      "post": {
-        "operationId": "confirmAgentReleaseTrialCase",
-        "summary": "对当前案例的完整输出登记人工结论；五项通过后试运行完成",
-        "parameters": [{ "$ref": "#/components/parameters/AgentId" }, { "name": "trialId", "in": "path", "required": true, "schema": { "type": "string" } }],
-        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "additionalProperties": false, "required": ["verdicts"], "properties": { "verdicts": { "type": "array", "minItems": 1, "items": { "type": "object", "required": ["caseId", "verdict"], "properties": { "caseId": { "type": "string" }, "verdict": { "enum": ["passed", "failed"] }, "note": { "type": "string", "maxLength": 1000, "description": "verdict=failed 时必填（去除首尾空白后非空），否则返回 422" } } } } } } } } },
-        "responses": { "200": { "$ref": "#/components/responses/Ok" }, "409": { "$ref": "#/components/responses/Error" }, "422": { "$ref": "#/components/responses/Error" } }
-      }
-    },
-    "/agents/{agentId}/versions/{versionId}/package": {
-      "get": {
-        "operationId": "exportAgentVersionPackage",
-        "summary": "导出 Agent 版本 ZIP 供审阅和离线核对；不包含平台凭据、连接器或授权，不提供 ZIP 导入",
         "parameters": [
-          { "name": "agentId", "in": "path", "required": true, "schema": { "type": "string" } },
-          { "name": "versionId", "in": "path", "required": true, "schema": { "type": "string" } }
-        ],
-        "responses": {
-          "200": { "description": "Agent 发布包", "content": { "application/zip": { "schema": { "type": "string", "format": "binary" } } } },
-          "404": { "$ref": "#/components/responses/Error" },
-          "409": { "$ref": "#/components/responses/Error" }
-        }
-      }
-    },
-    "/agents/{agentId}/routines": {
-      "get": { "operationId": "listAgentRoutines", "summary": "列出 Agent 拥有的主动任务规则", "parameters": [{ "name": "agentId", "in": "path", "required": true, "schema": { "type": "string" } }], "responses": { "200": { "$ref": "#/components/responses/Ok" }, "403": { "$ref": "#/components/responses/Error" } } },
-      "post": { "operationId": "createAgentRoutine", "summary": "创建固定版本、触发规则、接收人与预算的草稿", "parameters": [{ "name": "agentId", "in": "path", "required": true, "schema": { "type": "string" } }], "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AgentRoutineDraft" } } } }, "responses": { "201": { "$ref": "#/components/responses/Ok" }, "403": { "$ref": "#/components/responses/Error" } } }
-    },
-    "/agents/{agentId}/routines/{routineId}": {
-      "patch": { "operationId": "updateAgentRoutine", "summary": "按修订更新草稿或已暂停规则；更新后必须重新确认授权", "parameters": [{ "name": "agentId", "in": "path", "required": true, "schema": { "type": "string" } }, { "name": "routineId", "in": "path", "required": true, "schema": { "type": "string" } }], "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["expectedRevision"], "properties": { "expectedRevision": { "type": "integer" }, "name": { "type": "string" }, "agentVersionId": { "type": "string" }, "workspaceId": { "type": "string" }, "recipientUserId": { "type": "string" }, "schedule": { "$ref": "#/components/schemas/AgentRoutineSchedule" }, "inputTemplate": { "$ref": "#/components/schemas/AgentRoutineInput" } } } } } }, "responses": { "200": { "$ref": "#/components/responses/Ok" }, "409": { "$ref": "#/components/responses/Error" } } },
-      "delete": { "operationId": "disableAgentRoutine", "summary": "永久停用规则；保留审计与执行记录", "parameters": [{ "name": "agentId", "in": "path", "required": true, "schema": { "type": "string" } }, { "name": "routineId", "in": "path", "required": true, "schema": { "type": "string" } }], "responses": { "200": { "$ref": "#/components/responses/Ok" } } }
-    },
-    "/agents/{agentId}/routines/{routineId}/enable": { "post": { "operationId": "enableAgentRoutine", "summary": "确认 Agent 角色和数据范围上限并启用", "parameters": [{ "name": "agentId", "in": "path", "required": true, "schema": { "type": "string" } }, { "name": "routineId", "in": "path", "required": true, "schema": { "type": "string" } }], "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["expectedRevision", "roleIds", "dataScopes"], "properties": { "expectedRevision": { "type": "integer" }, "roleIds": { "type": "array", "items": { "type": "string" } }, "dataScopes": { "type": "array", "items": { "type": "string" } } } } } } }, "responses": { "200": { "$ref": "#/components/responses/Ok" }, "403": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" } } } },
-    "/agents/{agentId}/routines/{routineId}/pause": { "post": { "operationId": "pauseAgentRoutine", "summary": "暂停规则并阻止后续执行授权", "parameters": [{ "name": "agentId", "in": "path", "required": true, "schema": { "type": "string" } }, { "name": "routineId", "in": "path", "required": true, "schema": { "type": "string" } }], "responses": { "200": { "$ref": "#/components/responses/Ok" } } } },
-    "/agents/{agentId}/routines/{routineId}/run-now": { "post": { "operationId": "runAgentRoutineNow", "summary": "使用幂等键手动触发已启用规则", "parameters": [{ "name": "agentId", "in": "path", "required": true, "schema": { "type": "string" } }, { "name": "routineId", "in": "path", "required": true, "schema": { "type": "string" } }], "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["idempotencyKey"], "properties": { "idempotencyKey": { "type": "string" } } } } } }, "responses": { "200": { "$ref": "#/components/responses/Ok" } } } },
-    "/agents/{agentId}/routines/{routineId}/events": { "post": { "operationId": "triggerAgentRoutineEvent", "summary": "由受信管理员按来源与事件 ID 去重触发事件规则", "parameters": [{ "name": "agentId", "in": "path", "required": true, "schema": { "type": "string" } }, { "name": "routineId", "in": "path", "required": true, "schema": { "type": "string" } }], "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["eventType", "source", "eventId"], "properties": { "eventType": { "type": "string" }, "source": { "type": "string" }, "eventId": { "type": "string" } } } } } }, "responses": { "200": { "$ref": "#/components/responses/Ok" }, "403": { "$ref": "#/components/responses/Error" } } } },
-    "/agents/{agentId}/routines/{routineId}/executions": { "get": { "operationId": "listAgentRoutineExecutions", "summary": "查询受理、跳过、Run 终态与业务结果", "parameters": [{ "name": "agentId", "in": "path", "required": true, "schema": { "type": "string" } }, { "name": "routineId", "in": "path", "required": true, "schema": { "type": "string" } }], "responses": { "200": { "$ref": "#/components/responses/Ok" } } } },
-    "/agent-data/collections": {
-      "get": {
-        "operationId": "listAgentDataCollections",
-        "summary": "列出 Agent 数据集合及 Schema、作用域和保留策略",
-        "responses": { "200": { "$ref": "#/components/responses/Ok" }, "403": { "$ref": "#/components/responses/Error" } }
-      },
-      "post": {
-        "operationId": "publishAgentDataCollection",
-        "summary": "发布受治理的数据集合；不执行 Agent 包内 SQL",
-        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AgentDataCollectionInput" } } } },
-        "responses": { "201": { "$ref": "#/components/responses/Ok" }, "403": { "$ref": "#/components/responses/Error" }, "422": { "$ref": "#/components/responses/Error" } }
-      }
-    },
-    "/agent-data/collections/{collectionId}/schema": {
-      "patch": {
-        "operationId": "evolveAgentDataCollectionSchema",
-        "summary": "以期望版本升级集合 Schema",
-        "parameters": [{ "$ref": "#/components/parameters/AgentDataCollectionId" }],
-        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AgentDataSchemaEvolutionInput" } } } },
-        "responses": { "200": { "$ref": "#/components/responses/Ok" }, "403": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" } }
-      }
-    },
-    "/agent-data/collections/{collectionId}/status": {
-      "patch": {
-        "operationId": "setAgentDataCollectionStatus",
-        "summary": "启用或停用数据集合",
-        "parameters": [{ "$ref": "#/components/parameters/AgentDataCollectionId" }],
-        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["status"], "properties": { "status": { "enum": ["active", "disabled"] } } } } } },
-        "responses": { "200": { "$ref": "#/components/responses/Ok" }, "403": { "$ref": "#/components/responses/Error" } }
-      }
-    },
-    "/agent-data/collections/{collectionId}/grants": {
-      "get": {
-        "operationId": "listAgentDataCollectionGrants",
-        "summary": "列出集合对 Agent 安装实例的动作授权",
-        "parameters": [{ "$ref": "#/components/parameters/AgentDataCollectionId" }],
-        "responses": { "200": { "$ref": "#/components/responses/Ok" }, "403": { "$ref": "#/components/responses/Error" } }
-      }
-    },
-    "/agent-data/collections/{collectionId}/grants/{agentId}": {
-      "patch": {
-        "operationId": "setAgentDataCollectionGrant",
-        "summary": "设置 Agent 的集合动作授权；空数组表示撤权",
-        "parameters": [{ "$ref": "#/components/parameters/AgentDataCollectionId" }, { "$ref": "#/components/parameters/AgentId" }],
-        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AgentDataGrantInput" } } } },
-        "responses": { "200": { "$ref": "#/components/responses/Ok" }, "403": { "$ref": "#/components/responses/Error" }, "422": { "$ref": "#/components/responses/Error" } }
-      }
-    },
-    "/agent-data/collections/{collectionId}/records": {
-      "get": {
-        "operationId": "listAgentDataRecords",
-        "summary": "分页读取集合的结构化记录",
-        "parameters": [{ "$ref": "#/components/parameters/AgentDataCollectionId" },
-          { "name": "after", "in": "query", "schema": { "type": "string" } },
-          { "name": "limit", "in": "query", "schema": { "type": "integer", "minimum": 1, "maximum": 100 } }],
-        "responses": { "200": { "$ref": "#/components/responses/Ok" }, "403": { "$ref": "#/components/responses/Error" } }
-      }
-    },
-    "/agent-data/proposals": {
-      "get": {
-        "operationId": "listAgentDataProposals",
-        "summary": "列出待审或已处理的 Agent 数据提案",
-        "parameters": [{ "name": "status", "in": "query", "schema": { "enum": ["pending", "approved", "rejected"] } }],
-        "responses": { "200": { "$ref": "#/components/responses/Ok" }, "403": { "$ref": "#/components/responses/Error" } }
-      }
-    },
-    "/agent-data/proposals/{proposalId}/review": {
-      "post": {
-        "operationId": "reviewAgentDataProposal",
-        "summary": "审核提案并在批准时复核当前授权与固定 Schema 版本",
-        "parameters": [{ "name": "proposalId", "in": "path", "required": true, "schema": { "type": "string" } }],
-        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["decision"], "properties": { "decision": { "enum": ["approved", "rejected"] } } } } } },
-        "responses": { "200": { "$ref": "#/components/responses/Ok" }, "403": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" } }
-      }
-    },
-    "/agent-data/records/{recordId}": {
-      "delete": {
-        "operationId": "deleteAgentDataRecord",
-        "summary": "删除记录正文并保留不含正文的版本删除摘要",
-        "parameters": [{ "name": "recordId", "in": "path", "required": true, "schema": { "type": "string" } }],
-        "responses": { "200": { "$ref": "#/components/responses/Ok" }, "403": { "$ref": "#/components/responses/Error" } }
-      }
-    },
-    "/experience-iterations/agents": {
-      "get": {
-        "operationId": "listExperienceIterationAgents",
-        "summary": "查询每个 Agent 的经验迭代申请汇总",
-        "responses": { "200": { "$ref": "#/components/responses/Ok" } }
-      }
-    },
-    "/experience-iterations/agents/{agentId}/experiences": {
-      "get": {
-        "operationId": "listAgentExperiences",
-        "summary": "查询指定 Agent 的已发布经验及当前版本",
-        "parameters": [
-          { "name": "agentId", "in": "path", "required": true, "schema": { "type": "string" } }
-        ],
-        "responses": { "200": { "$ref": "#/components/responses/Ok" } }
-      }
-    },
-    "/experience-iterations/agents/{agentId}/experiences/{entryId}/current": {
-      "put": {
-        "operationId": "setAgentExperienceVersion",
-        "summary": "停用、启用或回滚 Agent 的当前经验版本",
-        "parameters": [
-          { "name": "agentId", "in": "path", "required": true, "schema": { "type": "string" } },
-          { "name": "entryId", "in": "path", "required": true, "schema": { "type": "string" } }
+          {
+            "$ref": "#/components/parameters/AgentId"
+          }
         ],
         "requestBody": {
           "required": true,
@@ -198,17 +35,1037 @@
               "schema": {
                 "type": "object",
                 "additionalProperties": false,
-                "required": ["versionId", "expectedVersionId", "reason"],
+                "required": [
+                  "roleIds",
+                  "dataScopes"
+                ],
                 "properties": {
-                  "versionId": { "type": ["string", "null"], "minLength": 1, "maxLength": 128 },
-                  "expectedVersionId": { "type": ["string", "null"], "minLength": 1, "maxLength": 128 },
-                  "reason": { "type": "string" }
+                  "roleIds": {
+                    "type": "array",
+                    "minItems": 1,
+                    "uniqueItems": true,
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "dataScopes": {
+                    "type": "array",
+                    "uniqueItems": true,
+                    "items": {
+                      "type": "string"
+                    }
+                  }
                 }
               }
             }
           }
         },
-        "responses": { "200": { "$ref": "#/components/responses/Ok" } }
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/agents/{agentId}/release/case-trials": {
+      "post": {
+        "operationId": "startAgentReleaseTrial",
+        "summary": "自动检查并只执行第一项发布验证案例",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/AgentId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "caseId"
+                ],
+                "properties": {
+                  "caseId": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/agents/{agentId}/release/trials/{trialId}/cases": {
+      "post": {
+        "operationId": "continueAgentReleaseTrialCase",
+        "summary": "上一项经人工确认通过后保存并执行下一项案例",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/AgentId"
+          },
+          {
+            "name": "trialId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "caseId",
+                  "input",
+                  "rubric"
+                ],
+                "properties": {
+                  "caseId": {
+                    "type": "string"
+                  },
+                  "input": {
+                    "type": "string"
+                  },
+                  "rubric": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/agents/{agentId}/release/trials/{trialId}/confirm": {
+      "post": {
+        "operationId": "confirmAgentReleaseTrialCase",
+        "summary": "对当前案例的完整输出登记人工结论；五项通过后试运行完成",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/AgentId"
+          },
+          {
+            "name": "trialId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "verdicts"
+                ],
+                "properties": {
+                  "verdicts": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                      "type": "object",
+                      "required": [
+                        "caseId",
+                        "verdict"
+                      ],
+                      "properties": {
+                        "caseId": {
+                          "type": "string"
+                        },
+                        "verdict": {
+                          "enum": [
+                            "passed",
+                            "failed"
+                          ]
+                        },
+                        "note": {
+                          "type": "string",
+                          "maxLength": 1000,
+                          "description": "verdict=failed 时必填（去除首尾空白后非空），否则返回 422"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/agents/{agentId}/versions/{versionId}/package": {
+      "get": {
+        "operationId": "exportAgentVersionPackage",
+        "summary": "导出 Agent 版本 ZIP 供审阅和离线核对；不包含平台凭据、连接器或授权，不提供 ZIP 导入",
+        "parameters": [
+          {
+            "name": "agentId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "versionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Agent 发布包",
+            "content": {
+              "application/zip": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/agents/{agentId}/routines": {
+      "get": {
+        "operationId": "listAgentRoutines",
+        "summary": "列出 Agent 拥有的主动任务规则",
+        "parameters": [
+          {
+            "name": "agentId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      },
+      "post": {
+        "operationId": "createAgentRoutine",
+        "summary": "创建固定版本、触发规则、接收人与预算的草稿",
+        "parameters": [
+          {
+            "name": "agentId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AgentRoutineDraft"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/agents/{agentId}/routines/{routineId}": {
+      "patch": {
+        "operationId": "updateAgentRoutine",
+        "summary": "按修订更新草稿或已暂停规则；更新后必须重新确认授权",
+        "parameters": [
+          {
+            "name": "agentId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "routineId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "expectedRevision"
+                ],
+                "properties": {
+                  "expectedRevision": {
+                    "type": "integer"
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "agentVersionId": {
+                    "type": "string"
+                  },
+                  "workspaceId": {
+                    "type": "string"
+                  },
+                  "recipientUserId": {
+                    "type": "string"
+                  },
+                  "schedule": {
+                    "$ref": "#/components/schemas/AgentRoutineSchedule"
+                  },
+                  "inputTemplate": {
+                    "$ref": "#/components/schemas/AgentRoutineInput"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      },
+      "delete": {
+        "operationId": "disableAgentRoutine",
+        "summary": "永久停用规则；保留审计与执行记录",
+        "parameters": [
+          {
+            "name": "agentId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "routineId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          }
+        }
+      }
+    },
+    "/agents/{agentId}/routines/{routineId}/enable": {
+      "post": {
+        "operationId": "enableAgentRoutine",
+        "summary": "确认 Agent 角色和数据范围上限并启用",
+        "parameters": [
+          {
+            "name": "agentId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "routineId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "expectedRevision",
+                  "roleIds",
+                  "dataScopes"
+                ],
+                "properties": {
+                  "expectedRevision": {
+                    "type": "integer"
+                  },
+                  "roleIds": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "dataScopes": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/agents/{agentId}/routines/{routineId}/pause": {
+      "post": {
+        "operationId": "pauseAgentRoutine",
+        "summary": "暂停规则并阻止后续执行授权",
+        "parameters": [
+          {
+            "name": "agentId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "routineId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          }
+        }
+      }
+    },
+    "/agents/{agentId}/routines/{routineId}/run-now": {
+      "post": {
+        "operationId": "runAgentRoutineNow",
+        "summary": "使用幂等键手动触发已启用规则",
+        "parameters": [
+          {
+            "name": "agentId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "routineId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "idempotencyKey"
+                ],
+                "properties": {
+                  "idempotencyKey": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          }
+        }
+      }
+    },
+    "/agents/{agentId}/routines/{routineId}/events": {
+      "post": {
+        "operationId": "triggerAgentRoutineEvent",
+        "summary": "由受信管理员按来源与事件 ID 去重触发事件规则",
+        "parameters": [
+          {
+            "name": "agentId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "routineId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "eventType",
+                  "source",
+                  "eventId"
+                ],
+                "properties": {
+                  "eventType": {
+                    "type": "string"
+                  },
+                  "source": {
+                    "type": "string"
+                  },
+                  "eventId": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/agents/{agentId}/routines/{routineId}/executions": {
+      "get": {
+        "operationId": "listAgentRoutineExecutions",
+        "summary": "查询受理、跳过、Run 终态与业务结果",
+        "parameters": [
+          {
+            "name": "agentId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "routineId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          }
+        }
+      }
+    },
+    "/agent-data/collections": {
+      "get": {
+        "operationId": "listAgentDataCollections",
+        "summary": "列出 Agent 数据集合及 Schema、作用域和保留策略",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      },
+      "post": {
+        "operationId": "publishAgentDataCollection",
+        "summary": "发布受治理的数据集合；不执行 Agent 包内 SQL",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AgentDataCollectionInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/agent-data/collections/{collectionId}/schema": {
+      "patch": {
+        "operationId": "evolveAgentDataCollectionSchema",
+        "summary": "以期望版本升级集合 Schema",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/AgentDataCollectionId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AgentDataSchemaEvolutionInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/agent-data/collections/{collectionId}/status": {
+      "patch": {
+        "operationId": "setAgentDataCollectionStatus",
+        "summary": "启用或停用数据集合",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/AgentDataCollectionId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "status"
+                ],
+                "properties": {
+                  "status": {
+                    "enum": [
+                      "active",
+                      "disabled"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/agent-data/collections/{collectionId}/grants": {
+      "get": {
+        "operationId": "listAgentDataCollectionGrants",
+        "summary": "列出集合对 Agent 安装实例的动作授权",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/AgentDataCollectionId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/agent-data/collections/{collectionId}/grants/{agentId}": {
+      "patch": {
+        "operationId": "setAgentDataCollectionGrant",
+        "summary": "设置 Agent 的集合动作授权；空数组表示撤权",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/AgentDataCollectionId"
+          },
+          {
+            "$ref": "#/components/parameters/AgentId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AgentDataGrantInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/agent-data/collections/{collectionId}/records": {
+      "get": {
+        "operationId": "listAgentDataRecords",
+        "summary": "分页读取集合的结构化记录",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/AgentDataCollectionId"
+          },
+          {
+            "name": "after",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/agent-data/proposals": {
+      "get": {
+        "operationId": "listAgentDataProposals",
+        "summary": "列出待审或已处理的 Agent 数据提案",
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "schema": {
+              "enum": [
+                "pending",
+                "approved",
+                "rejected"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/agent-data/proposals/{proposalId}/review": {
+      "post": {
+        "operationId": "reviewAgentDataProposal",
+        "summary": "审核提案并在批准时复核当前授权与固定 Schema 版本",
+        "parameters": [
+          {
+            "name": "proposalId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "decision"
+                ],
+                "properties": {
+                  "decision": {
+                    "enum": [
+                      "approved",
+                      "rejected"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/agent-data/records/{recordId}": {
+      "delete": {
+        "operationId": "deleteAgentDataRecord",
+        "summary": "删除记录正文并保留不含正文的版本删除摘要",
+        "parameters": [
+          {
+            "name": "recordId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/experience-iterations/agents": {
+      "get": {
+        "operationId": "listExperienceIterationAgents",
+        "summary": "查询每个 Agent 的经验迭代申请汇总",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          }
+        }
+      }
+    },
+    "/experience-iterations/agents/{agentId}/experiences": {
+      "get": {
+        "operationId": "listAgentExperiences",
+        "summary": "查询指定 Agent 的已发布经验及当前版本",
+        "parameters": [
+          {
+            "name": "agentId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          }
+        }
+      }
+    },
+    "/experience-iterations/agents/{agentId}/experiences/{entryId}/current": {
+      "put": {
+        "operationId": "setAgentExperienceVersion",
+        "summary": "停用、启用或回滚 Agent 的当前经验版本",
+        "parameters": [
+          {
+            "name": "agentId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "entryId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "versionId",
+                  "expectedVersionId",
+                  "reason"
+                ],
+                "properties": {
+                  "versionId": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "minLength": 1,
+                    "maxLength": 128
+                  },
+                  "expectedVersionId": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "minLength": 1,
+                    "maxLength": 128
+                  },
+                  "reason": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          }
+        }
       }
     },
     "/experience-iterations/applications": {
@@ -220,16 +1077,28 @@
             "name": "agentId",
             "in": "query",
             "required": false,
-            "schema": { "type": "string" }
+            "schema": {
+              "type": "string"
+            }
           },
           {
             "name": "status",
             "in": "query",
             "required": false,
-            "schema": { "enum": ["pending", "approved", "rejected"] }
+            "schema": {
+              "enum": [
+                "pending",
+                "approved",
+                "rejected"
+              ]
+            }
           }
         ],
-        "responses": { "200": { "$ref": "#/components/responses/Ok" } }
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          }
+        }
       }
     },
     "/experience-iterations/applications/{applicationId}/review": {
@@ -237,29 +1106,57 @@
         "operationId": "reviewExperienceIterationApplication",
         "summary": "审核并发布或拒绝 Agent 经验迭代申请",
         "description": "申请归属于稳定 Agent，来源固定到成功 Run/Attempt。批准后创建独立不可变经验版本；相同决定和 resolutionKey 可幂等重放，其他并发决定返回冲突。",
-        "parameters": [{
-          "name": "applicationId",
-          "in": "path",
-          "required": true,
-          "schema": { "type": "string" }
-        }],
+        "parameters": [
+          {
+            "name": "applicationId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "requestBody": {
           "required": true,
-          "content": { "application/json": { "schema": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": ["decision", "resolutionKey"],
-            "properties": {
-              "decision": { "enum": ["approved", "rejected"] },
-              "resolutionKey": { "type": "string", "minLength": 1 },
-              "comment": { "type": "string", "maxLength": 1000 }
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "decision",
+                  "resolutionKey"
+                ],
+                "properties": {
+                  "decision": {
+                    "enum": [
+                      "approved",
+                      "rejected"
+                    ]
+                  },
+                  "resolutionKey": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "comment": {
+                    "type": "string",
+                    "maxLength": 1000
+                  }
+                }
+              }
             }
-          } } }
+          }
         },
         "responses": {
-          "200": { "$ref": "#/components/responses/Ok" },
-          "409": { "$ref": "#/components/responses/Error" },
-          "422": { "$ref": "#/components/responses/Error" }
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          }
         }
       }
     },
@@ -267,35 +1164,100 @@
       "get": {
         "operationId": "listPersistentApprovals",
         "summary": "查询持久化动作审批",
-        "parameters": [{ "name": "status", "in": "query", "required": false, "schema": { "enum": ["pending", "approved", "rejected", "expired", "cancelled"] } }],
-        "responses": { "200": { "$ref": "#/components/responses/Ok" } }
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "enum": [
+                "pending",
+                "approved",
+                "rejected",
+                "expired",
+                "cancelled"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          }
+        }
       }
     },
     "/approvals/{approvalId}": {
       "get": {
         "operationId": "getPersistentApproval",
         "summary": "查询动作审批详情",
-        "parameters": [{ "name": "approvalId", "in": "path", "required": true, "schema": { "type": "string" } }],
-        "responses": { "200": { "$ref": "#/components/responses/Ok" } }
+        "parameters": [
+          {
+            "name": "approvalId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          }
+        }
       }
     },
     "/approvals/{approvalId}/resolve": {
       "post": {
         "operationId": "resolvePersistentApproval",
         "summary": "批准或拒绝动作快照",
-        "parameters": [{ "name": "approvalId", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "parameters": [
+          {
+            "name": "approvalId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "requestBody": {
           "required": true,
-          "content": { "application/json": { "schema": {
-            "type": "object", "additionalProperties": false, "required": ["decision", "resolutionKey"],
-            "properties": {
-              "decision": { "enum": ["approved", "rejected"] },
-              "resolutionKey": { "type": "string", "minLength": 1 },
-              "comment": { "type": "string", "maxLength": 1000 }
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "decision",
+                  "resolutionKey"
+                ],
+                "properties": {
+                  "decision": {
+                    "enum": [
+                      "approved",
+                      "rejected"
+                    ]
+                  },
+                  "resolutionKey": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "comment": {
+                    "type": "string",
+                    "maxLength": 1000
+                  }
+                }
+              }
             }
-          } } }
+          }
         },
-        "responses": { "200": { "$ref": "#/components/responses/Ok" } }
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          }
+        }
       }
     },
     "/session": {
@@ -955,8 +1917,22 @@
         "operationId": "getSkillTestRun",
         "summary": "读取 Skill 严格试运行的真实 Run、激活与脚本执行进度",
         "parameters": [
-          { "name": "skillId", "in": "path", "required": true, "schema": { "type": "string" } },
-          { "name": "runId", "in": "path", "required": true, "schema": { "type": "string" } }
+          {
+            "name": "skillId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "runId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
         ],
         "responses": {
           "200": {
@@ -1088,11 +2064,24 @@
         "responses": {
           "200": {
             "description": "工具列表。授权判断使用 allowedRoleIds，allowedRoles 仅为展示名称。",
-            "content": { "application/json": { "schema": {
-              "type": "object", "required": ["data"], "properties": {
-                "data": { "type": "array", "items": { "$ref": "#/components/schemas/ToolDefinition" } }
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/ToolDefinition"
+                      }
+                    }
+                  }
+                }
               }
-            } } }
+            }
           }
         }
       },
@@ -1176,10 +2165,18 @@
         "operationId": "registerMcpConnector",
         "summary": "重新执行连通与 Tool 发现后登记并自动生效 Streamable HTTP MCP Server；Bearer Token 加密入库且不回显；租户最多启用 20 个",
         "responses": {
-          "200": { "$ref": "#/components/responses/Ok" },
-          "409": { "$ref": "#/components/responses/Error" },
-          "422": { "$ref": "#/components/responses/Error" },
-          "503": { "$ref": "#/components/responses/Error" }
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
         }
       }
     },
@@ -1188,10 +2185,18 @@
         "operationId": "testMcpConnection",
         "summary": "使用待登记配置通过 DSH 测试 MCP 连通性并发现 Tool；不持久化 Token 或 Connector",
         "responses": {
-          "200": { "$ref": "#/components/responses/Ok" },
-          "409": { "$ref": "#/components/responses/Error" },
-          "422": { "$ref": "#/components/responses/Error" },
-          "503": { "$ref": "#/components/responses/Error" }
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
         }
       }
     },
@@ -1200,7 +2205,9 @@
         "operationId": "beginMcpProbeAuthorization",
         "summary": "登记前 OAuth 探活授权",
         "responses": {
-          "200": { "$ref": "#/components/responses/Ok" }
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          }
         }
       }
     },
@@ -1209,11 +2216,22 @@
         "operationId": "deleteMcpConnector",
         "summary": "删除 MCP Connector，停止所有 Agent 使用、销毁独占凭据并保留能力快照与调用证据",
         "parameters": [
-          { "name": "connectorId", "in": "path", "required": true, "schema": { "type": "string" } }
+          {
+            "name": "connectorId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
         ],
         "responses": {
-          "200": { "$ref": "#/components/responses/Ok" },
-          "404": { "$ref": "#/components/responses/Error" }
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          }
         }
       }
     },
@@ -1222,8 +2240,12 @@
         "operationId": "rotateMcpCredential",
         "summary": "轮换 MCP Connector 的 Bearer Token，并要求重新检查连接状态",
         "responses": {
-          "200": { "$ref": "#/components/responses/Ok" },
-          "409": { "$ref": "#/components/responses/Error" }
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          }
         }
       }
     },
@@ -1232,9 +2254,20 @@
         "operationId": "listMcpInvocationAudits",
         "summary": "查询一个 MCP Connector 最近 50 条实际 Tool 调用审计",
         "parameters": [
-          { "name": "connector_id", "in": "query", "required": true, "schema": { "type": "string" } }
+          {
+            "name": "connector_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
         ],
-        "responses": { "200": { "$ref": "#/components/responses/Ok" } }
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          }
+        }
       }
     },
     "/connectors/check": {
@@ -1245,7 +2278,9 @@
           "200": {
             "$ref": "#/components/responses/Ok"
           },
-          "409": { "$ref": "#/components/responses/Error" }
+          "409": {
+            "$ref": "#/components/responses/Error"
+          }
         }
       }
     },
@@ -1254,8 +2289,12 @@
         "operationId": "setMcpConnectorStatus",
         "summary": "启用或停用 MCP Connector；重新启用要求能力摘要已成功同步且未超过 20 个容量上限",
         "responses": {
-          "200": { "$ref": "#/components/responses/Ok" },
-          "409": { "$ref": "#/components/responses/Error" }
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          }
         }
       }
     },
@@ -1275,7 +2314,9 @@
         "operationId": "getBuiltinTools",
         "summary": "查询 DSH 内置工具注册表、当前停用清单与目录比对",
         "responses": {
-          "200": { "$ref": "#/components/responses/Ok" }
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          }
         }
       }
     },
@@ -1284,7 +2325,9 @@
         "operationId": "getDshRuntimeToolConnector",
         "summary": "查询 DSH Runtime 内置工具连接、目录摘要和 Binding 状态",
         "responses": {
-          "200": { "$ref": "#/components/responses/Ok" }
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          }
         }
       }
     },
@@ -1293,8 +2336,12 @@
         "operationId": "checkDshRuntimeToolConnector",
         "summary": "从 Runtime 运维入口检查 DSH 内置工具连接并刷新目录状态",
         "responses": {
-          "200": { "$ref": "#/components/responses/Ok" },
-          "403": { "$ref": "#/components/responses/Error" }
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          }
         }
       }
     },
@@ -1546,21 +2593,65 @@
         "summary": "平台管理员检查新登录账号格式及是否被独立账号或已同步 AI Hub 账号占用",
         "requestBody": {
           "required": true,
-          "content": { "application/json": { "schema": {
-            "type": "object", "additionalProperties": false, "required": ["username"],
-            "properties": { "username": { "type": "string", "maxLength": 254 } }
-          } } }
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "username"
+                ],
+                "properties": {
+                  "username": {
+                    "type": "string",
+                    "maxLength": 254
+                  }
+                }
+              }
+            }
+          }
         },
         "responses": {
-          "200": { "description": "返回规范化的 username 与 available；创建时仍重新检查", "content": { "application/json": { "schema": {
-            "type": "object", "required": ["data", "meta"], "properties": {
-              "data": { "type": "object", "required": ["username", "available"], "properties": {
-                "username": { "type": "string" }, "available": { "type": "boolean" }
-              } }, "meta": { "type": "object" }
+          "200": {
+            "description": "返回规范化的 username 与 available；创建时仍重新检查",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data",
+                    "meta"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "required": [
+                        "username",
+                        "available"
+                      ],
+                      "properties": {
+                        "username": {
+                          "type": "string"
+                        },
+                        "available": {
+                          "type": "boolean"
+                        }
+                      }
+                    },
+                    "meta": {
+                      "type": "object"
+                    }
+                  }
+                }
+              }
             }
-          } } } },
-          "403": { "description": "仅平台管理员可检查账号占用" },
-          "422": { "description": "账号不是有效的手机号或邮箱" }
+          },
+          "403": {
+            "description": "仅平台管理员可检查账号占用"
+          },
+          "422": {
+            "description": "账号不是有效的手机号或邮箱"
+          }
         }
       }
     },
@@ -2202,17 +3293,38 @@
         "operationId": "confirmAdminAssistantTaskProposal",
         "summary": "确认调用提案中锁定的 DSH 专用助手；此步骤不直接执行平台写入",
         "responses": {
-          "200": { "$ref": "#/components/responses/Ok" },
-          "403": { "description": "没有管理写权限或不拥有此对话" },
-          "409": { "description": "提案状态已变化" },
-          "503": { "description": "未配置数据库或 DSH 管理助手不可用" }
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "403": {
+            "description": "没有管理写权限或不拥有此对话"
+          },
+          "409": {
+            "description": "提案状态已变化"
+          },
+          "503": {
+            "description": "未配置数据库或 DSH 管理助手不可用"
+          }
         },
         "parameters": [
-          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
         ],
         "requestBody": {
           "required": true,
-          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AdminTaskProposalConfirmation" } } }
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdminTaskProposalConfirmation"
+              }
+            }
+          }
         }
       }
     },
@@ -2221,11 +3333,22 @@
         "operationId": "cancelAdminAssistantTaskProposal",
         "summary": "取消尚未确认的专用助手调用提案",
         "responses": {
-          "200": { "$ref": "#/components/responses/Ok" },
-          "403": { "description": "没有管理写权限或不拥有此对话" }
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "403": {
+            "description": "没有管理写权限或不拥有此对话"
+          }
         },
         "parameters": [
-          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
         ]
       }
     },
@@ -2235,16 +3358,35 @@
         "operationId": "confirmAdminAssistantActionPlan",
         "summary": "确认并执行专用助手生成的精确 Agent 或 Runtime 操作计划",
         "responses": {
-          "200": { "$ref": "#/components/responses/Ok" },
-          "403": { "description": "没有管理写权限或不拥有此对话" },
-          "409": { "description": "目标状态或计划状态已变化" }
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "403": {
+            "description": "没有管理写权限或不拥有此对话"
+          },
+          "409": {
+            "description": "目标状态或计划状态已变化"
+          }
         },
         "parameters": [
-          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
         ],
         "requestBody": {
           "required": true,
-          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AdminActionPlanConfirmation" } } }
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdminActionPlanConfirmation"
+              }
+            }
+          }
         }
       }
     },
@@ -2253,11 +3395,22 @@
         "operationId": "cancelAdminAssistantActionPlan",
         "summary": "取消尚未执行的专用助手操作计划",
         "responses": {
-          "200": { "$ref": "#/components/responses/Ok" },
-          "403": { "description": "没有管理写权限或不拥有此对话" }
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "403": {
+            "description": "没有管理写权限或不拥有此对话"
+          }
         },
         "parameters": [
-          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
         ]
       }
     },
@@ -2358,19 +3511,39 @@
         "summary": "核对外部系统后收敛 Task Operation 状态",
         "description": "仅平台管理员可用。用于把 accepted 或 unknown 操作收敛为 completed/failed；receipt 必须来自权威外部系统核对结果。",
         "parameters": [
-          { "$ref": "#/components/parameters/TaskId" },
-          { "$ref": "#/components/parameters/OperationId" }
+          {
+            "$ref": "#/components/parameters/TaskId"
+          },
+          {
+            "$ref": "#/components/parameters/OperationId"
+          }
         ],
         "requestBody": {
           "required": true,
-          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ResolveTaskOperationInput" } } }
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResolveTaskOperationInput"
+              }
+            }
+          }
         },
         "responses": {
-          "200": { "$ref": "#/components/responses/Ok" },
-          "401": { "$ref": "#/components/responses/Error" },
-          "403": { "$ref": "#/components/responses/Error" },
-          "409": { "$ref": "#/components/responses/Error" },
-          "422": { "$ref": "#/components/responses/Error" }
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          }
         }
       }
     },
@@ -2884,11 +4057,69 @@
           }
         }
       }
+    },
+    "/agents/{agentId}/access": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/AgentId"
+        }
+      ],
+      "get": {
+        "operationId": "getAgentAccess",
+        "summary": "查询 Agent 岗位权限：可见角色、岗位角色、数据范围、执行身份状态与当前修订号",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      },
+      "patch": {
+        "operationId": "updateAgentAccess",
+        "summary": "整体替换 Agent 岗位权限；按 expectedRevision 做乐观并发，缺字段或修订号过期时拒绝",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateAgentAccessInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
     }
   },
   "components": {
     "securitySchemes": {
-      "localAdminSession": {"type": "apiKey", "in": "cookie", "name": "dsh_work_local_admin_session", "description": "独立账号登录签发；生产使用 __Host- 前缀，与 OIDC Session 分离。"},
+      "localAdminSession": {
+        "type": "apiKey",
+        "in": "cookie",
+        "name": "dsh_work_local_admin_session",
+        "description": "独立账号登录签发；生产使用 __Host- 前缀，与 OIDC Session 分离。"
+      },
       "adminSession": {
         "type": "apiKey",
         "in": "cookie",
@@ -2901,7 +4132,9 @@
         "name": "collectionId",
         "in": "path",
         "required": true,
-        "schema": { "type": "string" }
+        "schema": {
+          "type": "string"
+        }
       },
       "AgentId": {
         "name": "agentId",
@@ -2935,8 +4168,22 @@
           "type": "string"
         }
       },
-      "TaskId": { "name": "taskId", "in": "path", "required": true, "schema": { "type": "string" } },
-      "OperationId": { "name": "operationId", "in": "path", "required": true, "schema": { "type": "string" } }
+      "TaskId": {
+        "name": "taskId",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "string"
+        }
+      },
+      "OperationId": {
+        "name": "operationId",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "string"
+        }
+      }
     },
     "requestBodies": {
       "Agent": {
@@ -2975,53 +4222,259 @@
     "schemas": {
       "ToolDefinition": {
         "type": "object",
-        "required": ["id", "allowedRoleIds", "allowedRoles", "dataScopes"],
+        "required": [
+          "id",
+          "allowedRoleIds",
+          "allowedRoles",
+          "dataScopes"
+        ],
         "properties": {
-          "id": { "type": "string" },
-          "version": { "type": "string" },
-          "allowedRoleIds": { "type": "array", "items": { "type": "string" }, "description": "稳定角色 ID，用于与执行身份的 roleIds 比较" },
-          "allowedRoles": { "type": "array", "items": { "type": "string" }, "description": "角色展示名称，不用于授权判断" },
-          "dataScopes": { "type": "array", "items": { "type": "string" } },
-          "agentRunLocalDefault": { "type": "boolean", "description": "是否为当前 Run 隔离范围内且保持默认策略的基础工具" }
+          "id": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          },
+          "allowedRoleIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "稳定角色 ID，用于与执行身份的 roleIds 比较"
+          },
+          "allowedRoles": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "角色展示名称，不用于授权判断"
+          },
+          "dataScopes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "agentRunLocalDefault": {
+            "type": "boolean",
+            "description": "是否为当前 Run 隔离范围内且保持默认策略的基础工具"
+          }
         }
       },
-      "AgentRoutineSchedule": { "oneOf": [
-        { "type": "object", "required": ["kind", "timezone"], "properties": { "kind": { "const": "manual" }, "timezone": { "type": "string" } } },
-        { "type": "object", "required": ["kind", "timezone", "timeOfDay"], "properties": { "kind": { "enum": ["daily", "weekly"] }, "timezone": { "type": "string" }, "timeOfDay": { "type": "string" }, "weekdays": { "type": "array", "items": { "type": "integer", "minimum": 0, "maximum": 6 } } } },
-        { "type": "object", "required": ["kind", "timezone", "eventType"], "properties": { "kind": { "const": "event" }, "timezone": { "type": "string" }, "eventType": { "type": "string" } } }
-      ] },
-      "AgentRoutineInput": { "type": "object", "required": ["prompt"], "properties": { "prompt": { "type": "string", "minLength": 1, "maxLength": 20000 }, "budget": { "type": "object", "properties": { "timeoutSeconds": { "type": "integer", "minimum": 1 }, "maxToolCalls": { "type": "integer", "minimum": 1 }, "maxOutputBytes": { "type": "integer", "minimum": 1 } } } } },
-      "AgentRoutineDraft": { "type": "object", "required": ["name", "agentVersionId", "workspaceId", "recipientUserId", "schedule", "inputTemplate"], "properties": { "name": { "type": "string" }, "agentVersionId": { "type": "string" }, "workspaceId": { "type": "string" }, "recipientUserId": { "type": "string" }, "schedule": { "$ref": "#/components/schemas/AgentRoutineSchedule" }, "inputTemplate": { "$ref": "#/components/schemas/AgentRoutineInput" } } },
+      "AgentRoutineSchedule": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "kind",
+              "timezone"
+            ],
+            "properties": {
+              "kind": {
+                "const": "manual"
+              },
+              "timezone": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "kind",
+              "timezone",
+              "timeOfDay"
+            ],
+            "properties": {
+              "kind": {
+                "enum": [
+                  "daily",
+                  "weekly"
+                ]
+              },
+              "timezone": {
+                "type": "string"
+              },
+              "timeOfDay": {
+                "type": "string"
+              },
+              "weekdays": {
+                "type": "array",
+                "items": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 6
+                }
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "kind",
+              "timezone",
+              "eventType"
+            ],
+            "properties": {
+              "kind": {
+                "const": "event"
+              },
+              "timezone": {
+                "type": "string"
+              },
+              "eventType": {
+                "type": "string"
+              }
+            }
+          }
+        ]
+      },
+      "AgentRoutineInput": {
+        "type": "object",
+        "required": [
+          "prompt"
+        ],
+        "properties": {
+          "prompt": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 20000
+          },
+          "budget": {
+            "type": "object",
+            "properties": {
+              "timeoutSeconds": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "maxToolCalls": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "maxOutputBytes": {
+                "type": "integer",
+                "minimum": 1
+              }
+            }
+          }
+        }
+      },
+      "AgentRoutineDraft": {
+        "type": "object",
+        "required": [
+          "name",
+          "agentVersionId",
+          "workspaceId",
+          "recipientUserId",
+          "schedule",
+          "inputTemplate"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "agentVersionId": {
+            "type": "string"
+          },
+          "workspaceId": {
+            "type": "string"
+          },
+          "recipientUserId": {
+            "type": "string"
+          },
+          "schedule": {
+            "$ref": "#/components/schemas/AgentRoutineSchedule"
+          },
+          "inputTemplate": {
+            "$ref": "#/components/schemas/AgentRoutineInput"
+          }
+        }
+      },
       "AgentDataCollectionInput": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["key", "schema", "queryFields", "retentionDays"],
+        "required": [
+          "key",
+          "schema",
+          "queryFields",
+          "retentionDays"
+        ],
         "properties": {
-          "key": { "type": "string", "pattern": "^[a-z][a-z0-9_]{2,79}$" },
-          "ownerWorkspaceId": { "type": "string" },
-          "privateAgentId": { "type": "string" },
-          "schema": { "type": "object", "description": "管理员批准的 JSON Schema；顶层必须为 object。" },
-          "queryFields": { "type": "array", "maxItems": 12, "uniqueItems": true, "items": { "type": "string" } },
-          "retentionDays": { "type": "integer", "minimum": 1, "maximum": 3650 }
+          "key": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]{2,79}$"
+          },
+          "ownerWorkspaceId": {
+            "type": "string"
+          },
+          "privateAgentId": {
+            "type": "string"
+          },
+          "schema": {
+            "type": "object",
+            "description": "管理员批准的 JSON Schema；顶层必须为 object。"
+          },
+          "queryFields": {
+            "type": "array",
+            "maxItems": 12,
+            "uniqueItems": true,
+            "items": {
+              "type": "string"
+            }
+          },
+          "retentionDays": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 3650
+          }
         }
       },
       "AgentDataSchemaEvolutionInput": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["expectedVersion", "schema", "queryFields"],
+        "required": [
+          "expectedVersion",
+          "schema",
+          "queryFields"
+        ],
         "properties": {
-          "expectedVersion": { "type": "integer", "minimum": 1 },
-          "schema": { "type": "object" },
-          "queryFields": { "type": "array", "maxItems": 12, "uniqueItems": true, "items": { "type": "string" } }
+          "expectedVersion": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "schema": {
+            "type": "object"
+          },
+          "queryFields": {
+            "type": "array",
+            "maxItems": 12,
+            "uniqueItems": true,
+            "items": {
+              "type": "string"
+            }
+          }
         }
       },
       "AgentDataGrantInput": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["actions"],
+        "required": [
+          "actions"
+        ],
         "properties": {
-          "actions": { "type": "array", "uniqueItems": true,
-            "items": { "enum": ["query", "propose", "create", "update", "transition"] } }
+          "actions": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "enum": [
+                "query",
+                "propose",
+                "create",
+                "update",
+                "transition"
+              ]
+            }
+          }
         }
       },
       "SkillTestScenario": {
@@ -3138,11 +4591,27 @@
             "type": "array",
             "maxItems": 16,
             "uniqueItems": true,
-            "items": { "type": "string", "minLength": 1, "maxLength": 128 }
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
           },
-          "maxDepth": { "type": "integer", "minimum": 1, "maximum": 4 },
-          "maxParallel": { "type": "integer", "minimum": 1, "maximum": 4 },
-          "timeoutSeconds": { "type": "integer", "minimum": 10, "maximum": 300 }
+          "maxDepth": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 4
+          },
+          "maxParallel": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 4
+          },
+          "timeoutSeconds": {
+            "type": "integer",
+            "minimum": 10,
+            "maximum": 300
+          }
         },
         "description": "平台受管的工具式 Agent 委派策略；空目标列表表示不启用委派。"
       },
@@ -3203,18 +4672,38 @@
             "maxLength": 20000
           },
           "workInstructions": {
-            "type": ["string", "null"],
+            "type": [
+              "string",
+              "null"
+            ],
             "description": "可选 AGENTS.md 工作规程正文；空值表示不启用",
             "maxLength": 20000
           },
           "mcpScope": {
             "type": "object",
             "description": "Agent Version 的 MCP 使用范围；端点与凭据由 Connector 管理。省略时默认为 all。",
-            "required": ["mode", "connectorIds"],
+            "required": [
+              "mode",
+              "connectorIds"
+            ],
             "additionalProperties": false,
             "properties": {
-              "mode": { "type": "string", "enum": ["all", "selected", "none"] },
-              "connectorIds": { "type": "array", "maxItems": 20, "uniqueItems": true, "items": { "type": "string" } }
+              "mode": {
+                "type": "string",
+                "enum": [
+                  "all",
+                  "selected",
+                  "none"
+                ]
+              },
+              "connectorIds": {
+                "type": "array",
+                "maxItems": 20,
+                "uniqueItems": true,
+                "items": {
+                  "type": "string"
+                }
+              }
             }
           },
           "skills": {
@@ -3251,18 +4740,47 @@
             "type": "object",
             "description": "可选 Agent 数据需求声明；集合发布与授权由平台管理，声明本身不授予权限。",
             "properties": {
-              "state": { "type": "boolean" },
+              "state": {
+                "type": "boolean"
+              },
               "collections": {
                 "type": "array",
                 "items": {
                   "type": "object",
-                  "required": ["key", "scope", "schemaVersion", "actions"],
+                  "required": [
+                    "key",
+                    "scope",
+                    "schemaVersion",
+                    "actions"
+                  ],
                   "properties": {
-                    "key": { "type": "string" },
-                    "scope": { "enum": ["installation", "workspace", "tenant"] },
-                    "schemaVersion": { "type": "integer", "minimum": 1 },
-                    "actions": { "type": "array", "uniqueItems": true,
-                      "items": { "enum": ["query", "propose", "create", "update", "transition"] } }
+                    "key": {
+                      "type": "string"
+                    },
+                    "scope": {
+                      "enum": [
+                        "installation",
+                        "workspace",
+                        "tenant"
+                      ]
+                    },
+                    "schemaVersion": {
+                      "type": "integer",
+                      "minimum": 1
+                    },
+                    "actions": {
+                      "type": "array",
+                      "uniqueItems": true,
+                      "items": {
+                        "enum": [
+                          "query",
+                          "propose",
+                          "create",
+                          "update",
+                          "transition"
+                        ]
+                      }
+                    }
                   }
                 }
               }
@@ -3538,7 +5056,9 @@
       },
       "AdminTaskProposalConfirmation": {
         "type": "object",
-        "required": ["proposalSha256"],
+        "required": [
+          "proposalSha256"
+        ],
         "additionalProperties": false,
         "properties": {
           "proposalSha256": {
@@ -3548,10 +5068,20 @@
           }
         }
       },
-      "AdminActionConfirmationMode": {"type": "string", "enum": ["single", "delegated"], "description": "响应 actions[].confirmationMode 的只读增量字段；缺失表示旧 delegated 计划。不可用作请求中的风险声明。", "readOnly": true},
+      "AdminActionConfirmationMode": {
+        "type": "string",
+        "enum": [
+          "single",
+          "delegated"
+        ],
+        "description": "响应 actions[].confirmationMode 的只读增量字段；缺失表示旧 delegated 计划。不可用作请求中的风险声明。",
+        "readOnly": true
+      },
       "AdminActionPlanConfirmation": {
         "type": "object",
-        "required": ["planSha256"],
+        "required": [
+          "planSha256"
+        ],
         "additionalProperties": false,
         "properties": {
           "planSha256": {
@@ -3770,18 +5300,64 @@
             "type": "array",
             "items": {
               "type": "object",
-              "required": ["id", "runId", "kind", "assistantName", "purpose", "request", "impact", "proposalSha256", "status"],
+              "required": [
+                "id",
+                "runId",
+                "kind",
+                "assistantName",
+                "purpose",
+                "request",
+                "impact",
+                "proposalSha256",
+                "status"
+              ],
               "properties": {
-                "id": { "type": "string" },
-                "runId": { "type": "string" },
-                "kind": { "enum": ["skill-install", "agent-management", "platform-operations"] },
-                "assistantName": { "type": "string" },
-                "purpose": { "enum": ["admin-skill-install", "admin-agent-manage", "admin-platform-operations"] },
-                "request": { "type": "string" },
-                "impact": { "type": "string" },
-                "proposalSha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
-                "status": { "enum": ["pending", "confirmed", "cancelled"] },
-                "delegatedRunId": { "type": ["string", "null"] }
+                "id": {
+                  "type": "string"
+                },
+                "runId": {
+                  "type": "string"
+                },
+                "kind": {
+                  "enum": [
+                    "skill-install",
+                    "agent-management",
+                    "platform-operations"
+                  ]
+                },
+                "assistantName": {
+                  "type": "string"
+                },
+                "purpose": {
+                  "enum": [
+                    "admin-skill-install",
+                    "admin-agent-manage",
+                    "admin-platform-operations"
+                  ]
+                },
+                "request": {
+                  "type": "string"
+                },
+                "impact": {
+                  "type": "string"
+                },
+                "proposalSha256": {
+                  "type": "string",
+                  "pattern": "^[a-f0-9]{64}$"
+                },
+                "status": {
+                  "enum": [
+                    "pending",
+                    "confirmed",
+                    "cancelled"
+                  ]
+                },
+                "delegatedRunId": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
               }
             }
           },
@@ -3789,17 +5365,58 @@
             "type": "array",
             "items": {
               "type": "object",
-              "required": ["id", "runId", "actionType", "summary", "before", "after", "planSha256", "status"],
+              "required": [
+                "id",
+                "runId",
+                "actionType",
+                "summary",
+                "before",
+                "after",
+                "planSha256",
+                "status"
+              ],
               "properties": {
-                "id": { "type": "string" },
-                "runId": { "type": "string" },
-                "actionType": { "enum": ["agent-update-draft", "agent-set-status", "runtime-update-configuration"] },
-                "summary": { "type": "string" },
-                "before": { "type": "object" },
-                "after": { "type": "object" },
-                "planSha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
-                "status": { "enum": ["pending", "executing", "executed", "cancelled", "failed"] },
-                "resultSummary": { "type": ["string", "null"] }
+                "id": {
+                  "type": "string"
+                },
+                "runId": {
+                  "type": "string"
+                },
+                "actionType": {
+                  "enum": [
+                    "agent-update-draft",
+                    "agent-set-status",
+                    "runtime-update-configuration"
+                  ]
+                },
+                "summary": {
+                  "type": "string"
+                },
+                "before": {
+                  "type": "object"
+                },
+                "after": {
+                  "type": "object"
+                },
+                "planSha256": {
+                  "type": "string",
+                  "pattern": "^[a-f0-9]{64}$"
+                },
+                "status": {
+                  "enum": [
+                    "pending",
+                    "executing",
+                    "executed",
+                    "cancelled",
+                    "failed"
+                  ]
+                },
+                "resultSummary": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
               }
             }
           }
@@ -3808,17 +5425,100 @@
       "ResolveTaskOperationInput": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["status", "receipt"],
+        "required": [
+          "status",
+          "receipt"
+        ],
         "properties": {
-          "status": { "type": "string", "enum": ["completed", "failed"] },
-          "receipt": { "type": "object", "additionalProperties": true },
-          "errorCode": { "type": "string", "minLength": 1, "description": "status=failed 时必填；completed 时禁止。" }
+          "status": {
+            "type": "string",
+            "enum": [
+              "completed",
+              "failed"
+            ]
+          },
+          "receipt": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "errorCode": {
+            "type": "string",
+            "minLength": 1,
+            "description": "status=failed 时必填；completed 时禁止。"
+          }
         },
-        "allOf": [{
-          "if": { "properties": { "status": { "const": "failed" } }, "required": ["status"] },
-          "then": { "required": ["errorCode"] },
-          "else": { "not": { "required": ["errorCode"] } }
-        }]
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "status": {
+                  "const": "failed"
+                }
+              },
+              "required": [
+                "status"
+              ]
+            },
+            "then": {
+              "required": [
+                "errorCode"
+              ]
+            },
+            "else": {
+              "not": {
+                "required": [
+                  "errorCode"
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "UpdateAgentAccessInput": {
+        "type": "object",
+        "unevaluatedProperties": false,
+        "required": [
+          "expectedRevision",
+          "visibleRoleIds",
+          "roleIds",
+          "dataScopes"
+        ],
+        "properties": {
+          "expectedRevision": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "页面读取到的岗位权限修订号；不一致返回 409"
+          },
+          "visibleRoleIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "可见角色：哪些员工的角色能在 AI 同事与团队候选里看到该 Agent"
+          },
+          "roleIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "岗位角色：执行身份持有的角色，决定可调用的工具与授权范围"
+          },
+          "dataScopes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "数据范围：执行身份可访问的数据域"
+          },
+          "principalStatus": {
+            "type": "string",
+            "enum": [
+              "active",
+              "disabled"
+            ],
+            "description": "停用后该 Agent 不能执行任何 Run"
+          }
+        }
       }
     }
   },

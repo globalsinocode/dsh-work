@@ -23,6 +23,7 @@ import { PostgresEncryptedCredentialStore } from '../../server/src/modules/tool/
 import type { AgentRuntimePort, McpInspectionResult } from '../../server/src/modules/runtime/runtime-types.ts'
 import { registerToolRoutes } from '../../server/src/http/admin/tool-routes.ts'
 import { registerAgentRoutes } from '../../server/src/http/admin/agent-routes.ts'
+import { registerAgentAccessRoutes } from '../../server/src/http/admin/agent-access-routes.ts'
 import { registerAgentValidationRoutes } from '../../server/src/http/admin/agent-validation-routes.ts'
 import { registerAgentRoutineRoutes } from '../../server/src/http/admin/agent-routine-routes.ts'
 import { PostgresAuthorizationService } from '../../server/src/modules/authorization/postgres-authorization-service.ts'
@@ -94,7 +95,8 @@ router.get(`${base}/tasks`, () => envelope('admin', [], 'postgres'))
 router.get(`${base}/runtimes`, () => envelope('admin', [], 'postgres'))
 router.get(`${base}/workspaces`, () => envelope('admin', [], 'postgres'))
 registerIdentityAdministrationRoutes(router, new IdentityAdministrationService(database.client))
-registerAgentRoutes(router, agents, new PostgresAgentAccessService(database.client))
+registerAgentRoutes(router, agents)
+registerAgentAccessRoutes(router, new PostgresAgentAccessService(database.client))
 const routineRuns = new PostgresRunRepository(database.client)
 const routineConversations = new PostgresConversationRepository(database.client)
 const routineOrchestration = new RunOrchestrationService(routineRuns, routineConversations,

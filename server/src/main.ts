@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url'
 import { resolve } from 'node:path'
 
 import { registerAgentRoutes } from './http/admin/agent-routes.ts'
+import { registerAgentAccessRoutes } from './http/admin/agent-access-routes.ts'
 import { registerSkillRoutes } from './http/admin/skill-routes.ts'
 import { registerToolRoutes } from './http/admin/tool-routes.ts'
 import { registerModelGovernanceRoutes } from './http/admin/model-routes.ts'
@@ -63,6 +64,7 @@ import {
 import { PostgresWorkspaceUsageService } from './modules/workbench/application/postgres-workspace-usage-service.ts'
 import { PostgresWorkspaceService } from './modules/workbench/application/postgres-workspace-service.ts'
 import { PostgresAgentService } from './modules/agent/postgres-agent-service.ts'
+import { PostgresAgentAccessService } from './modules/agent/agent-access-service.ts'
 import { PostgresAgentReleaseService } from './modules/agent/postgres-agent-release-service.ts'
 import { PostgresAgentValidationService } from './modules/agent/agent-validation-service.ts'
 import { PostgresAgentRunHistory } from './modules/agent/agent-run-history.ts'
@@ -529,6 +531,7 @@ async function start() {
   registerWorkspaceAgentMemberRoutes(router, workspaceAgentMembers, authorization)
   registerOperationsRoutes(router, operations, new PostgresGrantReconciliationService(database, operations))
   registerAgentRoutes(router, agents)
+  registerAgentAccessRoutes(router, new PostgresAgentAccessService(database))
   registerAdminAgentDataRoutes(router, agentData)
   const agentRelease = new PostgresAgentReleaseService(database, agents, skills, toolService, orchestration)
   // 启动收敛：进程中断留下的执行中试运行标记为“服务重启中断”，允许管理员重新开始（底层 Run 已由重启恢复收敛）。

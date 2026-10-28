@@ -209,7 +209,7 @@ defineExpose({ reload: load, access, dirty, save, complete, validateRequired })
           </el-select>
         </el-form-item>
         <el-form-item label="岗位角色" required :error="attempted ? requiredErrors.roleIds : ''">
-          <el-select v-model="form.roleIds" multiple filterable aria-label="岗位角色" placeholder="选择它持有的岗位角色，决定它以什么身份执行" :disabled="!canManage">
+          <el-select v-model="form.roleIds" multiple filterable aria-label="岗位角色" placeholder="选择它持有的岗位角色，决定它能使用哪些能力" :disabled="!canManage">
             <el-option v-for="role in jobRoleOptions" :key="role.id" :label="role.status === 'active' ? role.name : `${role.name}（已停用）`" :value="role.id" :disabled="!roleSelectable(role.id, form.roleIds)">
               <span class="agent-access__option">
                 <span>{{ role.status === 'active' ? role.name : `${role.name}（已停用）` }}</span>
