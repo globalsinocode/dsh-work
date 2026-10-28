@@ -134,7 +134,7 @@ PF-07 使用 `pnpm test:pf07:matrix` 校验版本化能力矩阵，`pnpm test:pf
 | 网络与运行故障 | 真实断网、代理/Provider 故障、Worker 与服务重启、宿主机恢复；故障注入单测不替代现场演练 |
 | 运维 | TLS、密钥、磁盘/证书/身份依赖告警、异机备份与恢复、应用回滚兼容性、RTO/RPO 和维护窗口 |
 
-主分支要求 `M6 quality gate`。普通 push 只运行 CI；人工发布、Release watcher、首次安装及回滚统一按 [部署手册](../release/mac-mini-deployment-runbook.md) 执行。已发布 Release、主分支 CI 成功和远端部署完成是三个独立事实。
+主分支要求 CI 的四个 Job（Static checks and build、Unit tests、PostgreSQL integration tests、Browser tests）全部成功，人工发布按同一组检查放行。普通 push 只运行 CI；人工发布、Release watcher、首次安装及回滚统一按 [部署手册](../release/mac-mini-deployment-runbook.md) 执行。已发布 Release、主分支 CI 成功和远端部署完成是三个独立事实。
 
 ### 个人工作闭环增量
 

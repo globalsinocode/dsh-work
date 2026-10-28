@@ -59,9 +59,14 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          conclusion=$(gh api "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/check-runs?per_page=100" \
-            --jq '[.check_runs[] | select(.name == "M6 quality gate")][0].conclusion // ""')
-          test "${conclusion}" = "success"
+          set -euo pipefail
+          # CI 拆成并行 Job 后没有汇总检查（d968729），逐个要求 ci.yml 的 Job 成功。
+          runs=$(gh api "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/check-runs?per_page=100")
+          for check in "Static checks and build" "Unit tests" "PostgreSQL integration tests" "Browser tests"; do
+            conclusion=$(jq -r --arg name "${check}" '[.check_runs[] | select(.name == $name)][0].conclusion // ""' <<<"${runs}")
+            test "${conclusion}" = "success" \
+              || { echo "CI check not successful for ${GITHUB_SHA}: ${check} (${conclusion:-missing})" >&2; exit 1; }
+          done
 
       - name: Set up locked pnpm and Node.js
         uses: pnpm/setup@703c52620218391530e48b9e8870d5c0082e1b9b # v2.1.0

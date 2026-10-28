@@ -100,7 +100,7 @@ DWP_OFFHOST='/Volumes/dsh-work-backups'
 
 此步骤在开发/运维端和 GitHub 完成，不在生产服务器构建：
 
-1. 确认部署改动已合并到 dsh-work 的 `main`，目标 Commit 的 **M6 quality gate** 成功。
+1. 确认部署改动已合并到 dsh-work 的 `main`，目标 Commit 的 CI 四个 Job（Static checks and build、Unit tests、PostgreSQL integration tests、Browser tests）全部成功；发布工作流会再次核对。
 2. 在仓库 `Settings → General → Releases` 启用 **Enable release immutability**。
    旧 Release 不会因此自动变为不可变 Release；不能用旧可变包充当新发布包。
 3. 确认 `server/package.json` 中的 `releaseVersion` 与准备发布的日期版本一致。
