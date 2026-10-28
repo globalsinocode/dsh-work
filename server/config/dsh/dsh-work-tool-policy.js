@@ -341,7 +341,7 @@ function validateExecution(execution, allowedTools, allowedMcpServers, approvedM
     }
     const extension = candidate.slice(candidate.lastIndexOf('.')).toLowerCase()
     if (!writableArtifactExtensions.has(extension)) {
-      return 'dsh-work 文本成果仅支持 Markdown、TXT 和 CSV 文件'
+      return 'dsh-work write/edit 只支持 Markdown、TXT 和 CSV 文件；HTML、Office、PDF 与图片成果在本次可用 bash 时于执行容器中用 bash 生成到 output/'
     }
   }
   if (execution.name === 'read_image') {
@@ -607,7 +607,7 @@ function registerPlatformTools(ctx) {
   })
   registerPlatformTool(ctx, socketPath, {
     name: 'python_execute',
-    description: 'Execute a declared Python entry point from an activated Skill in the platform sandbox. Arbitrary commands, package installation and network access are not allowed.',
+    description: 'Execute a declared Python entry point from an activated Skill inside this run\'s execution container. Files it writes to DSH_OUTPUT_DIR (the workspace output/ directory) follow the artifact rules of the system prompt. Arbitrary commands, package installation and network access are not allowed.',
     parameters: {
       type: 'object',
       properties: {

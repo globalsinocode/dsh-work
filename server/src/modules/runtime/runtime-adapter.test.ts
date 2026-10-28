@@ -431,7 +431,8 @@ describe('DSH ACP Runtime Adapter', () => {
     assert.match(containerPython, /# Python 脚本/)
     assert.match(containerPython, /DSH_SKILL_DIR、DSH_INPUT_DIR、DSH_OUTPUT_DIR/)
     assert.match(containerPython, /工作区位于 \/data\/dsh-attempts\/t\/run\/attempt\/workspace/)
-    assert.doesNotMatch(renderSystemPrompt(withPython), /# Python 脚本/, 'the per-call sandbox keeps its own mounts')
+    assert.match(containerPython, /这些路径只用于脚本参数，不要写进给用户的回答/)
+    assert.doesNotMatch(renderSystemPrompt(withPython), /# Python 脚本/, 'no workspace path, no Python section')
     assert.match(withBash, /中间文件放在工作区其他目录/)
     assert.match(withBash, /xlsx、docx、pptx、pdf、png、jpg/)
     assert.doesNotMatch(withBash, /执行镜像中已安装的程序/, 'no list without a startup check result')
@@ -450,6 +451,41 @@ describe('DSH ACP Runtime Adapter', () => {
     assert.match(listed, /Noto CJK，默认简体字形/)
     assert.doesNotMatch(listed, /pandoc/, 'only what the check found')
     assert.doesNotMatch(renderSystemPrompt(compileRuntimeManifest(base).manifest, { executionToolchain }), /执行镜像中已安装的程序/)
+  })
+  it('tells the model how artifacts reach the user whenever a tool can write output/', () => {
+    const base = manifest('run-artifact-prompt', 'attempt-artifact-prompt')
+    const render = (tools: string[], purpose?: RuntimeManifest['purpose']) => renderSystemPrompt({
+      ...base, ...(purpose ? { purpose } : {}), tools: tools.map(id => ({ id, version: '1.0.0' })),
+    })
+
+    const writeOnly = render(['write'])
+    assert.match(writeOnly, /# 成果文件/)
+    assert.match(writeOnly, /write 工具只能写 Markdown、纯文本和 CSV/)
+    assert.doesNotMatch(writeOnly, /\.html/, 'write cannot produce HTML (tool policy accepts md, txt and csv)')
+    // The user downloads from the artifact card; workspace paths mean nothing to them.
+    assert.match(writeOnly, /临时工作区目录，不是用户电脑或共享盘上的文件夹/)
+    assert.match(writeOnly, /已生成成果《销售汇总\.md》，可在下方成果卡片中查看或下载/, 'the example is a format this run can produce')
+    assert.match(writeOnly, /不要在回答中写 output\/、input\/、\/workspace\/ 或其他工作区路径/)
+    assert.match(writeOnly, /此前轮次 output 中的文件不在本次工作区/)
+
+    // Collected when only bash writes output/ (write disabled at the Runtime), so the rules apply too.
+    const bashOnly = render(['read', 'bash'])
+    assert.match(bashOnly, /# 成果文件/)
+    assert.match(bashOnly, /HTML 以及 xlsx、docx、pptx、pdf、png、jpg 用 bash 中的程序生成/)
+    assert.doesNotMatch(bashOnly, /write 工具只能写/)
+    assert.match(bashOnly, /已生成成果《销售汇总\.xlsx》/)
+
+    assert.match(render(['write'], 'agent-release-trial'), /# 成果文件/, 'release trials see the production text (F-02)')
+    assert.doesNotMatch(render(['read']), /# 成果文件/)
+    assert.doesNotMatch(render(['write'], 'admin-skill-test'), /# 成果文件/)
+  })
+  it('asks for everyday wording when telling employees what the Agent can do', () => {
+    const base = manifest('run-plain-capabilities', 'attempt-plain-capabilities')
+    const plain = /用日常工作中的说法讲能帮他做成什么事[\s\S]*不要列出工具名、Skill 标识与版本号/
+    assert.match(renderSystemPrompt(base), plain)
+    assert.match(renderSystemPrompt({ ...base, purpose: 'automation' }), plain)
+    assert.match(renderSystemPrompt({ ...base, purpose: 'agent-release-trial' }), plain, 'release trials see the production text (F-02)')
+    assert.doesNotMatch(renderSystemPrompt({ ...base, purpose: 'admin-assistant' }), plain, 'administrators keep the technical wording')
   })
   it('passes the execution container toolchain into the Worker system prompt (2b-1)', async () => {
     const log = join(await mkdtemp(join(tmpdir(), 'dsh-work-prompt-log-')), 'prompt.log')

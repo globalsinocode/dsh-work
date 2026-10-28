@@ -64,6 +64,8 @@ const DEFAULT_SETUP_TIMEOUT_MS = 120_000
 const EXECUTION_CONTAINER_IDLE_WAIT_MS = 3_000
 /** End-of-Attempt or checkpoint reads have no probe deadline; a killed command plus a sweep fit well within this. */
 const EXECUTION_CONTAINER_SETTLE_WAIT_MS = 30_000
+/** Tools that can write output/: the system prompt explains artifacts and the Attempt collects them when any is assembled. */
+const ARTIFACT_WRITING_TOOLS = new Set(['write', 'bash', 'python_execute'])
 
 interface ExecutionRecord {
   manifest: RuntimeManifest
@@ -770,7 +772,7 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
       // bash 也能在 output/ 写出成果（执行隔离 2b）：write 被紧急停用时同样要收集。
       if (!isAdminRunPurpose(record.manifest.purpose)
         // python_execute 在执行容器内把结果写入 output/（方案 4.8），同样收集。
-        && record.manifest.tools.some(tool => tool.id === 'write' || tool.id === 'bash' || tool.id === 'python_execute')) {
+        && record.manifest.tools.some(tool => ARTIFACT_WRITING_TOOLS.has(tool.id))) {
         if (!this.configuration.collectArtifacts) throw dependencyUnavailable('成果收集服务不可用')
         const collection = await this.configuration.collectArtifacts(record.manifest, workspaceDirectory)
         artifacts = collection.published
@@ -1416,6 +1418,10 @@ export function renderSystemPrompt(manifest: RuntimeManifest, options: { executi
     `平台工具：${manifest.tools.length ? manifest.tools.map(tool => tool.id).join('、') : '无'}`,
     `MCP Server：${manifest.mcp_connections?.length ? manifest.mcp_connections.map(connection => connection.server_name).join('、') : '无'}`,
     '回答能力范围问题时，只依据本清单；未列出的 Shell 命令、后台任务、网页获取、平台数据写入或 Agent 委派等能力不得声称可用。实际调用仍以执行时权限校验为准。',
+    // 员工面对的是业务用语；管理运行的读者是管理员，保留技术说法。
+    ...(!isAdminRunPurpose(manifest.purpose) || manifest.purpose === 'agent-release-trial' ? [
+      '向用户介绍能力或限制时，用日常工作中的说法讲能帮他做成什么事，例如“整理、总结文档”“处理 Excel 表格”“生成 Word、PDF 或 PPT 文件”“把文件转换成另一种格式”；不要列出工具名、Skill 标识与版本号，也不要使用 MCP、沙箱、工作区、output、命令、Python 包名等技术说法。限制同样用用户能理解的话说，例如“不能上网查资料”“不会改动你上传的原文件，修改后的内容作为新文件交给你”。用户明确问技术细节时再说明。',
+    ] : []),
   ].join('\n'))
   if (manifest.timezone) {
     sections.push([
@@ -1469,7 +1475,7 @@ export function renderSystemPrompt(manifest: RuntimeManifest, options: { executi
         ...(file.originalPath ? [`   - 原始文件（只读，供 bash 中的程序处理，如 pandas、openpyxl、LibreOffice）：${file.originalPath.slice('/workspace/'.length)}`] : []),
         `   - 媒体类型：${file.mediaType}`,
         ...(file.revision ? [!BINARY_INPUT_PATTERN.test(file.sourceName)
-          ? `   - 这是此前生成的成果第 ${file.revision.version} 版；用户要求修改它时，把修改后的完整内容写入 output/${file.sourceName}，平台会登记为第 ${file.revision.version + 1} 版；只是参考时不要重写`
+          ? `   - 这是此前生成的成果第 ${file.revision.version} 版；用户要求修改它时，把修改后的完整内容写入 output/${file.sourceName}（按成果文件一节选择工具），平台会登记为第 ${file.revision.version + 1} 版；只是参考时不要重写`
           : file.originalPath
             ? `   - 这是此前生成的成果第 ${file.revision.version} 版；用户要求修改它时，基于原始文件处理，把修改后的完整文件写入 output/${file.sourceName}，平台会登记为第 ${file.revision.version + 1} 版；只是参考时不要重写`
             // 2b-3：二进制成果有解析文本但本次没有 bash 时只能参考，不能写出新版本。
@@ -1477,15 +1483,22 @@ export function renderSystemPrompt(manifest: RuntimeManifest, options: { executi
       ].join('\n')),
     ].join('\n'))
   }
-  // 发布试运行与员工执行使用同一成果说明（F-02）；试运行不登记成果，见下方附加说明。
-  if ((!isAdminRunPurpose(manifest.purpose) || manifest.purpose === 'agent-release-trial') && manifest.tools.some(tool => tool.id === 'write')) {
+  // 与成果收集同一装配条件（write、bash、python_execute 任一都能写 output/）。发布试运行与员工
+  // 执行使用同一成果说明（F-02），只是 Attempt 结束时不收集成果（见 isAdminRunPurpose 处的收集）。
+  const hasBash = manifest.tools.some(tool => tool.id === 'bash')
+  if ((!isAdminRunPurpose(manifest.purpose) || manifest.purpose === 'agent-release-trial')
+    && manifest.tools.some(tool => ARTIFACT_WRITING_TOOLS.has(tool.id))) {
     sections.push([
       '# 成果文件',
-      '需要向用户交付文件时，必须使用 write 工具写入 output 目录。Markdown、纯文本、CSV 和 HTML 分别使用 output/<文件名>.md、.txt、.csv、.html；不要写入其他目录。',
-      '只有 output 目录中通过平台检查并登记的文件会作为可下载成果展示。回答中应明确说明已生成的文件名。',
+      '需要向用户交付文件时，把文件写入工作区 output 目录的顶层，不要写入其他目录。'
+        + (manifest.tools.some(tool => tool.id === 'write') ? 'write 工具只能写 Markdown、纯文本和 CSV（output/<文件名>.md、.txt、.csv）。' : '')
+        + (hasBash ? 'HTML 以及 xlsx、docx、pptx、pdf、png、jpg 用 bash 中的程序生成到 output/<文件名>.<扩展名>。' : ''),
+      'output 是本次运行的临时工作区目录，不是用户电脑或共享盘上的文件夹。运行结束后平台检查其中的文件，合格的登记为成果，显示在本条回复下方的成果卡片中供用户查看或下载；工作区随后删除。未通过检查的文件由平台在回复下方列出原因。',
+      `面向用户的回答以成果名称说明交付内容，例如“已生成成果《${hasBash ? '销售汇总.xlsx' : '销售汇总.md'}》，可在下方成果卡片中查看或下载”；不要在回答中写 output/、input/、/workspace/ 或其他工作区路径，也不要让用户到某个目录中找文件。此要求优先于 Agent 说明和历史消息中的写法。`,
+      '此前轮次 output 中的文件不在本次工作区；需要基于此前成果继续工作时，只能使用上面“当前 Run 输入文件”中列出的成果，没有列出时请用户在该成果卡片上点“继续修改”。',
     ].join('\n'))
   }
-  if (manifest.tools.some(tool => tool.id === 'bash')) {
+  if (hasBash) {
     sections.push([
       '# 运行命令',
       'bash 在本次运行专用的执行容器中执行：不能联网，只能使用镜像中已安装的程序与 Python 包，不能安装新依赖；每次一条前台命令，单条命令有时限，不支持后台运行；工作目录就是当前会话工作区，文件读写与工具看到的是同一份。',
@@ -1500,7 +1513,7 @@ export function renderSystemPrompt(manifest: RuntimeManifest, options: { executi
   if (options.executionWorkspace && manifest.tools.some(tool => tool.id === 'python_execute')) {
     sections.push([
       '# Python 脚本',
-      `python_execute 在本次运行的执行容器中运行已激活 Skill 登记的脚本：工作目录是该 Skill 的目录，环境变量 DSH_SKILL_DIR、DSH_INPUT_DIR、DSH_OUTPUT_DIR 给出 Skill 目录、输入目录与输出目录（即工作区的 output/）的绝对路径。给脚本传文件参数时使用绝对路径，工作区位于 ${options.executionWorkspace}。脚本写入输出目录的文件按成果规则登记。`,
+      `python_execute 在本次运行的执行容器中运行已激活 Skill 登记的脚本：工作目录是该 Skill 的目录，环境变量 DSH_SKILL_DIR、DSH_INPUT_DIR、DSH_OUTPUT_DIR 给出 Skill 目录、输入目录与输出目录（即工作区的 output/）的绝对路径。给脚本传文件参数时使用绝对路径，工作区位于 ${options.executionWorkspace}。脚本写入输出目录的文件按成果规则登记。这些路径只用于脚本参数，不要写进给用户的回答。`,
     ].join('\n'))
   }
   if (manifest.agent_configuration.skill_instructions.length > 0) {
