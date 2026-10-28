@@ -69,7 +69,7 @@ describe('ArtifactPreviewPanel', () => {
     wrapper.unmount()
   })
 
-  it('marks Office text as extracted and offers the HTML source view', async () => {
+  it('marks Office text as extracted and shows HTML only rendered, without a source view', async () => {
     getArtifactText.mockResolvedValue({ status: 'available', type: 'docx', text: '季度报告正文', pageCount: null, sheetCount: null, rowCount: null })
     const doc = mountPanel({ artifact: artifact({ type: 'docx', name: '报告.docx', textPreview: 'available' }), docked: true })
     await flushPromises()
@@ -81,8 +81,9 @@ describe('ArtifactPreviewPanel', () => {
     const html = mountPanel({ artifact: artifact({ type: 'html', name: '看板.html' }), docked: true })
     await flushPromises()
     expect(html.find('[data-testid="artifact-preview-frame"]').attributes('sandbox')).toBe('allow-scripts')
-    await html.findAll('[aria-label="预览方式"] input[type="radio"]')[1]!.setValue()
-    expect(html.get('[data-testid="artifact-preview-source"]').text()).toContain('<h1>看板</h1>')
+    expect(html.find('[aria-label="预览方式"]').exists()).toBe(false)
+    expect(html.text()).not.toContain('源代码')
+    expect(html.find('[data-testid="artifact-preview-source"]').exists()).toBe(false)
     html.unmount()
   })
 

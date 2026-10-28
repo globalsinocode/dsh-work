@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed } from 'vue'
 import { Close, Download, FullScreen, ScaleToOriginal } from '@element-plus/icons-vue'
 
 import ArtifactPreviewBody from '@/components/ArtifactPreviewBody.vue'
@@ -7,7 +7,7 @@ import type { Artifact } from '@/types/domain'
 import { isOfficeArtifact } from '@/utils/artifact-preview'
 import { downloadArtifactFile } from '@/utils/feedback'
 
-/** 对话右栏的成果预览内容：一行标题栏（文件名与版本、HTML 预览方式、下载、全屏、关闭），正文复用 ArtifactPreviewBody。摆放见 ArtifactPreviewPanel。 */
+/** 对话右栏的成果预览内容：一行标题栏（文件名与版本、下载、全屏、关闭），HTML 只看渲染结果，正文复用 ArtifactPreviewBody。摆放见 ArtifactPreviewPanel。 */
 const props = withDefaults(defineProps<{
   artifact: Artifact
   /** 是否提供全屏展开；已经全屏的手机宽度不提供。 */
@@ -16,7 +16,6 @@ const props = withDefaults(defineProps<{
 }>(), { canExpand: false, expanded: false })
 const emit = defineEmits<{ close: []; 'toggle-expand': [] }>()
 
-const htmlView = ref<'preview' | 'source'>('preview')
 const meta = computed(() =>
   `V${props.artifact.version} · ${props.artifact.size}${isOfficeArtifact(props.artifact.type) && props.artifact.textPreview === 'available' ? ' · 解析文本' : ''}`)
 </script>
@@ -29,10 +28,6 @@ const meta = computed(() =>
         <strong :title="artifact.name">{{ artifact.name }}</strong>
         <small>{{ meta }}</small>
       </div>
-      <el-radio-group v-if="artifact.type === 'html'" v-model="htmlView" size="small" aria-label="预览方式">
-        <el-radio-button value="preview">渲染预览</el-radio-button>
-        <el-radio-button value="source">源代码</el-radio-button>
-      </el-radio-group>
       <button
         type="button"
         class="artifact-pane__action"
@@ -59,7 +54,7 @@ const meta = computed(() =>
     </header>
 
     <div class="artifact-pane__body">
-      <ArtifactPreviewBody v-model:html-view="htmlView" :artifact="artifact" active text-layout="tabs" />
+      <ArtifactPreviewBody :artifact="artifact" active text-layout="tabs" />
     </div>
   </div>
 </template>
