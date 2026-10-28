@@ -30,6 +30,12 @@ export interface RunStep {
   /** EX-01：工具调用步骤所属的调用；快照与实时事件按它合并为同一行。 */
   callId?: string
   duration?: string
+  /** EX-PROGRESS-01：步骤来源的运行事件类型（如 `run.started`、`tool.completed`）。 */
+  event?: string
+  /** 来源事件的服务端发生时间（ISO）；工具调用结果步骤为调用结束时间。 */
+  at?: string
+  /** 工具调用开始时间（ISO，取同一调用的 `tool.started`）；未收到开始事件时缺省。 */
+  startedAt?: string
 }
 
 export interface TaskSource {
@@ -271,10 +277,10 @@ export interface TaskRun {
    */
   threadArtifacts?: Artifact[]
   /**
-   * 客户端收到该 Run 最后一个运行事件的时刻（毫秒）；只用于“长时间无输出”提示，
-   * 不来自服务端。开始关注一个执行中的 Run 时以当时为起点。
+   * EX-PROGRESS-01：客户端时钟减服务端事件时间（毫秒），收到实时事件时更新。进行中步骤的
+   * 计时据此把服务端时间换算到本机，避免两边时钟不一致；只有快照时缺省，按 0 计。
    */
-  lastActivityAt?: number
+  clockOffsetMs?: number
   attachments: string[]
   skill?: Pick<WorkbenchSkill, 'id' | 'name' | 'version'>
   /**

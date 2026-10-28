@@ -29,7 +29,7 @@ import RunMessageList from '@/components/conversation/RunMessageList.vue'
 import SessionDiscussionList from '@/components/conversation/SessionDiscussionList.vue'
 import { useMediaQuery } from '@/composables/useMediaQuery'
 import { useRunActions } from '@/composables/useRunActions'
-import { resultOutcomeLabels, useRunProgress } from '@/composables/useRunProgress'
+import { resultOutcomeLabels } from '@/composables/useRunProgress'
 import '@/styles/conversation-thread.css'
 
 const route = useRoute()
@@ -272,7 +272,6 @@ async function loadAgentMembers(workspaceId: string | undefined) {
     agentMembers.value = []
   }
 }
-const { quietLabel } = useRunProgress(task)
 
 const sourceTypeLabels: Record<TaskSource['type'], string> = {
   knowledge: '企业知识',
@@ -1222,7 +1221,6 @@ watch(
 
         <section class="drawer-section">
           <h2>本轮执行步骤</h2>
-          <p v-if="quietLabel" class="working-quiet working-quiet--drawer" role="status">已 {{ quietLabel }}没有新的执行事件，任务仍在运行。</p>
           <RunTimeline :steps="task.steps" />
         </section>
 

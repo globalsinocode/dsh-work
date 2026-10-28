@@ -273,16 +273,54 @@ describe('RunMessageList', () => {
     expect(readOnly.find('[data-testid="continue-editing-artifact-1"]').exists()).toBe(false)
   })
 
+  const at = (seconds: number) => new Date(Date.UTC(2026, 9, 28, 10, 0, seconds)).toISOString()
+  const liveSteps: TaskRun['steps'] = [
+    { id: 'e1', title: '执行服务开始运行', detail: '', status: 'succeeded', event: 'run.started', at: at(0) },
+    { id: 'c1', title: '调用工具', detail: '', status: 'succeeded', tool: 'read', callId: 'c1', event: 'tool.completed', at: at(13), startedAt: at(11) },
+    { id: 'c2', title: '正在调用工具', detail: '', status: 'running', tool: 'erp.query', callId: 'c2', event: 'tool.started', at: at(41), startedAt: at(41) },
+  ]
+
+  it('collapses the steps above the answer once the run has finished', async () => {
+    const finished = mount(RunMessageList, {
+      global,
+      props: {
+        task: run({
+          steps: [
+            ...liveSteps.slice(0, 2),
+            { id: 'c2', title: '调用工具', detail: '', status: 'failed', tool: 'python_execute', callId: 'c2', event: 'tool.completed', at: at(98), startedAt: at(41) },
+            { id: 'e2', title: '执行完成', detail: '', status: 'succeeded', event: 'run.completed', at: at(126) },
+          ],
+        }),
+        isOwn: () => false,
+      },
+    })
+    expect(finished.find('[data-testid="run-progress-card"]').exists()).toBe(false)
+    const summary = finished.get('[data-testid="run-progress-summary"]')
+    expect(summary.get('summary').text()).toBe('已完成 5 个步骤（调用工具 2 次）')
+    expect(summary.findAll('[data-testid="run-progress-step"]').map(row => row.find('.run-progress-step__label').text())).toEqual([
+      '理解问题，已完成', '读取文件，已完成', '思考下一步，已完成', '运行 Python失败', '整理回答，已完成',
+    ])
+
+    const noTools = mount(RunMessageList, { global, props: { task: run({ steps: [liveSteps[0]!] }), isOwn: () => false } })
+    expect(noTools.find('[data-testid="run-progress-summary"]').exists()).toBe(false)
+  })
+
   it('shows the working state, approval wait, failure with retry and stop attribution', async () => {
     const running = mount(RunMessageList, {
       global,
       props: {
-        task: run({ status: 'running', result: result({ outcome: 'pending' }), steps: [{ id: 's1', title: '读取库存', status: 'running', tool: 'erp.query' }] as TaskRun['steps'] }),
+        task: run({ status: 'running', result: result({ outcome: 'pending' }), steps: liveSteps }),
         isOwn: () => false,
       },
     })
+    const rows = running.findAll('[data-testid="run-progress-step"]')
+    expect(rows.map(row => row.find('.run-progress-step__label').text())).toEqual([
+      '理解问题，已完成', '读取文件，已完成', '思考下一步，已完成', '正在调用 erp.query，进行中',
+    ])
+    expect(rows.map(row => row.find('.run-progress-step__time').text())).toEqual(['11 秒', '2 秒', '28 秒', expect.stringMatching(/秒|分/)])
     expect(running.get('[data-testid="current-step"]').text()).toBe('正在调用 erp.query')
-    await running.get('.working-answer button').trigger('click')
+    expect(running.text()).not.toContain('没有新的输出')
+    await running.get('[data-testid="run-progress-card"] button').trigger('click')
     expect(running.emitted('open-details')).toHaveLength(1)
 
     const approval = mount(RunMessageList, { global, props: { task: run({ status: 'awaiting_approval', result: result({ outcome: 'pending' }) }), isOwn: () => false } })

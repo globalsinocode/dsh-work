@@ -74,8 +74,6 @@ export const useTaskStore = defineStore('tasks', () => {
     try {
       const loaded = await workbenchApi.getTasks()
       if (current !== generation) return
-      const loadedAt = Date.now()
-      for (const task of loaded) task.lastActivityAt ??= loadedAt
       tasks.value = loaded
       initialized.value = true
       for (const task of activeTasks.value) subscribe(task.id)
@@ -422,7 +420,6 @@ export const useTaskStore = defineStore('tasks', () => {
     if (event.event_type === 'run.failed') task.status = 'failed'
     if (event.event_type === 'run.completed') task.status = 'succeeded'
     task.updatedAt = '刚刚'
-    task.lastActivityAt = Date.now()
 
     if (event.event_type === 'assistant.delta' && event.display_message) {
       const messageId = `${event.attempt_id}-streaming`
@@ -443,11 +440,24 @@ export const useTaskStore = defineStore('tasks', () => {
     // 按 callId 合并，快照（服务端）与实时事件产生的同一调用始终只占一行。
     const callId = typeof event.safe_metadata['call_id'] === 'string' ? event.safe_metadata['call_id'] : null
     const callStepIndex = callId ? task.steps.findIndex((item) => item.callId === callId) : -1
+    // EX-PROGRESS-01：新连接会从头重放事件，重放的旧事件已在快照步骤里；只用新事件测量时钟差，
+    // 否则刷新后正在进行的步骤会从 0 秒重新计时。回答文本事件无法判断是否重放，不参与测量。
+    const replayed = event.event_type === 'tool.started' && callId ? callStepIndex >= 0
+      : event.event_type === 'tool.completed' && callStepIndex >= 0 ? task.steps[callStepIndex]!.status !== 'running'
+        : task.steps.some((item) => item.id === event.event_id)
+    const occurredAt = Date.parse(event.occurred_at)
+    if (!replayed && !event.event_type.startsWith('assistant.') && Number.isFinite(occurredAt)) {
+      task.clockOffsetMs = Date.now() - occurredAt
+    }
     if (event.event_type === 'tool.started' && callId) {
       if (callStepIndex < 0) task.steps.push(toolStartedStep(callId, event))
     } else if (event.event_type === 'tool.completed' && callId) {
       if (callStepIndex < 0) task.steps.push(toolStep(event))
-      else if (task.steps[callStepIndex]!.status === 'running') task.steps.splice(callStepIndex, 1, { ...toolStep(event), id: task.steps[callStepIndex]!.id })
+      else if (task.steps[callStepIndex]!.status === 'running') {
+        const started = task.steps[callStepIndex]!
+        const completed = toolStep(event)
+        task.steps.splice(callStepIndex, 1, { ...completed, id: started.id, ...(started.startedAt ? { startedAt: started.startedAt } : {}) })
+      }
     } else if (!['assistant.delta', 'assistant.completed'].includes(event.event_type)) {
       const step = task.steps.find((item) => item.id === event.event_id)
       if (!step) task.steps.push(event.event_type === 'tool.completed' ? toolStep(event) : {
@@ -455,6 +465,8 @@ export const useTaskStore = defineStore('tasks', () => {
         title: eventTitle(event.event_type),
         detail: event.display_message ?? '执行状态已更新。',
         status: eventStepStatus(event.event_type),
+        event: event.event_type,
+        at: event.occurred_at,
       })
     }
 
@@ -473,9 +485,9 @@ export const useTaskStore = defineStore('tasks', () => {
   function upsert(task: TaskRun | null | undefined) {
     if (!task) return
     const index = tasks.value.findIndex((item) => item.id === task.id)
-    // 刷新服务端快照时保留“最后收到事件”的时刻；首次关注执行中的 Run 以此刻为起点。
-    task.lastActivityAt = (index >= 0 ? tasks.value[index]?.lastActivityAt : undefined)
-      ?? task.lastActivityAt ?? Date.now()
+    // 刷新服务端快照时保留已测得的时钟差，进行中步骤的计时不因刷新跳变。
+    const clockOffsetMs = (index >= 0 ? tasks.value[index]?.clockOffsetMs : undefined) ?? task.clockOffsetMs
+    if (clockOffsetMs !== undefined) task.clockOffsetMs = clockOffsetMs
     if (index >= 0) tasks.value.splice(index, 1, task)
     else tasks.value.unshift(task)
   }
@@ -509,7 +521,7 @@ function eventTitle(eventType: string) {
 }
 
 /** EX-01：与服务端 mapSteps 相同的工具调用步骤。 */
-function toolStep(event: { event_id: string; display_message: string | null; safe_metadata: Record<string, unknown> }) {
+function toolStep(event: { event_id: string; event_type: string; occurred_at: string; display_message: string | null; safe_metadata: Record<string, unknown> }) {
   const outcome = event.safe_metadata['status']
   const toolName = typeof event.safe_metadata['tool_name'] === 'string' ? event.safe_metadata['tool_name'] : undefined
   const callId = typeof event.safe_metadata['call_id'] === 'string' ? event.safe_metadata['call_id'] : undefined
@@ -520,10 +532,12 @@ function toolStep(event: { event_id: string; display_message: string | null; saf
     status: outcome === 'failed' ? 'failed' as const : outcome === 'unknown' ? 'pending' as const : 'succeeded' as const,
     ...(toolName ? { tool: toolName } : {}),
     ...(callId ? { callId } : {}),
+    event: event.event_type,
+    at: event.occurred_at,
   }
 }
 
-function toolStartedStep(callId: string, event: { display_message: string | null; safe_metadata: Record<string, unknown> }) {
+function toolStartedStep(callId: string, event: { event_type: string; occurred_at: string; display_message: string | null; safe_metadata: Record<string, unknown> }) {
   const toolName = typeof event.safe_metadata['tool_name'] === 'string' ? event.safe_metadata['tool_name'] : undefined
   return {
     id: `tool-call-${callId}`,
@@ -532,6 +546,9 @@ function toolStartedStep(callId: string, event: { display_message: string | null
     status: 'running' as const,
     callId,
     ...(toolName ? { tool: toolName } : {}),
+    event: event.event_type,
+    at: event.occurred_at,
+    startedAt: event.occurred_at,
   }
 }
 

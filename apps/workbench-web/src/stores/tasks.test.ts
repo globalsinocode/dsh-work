@@ -553,33 +553,48 @@ describe('task store', () => {
     expect(FakeEventSource.instances[1]?.closed).toBe(true)
   })
 
-  it('stamps the last runtime event time for the quiet hint and keeps it across refreshes', async () => {
+  it('measures the clock offset from live events and keeps it across refreshes (EX-PROGRESS-01)', async () => {
     const { useTaskStore } = await import('./tasks')
     vi.useFakeTimers({ toFake: ['Date'] })
     try {
       vi.setSystemTime(new Date('2026-10-17T12:00:00.000Z'))
-      // 其他用例把共享的 baseTask 直接交给 store，可能已带上时刻；这里从一份干净的副本开始。
-      const fresh = (): TaskRun => ({ ...structuredClone(baseTask), lastActivityAt: undefined })
+      // 其他用例把共享的 baseTask 直接交给 store，可能已带上时钟差；这里从一份干净的副本开始。
+      const fresh = (): TaskRun => ({
+        ...structuredClone(baseTask),
+        clockOffsetMs: undefined,
+        steps: [{
+          id: 'event-started-old', title: '正在调用工具', detail: '', status: 'running', tool: 'read',
+          callId: 'call-old', event: 'tool.started', at: '2026-10-17T11:59:20.000Z', startedAt: '2026-10-17T11:59:20.000Z',
+        }],
+      })
       api.getTasks.mockResolvedValue([fresh()])
       const store = useTaskStore()
       await store.load()
-      expect(store.tasks[0]?.lastActivityAt).toBe(Date.parse('2026-10-17T12:00:00.000Z'))
+      expect(store.tasks[0]?.clockOffsetMs).toBeUndefined()
 
+      // 本机时钟比服务端快 5 秒：事件发生于 12:00:35，本机在 12:00:40 收到。
       vi.setSystemTime(new Date('2026-10-17T12:00:40.000Z'))
-      FakeEventSource.instances[0]?.emit('assistant.delta', {
-        event_id: 'event-delta-1', run_id: 'run-001', attempt_id: 'attempt-001', sequence: 3,
-        event_type: 'assistant.delta', occurred_at: new Date().toISOString(), display_message: '部分',
+      // 先到的是重放：快照里已有的工具调用（40 秒前开始），不能拿来测时钟差。
+      FakeEventSource.instances[0]?.emit('tool.started', {
+        event_id: 'event-started-old', run_id: 'run-001', attempt_id: 'attempt-001', sequence: 2,
+        event_type: 'tool.started', occurred_at: '2026-10-17T11:59:20.000Z', display_message: 'read：正在调用',
+        safe_metadata: { call_id: 'call-old', tool_name: 'read' }, trace_id: 'trace-001',
+      })
+      await Promise.resolve()
+      expect(store.tasks[0]?.clockOffsetMs).toBeUndefined()
+      FakeEventSource.instances[0]?.emit('approval.resolved', {
+        event_id: 'event-live-1', run_id: 'run-001', attempt_id: 'attempt-001', sequence: 3,
+        event_type: 'approval.resolved', occurred_at: '2026-10-17T12:00:35.000Z', display_message: '已允许本次操作',
         safe_metadata: {}, trace_id: 'trace-001',
       })
-      // vi.waitFor 在假时钟下每次轮询都会推进时钟，因此只断言时刻已推进到事件之后。
-      await vi.waitFor(() => expect(store.tasks[0]?.lastActivityAt).toBeGreaterThanOrEqual(Date.parse('2026-10-17T12:00:40.000Z')))
-      const stamped = store.tasks[0]!.lastActivityAt!
-      expect(stamped).toBeLessThan(Date.parse('2026-10-17T12:00:41.000Z'))
+      // vi.waitFor 在假时钟下每次轮询都会推进时钟，因此只断言落在合理区间。
+      await vi.waitFor(() => expect(store.tasks[0]?.clockOffsetMs).toBeGreaterThanOrEqual(5_000))
+      const measured = store.tasks[0]!.clockOffsetMs!
+      expect(measured).toBeLessThan(6_000)
 
-      vi.setSystemTime(new Date('2026-10-17T12:01:30.000Z'))
       api.getRun.mockResolvedValue(fresh())
       await store.refreshRun('run-001')
-      expect(store.tasks[0]?.lastActivityAt).toBe(stamped)
+      expect(store.tasks[0]?.clockOffsetMs).toBe(measured)
     } finally {
       vi.useRealTimers()
     }
@@ -593,20 +608,27 @@ describe('task store', () => {
     await store.load()
     const stream = FakeEventSource.instances.find((item) => item.url === '/events/run-tool-live')
     expect(stream).toBeDefined()
-    const emit = (eventType: string, eventId: string, display: string, metadata: Record<string, unknown>) =>
+    const emit = (eventType: string, eventId: string, display: string, metadata: Record<string, unknown>, occurredAt = new Date().toISOString()) =>
       stream?.emit(eventType, {
         event_id: eventId, run_id: 'run-tool-live', attempt_id: 'attempt-001', sequence: 1, event_type: eventType,
-        occurred_at: new Date().toISOString(), display_message: display, safe_metadata: metadata, trace_id: 'trace-001',
+        occurred_at: occurredAt, display_message: display, safe_metadata: metadata, trace_id: 'trace-001',
       })
 
-    emit('tool.started', 'event-start-read', 'read：正在调用', { call_id: 'call-read', tool_name: 'read', status: 'running', live: true })
+    emit('tool.started', 'event-start-read', 'read：正在调用', { call_id: 'call-read', tool_name: 'read', status: 'running', live: true }, '2026-10-28T10:00:11.000Z')
     await vi.waitFor(() => expect(store.tasks[0]?.steps).toHaveLength(1))
-    expect(store.tasks[0]?.steps[0]).toMatchObject({ id: 'tool-call-call-read', title: '正在调用工具', status: 'running', tool: 'read' })
+    expect(store.tasks[0]?.steps[0]).toMatchObject({
+      id: 'tool-call-call-read', title: '正在调用工具', status: 'running', tool: 'read',
+      event: 'tool.started', startedAt: '2026-10-28T10:00:11.000Z',
+    })
 
-    emit('tool.completed', 'event-done-read', 'read：调用失败，工具返回失败', { call_id: 'call-read', tool_name: 'read', status: 'failed', live: true })
+    emit('tool.completed', 'event-done-read', 'read：调用失败，工具返回失败', { call_id: 'call-read', tool_name: 'read', status: 'failed', live: true }, '2026-10-28T10:00:13.000Z')
     await vi.waitFor(() => expect(store.tasks[0]?.steps[0]?.status).toBe('failed'))
     expect(store.tasks[0]?.steps).toHaveLength(1)
-    expect(store.tasks[0]?.steps[0]).toMatchObject({ id: 'tool-call-call-read', title: '工具调用失败', detail: 'read：调用失败，工具返回失败' })
+    // EX-PROGRESS-01：结果原地替代后保留开始时间，结束时间取结果事件，供计算该步耗时。
+    expect(store.tasks[0]?.steps[0]).toMatchObject({
+      id: 'tool-call-call-read', title: '工具调用失败', detail: 'read：调用失败，工具返回失败',
+      event: 'tool.completed', startedAt: '2026-10-28T10:00:11.000Z', at: '2026-10-28T10:00:13.000Z',
+    })
 
     // 结束时由会话日志补齐、从未实时开始的调用照常追加一行。
     emit('tool.completed', 'event-done-fetch', 'web_fetch：未收到调用结果', { call_id: 'call-fetch', tool_name: 'web_fetch', status: 'unknown' })

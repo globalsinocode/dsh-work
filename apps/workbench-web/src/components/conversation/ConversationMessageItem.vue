@@ -54,6 +54,7 @@ const name = computed(() => isUser.value ? props.message.senderName ?? '我' : p
       </div>
       <span v-if="tag" class="task-conversation-tag" data-testid="task-conversation-tag">{{ tag }}</span>
     </div>
+    <slot v-if="!isUser" name="before" />
     <div v-if="isUser" class="assistant-answer user-message">
       <p>{{ message.content }}</p>
       <ul v-if="message.attachments?.length" class="message-attachments" aria-label="附带文件">

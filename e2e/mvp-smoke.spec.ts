@@ -230,6 +230,35 @@ test('employee conversations do not expose controlled-memory submission', async 
   await expect(page.getByRole('heading', { name: '受控记忆授权' })).toHaveCount(0)
 })
 
+test('employee sees each step and a running timer while a run is in progress (EX-PROGRESS-01)', async ({ page }) => {
+  // P0 冒烟服务不提供单个 Run 详情，这里与受控记忆用例一样按夹具返回，并把发起人设为当前员工。
+  for (const run of mockTasks.filter(item => ['run-260828-002', 'run-260828-001'].includes(item.id))) {
+    await page.route(`**/api/workbench/v1/runs/${run.id}`, async route => {
+      await route.fulfill({ contentType: 'application/json', body: JSON.stringify({
+        data: { ...run, requestedBy: 'U00001' }, meta: { api: 'workbench', adapter: 'prototype', timestamp: new Date().toISOString() },
+      }) })
+    })
+  }
+
+  await page.goto('/conversations/run-260828-002')
+  const steps = page.getByRole('list', { name: '执行步骤' })
+  await expect(steps.getByRole('listitem')).toHaveCount(4)
+  await expect(steps.getByRole('listitem').first()).toContainText('理解问题')
+  const current = steps.getByRole('listitem').last()
+  await expect(current).toContainText('正在调用 mes.get_work_order_progress')
+  const before = await current.textContent()
+  await expect.poll(() => current.textContent()).not.toBe(before)
+  await expect(page.getByText(/正在处理 · 已用/)).toBeVisible()
+  await expect(page.getByText(/没有新的输出/)).toHaveCount(0)
+
+  await page.goto('/conversations/run-260828-001')
+  await expect(page.getByRole('list', { name: '执行步骤' })).toHaveCount(0)
+  await page.getByText('已完成 5 个步骤（调用工具 2 次）').click()
+  const finished = page.getByRole('list', { name: '执行步骤' })
+  await expect(finished.getByRole('listitem')).toHaveCount(5)
+  await expect(finished.getByRole('listitem').last()).toContainText('整理回答')
+})
+
 test('administrator can open system information from the user menu', async ({ page }) => {
   await page.goto(`${adminUrl}/overview`)
 

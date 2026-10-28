@@ -5,6 +5,8 @@ import { StatusTag } from '@dsh-work/ui-core'
 
 import ArtifactImageThumb from './ArtifactImageThumb.vue'
 import ConversationMessageItem from './ConversationMessageItem.vue'
+import RunProgressCard from './RunProgressCard.vue'
+import RunProgressSummary from './RunProgressSummary.vue'
 import { resultOutcomeLabels, useRunProgress } from '@/composables/useRunProgress'
 import type { Artifact, ChatMessage, TaskRun } from '@/types/domain'
 import { isImageArtifact, isOfficeArtifact, unavailableTextNote } from '@/utils/artifact-preview'
@@ -41,7 +43,7 @@ const emit = defineEmits<{
 }>()
 
 const task = toRef(props, 'task')
-const { currentStepLabel, quietLabel, isTerminalRun } = useRunProgress(computed(() => task.value))
+const { isTerminalRun } = useRunProgress(computed(() => task.value))
 
 /** 气泡可展示的成果：多轮线程用 threadArtifacts，否则退回本轮 result.artifacts。 */
 const displayArtifacts = computed(() =>
@@ -58,6 +60,10 @@ const lastAssistantIdByRun = computed(() => {
 })
 
 const lastAssistantMessageId = computed(() => lastAssistantIdByRun.value.get(task.value.id))
+
+/** EX-PROGRESS-01：本轮结束后，执行步骤摘要放在本轮第一条回复上方。 */
+const firstAssistantMessageId = computed(() =>
+  task.value.messages.find(message => message.role === 'assistant' && belongsToCurrentRun(message))?.id)
 
 function belongsToCurrentRun(message: ChatMessage) {
   return message.runId === task.value.id
@@ -106,6 +112,9 @@ function isPreviewing(artifact: Artifact) {
     :own="isOwn(message)"
     :meta="messageMeta(message)"
   >
+    <template v-if="isTerminalRun && message.id === firstAssistantMessageId" #before>
+      <RunProgressSummary :task="task" />
+    </template>
     <div
       v-if="artifactsForMessage(message).length"
       class="answer-artifacts"
@@ -199,26 +208,11 @@ function isPreviewing(artifact: Artifact) {
     </div>
   </ConversationMessageItem>
 
-  <article
+  <RunProgressCard
     v-if="['queued', 'running'].includes(task.status)"
-    class="conversation-message conversation-message--assistant conversation-message--working"
-  >
-    <div class="assistant-identity">
-      <span class="assistant-avatar">d</span>
-      <div>
-        <strong>dsh-work</strong>
-        <span>正在处理</span>
-      </div>
-    </div>
-    <div class="working-answer">
-      <span class="working-dots"><i></i><i></i><i></i></span>
-      <span data-testid="current-step">{{ currentStepLabel }}</span>
-      <button type="button" @click="emit('open-details')">查看执行过程</button>
-    </div>
-    <p v-if="quietLabel" class="working-quiet" role="status" data-testid="run-quiet-hint">
-      已 {{ quietLabel }}没有新的输出，任务仍在运行。Agent 可能在等待模型或工具返回，无需重复提交。
-    </p>
-  </article>
+    :task="task"
+    @open-details="emit('open-details')"
+  />
 
   <section v-if="task.status === 'awaiting_approval'" class="conversation-notice approval-notice">
     <span class="conversation-notice__icon"><el-icon><Lock /></el-icon></span>

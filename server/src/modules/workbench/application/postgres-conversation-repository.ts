@@ -1702,14 +1702,20 @@ function mapSteps(runId: string, events: EventRow[], status: RunState): RunStep[
   const completedCalls = new Set(events
     .filter(event => event.eventType === 'tool.completed' && typeof event.safeMetadata['call_id'] === 'string')
     .map(event => event.safeMetadata['call_id'] as string))
+  // EX-PROGRESS-01：调用结果步骤带上同一调用的开始时间，员工端据此计算每步耗时。
+  const callStartedAt = new Map(events
+    .filter(event => event.eventType === 'tool.started' && typeof event.safeMetadata['call_id'] === 'string')
+    .map(event => [event.safeMetadata['call_id'] as string, event.occurredAt.toISOString()]))
   return events
     .filter((event) => !['assistant.delta', 'assistant.completed'].includes(event.eventType))
     .filter(event => event.eventType !== 'tool.started' || !completedCalls.has(event.safeMetadata['call_id'] as string))
-    .map((event, index, visibleEvents) => event.eventType === 'tool.started' ? toolStartedStep(event, status) : event.eventType === 'tool.completed' ? toolStep(event) : ({
+    .map((event, index, visibleEvents) => event.eventType === 'tool.started' ? toolStartedStep(event, status) : event.eventType === 'tool.completed' ? toolStep(event, callStartedAt) : ({
       id: event.id,
       title: eventTitle(event.eventType),
       detail: event.displayMessage ?? '执行状态已更新。',
       status: eventStepStatus(event.eventType, status, index === visibleEvents.length - 1),
+      event: event.eventType,
+      at: event.occurredAt.toISOString(),
     }))
 }
 
@@ -1725,13 +1731,17 @@ function toolStartedStep(event: EventRow, status: RunState): RunStep {
     status: ended ? 'pending' : 'running',
     ...(toolName ? { tool: toolName } : {}),
     ...(callId ? { callId } : {}),
+    event: event.eventType,
+    at: event.occurredAt.toISOString(),
+    startedAt: event.occurredAt.toISOString(),
   }
 }
 
 /** EX-01：一次工具调用的结果（成功、失败原因或未收到结果）。 */
-function toolStep(event: EventRow): RunStep {
+function toolStep(event: EventRow, callStartedAt: Map<string, string>): RunStep {
   const toolName = typeof event.safeMetadata['tool_name'] === 'string' ? event.safeMetadata['tool_name'] : undefined
   const callId = typeof event.safeMetadata['call_id'] === 'string' ? event.safeMetadata['call_id'] : undefined
+  const startedAt = callId ? callStartedAt.get(callId) : undefined
   const outcome = event.safeMetadata['status']
   return {
     id: event.id,
@@ -1740,6 +1750,9 @@ function toolStep(event: EventRow): RunStep {
     status: outcome === 'failed' ? 'failed' : outcome === 'unknown' ? 'pending' : 'succeeded',
     ...(toolName ? { tool: toolName } : {}),
     ...(callId ? { callId } : {}),
+    event: event.eventType,
+    at: event.occurredAt.toISOString(),
+    ...(startedAt ? { startedAt } : {}),
   }
 }
 

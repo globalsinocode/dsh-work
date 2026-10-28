@@ -279,24 +279,16 @@ describe('ConversationView 归档只读态（design §2.7 / AC-23）', () => {
     expect(cancelTask).toHaveBeenCalledWith('run-001')
   })
 
-  it('tells the employee a quiet running task is still running after 30 seconds without events (EX-01)', async () => {
+  it('lists the steps so far and the one running now instead of a quiet-run warning (EX-PROGRESS-01)', async () => {
     const running = { status: 'running' as const, result: result({ execution: 'running', outcome: 'pending', error: null, completedAt: null }) }
-    const quiet = await mountView({ item: task({ ...running, lastActivityAt: Date.now() - 40_000 }) })
-    expect(quiet.wrapper.get('[data-testid="run-quiet-hint"]').text()).toContain('已 40 秒没有新的输出，任务仍在运行')
-    quiet.wrapper.unmount()
-
-    const active = await mountView({ item: task({ ...running, lastActivityAt: Date.now() - 5_000 }) })
-    expect(active.wrapper.find('[data-testid="run-quiet-hint"]').exists()).toBe(false)
-    active.wrapper.unmount()
-  })
-
-  it('names the tool being called right now in the working indicator (EX-01)', async () => {
-    const running = { status: 'running' as const, result: result({ execution: 'running', outcome: 'pending', error: null, completedAt: null }) }
+    const startedAt = new Date(Date.now() - 40_000).toISOString()
     const { wrapper } = await mountView({ item: task({ ...running, steps: [
-      { id: 'event-started', title: 'DSH Worker 开始执行', detail: '开始执行', status: 'running' },
-      { id: 'tool-call-call-read', title: '正在调用工具', detail: 'read：正在调用', status: 'running', tool: 'read' },
+      { id: 'event-started', title: 'DSH Worker 开始执行', detail: '开始执行', status: 'running', event: 'run.started', at: startedAt },
+      { id: 'tool-call-call-read', title: '正在调用工具', detail: 'read：正在调用', status: 'running', tool: 'read', callId: 'call-read', event: 'tool.started', at: startedAt, startedAt },
     ] }) })
-    expect(wrapper.get('[data-testid="current-step"]').text()).toBe('正在调用 read')
+    expect(wrapper.get('[data-testid="current-step"]').text()).toBe('正在读取文件')
+    expect(wrapper.get('[data-testid="run-progress-card"]').text()).toMatch(/正在处理 · 已用 4\d 秒/)
+    expect(wrapper.text()).not.toContain('没有新的')
   })
 
   it('lets any writable member retry a shared run, not only the requester (TW-10)', async () => {

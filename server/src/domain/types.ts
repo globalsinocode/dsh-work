@@ -37,6 +37,12 @@ export interface RunStep {
   /** EX-01：工具调用步骤所属的调用；快照与实时事件按它合并为同一行。 */
   callId?: string
   duration?: string
+  /** EX-PROGRESS-01：步骤来源的运行事件类型（如 `run.started`、`tool.completed`）。 */
+  event?: string
+  /** 来源事件的服务端发生时间（ISO）；工具调用结果步骤为调用结束时间。 */
+  at?: string
+  /** 工具调用开始时间（ISO，取同一调用的 `tool.started`）；未收到开始事件时缺省。 */
+  startedAt?: string
 }
 
 export interface TaskSource {

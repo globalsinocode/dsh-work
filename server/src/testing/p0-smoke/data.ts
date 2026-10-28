@@ -62,41 +62,41 @@ export const prototypeUsers: Record<UserProfile['role'], UserProfile> = {
   },
 }
 
+// EX-PROGRESS-01：执行中的 Run 带真实形态的事件步骤与服务端时间（相对冒烟服务启动时刻），
+// 员工端据此逐条列出已完成步骤与耗时，并为正在调用的工具计时。
+const smokeStartedAt = Date.now()
+const smokeAt = (secondsAgo: number) => new Date(smokeStartedAt - secondsAgo * 1000).toISOString()
+
 const shortageSteps = [
   {
     id: 'step-1',
-    title: '识别订单与查询范围',
-    detail: '已识别销售订单 SO20260821001，数据范围为工厂一与华东仓。',
+    title: '执行服务开始运行',
+    detail: 'DSH Worker 已启动',
     status: 'succeeded' as const,
-    duration: '0.8 秒',
+    event: 'run.started',
+    at: smokeAt(95),
   },
   {
     id: 'step-2',
-    title: '查询订单与生产工单',
-    detail: '已读取订单行及关联的 3 张生产工单。',
+    title: '调用工具',
+    detail: 'erp.get_sales_order：调用成功',
     status: 'succeeded' as const,
     tool: 'erp.get_sales_order',
-    duration: '1.4 秒',
+    callId: 'call-sales-order',
+    event: 'tool.completed',
+    startedAt: smokeAt(83),
+    at: smokeAt(81),
   },
   {
     id: 'step-3',
-    title: '核对生产进度',
-    detail: '正在比对计划数量、完工数量与交付日期。',
+    title: '正在调用工具',
+    detail: 'mes.get_work_order_progress：正在调用',
     status: 'running' as const,
     tool: 'mes.get_work_order_progress',
-  },
-  {
-    id: 'step-4',
-    title: '核对库存与采购到货',
-    detail: '等待上一步完成。',
-    status: 'pending' as const,
-    tool: 'wms.get_material_inventory',
-  },
-  {
-    id: 'step-5',
-    title: '生成缺料风险结论',
-    detail: '等待数据准备完成。',
-    status: 'pending' as const,
+    callId: 'call-work-order',
+    event: 'tool.started',
+    startedAt: smokeAt(40),
+    at: smokeAt(40),
   },
 ]
 
@@ -186,42 +186,24 @@ export const mockTasks: TaskRun[] = [
       {
         id: 'msg-12',
         role: 'assistant',
+        runId: 'run-260828-001',
         content:
           '本月华东区共有 126 张在制订单，其中 8 张存在延期风险。高风险订单集中在电机组件与控制器两类物料，主要受供应商到货延迟影响。建议优先协调 SO20260821001、SO20260821018 和 SO20260821027，并在 8 月 30 日前确认替代料方案。',
         createdAt: '09:22',
       },
     ],
+    // EX-PROGRESS-01：已结束的 Run 带事件时间，回答上方显示可展开的步骤摘要（共 3 分 42 秒）。
     steps: [
+      { id: 'done-1', title: '执行服务开始运行', detail: 'DSH Worker 已启动', status: 'succeeded', event: 'run.started', at: '2026-08-28T01:18:10.000Z' },
       {
-        id: 'done-1',
-        title: '确定统计范围',
-        detail: '华东区，统计周期 2026-08-01 至 2026-08-28。',
-        status: 'succeeded',
-        duration: '0.6 秒',
+        id: 'done-2', title: '调用工具', detail: 'erp.get_orders：调用成功', status: 'succeeded', tool: 'erp.get_orders',
+        callId: 'call-orders', event: 'tool.completed', startedAt: '2026-08-28T01:18:22.000Z', at: '2026-08-28T01:19:00.000Z',
       },
       {
-        id: 'done-2',
-        title: '读取订单和生产进度',
-        detail: '查询 126 张在制订单及其关联工单。',
-        status: 'succeeded',
-        tool: 'erp.get_orders + mes.get_work_order_progress',
-        duration: '38 秒',
+        id: 'done-3', title: '调用工具', detail: 'python_execute：调用成功', status: 'succeeded', tool: 'python_execute',
+        callId: 'call-python', event: 'tool.completed', startedAt: '2026-08-28T01:19:31.000Z', at: '2026-08-28T01:20:25.000Z',
       },
-      {
-        id: 'done-3',
-        title: '核对库存与到货计划',
-        detail: '识别 14 项关键物料的库存和采购承诺日期。',
-        status: 'succeeded',
-        tool: 'wms.get_inventory + procurement.get_delivery_plan',
-        duration: '54 秒',
-      },
-      {
-        id: 'done-4',
-        title: '生成风险分级与建议',
-        detail: '形成 3 张高风险、5 张中风险订单清单。',
-        status: 'succeeded',
-        duration: '1 分 26 秒',
-      },
+      { id: 'done-4', title: '执行完成', detail: '任务执行完成', status: 'succeeded', event: 'run.completed', at: '2026-08-28T01:21:52.000Z' },
     ],
     attachments: [],
     result: {

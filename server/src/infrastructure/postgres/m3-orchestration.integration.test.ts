@@ -515,6 +515,17 @@ test('EX-01 tool call outcomes are kept as run steps and counted in the task res
   ])
   assert.equal(task.result.evidence.toolCalls, 2)
   assert.equal(task.result.evidence.toolFailures, 1)
+
+  // EX-PROGRESS-01：步骤带来源事件与服务端时间；调用结果步骤带同一调用的开始时间，员工端据此算耗时。
+  const iso = (value: string | undefined) => typeof value === 'string' && !Number.isNaN(Date.parse(value))
+  const [read, fetch, demo] = toolSteps
+  assert.equal(read?.event, 'tool.completed')
+  assert.ok(iso(read?.startedAt) && iso(read?.at) && Date.parse(read!.startedAt!) <= Date.parse(read!.at!))
+  assert.equal(fetch?.event, 'tool.started')
+  assert.equal(fetch?.startedAt, fetch?.at)
+  assert.ok(iso(demo?.startedAt) && Date.parse(demo!.startedAt!) <= Date.parse(demo!.at!))
+  assert.ok(iso(task.steps.find(step => step.event === 'run.started')?.at))
+  assert.ok(iso(task.steps.find(step => step.event === 'run.completed')?.at))
 })
 
 test('EX-02 long conversations keep the first message, fall back to trimming and then use a background summary', async () => {
