@@ -51,7 +51,7 @@ export class ContainerExecutor {
   private retrying = false
 
   constructor(backend: ExecutionBackend, options: ContainerExecutorOptions) {
-    if (!IMAGE_PATTERN.test(options.pythonImage)) throw invalidRequest('DSH_WORK_PYTHON_IMAGE 必须使用 sha256 摘要锁定容器镜像')
+    if (!IMAGE_PATTERN.test(options.pythonImage)) throw invalidRequest('沙箱容器镜像必须使用 sha256 摘要锁定')
     this.backend = backend
     this.pythonImage = options.pythonImage
     this.slots = new ExecutionSlots(options.maxContainers ?? DEFAULT_MAX_CONTAINERS)
@@ -243,17 +243,6 @@ export class ExecutionSlots {
       else this.used -= 1
     }
   }
-}
-
-/** `DSH_WORK_EXECUTION_MAX_CONTAINERS`: unset means the default; anything malformed fails closed. */
-export function parseMaxContainers(value: string | undefined): number {
-  if (value === undefined || value.trim() === '') return DEFAULT_MAX_CONTAINERS
-  const text = value.trim()
-  const parsed = /^\d{1,3}$/.test(text) ? Number(text) : Number.NaN
-  if (!Number.isSafeInteger(parsed) || parsed < 1 || parsed > MAX_CONTAINERS_LIMIT) {
-    throw invalidRequest(`DSH_WORK_EXECUTION_MAX_CONTAINERS 必须是 1–${MAX_CONTAINERS_LIMIT} 的整数`)
-  }
-  return parsed
 }
 
 export function createPythonContainerName(): string {

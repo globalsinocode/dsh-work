@@ -5,8 +5,7 @@ import { join } from 'node:path'
 import { test } from 'node:test'
 import { commandEnvironment } from './docker-execution-backend.ts'
 import type { ContainerCommand, ContainerCommandResult } from './execution-backend.ts'
-import { ExecutionContainerPythonRunner } from './execution-container-python.ts'
-import { skillDirectory } from './python-skill-runner.ts'
+import { ExecutionContainerPythonRunner, skillDirectory } from './execution-container-python.ts'
 import type { RuntimeManifest } from './runtime-types.ts'
 
 function manifest(): RuntimeManifest {

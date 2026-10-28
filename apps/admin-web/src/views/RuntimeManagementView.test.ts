@@ -92,8 +92,8 @@ describe('Runtime built-in tools', () => {
     const panel = wrapper.get('[aria-label="内置工具"]')
     expect(panel.text()).toContain('随平台代码发布')
     expect(panel.text()).toContain('DSH 未提供以下内置工具，相关运行会失败：web_search')
-    // 执行容器决定 bash 是否装配：不可用时说明影响与处理方式，原因只在服务日志。
-    expect(panel.get('[data-testid="execution-container-status"]').text()).toContain('执行容器启动检查未通过：本次启动不装配 bash')
+    // 执行容器是所有 Agent 运行的前提：不可用时说明影响与处理方式，原因只在服务日志。
+    expect(panel.get('[data-testid="execution-container-status"]').text()).toContain('执行容器启动检查未通过：所有 Agent 运行暂不能执行')
     expect(state(wrapper).disableableTools.map(tool => tool.name)).toEqual(['read', 'web_search', 'bash'])
   })
 

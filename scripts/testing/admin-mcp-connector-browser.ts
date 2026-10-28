@@ -123,7 +123,7 @@ router.get(`${base}/platform-status`, () => envelope('admin', {
   mode: 'test', identity: 'prototype', persistence: 'postgres', runtime: 'synthetic',
 }, 'postgres'))
 router.get(`${base}/assistant/sessions`, () => envelope('admin', [], 'postgres'))
-registerToolRoutes(router, mcpService, async () => ({ tools: builtinTools, disabledTools: [], catalog: null, executionContainer: { status: 'not-configured' } }))
+registerToolRoutes(router, mcpService, async () => ({ tools: builtinTools, disabledTools: [], catalog: null, executionContainer: { status: 'available' } }))
 
 router.get(`${base}/test/agent-principal/evidence`, async (_request, context) => {
   const agentVersionId = context.url.searchParams.get('agent_version_id') ?? ''

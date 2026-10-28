@@ -211,7 +211,7 @@ test('authorization is fail-closed and compiles the effective identity into Runt
   assert.deepEqual(manifest?.skills, [{ id: 'skill-document', version: '1.0.0' }])
   // 内置工具由平台统一装配：默认工具 + 激活 Skill；联网搜索默认关闭。
   assert.deepEqual(manifest?.tools.map(tool => tool.id), [
-    'read', 'glob', 'grep', 'read_image', 'write', 'edit', 'str_replace_editor', 'todo_write', 'activate_skill',
+    'read', 'glob', 'grep', 'read_image', 'write', 'edit', 'str_replace_editor', 'todo_write', 'bash', 'activate_skill',
   ])
   assert.ok(manifest?.tools.every(tool => tool.version === '1.0.0'))
 

@@ -1,8 +1,11 @@
+import { createHash } from 'node:crypto'
 import { lstat, mkdir, readdir } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import type { RuntimeManifest } from './runtime-types.ts'
 import { EXECUTION_CONTAINER_LIMITS, type ContainerCommand, type ContainerCommandResult } from './execution-backend.ts'
-import { resolvePythonCall, skillDirectory } from './python-skill-runner.ts'
+import { invalidRequest } from '../../domain/request-errors.ts'
+
+const ENTRY_PATTERN = /^(?:scripts\/)?[A-Za-z0-9._/-]+\.py$/
 
 /** One `python_execute` call may run at most this long (dsh-work-tool-policy.js gives the tool 300 s). */
 const PYTHON_CALL_TIMEOUT_MS = 290_000
@@ -64,4 +67,30 @@ async function outputFiles(root: string) {
     files.set(name, { size: details.size, signature: `${details.size}:${details.mtimeMs}:${details.ino}` })
   }
   return files
+}
+
+/**
+ * What every `python_execute` call is checked against: the entry must be a `.py`
+ * file declared by exactly one Skill of this Run's locked version; no source, interpreter or path.
+ */
+export function resolvePythonCall(input: Record<string, unknown>, manifest: RuntimeManifest): { skillId: string; entry: string; args: string[] } {
+  const skillName = typeof input['skill'] === 'string' ? input['skill'].trim() : ''
+  const entry = typeof input['entry'] === 'string' ? input['entry'].trim() : ''
+  const args = input['args'] === undefined ? [] : input['args']
+  if (!skillName || !ENTRY_PATTERN.test(entry) || entry.includes('..')) throw invalidRequest('Python Skill 或入口文件无效')
+  if (!Array.isArray(args) || args.length > 32 || args.some(value => typeof value !== 'string' || value.length > 1000 || value.includes('\0'))) throw invalidRequest('Python 参数无效')
+  const matches = manifest.agent_configuration.skill_instructions.filter(skill => (skill.name ?? skill.id) === skillName || skill.id === skillName)
+  if (matches.length !== 1 || !matches[0]!.files?.some(file => file.path === entry && file.path.endsWith('.py'))) throw new Error('入口文件未在当前 Run 的锁定 Skill 中声明')
+  return { skillId: matches[0]!.id, entry, args: args as string[] }
+}
+
+/** Where the Adapter materializes an activated Skill inside the Attempt workspace. */
+export function skillDirectory(workspaceDirectory: string, skillId: string) {
+  return resolve(workspaceDirectory, 'skills', safeSegment(skillId))
+}
+
+function safeSegment(value: string): string {
+  const readable = value.replaceAll(/[^A-Za-z0-9._-]/g, '_').slice(0, 80)
+  const digest = createHash('sha256').update(value).digest('hex').slice(0, 12)
+  return `${readable}-${digest}`
 }

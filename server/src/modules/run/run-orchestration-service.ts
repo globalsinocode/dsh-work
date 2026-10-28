@@ -96,8 +96,6 @@ export class RunOrchestrationService {
       projectArchive?: OrchestrationDependencies['projectArchive']
       /** Platform default IANA timezone for a run's current time; defaults to Asia/Shanghai. */
       timezone?: string
-      /** 执行容器通过启动检查时为 true；缺省 false，不装配 bash。 */
-      executionContainerAvailable?: boolean
     },
   ) {
     this.deps = {
@@ -105,7 +103,6 @@ export class RunOrchestrationService {
       agentMembers: options?.agentMembers,
       automationMaxConcurrent: options?.automationMaxConcurrent ?? 2,
       timezone: options?.timezone ?? DEFAULT_PLATFORM_TIMEZONE,
-      executionContainerAvailable: options?.executionContainerAvailable ?? false,
       automationStatusLookup: options?.automationStatusLookup,
       toolChecks: options?.toolChecks,
       tasks: options?.tasks,

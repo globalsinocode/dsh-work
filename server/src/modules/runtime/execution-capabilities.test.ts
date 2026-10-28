@@ -15,6 +15,15 @@ test('unavailable port never admits work or fabricates tools/events/results', as
   let events = 0; const unsubscribe = runtime.subscribe('run-fixture', () => { events++ }); unsubscribe()
   assert.equal(events, 0); await runtime.close()
 })
+test('a failed execution container refuses every run instead of falling back to the host (plan 4.9)', async () => {
+  const runtime = new UnavailableRuntime('runtime-fixture', 'execution-container')
+  await assert.rejects(runtime.assertAvailable(), { code: 'EXECUTION_CONTAINER_UNAVAILABLE', status: 503 })
+  await assert.rejects(runtime.execute({} as RuntimeManifest), { code: 'EXECUTION_CONTAINER_UNAVAILABLE' })
+  await assert.rejects(runtime.listTools(), { code: 'EXECUTION_CONTAINER_UNAVAILABLE' })
+  const health = await runtime.health()
+  assert.equal(health.acceptingRuns, false)
+  assert.match(health.message ?? '', /执行容器不可用/)
+})
 test('failed optional probe returns a negative capability without exposing stderr or credentials', async () => {
   const result = await probeExecutionCapability('python', async () => { throw new Error('sensitive subprocess detail') })
   assert.deepEqual(result, { value: null, state: { status: 'unavailable', code: 'PYTHON_UNAVAILABLE' } })

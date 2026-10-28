@@ -40,6 +40,21 @@ export function resolveExecutionContainerUser(): string {
   return `${uid}:${gid}`
 }
 
+/**
+ * Settings removed when the execution container became mandatory (plan 4.9). They are ignored; the warning
+ * keeps an operator from expecting `DSH_WORK_EXECUTION_CONTAINER=off` to fall back to host execution.
+ */
+export function removedExecutionSettingWarnings(env: NodeJS.ProcessEnv): string[] {
+  const warnings: string[] = []
+  if (env.DSH_WORK_EXECUTION_CONTAINER !== undefined) {
+    warnings.push('DSH_WORK_EXECUTION_CONTAINER is removed and ignored: the execution container is always required, and "off" no longer runs DSH on the host')
+  }
+  for (const name of ['DSH_WORK_PYTHON_IMAGE', 'DSH_WORK_PYTHON_PACKAGES', 'DSH_WORK_PYTHON_USER', 'DSH_WORK_EXECUTION_MAX_CONTAINERS']) {
+    if (env[name] !== undefined) warnings.push(`${name} is removed and ignored: python_execute runs in the execution container`)
+  }
+  return warnings
+}
+
 /** DSH reports resolved paths (macOS /var → /private/var), so the container must see that path too. */
 function resolvedPath(path: string) {
   try { return realpathSync(path) } catch { return path }

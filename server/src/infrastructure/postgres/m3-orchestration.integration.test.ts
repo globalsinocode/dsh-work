@@ -1501,8 +1501,8 @@ test('2b-2: compliant files are published, non-compliant ones are skipped with a
     const byName = new Map(task!.result.artifacts.map(artifact => [artifact.name, artifact]))
     assert.equal(byName.get('数据.xlsx')?.type, 'xlsx')
     assert.equal(byName.get('说明.docx')?.type, 'docx')
-    // 二进制成果在 2b-3 之前没有解析文本：可下载，不可引用。
-    assert.equal(byName.get('数据.xlsx')?.canReference, false)
+    // 二进制成果没有解析文本也可引用：执行容器为必需，挂载原始文件（2b-4、方案 4.9）。
+    assert.equal(byName.get('数据.xlsx')?.canReference, true)
     assert.equal(byName.get('周报.md')?.canReference, true)
     const fileId = await content.artifactFileId(byName.get('数据.xlsx')!.id, 1, 'U00001')
     const downloaded = await content.readFile(fileId, 'U00001')
@@ -1518,11 +1518,11 @@ test('2b-2: compliant files are published, non-compliant ones are skipped with a
 })
 
 test('2b-4: with bash, inputs also mount their originals and a binary artifact is revised to V2; without bash it is refused', async () => {
-  const bashConversations = new PostgresConversationRepository(database, undefined, { binaryArtifactsReferenceable: true })
+  const bashConversations = new PostgresConversationRepository(database)
   const withBash = new RunOrchestrationService(
     runs, bashConversations, new ModelGovernanceService(new PostgresModelGovernanceRepository(database)), runtime,
     content, new PostgresOperationsService(database), undefined, undefined, new PostgresAuthorizationService(database),
-    { tasks: new PostgresTaskRepository(database), executionContainerAvailable: true },
+    { tasks: new PostgresTaskRepository(database) },
   )
   const session = await withBash.createSession({ userId: 'U00001', title: '修改表格成果' })
   const turn = async (service: RunOrchestrationService, prompt: string, fileIds: string[], output: Record<string, Buffer>) => {
@@ -1552,16 +1552,25 @@ test('2b-4: with bash, inputs also mount their originals and a binary artifact i
   v1.release()
   await waitForTask(v1.created.id, 'succeeded')
   const artifact = (await bashConversations.getTask(v1.created.id, 'U00001'))!.result.artifacts.find(item => item.name === '数据.xlsx')!
-  assert.equal(artifact.canReference, true, 'referenceable while the execution container is available')
-  assert.equal((await conversations.getTask(v1.created.id, 'U00001'))!.result.artifacts.find(item => item.name === '数据.xlsx')!.canReference, false,
-    'not referenceable without it')
+  assert.equal(artifact.canReference, true, 'the execution container mounts the original')
   const upload = await content.storeSessionFile(session.id, '明细.csv', 'text/csv', Buffer.from('物料,数量\nA,3\n'), 'U00001')
 
-  // Without bash a binary artifact cannot be an input: refused before an Attempt exists.
-  await assert.rejects(
-    orchestration.startRun({ userId: 'U00001', sessionId: session.id, prompt: '改一下', idempotencyKey: randomUUID(), fileIds: [artifact.fileId!] }),
-    /需要运行命令的能力/,
-  )
+  // With bash disabled by the Runtime a binary artifact cannot be an input: refused before an Attempt exists.
+  const operations = new PostgresOperationsService(database, runtime)
+  const runtimeRow = (await operations.getRuntimes()).find(item => item.id === 'runtime-local-01')!
+  const setDisabled = (disabledTools: string[]) => operations.updateRuntimeConfiguration({
+    runtimeId: runtimeRow.id, maxConcurrentWorkers: runtimeRow.maxConcurrentWorkers,
+    attemptTimeoutMinutes: runtimeRow.attemptTimeoutMinutes, schedulingStatus: runtimeRow.schedulingStatus, disabledTools, actor: 'U00008',
+  })
+  await setDisabled(['bash'])
+  try {
+    await assert.rejects(
+      withBash.startRun({ userId: 'U00001', sessionId: session.id, prompt: '改一下', idempotencyKey: randomUUID(), fileIds: [artifact.fileId!] }),
+      /需要运行命令的能力/,
+    )
+  } finally {
+    await setDisabled([])
+  }
 
   const v2 = await turn(withBash, '把 A 的数量改成 5', [artifact.fileId!, upload.id], {})
   try {
@@ -1614,14 +1623,20 @@ test('2b-3: binary artifacts get container-extracted text, failures are recorded
     database, new LocalObjectStorage(`/tmp/dsh-work-m3-extract-${randomUUID()}`), new PostgresAuthorizationService(database),
     undefined, undefined, { artifactTextExtractor: extractor },
   )
-  const service = (executionContainerAvailable: boolean) => new RunOrchestrationService(
-    runs, new PostgresConversationRepository(database, undefined, { binaryArtifactsReferenceable: executionContainerAvailable }),
+  const operations = new PostgresOperationsService(database, runtime)
+  const orchestrator = new RunOrchestrationService(
+    runs, new PostgresConversationRepository(database),
     new ModelGovernanceService(new PostgresModelGovernanceRepository(database)), runtime,
-    extracting, new PostgresOperationsService(database), undefined, undefined, new PostgresAuthorizationService(database),
-    { tasks: new PostgresTaskRepository(database), executionContainerAvailable },
+    extracting, operations, undefined, undefined, new PostgresAuthorizationService(database),
+    { tasks: new PostgresTaskRepository(database) },
   )
-  const withoutBash = service(false)
-  const session = await withoutBash.createSession({ userId: 'U00001', title: '解析二进制成果' })
+  // The execution container is always required (plan 4.9); a run goes without bash only when the Runtime disables it.
+  const runtimeRow = (await operations.getRuntimes()).find(item => item.id === 'runtime-local-01')!
+  const setDisabled = (disabledTools: string[]) => operations.updateRuntimeConfiguration({
+    runtimeId: runtimeRow.id, maxConcurrentWorkers: runtimeRow.maxConcurrentWorkers,
+    attemptTimeoutMinutes: runtimeRow.attemptTimeoutMinutes, schedulingStatus: runtimeRow.schedulingStatus, disabledTools, actor: 'U00008',
+  })
+  const session = await orchestrator.createSession({ userId: 'U00001', title: '解析二进制成果' })
   const turn = async (orchestrator: RunOrchestrationService, prompt: string, fileIds: string[], output: Record<string, Buffer>) => {
     const workspaceDirectory = await mkdtemp(join(tmpdir(), 'dsh-work-binary-text-'))
     await mkdir(join(workspaceDirectory, 'output'))
@@ -1644,7 +1659,7 @@ test('2b-3: binary artifacts get container-extracted text, failures are recorded
   const pdf = Buffer.from('%PDF-1.7\n1 0 obj\n<< /Type /Catalog >>\nendobj\ntrailer\n<< /Root 1 0 R >>\n%%EOF\n', 'latin1')
 
   // One container call for all binary artifacts of the turn; text artifacts keep their own text.
-  const first = await turn(withoutBash, '生成报告', [], {
+  const first = await turn(orchestrator, '生成报告', [], {
     '数据.xlsx': minimalXlsx(), '说明.docx': minimalDocx(), '概览.pptx': minimalPptx(), '报告.pdf': pdf, '周报.md': Buffer.from('# 周报\n'),
   })
   assert.equal(first.published?.published.length, 5)
@@ -1663,26 +1678,32 @@ test('2b-3: binary artifacts get container-extracted text, failures are recorded
     '周报.md': ['m4-basic-v1', 'text', 'succeeded', null, null, null],
   })
 
-  // Without bash the xlsx is now an input through its text only; "continue editing" stays off without the container.
+  // A binary artifact can always be revised in a later turn: the execution container mounts its original.
   const artifacts = (await new PostgresConversationRepository(database).getTask(first.created.id, 'U00001'))!.result.artifacts
   const workbook = artifacts.find(item => item.name === '数据.xlsx')!
-  assert.equal(workbook.canReference, false, 'revising a binary artifact still needs the execution container')
+  assert.equal(workbook.canReference, true)
   // 我的文件: with text the xlsx can start a new conversation; the PDF whose extraction failed cannot.
   const personal = await extracting.listPersonalFiles({ actorUserId: 'U00001', source: 'artifact', limit: 50 })
   const listed = Object.fromEntries(personal.items.filter(item => item.sessionId === session.id).map(item => [item.name, [item.parseStatus, item.canReference]]))
   assert.deepEqual(listed['数据.xlsx'], ['succeeded', true])
   assert.deepEqual(listed['报告.pdf'], ['failed', false])
-  const textOnly = await turn(withoutBash, '总结表格', [workbook.fileId!], {})
-  assert.deepEqual(textOnly.manifest.input.file_mounts.map(mount => [mount.source_name, mount.content]), [['数据.xlsx', '# xlsx 解析文本\n华东\t1200']])
-  assert.equal(textOnly.manifest.input.original_mounts, undefined)
-  // A binary artifact whose extraction failed is still refused without bash.
+  // With bash disabled the xlsx is an input through its text only.
+  await setDisabled(['bash'])
   const report = artifacts.find(item => item.name === '报告.pdf')!
-  await assert.rejects(
-    withoutBash.startRun({ userId: 'U00001', sessionId: session.id, prompt: '读报告', idempotencyKey: randomUUID(), fileIds: [report.fileId!] }),
-    /需要运行命令的能力/,
-  )
+  try {
+    const textOnly = await turn(orchestrator, '总结表格', [workbook.fileId!], {})
+    assert.deepEqual(textOnly.manifest.input.file_mounts.map(mount => [mount.source_name, mount.content]), [['数据.xlsx', '# xlsx 解析文本\n华东\t1200']])
+    assert.equal(textOnly.manifest.input.original_mounts, undefined)
+    // A binary artifact whose extraction failed is refused without bash.
+    await assert.rejects(
+      orchestrator.startRun({ userId: 'U00001', sessionId: session.id, prompt: '读报告', idempotencyKey: randomUUID(), fileIds: [report.fileId!] }),
+      /需要运行命令的能力/,
+    )
+  } finally {
+    await setDisabled([])
+  }
   // With bash it gets both the text and the original.
-  const both = await turn(service(true), '改表格', [workbook.fileId!], {})
+  const both = await turn(orchestrator, '改表格', [workbook.fileId!], {})
   assert.deepEqual(both.manifest.input.file_mounts.map(mount => mount.source_name), ['数据.xlsx'])
   assert.deepEqual(both.manifest.input.original_mounts?.map(mount => mount.source_name), ['数据.xlsx'])
 
@@ -1705,7 +1726,7 @@ test('2b-3: binary artifacts get container-extracted text, failures are recorded
 
   // The container cannot run: the artifact is published without any extraction, and the backfill adds it later.
   outage = true
-  const later = await turn(withoutBash, '再生成一份', [], { '补充.docx': minimalDocx({ 'word/extra.xml': '<x/>' }) })
+  const later = await turn(orchestrator, '再生成一份', [], { '补充.docx': minimalDocx({ 'word/extra.xml': '<x/>' }) })
   assert.deepEqual(later.published?.published.map(item => item.name), ['补充.docx'])
   const [missing] = await database<{ count: number }[]>`
     select count(*)::integer as count from file_extractions fe join file_objects f on f.tenant_id = fe.tenant_id and f.id = fe.file_id

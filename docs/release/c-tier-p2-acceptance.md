@@ -8,7 +8,7 @@
 
 - 目标 Release 已按[部署手册](mac-mini-deployment-runbook.md)部署，9.1、9.2 已通过，DSH 模型凭据可用。
 - 执行镜像已按摘要拉取到 Mac mini（部署手册第 7 节 `DSH_WORK_EXECUTION_IMAGE` 一行），与 `runtime.env` 中的引用一致。
-- **打开执行容器模式需要单独批准。** 打开后所有已发布 Agent 的员工侧运行都会装配 `bash`。在维护窗口内把 `runtime.env` 的 `DSH_WORK_EXECUTION_CONTAINER` 改为 `on` 并重启服务（如 `launchctl kickstart -k "gui/$(id -u)/com.company.dsh-work.server"`）；验收不通过时改回 `off` 再重启。
+- 执行容器为必需（[执行隔离方案](../design/execution-isolation-plan.md) 4.9）：`runtime.env` 只需 `DSH_WORK_EXECUTION_IMAGE`，所有已发布 Agent 的员工侧运行都装配 `bash`。已不存在 `DSH_WORK_EXECUTION_CONTAINER` 开关，验收不通过时的回退方式是部署上一个 Release（按[部署手册](mac-mini-deployment-runbook.md)回滚）。2026-10-28 的 P2（v2026.10.28-01）仍在有开关的版本上执行。
 - 准备一个测试员工账号，只有 `employee` 角色，可使用平台默认 Agent；对话内容不含敏感信息。
 - 可选：一个已发布、含 Python 入口（`scripts/*.py`）且已授权给该 Agent 的 Skill，用于 `python-skill` 场景。
 
@@ -74,4 +74,4 @@ curl --fail --silent --show-error --max-time 30 http://127.0.0.1:4190/health
 - 输出目录含 `evidence.json`（`c-tier-p2-evidence/v1`）、`summary.md`、`health.json` 与 `files/` 下载的成果；不含 Cookie、密码或 Token。
 - 脚本退出码：0 表示没有自动核对失败（仍可能有待人工复核项），1 表示有失败，2 表示参数或登录错误。
 - 验收人复核后在 `evidence.json` 中填写 `reviewer`、`conclusion`，并把 `status` 从 `unreviewed` 改为 `verified` 或 `rejected`；结论写入发布说明或仓库外受控证据，不提交到仓库。
-- 通过后在[执行隔离方案](../design/execution-isolation-plan.md)状态行记录 Mac mini 验收日期与 Release；之后才能评估在生产保持执行容器模式开启。
+- 通过后在[执行隔离方案](../design/execution-isolation-plan.md)状态行记录 Mac mini 验收日期与 Release。

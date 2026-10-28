@@ -145,6 +145,9 @@ test('input file removed while the DSH Worker is active stops execution without 
       if (!context.orchestration) throw new Error('测试编排服务尚未就绪')
       return context.orchestration.assertCurrentRunAuthorization(manifest)
     },
+    // 执行容器为必需（方案 4.9），员工运行总装配 bash 并另挂原始文件；本用例的 Worker 替身不运行命令，执行容器只需报告空闲。
+    remoteExecution: { exec: async () => { throw new Error('must not run') }, waitUntilIdle: async () => 'idle' as const, release: async () => {} },
+    loadRuntimeOriginal: (manifest, originalFileId) => content.readRuntimeOriginal(manifest, originalFileId),
   })
   const orchestration = new RunOrchestrationService(
     runs,

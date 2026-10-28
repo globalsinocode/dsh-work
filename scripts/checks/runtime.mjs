@@ -29,6 +29,7 @@ export function checkRuntime(check) {
   check.assert(!production.DSH_RUNTIME_COMPATIBILITY, '生产模板不得启用开发兼容模式')
   check.includes('scripts/deploy/preflight.sh', [
     'DSH_RUNTIME_COMPATIBILITY is development-only',
+    'DSH_WORK_EXECUTION_IMAGE must be set and pinned by sha256 digest', 'execution image is not present locally',
     'apps/cli/src/bin.ts', 'apps/cli/lib/bin.js', 'packages/bundle/acp-app/cordis.patch.yml',
   ])
   check.files(['server/migrations/0019_dsh_runtime_0_1_2_rc_1.sql', 'scripts/runtime/probe.ts'])

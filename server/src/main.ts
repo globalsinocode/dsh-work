@@ -45,10 +45,9 @@ import { PostgresPersistentWaitService } from './modules/run/postgres-persistent
 import { DshAcpRuntimeAdapter } from './modules/runtime/dsh-acp-runtime-adapter.ts'
 import { CapabilityGuardedRuntime, UnavailableRuntime, ExecutionCapabilityUnavailableError, probeExecutionCapability, type CapabilityState } from './modules/runtime/execution-capabilities.ts'
 import type { AgentRuntimePort } from './modules/runtime/runtime-types.ts'
-import { PythonSkillRunner } from './modules/runtime/python-skill-runner.ts'
-import { ContainerExecutor, parseMaxContainers } from './modules/runtime/container-executor.ts'
+import { ContainerExecutor } from './modules/runtime/container-executor.ts'
 import { DockerExecutionBackend } from './modules/runtime/docker-execution-backend.ts'
-import { AttemptExecutionContainers, assertExclusiveToolScheduling, resolveExecutionContainerUser } from './modules/runtime/attempt-execution-containers.ts'
+import { AttemptExecutionContainers, assertExclusiveToolScheduling, removedExecutionSettingWarnings, resolveExecutionContainerUser } from './modules/runtime/attempt-execution-containers.ts'
 import { freeSpace } from './modules/runtime/workspace-usage.ts'
 import { ExecutionContainerPythonRunner } from './modules/runtime/execution-container-python.ts'
 import { normalizePythonPackageName } from './modules/skill/skill-installation-plan.ts'
@@ -154,10 +153,9 @@ async function start() {
   let persistentWait: PostgresPersistentWaitService | null = null
   let memoryProposalSweep: NodeJS.Timeout | null = null
   let dshCapability: CapabilityState = { status: 'not-configured' }
-  let pythonCapability: CapabilityState = { status: 'not-configured' }
-  let containerExecutor: ContainerExecutor | null = null
+  let pythonCapability: CapabilityState = { status: 'unavailable', code: 'PYTHON_UNAVAILABLE' }
   let attemptContainers: AttemptExecutionContainers | null = null
-  let executionContainerCapability: CapabilityState = { status: 'not-configured' }
+  let executionContainerCapability: CapabilityState = { status: 'unavailable', code: 'EXECUTION_CONTAINER_UNAVAILABLE' }
   const projectRoot = fileURLToPath(new URL('../..', import.meta.url))
   const dataRoot = resolve(projectRoot, process.env.DSH_WORK_DATA_ROOT ?? '.runtime')
   const skillArtifacts = new SkillArtifactStore(new LocalObjectStorage(resolve(dataRoot, 'skills'), { fileMode: 0o400 }))
@@ -169,15 +167,13 @@ async function start() {
     await preflightDshRuntime(installation)
     return installation
   })
-  dshInstallation = dsh.value
   dshCapability = dsh.state
-  // 执行隔离 1b：开关默认关闭。打开但启动检查失败时，本次启动的 DSH 子进程仍在宿主执行，
-  // 健康状态如实显示执行容器不可用；运行中途不切换模式。
-  const executionContainerSwitch = process.env.DSH_WORK_EXECUTION_CONTAINER?.trim()
-  if (dshInstallation && executionContainerSwitch && executionContainerSwitch !== 'off') {
-    const baseInstallation = dshInstallation
+  // 执行隔离阶段 3（方案 4.9）：执行容器为必需。DSH 子进程只经执行容器叠加层运行；
+  // 执行容器启动检查失败时不在宿主执行，Runtime 不可用，所有 Agent 运行在创建前明确失败。
+  for (const message of removedExecutionSettingWarnings(process.env)) console.warn(message)
+  if (dsh.value) {
+    const baseInstallation = dsh.value
     const probed = await probeExecutionCapability('execution-container', async () => {
-      if (executionContainerSwitch !== 'on') throw new Error('DSH_WORK_EXECUTION_CONTAINER 只能是 on 或 off')
       const containers = new AttemptExecutionContainers(new DockerExecutionBackend(), {
         image: process.env.DSH_WORK_EXECUTION_IMAGE ?? '',
         user: resolveExecutionContainerUser(),
@@ -195,7 +191,7 @@ async function start() {
       assertExclusiveToolScheduling(catalog)
       return { containers, installation }
     }, error => {
-      console.warn(`execution container unavailable; DSH subprocesses stay on the host for this run: ${redactSensitiveText(error instanceof Error ? error.message : String(error)).slice(0, 500)}`)
+      console.warn(`execution container unavailable; Agent runs are refused until it is fixed and the service restarts: ${redactSensitiveText(error instanceof Error ? error.message : String(error)).slice(0, 500)}`)
     })
     if (probed.value) {
       dshInstallation = probed.value.installation
@@ -204,34 +200,15 @@ async function start() {
       console.warn(`execution container toolchain: ${attemptContainers.toolchain.map(tool => tool.version ? `${tool.id} ${tool.version}` : tool.id).join(', ')}`)
     }
     executionContainerCapability = probed.state
-  } else if (!dshInstallation && executionContainerSwitch && executionContainerSwitch !== 'off') {
-    // 开关已打开但 DSH 本身不可用：如实报告不可用，而不是“未配置”。
-    executionContainerCapability = { status: 'unavailable', code: 'EXECUTION_CONTAINER_UNAVAILABLE' }
   }
-  const python = await probeExecutionCapability('python', process.env.DSH_WORK_PYTHON_IMAGE ? async () => {
-    const executor = new ContainerExecutor(new DockerExecutionBackend(), {
-      pythonImage: process.env.DSH_WORK_PYTHON_IMAGE!,
-      maxContainers: parseMaxContainers(process.env.DSH_WORK_EXECUTION_MAX_CONTAINERS),
-    })
-    const runner = new PythonSkillRunner(executor, {
-      user: process.env.DSH_WORK_PYTHON_USER,
-    })
-    await runner.preflight()
-    executor.startMaintenance()
-    containerExecutor = executor
-    return runner
-  } : null)
-  const pythonRunner = python.value
-  pythonCapability = python.state
-  // 执行隔离 1b②（方案 4.8）：执行容器可用且镜像含 python3 时，python_execute 在本 Attempt 的执行容器内运行，
-  // 可用性随执行容器，依赖按执行镜像实际已安装的包核对；否则沿用每次调用一个容器（DSH_WORK_PYTHON_IMAGE）。
+  // 执行隔离 1b②（方案 4.8）：python_execute 在本 Attempt 的执行容器内运行，可用性随执行容器与镜像中的 python3，
+  // Skill 声明的依赖按执行镜像实际已安装的包核对。
   const containerPythonRunner = attemptContainers?.toolchain.some(tool => tool.id === 'python3')
     ? new ExecutionContainerPythonRunner(attemptContainers)
     : null
   if (containerPythonRunner) pythonCapability = { status: 'available' }
-  const executePythonCall = containerPythonRunner ?? pythonRunner
   // 执行隔离 2b-3：二进制成果的解析文本只在一次性容器中生成（执行镜像、Python 沙箱姿态、独立的 2 个槽位）。
-  // 执行容器不可用时不解析，二进制成果仍可发布，只是没有解析文本。
+  // 解析容器启动失败时不解析，二进制成果仍可发布，只是没有解析文本。
   let extractionExecutor: ContainerExecutor | null = null
   if (attemptContainers) {
     const containers = attemptContainers
@@ -244,7 +221,7 @@ async function start() {
       console.warn(`artifact text extraction unavailable: ${redactSensitiveText(error instanceof Error ? error.message : String(error)).slice(0, 500)}`)
     }
   }
-  const conversations = new PostgresConversationRepository(database, undefined, { binaryArtifactsReferenceable: attemptContainers !== null })
+  const conversations = new PostgresConversationRepository(database)
   const authorization = new PostgresAuthorizationService(database, {
     // AI Hub 身份的后台任务必须复核目录；配置降级为 local 时传 null，
     // 授权服务仍按用户来源拒绝 AI Hub 后台执行，独立账号不受影响。
@@ -354,7 +331,7 @@ async function start() {
         })
       },
     }),
-    ...(executePythonCall ? { executePython: (input, manifest, workspace, signal) => executePythonCall.execute(input, manifest, workspace, signal) } : {}),
+    ...(containerPythonRunner ? { executePython: (input, manifest, workspace, signal) => containerPythonRunner.execute(input, manifest, workspace, signal) } : {}),
     ...(attemptContainers ? {
       remoteExecution: attemptContainers,
       recordContainerCommand: async (manifest, audit) => {
@@ -368,7 +345,7 @@ async function start() {
         )
       },
     } : {}),
-  }) : new UnavailableRuntime('runtime-local-01')
+  }) : new UnavailableRuntime('runtime-local-01', dsh.value ? 'execution-container' : 'dsh')
   const runtime = new CapabilityGuardedRuntime(dshAdapter, pythonCapability)
   executionRuntime = runtime
   const workspaceMembers = new PostgresWorkspaceMemberService(database, authorization)
@@ -401,6 +378,7 @@ async function start() {
     builtinCatalog = { checkedAt: new Date().toISOString(), error: error instanceof Error ? error.message : String(error) }
     console.warn('DSH built-in tool catalog check skipped:', error)
   })
+  const executionContainerStatus = () => executionContainerCapability.status === 'available' ? 'available' as const : 'unavailable' as const
   // 方案 4.7：执行容器可用时报告数据卷剩余空间是否低于阈值（低时不运行命令）。
   const executionDiskLow = async () => attemptContainers
     ? (await freeSpace(dataRoot).catch(() => null))?.low ?? false
@@ -409,7 +387,7 @@ async function start() {
     tools: builtinTools,
     disabledTools: [...(await operations.getRuntimePolicy('runtime-local-01')).disabledTools],
     catalog: builtinCatalog,
-    executionContainer: { status: executionContainerCapability.status, ...((await executionDiskLow()) ? { diskLow: true } : {}) },
+    executionContainer: { status: executionContainerStatus(), ...((await executionDiskLow()) ? { diskLow: true } : {}) },
   })
   const skills = new PostgresSkillService(database, operations, skillArtifacts)
   // C7 only inspects execution capability; it never starts a Worker/model call.
@@ -464,21 +442,18 @@ async function start() {
       projectTasks: projects,
       projectArchive,
       timezone: resolvePlatformTimezone(process.env.DSH_WORK_TIMEZONE),
-      executionContainerAvailable: attemptContainers !== null,
     },
   )
   projects.attachRunStarter(orchestration)
   persistentWait = new PostgresPersistentWaitService(database, runs, {
     reauthorize: manifest => orchestration!.assertWaitingRunAuthorization(manifest),
     enqueue: (run, manifest) => orchestration!.enqueueResumedAttempt(run, manifest),
-  }, dshInstallation?.version ?? 'unavailable')
+  }, dsh.value?.version ?? 'unavailable')
   persistentWaitRef.current = persistentWait
   orchestration.setPersistentWaitService(persistentWait)
   persistentWait.start()
-  const pythonPackages = containerPythonRunner && attemptContainers
-    ? [...attemptContainers.pythonPackages]
-    : (process.env.DSH_WORK_PYTHON_PACKAGES ?? '').split(',').map(value => value.trim()).filter(Boolean)
-  const installationService: AdminSkillInstallationService = new AdminSkillInstallationService(database, orchestration, authorization, acquireSkillSource, Boolean(executePythonCall), pythonPackages, skillArtifacts, checkInstallationRuntime)
+  const pythonPackages = containerPythonRunner && attemptContainers ? [...attemptContainers.pythonPackages] : []
+  const installationService: AdminSkillInstallationService = new AdminSkillInstallationService(database, orchestration, authorization, acquireSkillSource, Boolean(containerPythonRunner), pythonPackages, skillArtifacts, checkInstallationRuntime)
   const assistantService = new AdminAssistantService(database, orchestration, authorization, installationService, skills, agents, operations)
   skills.setPackageTester((userId, skill, prompt) => installationService.testPackage(userId, skill, prompt))
   skills.setPackageTestLifecycle({
@@ -606,7 +581,7 @@ async function start() {
       executionCapabilities: {
         dsh: { status: dshCapability.status },
         python: { status: pythonCapability.status },
-        executionContainer: { status: executionContainerCapability.status, ...((await executionDiskLow()) ? { diskLow: true } : {}) },
+        executionContainer: { status: executionContainerStatus(), ...((await executionDiskLow()) ? { diskLow: true } : {}) },
       },
       dshRuntime: {
         status: executionRuntime ? (await executionRuntime.health()).status : dshInstallation ? 'connected' : 'not-configured',
@@ -630,7 +605,6 @@ async function start() {
         if (revocationSweep) revocationSweep.close()
         persistentWait?.close()
         if (orchestration) await orchestration.close()
-        containerExecutor?.close()
         extractionExecutor?.close()
         attemptContainers?.close()
         await database.end()

@@ -48,13 +48,13 @@ export function buildSkillInstallationPlan(
   })
   const issues = packages.flatMap(pkg => pkg.compatibility.issues.map(issue => ({ ...issue, message: `${pkg.name}：${issue.message}` })))
   if (hasDependencyCycle(bundle.edges)) issues.push({ code: 'skill_dependency_cycle', severity: 'error', message: 'Skill 依赖图存在循环，无法生成稳定激活顺序' })
-  // 执行隔离 1b②（方案 4.8）：执行容器内没有 /skill、/input、/output，脚本应改用 DSH_SKILL_DIR 等环境变量。
+  // 执行隔离 1b②、阶段 3（方案 4.8、4.9）：python_execute 只在执行容器内运行，没有 /skill、/input、/output，脚本应改用 DSH_SKILL_DIR 等环境变量。
   for (const pkg of packages) {
     const fixed = pkg.files.filter(file => file.path.endsWith('.py') && FIXED_SANDBOX_PATH.test(file.content)).map(file => file.path)
     if (fixed.length) {
       issues.push({
         code: 'python_fixed_sandbox_paths', severity: 'warning',
-        message: `${pkg.name}：脚本写死了 /skill、/input 或 /output（${fixed.slice(0, 3).join('、')}${fixed.length > 3 ? ' 等' : ''}），执行容器中不可用；请改用环境变量 DSH_SKILL_DIR、DSH_INPUT_DIR、DSH_OUTPUT_DIR 或相对路径`,
+        message: `${pkg.name}：脚本写死了 /skill、/input 或 /output（${fixed.slice(0, 3).join('、')}${fixed.length > 3 ? ' 等' : ''}），平台不提供这些路径；请改用环境变量 DSH_SKILL_DIR、DSH_INPUT_DIR、DSH_OUTPUT_DIR 或相对路径`,
       })
     }
   }

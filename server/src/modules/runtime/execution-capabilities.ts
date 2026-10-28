@@ -8,7 +8,7 @@ export class ExecutionCapabilityUnavailableError extends Error {
       dsh: 'DSH 执行能力不可用，请管理员检查配置并重启服务后重试',
       python: 'Python 执行能力不可用，其他不依赖 Python 的任务可继续',
       model: '当前 DSH 链路尚不能保证 Agent 声明的模型能力，请管理员核对 Agent 要求与 Runtime 支持情况',
-      'execution-container': '执行容器不可用，需要运行命令的任务暂不能执行，请管理员检查执行容器配置',
+      'execution-container': '执行容器不可用，Agent 任务暂不能执行，请管理员检查执行镜像与 Docker 后重启服务',
     }[capability])
     this.name = 'ExecutionCapabilityUnavailableError'
     this.code = ({
@@ -27,21 +27,25 @@ export async function assertRuntimeModelRequirements(
   await runtime.assertModelRequirements(requirements, target)
 }
 
-/** Negative capability only: never creates a Worker, model call, event or answer. */
+/**
+ * Negative capability only: never creates a Worker, model call, event or answer.
+ * `capability` names what failed: DSH itself, or the execution container that every DSH run requires (plan 4.9).
+ */
 export class UnavailableRuntime implements AgentRuntimePort {
   private readonly runtimeId: string
-  constructor(runtimeId: string) { this.runtimeId = runtimeId }
-  async assertAvailable(): Promise<void> { throw new ExecutionCapabilityUnavailableError('dsh') }
-  async execute(_manifest: RuntimeManifest): ReturnType<AgentRuntimePort['execute']> { void _manifest; throw new ExecutionCapabilityUnavailableError('dsh') }
+  private readonly capability: 'dsh' | 'execution-container'
+  constructor(runtimeId: string, capability: 'dsh' | 'execution-container' = 'dsh') { this.runtimeId = runtimeId; this.capability = capability }
+  async assertAvailable(): Promise<void> { throw new ExecutionCapabilityUnavailableError(this.capability) }
+  async execute(_manifest: RuntimeManifest): ReturnType<AgentRuntimePort['execute']> { void _manifest; throw new ExecutionCapabilityUnavailableError(this.capability) }
   subscribe(_runId: string, _listener: RuntimeEventListener) { void _runId; void _listener; return () => {} }
   async cancel(_runId: string, _requestedBy: string, _cause?: RuntimeCancelCause) { void _runId; void _requestedBy; void _cause; return { accepted: false } }
   status(_runId: string) { void _runId; return undefined }
-  async listTools(): Promise<never> { throw new ExecutionCapabilityUnavailableError('dsh') }
+  async listTools(): Promise<never> { throw new ExecutionCapabilityUnavailableError(this.capability) }
   async configureScheduling(_status: 'accepting' | 'draining' | 'disabled') { void _status }
   async close() {}
   async health() { return { status: 'offline' as const, runtimeId: this.runtimeId, activeExecutions: 0,
     acceptingRuns: false, dshRepository: '', transport: 'acp-stdio' as const,
-    message: new ExecutionCapabilityUnavailableError('dsh').message } }
+    message: new ExecutionCapabilityUnavailableError(this.capability).message } }
 }
 
 export interface CapabilityState {

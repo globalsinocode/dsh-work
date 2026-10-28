@@ -182,23 +182,16 @@ export class PostgresConversationRepository {
   private readonly database: DatabaseClient
   private readonly workspaces: PostgresWorkspaceService
 
-  private readonly binaryArtifactsReferenceable: boolean
-
-  constructor(
-    database: DatabaseClient,
-    workspaces = new PostgresWorkspaceService(database),
-    /** 执行容器通过启动检查时为 true：二进制成果可作为下一轮输入（原始文件挂载，执行隔离 2b-4）。 */
-    options: { binaryArtifactsReferenceable?: boolean } = {},
-  ) {
+  constructor(database: DatabaseClient, workspaces = new PostgresWorkspaceService(database)) {
     this.database = database
     this.workspaces = workspaces
-    this.binaryArtifactsReferenceable = options.binaryArtifactsReferenceable ?? false
   }
 
   /**
    * Whether an artifact version (`a`, file `f`) can be attached to a later message: clean, not removed,
-   * and either with extracted text, or a binary artifact while the execution container can mount its
-   * original (execution isolation 2b-4). Mirrors the content service's runtime file readiness.
+   * and either with extracted text, or a binary artifact whose original the execution container mounts
+   * (execution isolation 2b-4; the container is always required, plan 4.9). Mirrors the content service's
+   * runtime file readiness.
    */
   private canReferenceSql() {
     return this.database`(f.scan_status = 'clean' and f.removed_at is null and (
@@ -207,7 +200,7 @@ export class PostgresConversationRepository {
          where fe.tenant_id = f.tenant_id and fe.file_id = f.id
            and fe.status = 'succeeded' and fe.extractor_version = 'm4-basic-v1'
       )
-      or (${this.binaryArtifactsReferenceable}::boolean and a.artifact_type in ('xlsx', 'docx', 'pptx', 'pdf', 'png', 'jpg'))
+      or a.artifact_type in ('xlsx', 'docx', 'pptx', 'pdf', 'png', 'jpg')
     ))`
   }
 

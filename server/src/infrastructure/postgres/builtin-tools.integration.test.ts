@@ -166,10 +166,10 @@ test('员工对话只在执行容器可用时装配 bash，Runtime 停用清单�
     },
     async close() {},
   }
-  const orchestration = (executionContainerAvailable: boolean) => new RunOrchestrationService(
+  const orchestration = () => new RunOrchestrationService(
     new PostgresRunRepository(database), new PostgresConversationRepository(database),
     new ModelGovernanceService(new PostgresModelGovernanceRepository(database)), runtime,
-    undefined, operations, agents, undefined, undefined, { executionContainerAvailable },
+    undefined, operations, agents, undefined, undefined,
   )
   const toolsOf = async (service: RunOrchestrationService) => {
     const session = await service.createSession({ userId: 'U00001', title: 'bash 装配', agentVersionId: created.version.id })
@@ -187,10 +187,10 @@ test('员工对话只在执行容器可用时装配 bash，Runtime 停用清单�
   })
   await setDisabled([])
   try {
-    assert.ok((await toolsOf(orchestration(true))).includes('bash'))
-    assert.equal((await toolsOf(orchestration(false))).includes('bash'), false)
+    // 执行容器为必需（方案 4.9）：员工侧运行总是装配 bash，只有 Runtime 紧急停用能去掉。
+    assert.ok((await toolsOf(orchestration())).includes('bash'))
     await setDisabled(['bash'])
-    assert.equal((await toolsOf(orchestration(true))).includes('bash'), false)
+    assert.equal((await toolsOf(orchestration())).includes('bash'), false)
   } finally {
     await setDisabled([])
   }

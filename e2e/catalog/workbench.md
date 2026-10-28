@@ -148,12 +148,12 @@ P1/P2 的执行结果须单独记录数据库、身份、Runtime/DSH 版本和�
 ### EX-ARTIFACT-04 运行命令时挂载原始文件，二进制成果可跨轮修改（执行隔离 2b-4）
 
 **优先级：** P1 · **角色：** 员工 · **运行层级：** 一次性 PostgreSQL、Manifest 编译器、Runtime Adapter（受控 Worker）；真实 Docker + DSH 端到端为 opt-in；真实模型修改 Office 文件属 P2<br>
-**前置数据：** 执行容器模式可用；个人或团队会话中有一个已上传的 xlsx 附件，以及一次成功 Run 登记的 xlsx 成果<br>
+**前置数据：** 执行容器可用（为必需，执行隔离 4.9）；个人或团队会话中有一个已上传的 xlsx 附件，以及一次成功 Run 登记的 xlsx 成果<br>
 **spec：** `server/src/modules/runtime/runtime-manifest-schema.test.ts`、`server/src/modules/runtime/runtime-adapter.test.ts`、`server/src/infrastructure/postgres/m3-orchestration.integration.test.ts`、`server/src/modules/runtime/execution-container.e2e.test.ts`
 
 1. 本轮装配了 `bash` 时，所选附件除解析文本（`input/*.txt`）外，另以只读方式挂载原始文件（`input/original/`）；二进制成果没有解析文本，只挂原始文件。运行说明分别列出两类路径。
-2. 执行容器模式可用时，二进制成果卡片提供“继续修改”；引用后模型把修改后的完整文件写入 `output/<原名>`，平台登记为该成果的下一版本，旧版本仍可下载。原样复制、内容未变的文件不产生新版本。
-3. 未装配 `bash`（执行容器不可用或被紧急停用）时，有解析文本的二进制成果只挂解析文本，运行说明告知只能参考、不能修改；没有解析文本的二进制成果不能作为本轮输入，提交前提示原因，不创建 Attempt（见 EX-ARTIFACT-06）；文本类附件照常只挂解析文本。
+2. 二进制成果卡片提供“继续修改”；引用后模型把修改后的完整文件写入 `output/<原名>`，平台登记为该成果的下一版本，旧版本仍可下载。原样复制、内容未变的文件不产生新版本。
+3. 未装配 `bash`（被 Runtime 紧急停用；执行容器不可用时整个运行被拒绝）时，有解析文本的二进制成果只挂解析文本，运行说明告知只能参考、不能修改；没有解析文本的二进制成果不能作为本轮输入，提交前提示原因，不创建 Attempt（见 EX-ARTIFACT-06）；文本类附件照常只挂解析文本。
 4. 原始文件在 Attempt 开始时按 Run 绑定读取，校验摘要与大小，不一致即失败；不属于本 Run 的文件不能被读取。
 
 **验收：** 上述测试通过。P2 另需在目标环境用真实 DSH 修改一个 xlsx 成果的指定单元格，下载 V1、V2 核对差异，并留证 Run/Attempt 与 DSH 版本。
@@ -161,10 +161,10 @@ P1/P2 的执行结果须单独记录数据库、身份、Runtime/DSH 版本和�
 ### EX-ARTIFACT-05 执行镜像的 Office 工具链：启动检查与运行说明（执行隔离 2b-1）
 
 **优先级：** P1 · **角色：** 平台管理员、员工 · **运行层级：** 工具链检查与 Runtime 说明单元测试、Runtime Adapter（受控 Worker）；真实 Docker + DSH 端到端与服务启动检查为 opt-in（`DSH_WORK_EXECUTION_E2E_IMAGE` 指向执行镜像工作流产出的镜像）；真实模型生成 Office 文件属 P2<br>
-**前置数据：** 执行容器模式开启；一个摘要锁定的执行镜像（含 LibreOffice、poppler、pandoc 与 Python 包）；只含 `rg` 的旧镜像以其工具链检查的实际输出作为单元测试数据<br>
+**前置数据：** 一个摘要锁定的执行镜像（含 LibreOffice、poppler、pandoc 与 Python 包）；只含 `rg` 的旧镜像以其工具链检查的实际输出作为单元测试数据<br>
 **spec：** `server/src/modules/runtime/execution-toolchain.test.ts`、`server/src/modules/runtime/runtime-adapter.test.ts`、`server/src/modules/runtime/execution-container.e2e.test.ts`、`server/src/infrastructure/postgres/execution-container-startup.integration.test.ts`
 
-1. 服务启动时在与执行容器相同的隔离条件下检查镜像：缺少 `bash`、`rg`、LibreOffice 或 `pdftoppm` 任一项时，执行容器显示不可用，员工对话不装配 `bash`；服务日志说明缺少哪些程序。
+1. 服务启动时在与执行容器相同的隔离条件下检查镜像：缺少 `bash`、`rg`、LibreOffice 或 `pdftoppm` 任一项，或未配置镜像时，执行容器显示不可用，所有 Agent 运行在创建前被拒绝，DSH 不在宿主执行；服务日志说明原因。旧开关 `DSH_WORK_EXECUTION_CONTAINER` 即使设为 `off` 也只被提示忽略（执行隔离 4.9）。
 2. 检查通过时，服务日志列出检查到的程序与版本；员工运行装配 `bash` 时，运行说明列出这些程序的用途与版本（含 pandas 等 Python 包），并说明镜像内置中文字体；未检查到的可选程序不出现在说明中。
 3. 在执行容器内，模型用 Python 生成含中文的 xlsx，经 LibreOffice 转为 PDF 写入 `output/`，PDF 中文使用简体字形；再把 PDF 页面转为图片。
 
@@ -173,12 +173,12 @@ P1/P2 的执行结果须单独记录数据库、身份、Runtime/DSH 版本和�
 ### EX-ARTIFACT-06 Office/PDF 成果在隔离容器中解析，可作为后续对话的文本参考（执行隔离 2b-3）
 
 **优先级：** P1 · **角色：** 员工 · **运行层级：** 解析端口单元测试（容器以测试替身代替）、一次性 PostgreSQL 与成果发布服务（解析器测试替身）、Runtime Adapter；真实 Docker 解析用例为 opt-in（`DSH_WORK_EXECUTION_E2E_IMAGE`）；真实模型基于解析文本作答属 P2<br>
-**前置数据：** 执行容器模式可用；一次运行在 `output/` 写出 xlsx、docx、pptx、pdf 与一个 Markdown 文件，其中 PDF 无法读取<br>
+**前置数据：** 执行容器可用；一次运行在 `output/` 写出 xlsx、docx、pptx、pdf 与一个 Markdown 文件，其中 PDF 无法读取<br>
 **spec：** `server/src/modules/workbench/application/container-artifact-text-extractor.test.ts`、`server/src/infrastructure/postgres/m3-orchestration.integration.test.ts`、`server/src/modules/runtime/runtime-adapter.test.ts`、`server/src/modules/runtime/execution-container.e2e.test.ts`
 
 1. 成果登记时，本轮的 Office/PDF 成果在一个与外界隔离的一次性容器中解析出文本，服务本身不打开这些文件；Markdown 等文本成果照旧以原文作为解析文本。
 2. 解析失败的文件（如无法读取的 PDF）照常登记为成果，只是不能作为文本参考，下次不再重试；解析容器本身无法运行时成果照常登记，服务重启后在后台补齐解析。
-3. 执行容器不可用时，有解析文本的 Office 成果可以作为新对话的参考资料，运行说明告知只能参考、不能修改；对话中的“继续修改”仍只在执行容器可用时提供。执行容器可用时同时提供解析文本与原始文件。
+3. 引用 Office 成果时同时提供解析文本与原始文件，对话中的成果始终可“继续修改”；`bash` 被 Runtime 紧急停用时，有解析文本的 Office 成果只作为参考资料，运行说明告知只能参考、不能修改。
 4. 解析文本中，表格按工作表列出（没有计算结果的公式显示公式本身），演示文稿按页列出文字、表格与备注；容器写出的链接文件或非 UTF-8 内容不被采信。
 
 **验收：** 上述测试通过；真实 Docker 用例用执行镜像生成的真实 Office 文件核对解析文本。P2 另需在目标环境用真实 DSH 生成 xlsx 后，在下一轮只引用它请模型复述其中数字，核对与表格一致。
@@ -200,7 +200,7 @@ P1/P2 的执行结果须单独记录数据库、身份、Runtime/DSH 版本和�
 ### EX-SHELL-01 运行命令的工作区容量上限与回收（执行隔离 4.7）
 
 **优先级：** P1 · **角色：** 员工、平台管理员 · **运行层级：** 计量与回收单元测试、执行容器单元测试（测试替身）、Runtime Adapter（受控 Worker）；真实 Docker 用例（计量按比例放大，避免真实写满 2 GB）；真实 DSH 与目标环境属 P2<br>
-**前置数据：** 执行容器模式可用；一个装配了 `bash` 的员工运行<br>
+**前置数据：** 执行容器可用；一个装配了 `bash` 的员工运行<br>
 **spec：** `server/src/modules/runtime/workspace-usage.test.ts`、`server/src/modules/runtime/execution-container.test.ts`、`server/src/modules/runtime/runtime-adapter.test.ts`
 
 1. 运行说明告知工作区合计不超过 2 GB；命令持续写文件使工作区超过上限时，该命令被终止，模型收到“工作区已用 X，超过上限 2 GB”的说明，本轮可继续；随后删除文件的命令照常执行。
@@ -213,14 +213,14 @@ P1/P2 的执行结果须单独记录数据库、身份、Runtime/DSH 版本和�
 ### EX-SHELL-02 Skill Python 脚本在执行容器内运行，结果登记为成果（执行隔离 1b②）
 
 **优先级：** P1 · **角色：** 员工、平台管理员 · **运行层级：** Python 执行单元测试（执行容器以测试替身代替）、Skill 安装计划单元测试、Runtime Adapter（受控 Worker）；真实 Docker 用例为 opt-in；真实 DSH 运行带脚本的 Skill 属 P2<br>
-**前置数据：** 执行容器模式可用，执行镜像含 `python3`；一个已发布、含 `.py` 入口的 Skill 被员工运行激活<br>
-**spec：** `server/src/modules/runtime/execution-container-python.test.ts`、`server/src/modules/runtime/python-skill-runner.test.ts`、`server/src/modules/skill/skill-package.test.ts`、`server/src/modules/runtime/runtime-adapter.test.ts`、`server/src/modules/runtime/execution-container.e2e.test.ts`
+**前置数据：** 执行容器可用，执行镜像含 `python3`；一个已发布、含 `.py` 入口的 Skill 被员工运行激活<br>
+**spec：** `server/src/modules/runtime/execution-container-python.test.ts`、`server/src/modules/runtime/python-sandbox.test.ts`、`server/src/modules/skill/skill-package.test.ts`、`server/src/modules/runtime/runtime-adapter.test.ts`、`server/src/modules/runtime/execution-container.e2e.test.ts`
 
 1. 模型调用 `python_execute` 时，脚本在本轮的执行容器内运行，工作目录是该 Skill 的目录；脚本经 `DSH_INPUT_DIR`、`DSH_OUTPUT_DIR`、`DSH_SKILL_DIR` 找到输入、输出与 Skill 目录；运行说明给出工作区路径，模型传入绝对路径的文件参数。
 2. 脚本写入输出目录的文件在调用结果中列出，本轮结束时按成果规则登记，可下载、预览与继续修改；不合规的文件跳过并说明。
 3. 脚本只能运行 Skill 登记的入口，不能提交源码或命令；超时、工作区超限时调用被终止并说明。
 4. 安装 Skill 时，写死 `/skill`、`/input`、`/output` 的脚本在安装计划中提示需复核；Skill 声明的 Python 依赖按执行镜像实际已安装的包判断能否发布。
-5. 执行容器不可用时仍为每次调用一个容器，同一脚本经同名环境变量照常运行，输出只列出不登记。
+5. 没有每次调用一个容器的模式（执行隔离 4.9）：执行容器不可用时整个运行被拒绝；镜像不含 `python3` 时 Python 能力不可用。成果解析使用的一次性沙箱不传任何环境变量。
 
 **验收：** 上述测试通过；真实 Docker 用例中脚本经环境变量读写并写出成果。P2 另需在目标环境用真实 DSH 运行一个带 Python 脚本的 Skill，核对结果与成果登记。
 

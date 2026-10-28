@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { stateConflict } from '../../domain/request-errors.ts'
-import { ContainerExecutor, DEFAULT_MAX_CONTAINERS, ExecutionSlots, parseMaxContainers, type PythonSandboxRequest } from './container-executor.ts'
+import { ContainerExecutor, DEFAULT_MAX_CONTAINERS, ExecutionSlots, type PythonSandboxRequest } from './container-executor.ts'
 import type { ContainerCommandResult, ExecutionBackend, PythonSandboxSpec, RunningSandbox } from './execution-backend.ts'
 
 const image = `python@sha256:${'b'.repeat(64)}`
@@ -65,13 +65,9 @@ async function until(predicate: () => boolean) {
   }
 }
 
-test('max containers defaults to 4 and rejects malformed values instead of falling back', () => {
-  assert.equal(parseMaxContainers(undefined), DEFAULT_MAX_CONTAINERS)
-  assert.equal(parseMaxContainers('  '), DEFAULT_MAX_CONTAINERS)
-  assert.equal(parseMaxContainers('8'), 8)
-  for (const value of ['0', '65', 'abc', '1.5', '-1', '4 containers', '0x4']) {
-    assert.throws(() => parseMaxContainers(value), /DSH_WORK_EXECUTION_MAX_CONTAINERS/, value)
-  }
+test('slot capacity must be a whole number from 1 to 64', () => {
+  assert.equal(new ExecutionSlots(DEFAULT_MAX_CONTAINERS).inUse, 0)
+  for (const value of [0, 65, 1.5, -1, Number.NaN]) assert.throws(() => new ExecutionSlots(value), /并发上限/, String(value))
 })
 
 test('slots queue in order, hand off on release, and an aborted wait leaves no trace', async () => {

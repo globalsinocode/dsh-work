@@ -96,7 +96,7 @@
 **spec：** `server/src/infrastructure/postgres/builtin-tools.integration.test.ts`、`server/src/infrastructure/postgres/agent-release-governance.integration.test.ts`、`server/src/modules/run/current-execution-authorization.test.ts`、`server/src/modules/skill/skill-package.test.ts`
 
 1. 新建 Agent，不开启联网搜索：运行快照装配 `read`、`glob`、`grep`、`read_image`、`write`、`edit`、`str_replace_editor`、`todo_write`，不含 `web_search` 与 `bash`；运行审批模式为无需审批。
-   - 执行容器模式开启且启动检查通过时，员工对话的 Manifest 另含 `bash`；未开启或不可用时不含（执行隔离 2a）。
+   - 员工对话的 Manifest 另含 `bash`（执行隔离 2a；执行容器为必需，4.9），只有 Runtime 紧急停用能去掉；执行容器不可用时运行在创建前被拒绝。
 2. 在 Agent 能力中开启“允许联网搜索”，验证运行的 Manifest 含 `web_search`；编辑时不改开关则保留原设置。
 3. 选择声明 `web_search` 的 Skill 而 Agent 未开启联网搜索，保存与验证被拒绝并提示“未开启联网搜索”；Skill 依赖平台不提供或不能由 Skill 声明的工具（如 `bash`）时说明“平台不提供该工具”。
 4. SKILL.md 的 `allowed-tools` 按名称匹配内置工具（`Read`、`WebSearch`、`str_replace_editor`），未知工具标为不支持。

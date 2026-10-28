@@ -161,8 +161,8 @@ export interface DshAcpRuntimeAdapterConfiguration {
   ) => Promise<unknown>
   recordPythonExecution?: (manifest: RuntimeManifest, skillId: string, entry: string, succeeded: boolean) => Promise<void>
   /**
-   * 执行容器模式（执行隔离方案 1b）：DSH 的子进程经工具桥落到本 Attempt 的执行容器。
-   * 未配置时保持现状（DSH 在宿主机起子进程）。
+   * 执行容器（执行隔离方案 1b）：DSH 的子进程经工具桥落到本 Attempt 的执行容器。生产启动总是配置
+   * （方案 4.9，不可用时不构建本 Adapter）；可选只为不起命令的 Worker 替身测试，带 bash 的 Manifest 在未配置时被拒绝。
    */
   remoteExecution?: {
     exec(attemptId: string, workspace: string, command: ContainerCommand, signal: AbortSignal): Promise<ContainerCommandResult>

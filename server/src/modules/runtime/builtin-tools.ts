@@ -89,9 +89,9 @@ export function parseBuiltinToolReference(reference: string): BuiltinTool | unde
   return version === BUILTIN_TOOL_VERSION ? byName.get(name) : undefined
 }
 
-/** 执行容器可用时员工侧 Agent 运行装配的工具（执行隔离阶段 2）。 */
-export function executionToolNames(executionContainerAvailable: boolean): string[] {
-  return executionContainerAvailable ? builtinTools.filter(tool => tool.assembly === 'execution-container').map(tool => tool.name) : []
+/** 员工侧 Agent 运行装配的执行容器工具（执行隔离阶段 2；阶段 3 起执行容器为必需，方案 4.9）。 */
+export function executionToolNames(): string[] {
+  return builtinTools.filter(tool => tool.assembly === 'execution-container').map(tool => tool.name)
 }
 
 /** 项目任务工具（S6）：读取与写入分开，定时执行只装配读取。 */
@@ -169,9 +169,9 @@ export interface BuiltinToolStatus {
   tools: readonly BuiltinTool[]
   disabledTools: string[]
   catalog: { checkedAt: string; missingTools: string[] } | { checkedAt: string; error: string } | null
-  /** 本次启动的执行容器状态：决定 bash 是否装配（执行隔离阶段 2）。原因细节只进服务日志。 */
+  /** 本次启动的执行容器状态：不可用时所有 Agent 运行被拒绝（执行隔离方案 4.9）。原因细节只进服务日志。 */
   executionContainer: {
-    status: 'available' | 'unavailable' | 'not-configured'
+    status: 'available' | 'unavailable'
     /** 执行容器可用而数据卷剩余空间低于阈值：暂不运行命令（方案 4.7）。 */
     diskLow?: boolean
   }

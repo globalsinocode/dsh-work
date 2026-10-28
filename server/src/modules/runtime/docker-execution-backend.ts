@@ -32,9 +32,6 @@ export function commandEnvironment(command: Pick<ContainerCommand, 'env'>): stri
   })
 }
 
-/** The paths a Skill script sees in the per-call Python sandbox, as in the execution container (plan 4.8). */
-const PYTHON_SANDBOX_PATH_ENV = ['DSH_SKILL_DIR=/skill', 'DSH_INPUT_DIR=/input', 'DSH_OUTPUT_DIR=/output'] as const
-
 export const EXECUTION_COMMAND_ENV = [
   'LANG=C.UTF-8',
   'PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin',
@@ -294,7 +291,7 @@ export function buildPythonSandboxArguments(
   options: PythonSandboxArgumentOptions,
 ) {
   if (!PYTHON_CONTAINER_NAME_PATTERN.test(options.name)) throw invalidRequest('Python 沙箱容器名称无效')
-  if (!SANDBOX_USER_PATTERN.test(options.user)) throw invalidRequest('DSH_WORK_PYTHON_USER 必须是非 root 的 uid:gid，例如 65534:65534')
+  if (!SANDBOX_USER_PATTERN.test(options.user)) throw invalidRequest('Python 沙箱用户必须是非 root 的 uid:gid，例如 65534:65534')
   for (const mountPath of [skillRoot, inputRoot, outputRoot]) {
     if (mountPath.includes(',') || mountPath.includes('\0')) throw invalidRequest('Python 沙箱挂载路径无效')
   }
@@ -316,7 +313,6 @@ export function buildPythonSandboxArguments(
     '--mount', `type=bind,src=${skillRoot},dst=/skill,readonly`,
     '--mount', `type=bind,src=${inputRoot},dst=/input,readonly`,
     '--mount', `type=bind,src=${outputRoot},dst=/output`,
-    ...PYTHON_SANDBOX_PATH_ENV.flatMap(value => ['-e', value]),
     '--workdir', '/skill', image, 'python', '-I', '-B', entry, ...args,
   ]
 }

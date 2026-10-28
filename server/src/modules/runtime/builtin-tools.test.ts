@@ -13,8 +13,7 @@ test('bash is a DSH tool assembled only when the execution container is availabl
   assert.equal(bash?.assembly, 'execution-container')
   assert.equal(isDshBuiltinTool('bash'), true, 'Runtime emergency disable applies to bash')
   assert.deepEqual(normalizeDisabledTools(['bash']), ['bash'])
-  assert.deepEqual(executionToolNames(true), ['bash'])
-  assert.deepEqual(executionToolNames(false), [])
+  assert.deepEqual(executionToolNames(), ['bash'])
   for (const webSearchEnabled of [false, true]) {
     assert.equal(agentBuiltinToolNames({ webSearchEnabled }).includes('bash'), false)
   }

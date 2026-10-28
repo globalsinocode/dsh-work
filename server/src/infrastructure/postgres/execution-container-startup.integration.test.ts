@@ -10,7 +10,7 @@ import { after, before, test } from 'node:test'
 import { createThrowawayDatabase, type ThrowawayDatabase } from './test-database.ts'
 
 /**
- * 执行隔离 1b：执行容器模式在服务启动时确定。需要真实 DSH 与 Docker，
+ * 执行隔离阶段 3（方案 4.9）：执行容器为必需，服务启动时检查。需要真实 DSH 与 Docker，
  * 并用 DSH_WORK_EXECUTION_E2E_IMAGE 指定能通过工具链检查（bash、rg、LibreOffice、pdftoppm）、按摘要或本地镜像 ID
  * 锁定的执行镜像（执行镜像工作流产出的镜像即可）；缺少任一项则跳过。
  */
@@ -23,39 +23,43 @@ let db: ThrowawayDatabase | undefined
 before(async () => { if (!skip) db = await createThrowawayDatabase({ namePrefix: 'dsh_exec_startup' }) })
 after(async () => { await db?.dispose() })
 
-interface Health { data: { dshRuntime: { status: string }; executionCapabilities: { dsh: { status: string }; executionContainer: { status: string } } } }
+interface Health { data: { dshRuntime: { status: string }; executionCapabilities: { dsh: { status: string }; python: { status: string }; executionContainer: { status: string } } } }
 
-test('container mode on: health reports it available and every DSH process gets the overlay', { skip, timeout: 120_000 }, async () => {
-  const app = await startApplication({ DSH_WORK_EXECUTION_CONTAINER: 'on', DSH_WORK_EXECUTION_IMAGE: image! })
+test('a usable image: every DSH process gets the overlay, and the removed switch is ignored with a warning', { skip, timeout: 120_000 }, async () => {
+  const app = await startApplication({ DSH_WORK_EXECUTION_CONTAINER: 'off', DSH_WORK_EXECUTION_IMAGE: image! })
   try {
     const health = await waitForHealth(app)
     assert.equal(health.data.executionCapabilities.dsh.status, 'available')
     assert.equal(health.data.executionCapabilities.executionContainer.status, 'available', app.output())
+    assert.equal(health.data.executionCapabilities.python.status, 'available')
+    assert.notEqual(health.data.dshRuntime.status, 'offline')
     assert.match(app.output(), /execution container toolchain: bash [\d.]+, rg [\d.]+, soffice [\d.]+, pdftoppm [\d.]+/)
+    assert.match(app.output(), /DSH_WORK_EXECUTION_CONTAINER is removed and ignored/)
     const overlay = await readFile(join(app.root, 'dsh-config/execution-container.cordis.patch.yml'), 'utf8')
     assert.match(overlay, /dsh-work-remote-subprocess\.js/)
   } finally { await app.close() }
 })
 
-test('container mode on but the image is unusable: DSH keeps running locally and health says unavailable', { skip, timeout: 120_000 }, async () => {
-  const app = await startApplication({ DSH_WORK_EXECUTION_CONTAINER: 'on', DSH_WORK_EXECUTION_IMAGE: `missing@sha256:${'0'.repeat(64)}` })
+test('an unusable image: DSH never runs on the host and the Runtime refuses runs', { skip, timeout: 120_000 }, async () => {
+  const app = await startApplication({ DSH_WORK_EXECUTION_IMAGE: `missing@sha256:${'0'.repeat(64)}` })
   try {
     const health = await waitForHealth(app)
     assert.equal(health.data.executionCapabilities.dsh.status, 'available')
     assert.equal(health.data.executionCapabilities.executionContainer.status, 'unavailable')
-    assert.match(app.output(), /execution container unavailable; DSH subprocesses stay on the host/)
+    assert.equal(health.data.executionCapabilities.python.status, 'unavailable')
+    assert.equal(health.data.dshRuntime.status, 'offline', 'no Runtime accepts work without the execution container')
+    assert.match(app.output(), /execution container unavailable; Agent runs are refused/)
+    assert.doesNotMatch(app.output(), /stay on the host/)
   } finally { await app.close() }
 })
 
-test('an unknown switch value fails closed to local execution; unset means not configured', { skip, timeout: 120_000 }, async () => {
-  const invalid = await startApplication({ DSH_WORK_EXECUTION_CONTAINER: 'yes', DSH_WORK_EXECUTION_IMAGE: image! })
+test('no image configured: the execution container is unavailable, not optional', { skip, timeout: 120_000 }, async () => {
+  const app = await startApplication({})
   try {
-    assert.equal((await waitForHealth(invalid)).data.executionCapabilities.executionContainer.status, 'unavailable')
-  } finally { await invalid.close() }
-  const unset = await startApplication({})
-  try {
-    assert.equal((await waitForHealth(unset)).data.executionCapabilities.executionContainer.status, 'not-configured')
-  } finally { await unset.close() }
+    const health = await waitForHealth(app)
+    assert.equal(health.data.executionCapabilities.executionContainer.status, 'unavailable')
+    assert.equal(health.data.dshRuntime.status, 'offline')
+  } finally { await app.close() }
 })
 
 async function freePort() {

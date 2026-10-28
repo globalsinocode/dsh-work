@@ -145,11 +145,11 @@ export class AttemptDispatcher {
     }
     // 内置工具按注册表装配，去掉 Runtime 配置紧急停用的工具。
     // 项目任务工具按运行场景装配（S6），不进入 Agent 快照的默认 runtimeTools。
-    // bash 只在本次启动的执行容器可用时装配（执行隔离阶段 2）；本方法只服务员工侧 Agent 运行，
+    // bash 始终装配（执行容器为必需，执行隔离方案 4.9；不可用时 Runtime 拒绝运行）；本方法只服务员工侧 Agent 运行，
     // 系统与管理运行（会话摘要、项目档案员、管理助手、Skill 安装与试运行）另行编译 Manifest。
     const toolNames = [
       ...agent.runtimeTools,
-      ...executionToolNames(this.deps.executionContainerAvailable),
+      ...executionToolNames(),
       ...(agent.skillInstructions.length ? ['activate_skill'] : []),
       ...(this.deps.memory && input.purpose !== 'agent-routine' ? ['propose_memory'] : []),
       ...(!input.purpose
@@ -160,11 +160,11 @@ export class AttemptDispatcher {
         : []),
     ].filter(name => !disabledTools.has(name))
     // 执行隔离 2b-4：有解析文本的输入照常挂文本；装配了 bash 时另挂原始文件。二进制成果没有解析文本，
-    // 没有 bash 就无法使用，在创建 Attempt 之前拒绝并说明原因。
+    // bash 被 Runtime 紧急停用时无法使用，在创建 Attempt 之前拒绝并说明原因。
     const withBash = toolNames.includes('bash')
     for (const file of preparedFiles) {
       if (!file.mount && !(withBash && file.original)) {
-        throw invalidRequest(`“${file.sourceName}”需要运行命令的能力才能处理，本次运行不可用；请联系管理员确认执行容器已启用`)
+        throw invalidRequest(`“${file.sourceName}”需要运行命令的能力才能处理，本次运行不可用；请联系管理员确认 bash 未被停用`)
       }
     }
     const originalMounts = withBash ? preparedFiles.flatMap(file => file.original ? [file.original] : []) : []

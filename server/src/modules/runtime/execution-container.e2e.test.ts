@@ -15,8 +15,7 @@ import { minimalXlsx } from '../../testing/office-fixtures.ts'
 import { ContainerArtifactTextExtractor } from '../workbench/application/container-artifact-text-extractor.ts'
 import { ContainerExecutor } from './container-executor.ts'
 import { measureWorkspace } from './workspace-usage.ts'
-import { ExecutionContainerPythonRunner } from './execution-container-python.ts'
-import { skillDirectory } from './python-skill-runner.ts'
+import { ExecutionContainerPythonRunner, skillDirectory } from './execution-container-python.ts'
 import type { RuntimeManifest } from './runtime-types.ts'
 
 /**

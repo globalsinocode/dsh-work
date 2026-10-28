@@ -213,9 +213,9 @@ export interface BuiltinToolStatus {
   disabledTools: string[]
   /** 服务启动时与 DSH 工具目录的比对结果；未比对时为 null。 */
   catalog: { checkedAt: string; missingTools: string[] } | { checkedAt: string; error: string } | null
-  /** 本次启动的执行容器状态：决定 bash 是否装配。 */
+  /** 本次启动的执行容器状态：不可用时所有 Agent 运行被拒绝（执行隔离方案 4.9）。 */
   executionContainer: {
-    status: 'available' | 'unavailable' | 'not-configured'
+    status: 'available' | 'unavailable'
     /** 数据卷剩余空间低于阈值，暂不运行命令（执行隔离 4.7）。 */
     diskLow?: boolean
   }

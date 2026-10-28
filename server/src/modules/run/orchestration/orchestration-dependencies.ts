@@ -49,8 +49,6 @@ export interface OrchestrationDependencies {
   readonly automationMaxConcurrent: number
   /** Platform default IANA timezone for a run's current time (DSH_WORK_TIMEZONE). */
   readonly timezone: string
-  /** 本次启动的执行容器通过了启动检查（执行隔离阶段 2）：员工侧 Agent 运行据此装配 bash。 */
-  readonly executionContainerAvailable: boolean
   readonly automationStatusLookup?: (runId: string) => Promise<{ status: string; trial: boolean } | null>
   persistentWait?: PersistentWaitPort
   /** EX-02 conversation summaries; wired by the facade after construction. */

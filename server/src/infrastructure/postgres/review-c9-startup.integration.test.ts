@@ -51,7 +51,7 @@ async function startApplication(extra: NodeJS.ProcessEnv = {}) {
       DSH_WORK_SESSION_SECRET: sessionSecret, DSH_WORK_COOKIE_SECURE: 'false',
       DSH_WORK_WORKBENCH_ORIGINS: base, DSH_WORK_ADMIN_ORIGINS: base,
       DSH_WORK_DATABASE_URL: db.url, DSH_WORK_DATA_ROOT: root,
-      DSH_RUNTIME_HOME: join(root, 'missing-dsh'), DSH_WORK_PYTHON_IMAGE: 'invalid-image',
+      DSH_RUNTIME_HOME: join(root, 'missing-dsh'),
       DSH_WORK_SERVER_PORT: String(port), DSH_WORK_SERVER_HOST: '127.0.0.1', ...extra },
     stdio: ['ignore', 'pipe', 'pipe'],
   })
@@ -82,7 +82,7 @@ async function ready(app: Awaited<ReturnType<typeof startApplication>>) {
   }
   throw new Error(`backend never listened: ${app.output()}`)
 }
-test('C9 RED: missing DSH and failed Python preflight do not block authenticated history/download or core readiness', async () => {
+test('C9 RED: missing DSH (so no execution container or Python) does not block authenticated history/download or core readiness', async () => {
   const app = await startApplication()
   try {
     await ready(app)
