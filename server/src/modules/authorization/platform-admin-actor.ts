@@ -1,5 +1,5 @@
 import type { DatabaseClient, DatabaseTransaction } from '../../infrastructure/postgres/database.ts'
-import { authorizationDenied } from '../../domain/authorization-errors.ts'
+import { adminAccessDenied } from '../../domain/authorization-errors.ts'
 
 const tenantId = 'tenant-dsh-work'
 
@@ -32,6 +32,6 @@ export async function requirePlatformAdminActor(
             and (r.permissions ? 'admin:*' or r.permissions ? 'admin:write')
        )
   `
-  if (!actor) throw authorizationDenied(`操作人不存在、已停用或不是平台管理员：${userId}`)
+  if (!actor) throw adminAccessDenied(`操作人不存在、已停用或不是平台管理员：${userId}`)
   return actor
 }

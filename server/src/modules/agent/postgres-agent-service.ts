@@ -796,10 +796,14 @@ export class PostgresAgentService {
         join users u on u.tenant_id = a.tenant_id and u.id = ${userId} and u.status = 'active'
        where a.tenant_id = ${tenantId} and a.status = 'published'
          and av.status = 'published'
+         -- 可见角色的唯一权威是 Agent 级 visible_role_ids（0090）：版本发布时把它
+         -- 快照进 av.visible_role_ids 只是发布记录，之后在管理端改可见性只写 agents 列
+         -- （assertAgentVersionVisibleToRoles 也读这一列）。这里若仍读版本快照，
+         -- 管理端刚授过权的 Agent 不会出现在候选里，未快照的历史版本则谁也看不到。
          and (${governance} or exists (
            select 1 from roles r
             where r.tenant_id = a.tenant_id and r.id in ${this.database(roleIds)}
-              and av.visible_role_ids ? r.id
+              and a.visible_role_ids ? r.id
          ))
        order by case when a.id = ${DEFAULT_WORKBENCH_AGENT_ID} then 0 else 1 end,
                 a.updated_at desc, a.id
@@ -959,10 +963,11 @@ export class PostgresAgentService {
          and a.status = 'published'
          and a.allow_workspace_join = true
          and av.status = 'published'
+         -- 与 listWorkbenchAgents 同口径：可见角色读 Agent 级列（0090 唯一权威）。
          and (${governance} or exists (
            select 1 from roles r
             where r.tenant_id = a.tenant_id and r.id in ${this.database(roleIds)}
-              and av.visible_role_ids ? r.id
+              and a.visible_role_ids ? r.id
          ))
          and not exists (
            select 1 from workspace_agent_members wam

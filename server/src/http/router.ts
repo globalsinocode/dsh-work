@@ -196,7 +196,11 @@ export function classifyHttpError(error: unknown, path: string): { status: numbe
           : status === 503 && error.code.startsWith('skill_')
             ? '请管理员检查 Skill 存储和试运行执行能力，恢复后重试。'
             : suggestions[status])
-    const code = status === 403 && isAuthorizationDenial(error) ? publicAuthorizationResponseCode(error.code) : error.code
+    // 收敛后的公开 403 码只属于员工端契约：员工端不接受内部细节，统一映射进封闭集合；
+    // 管理端按 5-T4 保留内部稳定码（permission_denied），管理端 OpenAPI 与用例依赖它。
+    const code = status === 403 && apiAudience(path) !== 'admin' && isAuthorizationDenial(error)
+      ? publicAuthorizationResponseCode(error.code)
+      : error.code
     return {
       status,
       error: {

@@ -29,6 +29,15 @@ export function authorizationDenied(message: string, http?: { status: number; co
   return new AuthorizationDeniedError(message, http)
 }
 
+/**
+ * 管理端「必须是平台管理员」的拒绝：仍然是类型化授权拒绝（撤销扫描按类型识别），
+ * 但按管理端既有契约保留 `permission_denied`，不并入员工端的封闭 403 集合。
+ * 员工端路径由 router 的 audience 判定再收敛，管理端路径原样返回。
+ */
+export function adminAccessDenied(message: string): AuthorizationDeniedError {
+  return new AuthorizationDeniedError(message, { status: 403, code: 'permission_denied' })
+}
+
 /** Stable 403 codes the admin/workbench clients use to refresh identity without replaying requests. */
 export const AUTHORIZATION_CHANGE_RESPONSE_CODES = [
   'authorization_denied',
