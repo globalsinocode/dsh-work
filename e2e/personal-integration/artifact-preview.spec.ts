@@ -84,11 +84,19 @@ test('P1: the preview gives way to 对话详情 and becomes a drawer on narrow s
   const panelBox = (await panel.boundingBox())!
   const composerBox = (await page.getByLabel('对话输入').boundingBox())!
   expect(composerBox.x + composerBox.width).toBeLessThanOrEqual(panelBox.x)
-  // 全屏查看：盖住整个窗口；Esc 先退出全屏，右栏仍在。
+  // 全屏查看：盖住整个窗口，按对话框处理；Esc 先退出全屏，右栏仍在。
   await panel.getByRole('button', { name: '全屏查看' }).click()
-  await expect(panel.getByRole('button', { name: '退出全屏' })).toBeVisible()
+  const fullscreenPanel = page.getByRole('dialog', { name: '成果预览：华东营收.xlsx' })
+  await expect(fullscreenPanel.getByRole('button', { name: '退出全屏' })).toBeVisible()
   const viewport = page.viewportSize()!
-  await expect.poll(async () => (await panel.boundingBox())?.width).toBe(viewport.width)
+  await expect.poll(async () => (await fullscreenPanel.boundingBox())?.width).toBe(viewport.width)
+  // 正文最宽 1200px；Tab 不会落到被遮住的对话上。
+  expect((await fullscreenPanel.getByRole('table').boundingBox())!.width).toBeLessThanOrEqual(1200)
+  for (let step = 0; step < 12; step++) {
+    await page.keyboard.press('Tab')
+    expect(await fullscreenPanel.evaluate(element => element.contains(document.activeElement))).toBe(true)
+  }
+  await fullscreenPanel.getByRole('button', { name: '退出全屏' }).focus()
   await page.keyboard.press('Escape')
   await expect(panel.getByRole('button', { name: '全屏查看' })).toBeVisible()
   await expect.poll(async () => (await panel.boundingBox())?.x).toBe(panelBox.x)

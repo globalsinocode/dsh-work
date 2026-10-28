@@ -111,6 +111,44 @@ describe('ArtifactPreviewPanel', () => {
     wrapper.unmount()
   })
 
+  it('keeps focus inside the full-screen preview', async () => {
+    downloadArtifact.mockResolvedValue(new Blob(['# 周报正文']))
+    const outside = document.createElement('button')
+    outside.textContent = '被遮住的对话'
+    document.body.prepend(outside)
+    const wrapper = mountPanel({ artifact: artifact(), docked: true })
+    await flushPromises()
+    const aside = () => wrapper.get('aside')
+    expect(aside().attributes('role')).toBeUndefined()
+
+    await wrapper.get('button[aria-label="全屏查看"]').trigger('click')
+    expect(aside().attributes('role')).toBe('dialog')
+    expect(aside().attributes('aria-modal')).toBe('true')
+
+    // jsdom 不做布局：让预览内的按钮都算可见。
+    const buttons = aside().findAll('button').map(button => button.element as HTMLButtonElement)
+    for (const button of buttons) vi.spyOn(button, 'getClientRects').mockReturnValue([{}] as unknown as DOMRectList)
+    const first = buttons[0]!
+    const last = buttons[buttons.length - 1]!
+
+    last.focus()
+    await aside().trigger('keydown', { key: 'Tab' })
+    expect(document.activeElement).toBe(first)
+    await aside().trigger('keydown', { key: 'Tab', shiftKey: true })
+    expect(document.activeElement).toBe(last)
+
+    // 焦点被移到预览外时拉回预览。
+    outside.focus()
+    expect(document.activeElement).toBe(first)
+
+    // 退出全屏后不再限制焦点。
+    await wrapper.get('button[aria-label="退出全屏"]').trigger('click')
+    expect(aside().attributes('role')).toBeUndefined()
+    outside.focus()
+    expect(document.activeElement).toBe(outside)
+    wrapper.unmount()
+  })
+
   it('opens as a labelled drawer over the conversation when it cannot dock', async () => {
     downloadArtifact.mockResolvedValue(new Blob(['# 周报正文']))
     const wrapper = mountPanel({ artifact: artifact(), docked: false })

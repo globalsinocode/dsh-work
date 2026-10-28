@@ -22,7 +22,7 @@ const meta = computed(() =>
 </script>
 
 <template>
-  <div class="artifact-pane" data-testid="artifact-preview-panel">
+  <div class="artifact-pane" :class="{ 'artifact-pane--expanded': expanded }" data-testid="artifact-preview-panel">
     <header class="artifact-pane__header">
       <span class="artifact-pane__icon" aria-hidden="true"><el-icon><Document /></el-icon></span>
       <div class="artifact-pane__title">
@@ -159,5 +159,10 @@ const meta = computed(() =>
   flex: 1 1 auto;
   overflow: auto;
   padding: 14px 16px 24px;
+}
+
+/* 全屏时正文最宽 1200px 并居中，滚动条仍在窗口边缘。 */
+.artifact-pane--expanded .artifact-pane__body {
+  padding-inline: max(16px, calc((100% - 1200px) / 2));
 }
 </style>

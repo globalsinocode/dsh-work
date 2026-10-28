@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 
 import ArtifactPreviewPane from './ArtifactPreviewPane.vue'
 import { useMediaQuery } from '@/composables/useMediaQuery'
@@ -8,7 +8,8 @@ import type { Artifact } from '@/types/domain'
 /**
  * 对话中点击成果后的预览右栏（EX-ARTIFACT-08）。`docked` 时作为与对话并排的一栏，由宿主留出宽度；
  * 否则（窄屏、项目空间内嵌）覆盖在对话上的抽屉，手机宽度全屏。是否并排由宿主按自身布局判定。
- * 右栏与抽屉都可全屏展开，Esc 先退出全屏；关闭预览后复原。
+ * 右栏与抽屉都可全屏展开，Esc 先退出全屏；关闭预览后复原。全屏的右栏按对话框处理：焦点留在预览内，
+ * 不会落到被遮住的对话上（抽屉本身是对话框，由 el-drawer 负责）。
  */
 const props = withDefaults(defineProps<{
   artifact: Artifact | null
@@ -32,15 +33,52 @@ function onEscape() {
   if (expanded.value) expanded.value = false
   else emit('close')
 }
+
+const panel = ref<HTMLElement>()
+const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), iframe, [tabindex]:not([tabindex="-1"])'
+function focusables() {
+  return [...(panel.value?.querySelectorAll<HTMLElement>(FOCUSABLE) ?? [])].filter(element => element.getClientRects().length > 0)
+}
+
+/** Tab 在全屏预览的首尾之间循环。 */
+function onTab(event: KeyboardEvent) {
+  if (!expanded.value) return
+  const items = focusables()
+  if (!items.length) return
+  const first = items[0]!
+  const last = items[items.length - 1]!
+  if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault()
+    last.focus()
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault()
+    first.focus()
+  }
+}
+
+/** 焦点从别处（例如沙箱 iframe 内按 Tab 离开）跑到预览外时，拉回预览。 */
+function onFocusIn(event: FocusEvent) {
+  if (!panel.value || panel.value.contains(event.target as Node)) return
+  focusables()[0]?.focus()
+}
+watch(expanded, (value) => {
+  if (value) document.addEventListener('focusin', onFocusIn)
+  else document.removeEventListener('focusin', onFocusIn)
+})
+onBeforeUnmount(() => document.removeEventListener('focusin', onFocusIn))
 </script>
 
 <template>
   <aside
     v-if="docked && artifact"
+    ref="panel"
     class="artifact-panel"
     :class="{ 'artifact-panel--expanded': expanded }"
+    :role="expanded ? 'dialog' : undefined"
+    :aria-modal="expanded ? 'true' : undefined"
     :aria-label="label"
     @keydown.esc="onEscape"
+    @keydown.tab="onTab"
   >
     <ArtifactPreviewPane
       :key="`${artifact.id}@${artifact.version}`"
