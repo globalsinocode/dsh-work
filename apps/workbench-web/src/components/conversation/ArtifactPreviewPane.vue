@@ -1,13 +1,13 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { Close, Document, Download, FullScreen, ScaleToOriginal } from '@element-plus/icons-vue'
+import { Close, Download, FullScreen, ScaleToOriginal } from '@element-plus/icons-vue'
 
 import ArtifactPreviewBody from '@/components/ArtifactPreviewBody.vue'
 import type { Artifact } from '@/types/domain'
 import { isOfficeArtifact } from '@/utils/artifact-preview'
 import { downloadArtifactFile } from '@/utils/feedback'
 
-/** 对话右栏的成果预览内容：标题与版本、全屏、下载、关闭，正文复用 ArtifactPreviewBody。摆放见 ArtifactPreviewPanel。 */
+/** 对话右栏的成果预览内容：一行标题栏（文件名与版本、HTML 预览方式、下载、全屏、关闭），正文复用 ArtifactPreviewBody。摆放见 ArtifactPreviewPanel。 */
 const props = withDefaults(defineProps<{
   artifact: Artifact
   /** 是否提供全屏展开；已经全屏的手机宽度不提供。 */
@@ -23,36 +23,40 @@ const meta = computed(() =>
 
 <template>
   <div class="artifact-pane" :class="{ 'artifact-pane--expanded': expanded }" data-testid="artifact-preview-panel">
+    <!-- 顶部只占一行，给正文留出尽量多的高度；可访问名称“成果预览：文件名”在外层右栏或抽屉上。 -->
     <header class="artifact-pane__header">
-      <span class="artifact-pane__icon" aria-hidden="true"><el-icon><Document /></el-icon></span>
       <div class="artifact-pane__title">
-        <span>成果预览</span>
         <strong :title="artifact.name">{{ artifact.name }}</strong>
         <small>{{ meta }}</small>
       </div>
-      <el-button text :icon="Download" data-testid="artifact-panel-download" @click="downloadArtifactFile(artifact)">下载</el-button>
+      <el-radio-group v-if="artifact.type === 'html'" v-model="htmlView" size="small" aria-label="预览方式">
+        <el-radio-button value="preview">渲染预览</el-radio-button>
+        <el-radio-button value="source">源代码</el-radio-button>
+      </el-radio-group>
+      <button
+        type="button"
+        class="artifact-pane__action"
+        aria-label="下载"
+        title="下载"
+        data-testid="artifact-panel-download"
+        @click="downloadArtifactFile(artifact)"
+      >
+        <el-icon><Download /></el-icon>
+      </button>
       <button
         v-if="canExpand"
         type="button"
-        class="artifact-pane__close"
+        class="artifact-pane__action"
         :aria-label="expanded ? '退出全屏' : '全屏查看'"
         :title="expanded ? '退出全屏' : '全屏查看'"
         @click="emit('toggle-expand')"
       >
         <el-icon><component :is="expanded ? ScaleToOriginal : FullScreen" /></el-icon>
       </button>
-      <button type="button" class="artifact-pane__close" aria-label="关闭成果预览" @click="emit('close')">
+      <button type="button" class="artifact-pane__action" aria-label="关闭成果预览" title="关闭" @click="emit('close')">
         <el-icon><Close /></el-icon>
       </button>
     </header>
-
-    <div v-if="artifact.type === 'html'" class="artifact-pane__toolbar">
-      <el-radio-group v-model="htmlView" size="small" aria-label="预览方式">
-        <el-radio-button value="preview">渲染预览</el-radio-button>
-        <el-radio-button value="source">源代码</el-radio-button>
-      </el-radio-group>
-      <span>隔离沙箱渲染：页面脚本不能访问工作台数据、Cookie 或存储</span>
-    </div>
 
     <div class="artifact-pane__body">
       <ArtifactPreviewBody v-model:html-view="htmlView" :artifact="artifact" active text-layout="tabs" />
@@ -68,49 +72,28 @@ const meta = computed(() =>
   flex-direction: column;
   color: var(--dsh-color-ink);
   background: #fff;
-  /* 正文里的 iframe 与图片撑满右栏可用高度。 */
-  --artifact-preview-frame-height: calc(100vh - 190px);
-  --artifact-preview-image-height: calc(100vh - 160px);
+  /* 正文里的 iframe 与图片撑满右栏可用高度（减去一行标题栏与正文内边距）。 */
+  --artifact-preview-frame-height: calc(100vh - 72px);
+  --artifact-preview-image-height: calc(100vh - 72px);
 }
 
 .artifact-pane__header {
   display: flex;
   flex: 0 0 auto;
   align-items: center;
-  gap: 10px;
-  min-height: 64px;
-  padding: 10px 12px 10px 16px;
+  gap: 6px;
+  min-height: 44px;
+  padding: 4px 8px 4px 16px;
   border-bottom: 1px solid #eceeeb;
-}
-
-.artifact-pane__icon {
-  display: inline-flex;
-  width: 32px;
-  height: 32px;
-  flex: 0 0 auto;
-  align-items: center;
-  justify-content: center;
-  border-radius: 8px;
-  color: #356858;
-  background: #eef4f1;
 }
 
 .artifact-pane__title {
   display: flex;
   min-width: 0;
   flex: 1 1 auto;
-  flex-direction: column;
-  gap: 1px;
-}
-
-.artifact-pane__title span,
-.artifact-pane__title small {
-  color: var(--dsh-color-muted);
-  font-size: var(--dsh-font-size-badge);
-}
-
-.artifact-pane__title span {
-  font-size: var(--dsh-font-size-micro);
+  align-items: baseline;
+  gap: 8px;
+  margin-right: 4px;
 }
 
 .artifact-pane__title strong {
@@ -121,7 +104,14 @@ const meta = computed(() =>
   white-space: nowrap;
 }
 
-.artifact-pane__close {
+.artifact-pane__title small {
+  flex: 0 0 auto;
+  color: var(--dsh-color-muted);
+  font-size: var(--dsh-font-size-badge);
+  white-space: nowrap;
+}
+
+.artifact-pane__action {
   display: inline-flex;
   width: 32px;
   height: 32px;
@@ -130,35 +120,22 @@ const meta = computed(() =>
   justify-content: center;
   border: 1px solid transparent;
   border-radius: 8px;
-  color: #7d827d;
+  color: #5f655f;
   background: transparent;
   cursor: pointer;
 }
 
-.artifact-pane__close:hover {
+.artifact-pane__action:hover {
   border-color: #dfe3df;
   color: #244d40;
   background: #f5f8f6;
-}
-
-.artifact-pane__toolbar {
-  display: flex;
-  flex: 0 0 auto;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px 12px;
-  padding: 8px 16px;
-  border-bottom: 1px solid #f0f1ef;
-  color: var(--dsh-color-muted);
-  background: #fafbfa;
-  font-size: var(--dsh-font-size-micro);
 }
 
 .artifact-pane__body {
   min-height: 0;
   flex: 1 1 auto;
   overflow: auto;
-  padding: 14px 16px 24px;
+  padding: 10px 16px 16px;
 }
 
 /* 全屏时正文最宽 1200px 并居中，滚动条仍在窗口边缘。 */
