@@ -437,6 +437,8 @@ DSH Worker（每 Attempt 一个，宿主进程）
 
 **实施（2026-10-28）：** [main.ts](../../server/src/main.ts) 在 DSH 预检通过后总是检查执行容器，只用执行容器叠加层的安装构建 DSH Adapter；任一步失败时 Runtime 为 `UnavailableRuntime('execution-container')`，Run 与 Attempt 创建前的可用性检查以 `EXECUTION_CONTAINER_UNAVAILABLE` 拒绝，日志说明运行被拒绝而不是回到宿主。旧设置仍存在时只在启动日志提示被忽略（`removedExecutionSettingWarnings`）。删除 `PythonSkillRunner`（`resolvePythonCall`、`skillDirectory` 并入 [execution-container-python.ts](../../server/src/modules/runtime/execution-container-python.ts)）、`parseMaxContainers` 与成果解析沙箱的路径环境变量；`executionToolNames()` 不再接收可用性，`PostgresConversationRepository` 不再有 `binaryArtifactsReferenceable` 选项；健康检查与管理端只报告 `available`/`unavailable`。部署预检要求 `DSH_WORK_EXECUTION_IMAGE` 按摘要锁定且本机已有该镜像（[preflight.sh](../../scripts/deploy/preflight.sh)）。Runtime Adapter 的 `remoteExecution` 仍是可选端口：生产启动总是配置，可选只为不起命令的 Worker 替身测试，带 `bash` 的 Manifest 在未配置时仍被拒绝（第二道防线），不构成宿主执行路径。“未装配 `bash`”此后只发生在 Runtime 紧急停用时，2b-4 的“只作文本参考/提交前拒绝”规则沿用于该情形。
 
+**后续（2026-10-28）：** 启动检查抽为 [execution-container-startup.ts](../../server/src/modules/runtime/execution-container-startup.ts)，服务与 PF-07 MCP 平台探针（`pnpm probe:pf07:mcp:platform`）共用，探针的 DSH 同样只经执行容器运行。按旧团队空间旅程编写、在宿主运行 DSH 的一次性脚本 `scripts/runtime/team-workspace-e2e.ts` 已删除（其 2026-09 的 P2 结论保留为历史证据）。
+
 ## 5. 分阶段
 
 | 阶段 | 内容 | 收益 | 前提 |

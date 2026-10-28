@@ -47,7 +47,8 @@ import { CapabilityGuardedRuntime, UnavailableRuntime, ExecutionCapabilityUnavai
 import type { AgentRuntimePort } from './modules/runtime/runtime-types.ts'
 import { ContainerExecutor } from './modules/runtime/container-executor.ts'
 import { DockerExecutionBackend } from './modules/runtime/docker-execution-backend.ts'
-import { AttemptExecutionContainers, assertExclusiveToolScheduling, removedExecutionSettingWarnings, resolveExecutionContainerUser } from './modules/runtime/attempt-execution-containers.ts'
+import { AttemptExecutionContainers, removedExecutionSettingWarnings } from './modules/runtime/attempt-execution-containers.ts'
+import { startExecutionContainers } from './modules/runtime/execution-container-startup.ts'
 import { freeSpace } from './modules/runtime/workspace-usage.ts'
 import { ExecutionContainerPythonRunner } from './modules/runtime/execution-container-python.ts'
 import { normalizePythonPackageName } from './modules/skill/skill-installation-plan.ts'
@@ -55,7 +56,6 @@ import { redactSensitiveText } from './security/safe-observability.ts'
 import {
   preflightDshRuntime,
   resolveDshRuntimeInstallation,
-  withExecutionContainerOverlay,
   type DshRuntimeInstallation,
 } from './modules/runtime/dsh-runtime-installation.ts'
 import { PostgresContentService } from './modules/workbench/application/postgres-content-service.ts'
@@ -173,24 +173,9 @@ async function start() {
   for (const message of removedExecutionSettingWarnings(process.env)) console.warn(message)
   if (dsh.value) {
     const baseInstallation = dsh.value
-    const probed = await probeExecutionCapability('execution-container', async () => {
-      const containers = new AttemptExecutionContainers(new DockerExecutionBackend(), {
-        image: process.env.DSH_WORK_EXECUTION_IMAGE ?? '',
-        user: resolveExecutionContainerUser(),
-      })
-      await containers.preflight()
-      const installation = await withExecutionContainerOverlay(baseInstallation, { projectRoot })
-      await preflightDshRuntime(installation)
-      // 静止保证的准入：DSH 必须独占调度 bash 与写类工具（执行隔离方案 3.7）。
-      const catalog = await new DshAcpRuntimeAdapter({
-        runtimeId: 'execution-container-admission',
-        runtimeRoot: resolve(dataRoot, 'dsh-attempts'),
-        dshRepository: installation.home,
-        process: installation.process,
-      }).listTools()
-      assertExclusiveToolScheduling(catalog)
-      return { containers, installation }
-    }, error => {
+    const probed = await probeExecutionCapability('execution-container', () => startExecutionContainers(baseInstallation, {
+      projectRoot, dataRoot, image: process.env.DSH_WORK_EXECUTION_IMAGE,
+    }), error => {
       console.warn(`execution container unavailable; Agent runs are refused until it is fixed and the service restarts: ${redactSensitiveText(error instanceof Error ? error.message : String(error)).slice(0, 500)}`)
     })
     if (probed.value) {
