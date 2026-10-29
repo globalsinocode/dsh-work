@@ -13,6 +13,7 @@ import {
   Monitor,
   MoreFilled,
   Plus,
+  Reading,
   Setting,
   Share,
   SwitchButton,
@@ -52,6 +53,7 @@ const navigation = [
   { label: 'Skill 广场', path: '/skills', icon: Grid },
   { label: 'AI 同事', path: '/agents', icon: UserFilled },
   { label: '项目空间', path: '/workspaces', icon: Collection },
+  { label: '知识库', path: '/knowledge', icon: Reading },
   { label: '定时任务', path: '/automations', icon: AlarmClock },
 ]
 

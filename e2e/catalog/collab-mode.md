@@ -12,11 +12,11 @@ A 工作模式与 B 协作模式：模式切换、协作壳层、对话列表、
 **前置数据：** 冒烟夹具；浏览器无本地模式缓存
 **spec：** `e2e/collab-mode.spec.ts`
 
-1. 打开 `/workbench`：显示工作模式壳层，主导航依次为“新对话、Skill 广场、AI 同事、项目空间、定时任务”。
+1. 打开 `/workbench`：显示工作模式壳层，主导航依次为“新对话、Skill 广场、AI 同事、项目空间、知识库、定时任务”。知识库旅程见 [knowledge.md](./knowledge.md)。
 2. 点击左上角 logo（可访问名称“切换模式”）：打开模式菜单，列出“工作模式”“协作模式”，“工作模式”处于选中状态，并提示按账号记住选择。
 3. 按 Esc 或点击菜单外：菜单关闭，页面与地址不变。
 
-**验收：** 从未切换过的用户进入工作模式；A 的界面除“自动任务”改名“定时任务”与 logo 可打开模式菜单外不变。logo 的“切换模式”按钮与头像的“打开用户中心”按钮是两个独立控件，不存在按钮嵌套。
+**验收：** 从未切换过的用户进入工作模式。主导航含“知识库”（见 [knowledge.md](./knowledge.md)）。logo 的“切换模式”按钮与头像的“打开用户中心”按钮是两个独立控件，不存在按钮嵌套。
 
 ### MODE-E2E-02 切换到协作模式并按账号记忆（S5a）
 
@@ -44,7 +44,7 @@ A 工作模式与 B 协作模式：模式切换、协作壳层、对话列表、
 
 1. 协作模式主导航只有四个入口：对话、AI 同事、群组、定时任务；宽屏左侧图标栏只显示图标，入口名称在悬停提示与可访问名称中；当前入口处于选中状态。配色与工作模式侧栏一致（中性暖灰）。
 2. 依次进入：对话 `/c/chats`、AI 同事 `/c/agents`、群组 `/c/groups`（S5a 为占位页，显示页面名称与“即将上线”说明）；定时任务 `/automations` 直接是工作模式的同一页面（标题“我的定时任务”）。
-3. 打开头像菜单：包含“用户中心、Skill 广场、我的文件、历史对话”，分别打开 `/settings`、`/skills`、`/files`、`/history`，页面与工作模式相同、仍处于协作模式壳层。
+3. 打开头像菜单：包含“用户中心、Skill 广场、我的文件、历史对话、知识库”，分别打开 `/settings`、`/skills`、`/files`、`/history`、`/knowledge`，页面与工作模式相同、仍处于协作模式壳层。
 4. 窄屏（宽度 ≤ 820px）：四个入口显示为底部标签栏，logo 模式菜单与头像菜单仍可用，页面无横向溢出。
 
 **验收：** B 的主导航为四个入口；共用页面只有一套，放在协作模式壳层中。
@@ -59,7 +59,7 @@ A 工作模式与 B 协作模式：模式切换、协作壳层、对话列表、
 
 1. 协作模式下直接打开工作模式地址（旧书签、复制的链接、站内通知）：`/workbench` → `/c/chats`；`/workspaces` → `/c/groups`；`/agents` → `/c/agents`；`/workspaces/ws-supply` → `/c/chats/group/ws-supply`；`/workspaces/ws-supply?tab=files` → `/c/chats/group/ws-supply?tab=files`；`/workspaces/ws-supply/tasks/:taskId` → `/c/chats/group/ws-supply?tab=tasks&task=:taskId`；`/conversations/:id` → `/c/chats?conversation=:id`（S5c 定位到所属 Agent 的单聊）；`/workbench?agent=:agentId` → `/c/chats/agent/:agentId`。
 2. 工作模式下打开协作模式地址：反向映射回工作模式对应地址；没有对应页的 `/c/...` 进入 `/workbench`。
-3. 共用页（`/automations`、`/settings`、`/skills`、`/files`、`/history`）在两种模式下地址不变。
+3. 共用页（`/automations`、`/settings`、`/skills`、`/files`、`/history`、`/knowledge`）在两种模式下地址不变。
 4. 在协作模式切回工作模式（及反向）时，当前页按同一规则映射，不丢失所在空间、页签与任务。
 
 **验收：** 链接与模式无关：同一链接在两种模式下都落到对应页面，不出现 404 或空白页。

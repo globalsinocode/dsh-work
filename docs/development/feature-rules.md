@@ -19,7 +19,7 @@
 
 ### 2.1 入口与空间解析
 
-- 员工端分 A 工作模式与 B 协作模式（[项目空间方案第 12 节](../design/project-space-plan.md)），模式按账号保存为用户偏好，缺省为 A。A 主导航固定为新对话、Skill 广场、AI 同事、项目空间、定时任务；B 主导航固定为对话、AI 同事、群组、定时任务，Skill 广场、我的文件、历史对话与用户中心从头像菜单进入。历史对话和我的文件保留路由、数据能力和上下文入口，但不进 A 主导航；修改导航时同步验收目录对应分册（索引 `e2e/TEST-CATALOG.md`）、`e2e/personal-workbench.spec.ts` 与 `e2e/collab-mode.spec.ts`。
+- 员工端分 A 工作模式与 B 协作模式（[项目空间方案第 12 节](../design/project-space-plan.md)），模式按账号保存为用户偏好，缺省为 A。A 主导航固定为新对话、Skill 广场、AI 同事、项目空间、知识库、定时任务；B 主导航固定为对话、AI 同事、群组、定时任务，Skill 广场、我的文件、历史对话、知识库与用户中心从头像菜单进入。历史对话和我的文件保留路由、数据能力和上下文入口，但不进 A 主导航；修改导航时同步验收目录对应分册（索引 `e2e/TEST-CATALOG.md`）、`e2e/personal-workbench.spec.ts` 与 `e2e/collab-mode.spec.ts`。
 - 后台默认个人 Workspace 保留，员工端不显示它的卡片、选择器和成员管理。
 - 全局请求不带 `workspaceId`，由服务端按当前用户解析；显式传入错误 ID 必须拒绝，不能回退到第一个团队。团队入口固定团队归属；旧 Session/Run 不迁移空间。
 - `POST /sessions` 接受省略空间、本人个人空间 ID 和 legacy standalone；不接受他人个人空间或无权团队。

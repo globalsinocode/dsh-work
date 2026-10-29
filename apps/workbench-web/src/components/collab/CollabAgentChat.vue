@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
 import { ArrowLeft } from '@element-plus/icons-vue'
+import { ElMessage } from 'element-plus'
 
 import RunComposer from '@/components/conversation/RunComposer.vue'
 import RunMessageList from '@/components/conversation/RunMessageList.vue'
@@ -58,6 +59,30 @@ const latestTask = computed(() => newestSegment.value ? segmentTask(newestSegmen
 /** 单聊都是本人的个人会话：停止与重试与 A 的个人对话同一口径（仅发起人）。 */
 const canOperate = computed(() => Boolean(latestTask.value && latestTask.value.requestedBy === authStore.user.id))
 const running = computed(() => ['queued', 'running', 'awaiting_approval'].includes(latestTask.value?.status ?? ''))
+const resolvingApproval = ref(false)
+
+function canResolveApproval(segment: AgentConversationSegment) {
+  const run = segmentTask(segment)
+  return Boolean(
+    run?.status === 'awaiting_approval'
+    && run.requestedBy === authStore.user.id
+    && run.approval?.employeeResolvable,
+  )
+}
+
+async function resolveApproval(segment: AgentConversationSegment, decision: 'approved' | 'rejected') {
+  const run = segmentTask(segment)
+  if (!run || resolvingApproval.value) return
+  resolvingApproval.value = true
+  try {
+    await taskStore.resolveRunApproval(run.id, decision)
+    ElMessage.success(decision === 'approved' ? '已允许本次操作' : '已拒绝本次操作')
+  } catch (cause) {
+    notifyActionFailure('确认操作', run.title, cause, '请刷新对话后重试。')
+  } finally {
+    resolvingApproval.value = false
+  }
+}
 
 const {
   stopping,
@@ -297,12 +322,15 @@ watch(() => [latestTask.value?.messages.length, latestTask.value?.status] as con
               :is-own="isOwn"
               :can-follow-up="canFollowUp(segment)"
               :can-retry="canRetry(segment)"
+              :can-resolve-approval="canResolveApproval(segment)"
+              :resolving-approval="resolvingApproval"
               :referenced-file-ids="referencedArtifacts.map(item => item.fileId)"
               @download="download"
               @continue-editing="continueEditing"
               @copy-answer="copyAnswer"
               @copy-link="copyConversationLink(segmentLink(segment))"
               @retry="retryRun"
+              @resolve-approval="(decision) => resolveApproval(segment, decision)"
             />
             <p v-else-if="segmentErrors[segment.sessionId]" class="collab-segment__empty" role="alert">
               这段对话暂时无法读取：{{ segmentErrors[segment.sessionId] }}

@@ -268,6 +268,8 @@ export interface TaskRun {
     nextStep: string
     toolName: string
     dataScope: string
+    /** 发起人可在员工端允许/拒绝的持久化等待审批。 */
+    employeeResolvable?: boolean
   }
 }
 
@@ -854,6 +856,15 @@ export interface UserPreferences {
   updatedAt: string | null
 }
 
+export interface NotificationPreferences {
+  collabUnread: boolean
+  runFinished: boolean
+}
+
+export interface PushConfig {
+  vapidPublicKey: string
+}
+
 /** 协作模式对话列表的一行（S5c）：与某个 AI 同事的单聊或一个群组，而不是单个 Session。 */
 export interface ConversationTarget {
   type: 'agent' | 'group'
@@ -970,6 +981,36 @@ export interface WorkbenchSkill {
   owner: string
   testPrompt: string
   updatedAt: string
+}
+
+export type WeknoraDirectoryAccount = 'none' | 'missing' | 'linked'
+
+export interface WeknoraIntegrationStatus {
+  configured: boolean
+  linked: boolean
+  source: 'directory' | 'bind' | null
+  canUnlink: boolean
+  directoryAccount: WeknoraDirectoryAccount
+}
+
+export interface WeknoraKnowledgeBaseSummary {
+  id: string
+  name: string
+  description?: string
+  documentCount?: number
+  updatedAt?: string
+}
+
+export interface WeknoraDocumentSummary {
+  id: string
+  title: string
+  updatedAt?: string
+}
+
+export interface WeknoraSearchHit {
+  documentId: string
+  title: string
+  snippet: string
 }
 
 /** AG-03 自动任务调度规则：manual 仅手动触发；daily/weekly 需 timeOfDay。 */

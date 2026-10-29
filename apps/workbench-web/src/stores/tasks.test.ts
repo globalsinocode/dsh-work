@@ -322,7 +322,7 @@ describe('task store', () => {
       object: '工具 read',
       toolName: 'read',
       dataScope: '供应链经营分析成员授权范围',
-      nextStep: expect.stringContaining('平台管理员'),
+      nextStep: expect.stringContaining('允许后将从当前等待继续执行'),
     })
     expect(Object.keys(store)).not.toContain('approveTask')
   })

@@ -31,7 +31,10 @@ const manifestIcons = [
   },
 ]
 
-export function createDshWorkPwaOptions(manifest: DshWorkPwaManifest) {
+export function createDshWorkPwaOptions(
+  manifest: DshWorkPwaManifest,
+  options: { importScripts?: string[] } = {},
+) {
   return {
     registerType: 'autoUpdate' as const,
     injectRegister: false as const,
@@ -57,6 +60,7 @@ export function createDshWorkPwaOptions(manifest: DshWorkPwaManifest) {
       cleanupOutdatedCaches: true,
       clientsClaim: true,
       skipWaiting: true,
+      importScripts: options.importScripts,
     },
   }
 }
