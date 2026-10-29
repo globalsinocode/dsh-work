@@ -106,7 +106,11 @@ const routeTargetId = computed(() => {
 const wideForPreview = useMediaQuery('(min-width: 1280px)', true)
 const previewDocked = computed(() => wideForPreview.value && !isEmbeddedInWorkspace.value)
 const previewKey = computed(() => previewArtifact.value ? `${previewArtifact.value.id}@${previewArtifact.value.version}` : null)
-const DIALOG_PREVIEW_TYPES = new Set<Artifact['type']>(['html', 'markdown', 'csv', 'text', 'pdf'])
+/**
+ * HTML / Markdown / CSV 仍走成果预览对话框（源代码切换与表格）。
+ * PDF 与纯文本走右栏：PDF 只展示解析文本或失败原因，文本展示该版本原文（EX-ARTIFACT-08）。
+ */
+const DIALOG_PREVIEW_TYPES = new Set<Artifact['type']>(['html', 'markdown', 'csv'])
 function openPreview(artifact: Artifact) {
   detailsOpen.value = false
   previewArtifact.value = artifact
