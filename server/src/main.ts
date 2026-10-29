@@ -22,6 +22,7 @@ import { registerWorkbenchAgentRoutes } from './http/workbench/agent-routes.ts'
 import { registerProjectRoutes } from './http/workbench/project-routes.ts'
 import { registerUserPreferenceRoutes } from './http/workbench/preference-routes.ts'
 import { registerPushRoutes } from './http/workbench/push-routes.ts'
+import { createWeknoraAccessService, registerWeknoraRoutes } from './http/workbench/weknora-routes.ts'
 import { registerConversationTargetRoutes } from './http/workbench/conversation-target-routes.ts'
 import { registerWorkspaceTimelineRoutes } from './http/workbench/workspace-timeline-routes.ts'
 import { registerOidcRoutes } from './http/auth-routes.ts'
@@ -536,6 +537,7 @@ async function start() {
   })
   bindWebPushDispatch(new WebPushDispatchService(database, webPushService, workspaceNotificationRecipients))
   registerPushRoutes(router, webPushService)
+  registerWeknoraRoutes(router, createWeknoraAccessService(database))
   registerRunApprovalRoutes(router, database, runs, persistentWait, 'postgres')
   registerConversationTargetRoutes(router, new PostgresConversationTargetService(database, agents), authorization)
   registerWorkspaceTimelineRoutes(router, new PostgresWorkspaceTimelineService(database, new PostgresWorkspaceService(database)), authorization)

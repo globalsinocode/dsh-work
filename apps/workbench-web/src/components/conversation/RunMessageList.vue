@@ -19,9 +19,11 @@ const props = withDefaults(defineProps<{
   isOwn: (message: ChatMessage) => boolean
   canFollowUp?: boolean
   canRetry?: boolean
+  canResolveApproval?: boolean
+  resolvingApproval?: boolean
   /** 已在输入区引用的成果文件，对应卡片显示“已引用”。 */
   referencedFileIds?: string[]
-}>(), { canFollowUp: false, canRetry: false, referencedFileIds: () => [] })
+}>(), { canFollowUp: false, canRetry: false, canResolveApproval: false, resolvingApproval: false, referencedFileIds: () => [] })
 
 const emit = defineEmits<{
   download: [artifact: Artifact]
@@ -30,6 +32,7 @@ const emit = defineEmits<{
   'copy-link': []
   'open-details': []
   retry: []
+  'resolve-approval': [decision: 'approved' | 'rejected']
 }>()
 
 const task = toRef(props, 'task')
@@ -148,6 +151,14 @@ function messageMeta(message: ChatMessage) {
         <div><dt>范围</dt><dd>{{ task.approval?.dataScope ?? '当前用户授权范围' }}</dd></div>
       </dl>
       <p>{{ task.approval?.nextStep ?? '审批完成后会从新的 Attempt 继续执行，无需重复提交。' }}</p>
+      <div v-if="canResolveApproval" class="conversation-notice__actions">
+        <el-button type="primary" :loading="resolvingApproval" @click="emit('resolve-approval', 'approved')">
+          允许本次
+        </el-button>
+        <el-button :disabled="resolvingApproval" @click="emit('resolve-approval', 'rejected')">
+          拒绝
+        </el-button>
+      </div>
     </div>
     <StatusTag status="awaiting_approval" label="等待确认" />
   </section>

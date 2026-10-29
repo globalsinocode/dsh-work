@@ -50,6 +50,8 @@ import type {
   AccountNotificationQuery,
   WorkspaceNotificationState,
   WorkspaceNotificationView,
+  NotificationPreferences,
+  PushConfig,
   WorkspaceSessionPage,
   WorkspaceSessionQuery,
   WorkspaceStatusFilter,
@@ -57,6 +59,10 @@ import type {
   WorkspaceUsage,
   WorkspaceUsageQuery,
   UploadedWorkspaceFileVersion,
+  WeknoraIntegrationStatus,
+  WeknoraKnowledgeBaseSummary,
+  WeknoraDocumentSummary,
+  WeknoraSearchHit,
 } from '../types/domain'
 import { isAuthorizationChangeCode, notifyAuthorizationChange } from '../utils/authorization-change'
 
@@ -206,6 +212,28 @@ export const workbenchApi = {
   getPreferences: () => request<UserPreferences>('/me/preferences'),
   updatePreferences: (input: { uiMode: UiMode }) =>
     request<UserPreferences>('/me/preferences', { method: 'PUT', body: JSON.stringify(input) }),
+  getPushConfig: () => request<PushConfig>('/me/push/config'),
+  savePushSubscription: (subscription: PushSubscriptionJSON) =>
+    request<{ endpoint: string; updated: true }>('/me/push/subscriptions', {
+      method: 'PUT',
+      body: JSON.stringify(subscription),
+    }),
+  deletePushSubscription: (input: { endpoint: string }) =>
+    request<{ endpoint: string; deleted: true }>('/me/push/subscriptions', {
+      method: 'DELETE',
+      body: JSON.stringify(input),
+    }),
+  getNotificationPreferences: () => request<NotificationPreferences>('/me/notification-preferences'),
+  patchNotificationPreferences: (input: Partial<NotificationPreferences>) =>
+    request<NotificationPreferences>('/me/notification-preferences', {
+      method: 'PATCH',
+      body: JSON.stringify(input),
+    }),
+  resolveRunApproval: (runId: string, decision: 'approved' | 'rejected') =>
+    request<{ runId: string; decision: 'approved' | 'rejected' }>(`/runs/${encodeURIComponent(runId)}/approval`, {
+      method: 'POST',
+      body: JSON.stringify({ decision }),
+    }),
   listConversationTargets: (query: { query?: string; cursor?: string; limit?: number } = {}) => {
     const params = new URLSearchParams()
     for (const [key, value] of Object.entries(query)) if (value !== undefined && value !== '') params.set(key, String(value))
@@ -727,6 +755,24 @@ export const workbenchApi = {
       `/automations/${encodeURIComponent(id)}/executions${suffix}`,
     )
   },
+  getWeknoraStatus: () => request<WeknoraIntegrationStatus>('/integrations/weknora/status'),
+  startWeknoraBind: () => request<{ url: string }>('/integrations/weknora/bind/start', { method: 'POST' }),
+  unlinkWeknora: () => request<{ ok: true }>('/integrations/weknora/link', { method: 'DELETE' }),
+  listWeknoraKnowledgeBases: () =>
+    request<{ list: WeknoraKnowledgeBaseSummary[] }>('/integrations/weknora/knowledge-bases'),
+  getWeknoraKnowledgeBase: (kbId: string) =>
+    request<WeknoraKnowledgeBaseSummary>(`/integrations/weknora/knowledge-bases/${encodeURIComponent(kbId)}`),
+  listWeknoraDocuments: (kbId: string) =>
+    request<{ list: WeknoraDocumentSummary[] }>(
+      `/integrations/weknora/knowledge-bases/${encodeURIComponent(kbId)}/documents`,
+    ),
+  searchWeknoraKnowledgeBase: (kbId: string, query: string) =>
+    request<{ list: WeknoraSearchHit[] }>(
+      `/integrations/weknora/knowledge-bases/${encodeURIComponent(kbId)}/search`,
+      { method: 'POST', body: JSON.stringify({ query }) },
+    ),
+  weknoraDocumentContentUrl: (documentId: string, inline = false) =>
+    `${baseUrl}/integrations/weknora/documents/${encodeURIComponent(documentId)}/content${inline ? '?disposition=inline' : ''}`,
 }
 
 /**

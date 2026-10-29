@@ -6,6 +6,7 @@ apps/*/dist/
 *.log
 .runtime/
 .tmp-esbuild/
+**/.esbuild-tmp/
 test-results/
 playwright-report/
 blob-report/

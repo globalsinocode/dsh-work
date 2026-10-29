@@ -137,6 +137,12 @@ const canOperateRun = computed(() => Boolean(
   task.value && !workspaceArchived.value && !isRunViewer.value
   && (task.value.workspaceType === 'team' || isRequester.value),
 ))
+const canResolveApproval = computed(() => Boolean(
+  task.value?.status === 'awaiting_approval'
+  && isRequester.value
+  && task.value.approval?.employeeResolvable,
+))
+const resolvingApproval = ref(false)
 const canStop = computed(() => Boolean(
   task.value && canOperateRun.value
   && ['queued', 'running', 'awaiting_approval'].includes(task.value.status),
@@ -593,6 +599,19 @@ async function stopCurrentRun() {
     // User cancelled the confirmation.
   } finally {
     stopping.value = false
+  }
+}
+
+async function resolveApproval(decision: 'approved' | 'rejected') {
+  if (!task.value || resolvingApproval.value || !canResolveApproval.value) return
+  resolvingApproval.value = true
+  try {
+    await taskStore.resolveRunApproval(task.value.id, decision)
+    ElMessage.success(decision === 'approved' ? '已允许本次操作' : '已拒绝本次操作')
+  } catch (cause) {
+    notifyActionFailure('确认操作', task.value.title, cause, '请刷新对话后重试。')
+  } finally {
+    resolvingApproval.value = false
   }
 }
 
@@ -1824,6 +1843,14 @@ watch(
                 <div><dt>范围</dt><dd>{{ task.approval?.dataScope ?? '当前用户授权范围' }}</dd></div>
               </dl>
               <p>{{ task.approval?.nextStep ?? '审批完成后会从新的 Attempt 继续执行，无需重复提交。' }}</p>
+              <div v-if="canResolveApproval" class="conversation-notice__actions">
+                <el-button type="primary" :loading="resolvingApproval" @click="resolveApproval('approved')">
+                  允许本次
+                </el-button>
+                <el-button :disabled="resolvingApproval" @click="resolveApproval('rejected')">
+                  拒绝
+                </el-button>
+              </div>
             </div>
             <StatusTag status="awaiting_approval" label="等待确认" />
           </section>

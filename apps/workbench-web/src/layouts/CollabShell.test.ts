@@ -31,7 +31,7 @@ async function setup(role: 'employee' | 'platform_admin', path = '/c/chats') {
   const page = { template: '<div>页面</div>' }
   const router = createRouter({
     history: createMemoryHistory(),
-    routes: ['/c/chats', '/c/agents', '/c/groups', '/automations', '/settings', '/skills', '/files', '/history']
+    routes: ['/c/chats', '/c/agents', '/c/groups', '/automations', '/settings', '/skills', '/files', '/history', '/knowledge']
       .map(p => ({ path: `${p}/:rest(.*)*`, component: page })),
   })
   await router.push(path)
@@ -88,7 +88,7 @@ describe('CollabShell', () => {
     const { wrapper } = await setup('employee')
     expect(wrapper.find('button[aria-label="打开用户菜单"]').text()).toBe('林')
     const text = wrapper.get('.menu').text()
-    for (const label of ['用户中心', 'Skill 广场', '我的文件', '历史对话']) expect(text).toContain(label)
+    for (const label of ['用户中心', 'Skill 广场', '我的文件', '历史对话', '知识库']) expect(text).toContain(label)
     expect(text.indexOf('用户中心')).toBeLessThan(text.indexOf('历史对话'))
     expect(text).not.toContain('打开管理后台')
     wrapper.unmount()

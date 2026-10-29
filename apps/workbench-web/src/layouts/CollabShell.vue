@@ -8,6 +8,7 @@ import {
   Document,
   Grid,
   Monitor,
+  Reading,
   Setting,
   SwitchButton,
   UserFilled,
@@ -109,6 +110,10 @@ useWorkbenchBootstrap()
               <el-dropdown-item command="/history">
                 <el-icon><Clock /></el-icon>
                 历史对话
+              </el-dropdown-item>
+              <el-dropdown-item command="/knowledge">
+                <el-icon><Reading /></el-icon>
+                知识库
               </el-dropdown-item>
               <el-dropdown-item v-if="authStore.canAccessAdmin" divided command="admin">
                 <el-icon><Monitor /></el-icon>

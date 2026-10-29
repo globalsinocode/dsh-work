@@ -482,13 +482,14 @@ export const useTaskStore = defineStore('tasks', () => {
       task.approval = {
         object: `工具 ${toolName}`,
         reason: durable
-          ? '本轮动作、参数摘要、资源和数据版本已固定，当前执行已释放 Worker。'
+          ? '本次操作已暂停，请确认是否允许执行。'
           : 'DSH 请求本轮一次性工具权限，服务端正在校验 Agent、角色和数据范围。',
         nextStep: durable
-          ? '平台管理员处理后会创建新的 Attempt 继续执行；无需重复提交。'
+          ? '允许后将从当前等待继续执行；拒绝后本次 Run 结束。'
           : '当前动作正在自动确认，无需手动操作；确认结果会自动更新。',
         toolName,
         dataScope: task.workspaceName === '我的空间' ? '当前员工个人授权范围' : `${task.workspaceName}成员授权范围`,
+        employeeResolvable: durable,
       }
     }
     if (event.event_type === 'run.waiting') task.status = 'awaiting_approval'
@@ -622,10 +623,15 @@ export const useTaskStore = defineStore('tasks', () => {
     streams.delete(runId)
   }
 
+  async function resolveRunApproval(runId: string, decision: 'approved' | 'rejected') {
+    await workbenchApi.resolveRunApproval(runId, decision)
+    await refreshRun(runId)
+  }
+
   return {
     tasks, loading, initialized, activeTasks, recentTasks, sessionActivity, reset, load, getTask, loadTask,
     createTask, sendMessage, postSessionMessage, startTeamDiscussion, loadSessionThread, loadEarlierThreadMessages, uploadSessionFiles,
-    startRunWithSessionFiles, cancelTask, retryTask, deleteConversation, refreshRun, refresh,
+    startRunWithSessionFiles, cancelTask, retryTask, deleteConversation, refreshRun, refresh, resolveRunApproval,
     upsert, subscribe, subscribeWorkspaceSessions, unsubscribeWorkspaceSessions,
   }
 })

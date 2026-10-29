@@ -9,7 +9,7 @@ test('P0: personal Workspace is implicit, navigation exposes work entries', asyn
   await page.goto('/workbench')
   const navigation = page.getByRole('navigation', { name: '员工工作台主导航' })
   // 历史对话与我的文件保留上下文入口和直达路由，不进入员工主导航。
-  await expect(navigation.getByRole('button')).toHaveText(['新对话', 'Skill 广场', 'AI 同事', '项目空间', '定时任务'])
+  await expect(navigation.getByRole('button')).toHaveText(['新对话', 'Skill 广场', 'AI 同事', '项目空间', '知识库', '定时任务'])
   await expect(page.getByRole('button', { name: '切换模式' })).toBeVisible()
   await expect(page.getByRole('button', { name: '打开用户中心' })).toBeVisible()
   await expect(page.getByLabel('选择工作空间')).toHaveCount(0)
@@ -35,6 +35,14 @@ test('P0: personal Workspace is implicit, navigation exposes work entries', asyn
   await expect(page.getByRole('button').filter({ hasText: '我的空间' })).toHaveCount(0)
   await navigation.getByRole('button', { name: '新对话', exact: true }).click()
   await expect(page.getByLabel('选择工作空间')).toHaveCount(0)
+})
+
+test('P0: knowledge entry shows unconfigured state in smoke', async ({ page }) => {
+  await page.goto('/workbench')
+  await page.getByRole('navigation', { name: '员工工作台主导航' })
+    .getByRole('button', { name: '知识库', exact: true }).click()
+  await expect(page).toHaveURL(/\/knowledge$/)
+  await expect(page.getByText('知识库尚未配置', { exact: true })).toBeVisible()
 })
 
 test('P0: legacy personal links redirect after the server authorizes the workspace', async ({ page }) => {

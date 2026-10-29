@@ -2,14 +2,21 @@
 import { computed, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
+import SystemNotificationBanner from '@/components/system-notification-banner/system-notification-banner.vue'
 import CollabShell from '@/layouts/CollabShell.vue'
 import EmployeeShell from '@/layouts/EmployeeShell.vue'
+import { useSystemNotifications } from '@/composables/useSystemNotifications'
 import { locationForMode, routeMode } from '@/router/mode-routes'
 import { useUiModeStore } from '@/stores/ui-mode'
 
 const route = useRoute()
 const router = useRouter()
 const uiMode = useUiModeStore()
+const {
+  active: notificationsActive,
+  bannerPayload,
+  clearBanner,
+} = useSystemNotifications()
 const publicRoute = computed(() => Boolean(route.meta.public))
 const shellRoute = computed(() => route.matched.length > 0 && !publicRoute.value)
 // 模式专属页始终放在所属模式的壳层里；切换模式后在地址换好之前不会出现“B 壳层套 A 页面”。
@@ -29,5 +36,10 @@ watch(() => uiMode.mode, (mode) => {
   <template v-else-if="shellRoute">
     <CollabShell v-if="shell === 'collab'" />
     <EmployeeShell v-else />
+    <SystemNotificationBanner
+      v-if="notificationsActive"
+      :payload="bannerPayload"
+      @dismiss="clearBanner"
+    />
   </template>
 </template>

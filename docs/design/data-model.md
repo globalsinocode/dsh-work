@@ -47,8 +47,10 @@ flowchart LR
 | `roles`、`user_roles`、`data_scope_grants` | 本地角色、用户角色、数据范围授权 | 独立于 AI Hub；过期角色不生效；任何变更由触发器递增本地授权版本，请求按当前版本重新计算 |
 | `system_settings` | 早期的租户级设置 | 当前代码未读写 |
 | `user_preferences` | 员工端界面偏好（迁移 0094） | 每个账号一行；`ui_mode` 为 `work` 或 `collab`，无记录时为工作模式；只影响界面，不改变权限 |
-| `push_subscriptions` | 手机工作台 Web Push 设备订阅（迁移 0110） | 以 `endpoint` 为主键；归属租户与用户；保存推送密钥材料，按用户索引 |
-| `notification_preferences` | 账号级通知开关（迁移 0110） | 每租户每用户一行；控制协作未读与 Run 完成等推送类别，跨设备一致 |
+| `push_subscriptions` | 手机工作台 Web Push 设备订阅（迁移 0111） | 以 `endpoint` 为主键；归属租户与用户；保存推送密钥材料，按用户索引 |
+| `notification_preferences` | 账号级通知开关（迁移 0111） | 每租户每用户一行；控制协作未读与 Run 完成等推送类别，跨设备一致 |
+| `user_weknora_links` | 员工与 WeKnora 用户的绑定（迁移 0110） | 每用户一行；来源为手动绑定或目录自动连接 |
+| `weknora_bind_states` | WeKnora 绑定一次性 state（迁移 0110） | `state` 为主键；到期后可清理 |
 
 ## 2. 执行身份
 
@@ -258,7 +260,8 @@ Run 和 Attempt 的普通状态转换不能从终态回退。只有失败或取�
 - [持久化等待与审批](../../server/migrations/0061_persistent_wait_and_approval.sql)、[受控记忆](../../server/migrations/0062_controlled_memory.sql)、[执行身份](../../server/migrations/0064_execution_principals.sql)。
 - [Agent 数据平面](../../server/migrations/0072_agent_data_plane.sql)、[Agent 主动任务](../../server/migrations/0074_agent_owned_routines.sql)、[负责人错误码](../../server/migrations/0080_workspace_owner_errcode.sql)、[知识分段检索](../../server/migrations/0081_knowledge_chunks.sql)。
 - [文件解析附件](../../server/migrations/0083_file_extraction_attachments.sql)、[MCP 用户授权](../../server/migrations/0084_mcp_user_grants.sql)、[会话草稿](../../server/migrations/0085_session_drafts.sql)、[空间对象 GC](../../server/migrations/0086_workspace_object_gc.sql)、[空间通知](../../server/migrations/0087_workspace_notifications.sql)。
-- [Web Push 订阅与通知偏好](../../server/migrations/0110_web_push.sql)：按设备 endpoint 存订阅，账号级通知开关跨设备一致。
+- [WeKnora 用户绑定](../../server/migrations/0110_user_weknora_links.sql)：员工与 WeKnora 用户的绑定及一次性绑定 state。
+- [Web Push 订阅与通知偏好](../../server/migrations/0111_web_push.sql)：按设备 endpoint 存订阅，账号级通知开关跨设备一致。
 - [Agent 级岗位权限](../../server/migrations/0090_agent_level_access.sql)：可见角色复制到 Agent 级并立即生效，版本列保留以兼容历史读取。
 - [Agent 验证与发布](../../server/migrations/0091_agent_validations.sql)：待发布版本冻结、自定义测试问题与验证案例；与既有发布候选/试运行表并存。
 - [Agent 运行记录索引](../../server/migrations/0092_agent_run_history_index.sql)：详情页按 Task 的执行身份读取最近 Run。

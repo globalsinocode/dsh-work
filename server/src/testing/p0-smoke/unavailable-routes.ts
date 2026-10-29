@@ -72,6 +72,13 @@ export function registerUnavailableWorkbenchCommandRoutes(router: Router) {
     envelope('workbench', { items: [], nextCursor: null, hasMore: false }))
   router.post(`${basePath}/automations/:automationId/archive`, async (_request, context) =>
     unavailable(`自动任务 ${context.params['automationId'] ?? ''}`))
+  router.get(`${basePath}/integrations/weknora/status`, async () => envelope('workbench', {
+    configured: false,
+    linked: false,
+    source: null,
+    canUnlink: false,
+    directoryAccount: 'none',
+  }, 'prototype-memory'))
 }
 
 function unavailable(object: string) {

@@ -27,7 +27,7 @@ async function switchToCollab(page: Page, options: { narrow?: boolean } = {}) {
 test('MODE-E2E-01: never-switched employees land in work mode and see the logo mode menu', async ({ page }) => {
   await page.goto('/workbench')
   const navigation = page.getByRole('navigation', { name: '员工工作台主导航' })
-  await expect(navigation.getByRole('button')).toHaveText(['新对话', 'Skill 广场', 'AI 同事', '项目空间', '定时任务'])
+  await expect(navigation.getByRole('button')).toHaveText(['新对话', 'Skill 广场', 'AI 同事', '项目空间', '知识库', '定时任务'])
 
   await page.getByRole('button', { name: '切换模式' }).click()
   await expect(page.getByRole('menuitem', { name: /工作模式.*当前模式/ })).toBeVisible()
@@ -111,6 +111,7 @@ test('MODE-E2E-03: collaboration shell has four entries and an avatar menu for s
     ['Skill 广场', /\/skills$/, undefined],
     ['我的文件', /\/files/, '我的文件'],
     ['历史对话', /\/history/, '历史对话'],
+    ['知识库', /\/knowledge$/, '知识库'],
   ] as const) {
     await page.getByRole('button', { name: '打开用户菜单' }).click()
     await page.getByRole('menuitem', { name: item }).click()

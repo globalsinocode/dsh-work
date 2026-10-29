@@ -5,10 +5,13 @@ import { workbenchApi } from '@/api/client'
 import { User } from '@element-plus/icons-vue'
 
 import ExternalConnections from '@/components/external-connections/external-connections.vue'
+import NotificationSettings from '@/components/notification-settings/notification-settings.vue'
 import { roleLabels, useAuthStore } from '@/stores/auth'
+import { isWorkbenchNotificationSupported } from '@/utils/system-notification-client'
 import type { McpUserGrantListItem } from '@/types/domain'
 
 const authStore = useAuthStore()
+const notificationSupported = isWorkbenchNotificationSupported()
 const route = useRoute()
 const router = useRouter()
 const policy = ref('')
@@ -94,6 +97,8 @@ onMounted(async () => {
         :revoke="revokeMcp"
         :reload="loadMcpGrants"
       />
+
+      <NotificationSettings :enabled="notificationSupported" />
 
       <section class="panel settings-section retention-notice">
         <h2>内容保留与账号停用</h2>

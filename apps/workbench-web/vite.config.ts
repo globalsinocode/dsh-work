@@ -1,3 +1,4 @@
+import './vite-esbuild-temp.ts'
 import { fileURLToPath, URL } from 'node:url'
 
 import vue from '@vitejs/plugin-vue'
@@ -15,13 +16,16 @@ export default defineConfig({
   plugins: [
     vue(),
     VitePWA(
-      createDshWorkPwaOptions({
-        name: 'dsh-work 员工 AI 工作台',
-        short_name: 'dsh-work',
-        description: 'dsh-work 员工 AI 工作台',
-        start_url: '/workbench',
-        id: '/workbench',
-      }),
+      createDshWorkPwaOptions(
+        {
+          name: 'dsh-work 员工 AI 工作台',
+          short_name: 'dsh-work',
+          description: 'dsh-work 员工 AI 工作台',
+          start_url: '/workbench',
+          id: '/workbench',
+        },
+        { importScripts: ['push-sw.js'] },
+      ),
     ),
   ],
   resolve: {

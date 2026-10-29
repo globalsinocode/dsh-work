@@ -17,6 +17,8 @@ afterEach(() => vi.restoreAllMocks())
 
 describe('SettingsView', () => {
   it('shows enterprise identity and content retention without controlled-memory controls', async () => {
+    // @ts-expect-error jsdom 无 Notification，需 stub 才会渲染用户中心通知区块
+    globalThis.Notification = function Notification() {}
     vi.spyOn(workbenchApi, 'getContentPolicy').mockResolvedValue({
       version: 'v1', physicalDeletion: false, retentionDays: null, notice: '保留规则',
     })
@@ -26,6 +28,8 @@ describe('SettingsView', () => {
       apiAudience: 'workbench',
     })
     vi.spyOn(workbenchApi, 'listMcpGrants').mockResolvedValue({ list: [], total: 0, page: 1, pageSize: 20 })
+    vi.spyOn(workbenchApi, 'getNotificationPreferences').mockResolvedValue({ collabUnread: true, runFinished: true })
+    vi.spyOn(workbenchApi, 'getPushConfig').mockRejectedValue(Object.assign(new Error('通知服务暂不可用'), { status: 503 }))
     const pinia = createPinia()
     setActivePinia(pinia)
     await useAuthStore().load()
@@ -34,6 +38,7 @@ describe('SettingsView', () => {
 
     expect(wrapper.text()).toContain('企业身份')
     expect(wrapper.text()).toContain('内容保留与账号停用')
+    expect(wrapper.text()).toContain('系统通知')
     expect(wrapper.text()).toContain('保留规则')
     expect(wrapper.text()).not.toContain('受控记忆')
   })
