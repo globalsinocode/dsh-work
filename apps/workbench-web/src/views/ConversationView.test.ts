@@ -195,7 +195,8 @@ async function mountView(options: {
   getRun?: () => Promise<TaskRun>
   bridge?: ProjectTaskDetailBridge
 } = {}) {
-  if (route.name !== 'workspace-conversation' && route.name !== 'workspace-task-thread') {
+  if (route.name !== 'workspace-conversation' && route.name !== 'workspace-task-thread'
+    && route.name !== 'collab-group-conversation' && route.name !== 'collab-group-task-thread') {
     route.name = 'conversation'
   }
   const pinia = createPinia()
@@ -1146,6 +1147,22 @@ describe('ConversationView 空间内嵌套视图（TW-10 导航）', () => {
     expect(wrapper.find('[data-testid="task-thread-badge"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="task-thread-notice"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="task-send-agent"]').exists()).toBe(true)
+  })
+
+  it('loads a collab group task thread without leaving the group', async () => {
+    route.name = 'collab-group-task-thread'
+    route.params = { id: 'ws-team', taskId: 'ptask-1', conversationId: 'session-001' }
+    api.getSessionThread.mockResolvedValue(sessionThread({
+      messages: [
+        { id: 'm1', role: 'assistant', content: '受控测试运行已完成（非真实模型回答）；成果已登记。', createdAt: '09:06', sentAt: '2026-09-10T09:06:00.000Z', runId: 'run-9', senderId: null, senderName: null, runRequesterId: 'U00002', runRequesterName: '周航', agentName: '缺货分析助手' },
+      ],
+    }))
+    api.listProjectTasks.mockResolvedValue(page([projectTask()]))
+    const { wrapper } = await mountView({ item: null })
+    expect(api.getSessionThread).toHaveBeenCalledWith('session-001')
+    expect(router.replace).not.toHaveBeenCalled()
+    expect(wrapper.text()).toContain('成果已登记')
+    expect(wrapper.find('.conversation-message--assistant').exists()).toBe(true)
   })
 
   describe('S3 任务对话', () => {

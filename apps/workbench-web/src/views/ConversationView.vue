@@ -2,6 +2,7 @@
 import { computed, inject, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { projectTaskDetailKey } from '@/composables/project-task-detail'
+import { spaceView, useSpaceRoutes } from '@/composables/space-routes'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   ArrowDown,
@@ -78,26 +79,19 @@ const targetLoading = ref(false)
  * （reconcileConversationRoute），保证团队对话始终停留在空间上下文。
  */
 /**
- * 项目任务详情内嵌：作为 /workspaces/:id/tasks/:taskId/thread/:conversationId 渲染时，
- * 任务信息、返回与任务标识由外层任务详情提供，线程内导航（续接产生新 Run、查看执行记录）
- * 停留在任务详情下。
+ * 项目任务详情内嵌：工作模式与协作模式共用本页。页面类型看 meta.spaceView
+ * （spaceView），不写死路由名；任务信息与返回由外层任务详情提供，线程内导航留在当前模式。
  */
-const isTaskThreadRoute = computed(() => route.name === 'workspace-task-thread')
+const spaceRoutes = useSpaceRoutes()
+const isTaskThreadRoute = computed(() => spaceView(route) === 'task-thread')
 const isEmbeddedInWorkspace = computed(() =>
-  route.name === 'workspace-conversation' || isTaskThreadRoute.value)
+  spaceView(route) === 'conversation' || isTaskThreadRoute.value)
 const isActiveConversationRoute = computed(() =>
-  route.name === 'workspace-conversation' || route.name === 'conversation' || isTaskThreadRoute.value)
+  route.name === 'conversation' || isEmbeddedInWorkspace.value)
 const embeddedWorkspaceId = computed(() =>
   isEmbeddedInWorkspace.value ? String(route.params.id) : '')
-const routeTargetId = computed(() => {
-  if (route.name === 'workspace-conversation' || route.name === 'workspace-task-thread') {
-    return String(route.params.conversationId ?? '')
-  }
-  if (route.name === 'conversation') {
-    return String(route.params.id ?? '')
-  }
-  return ''
-})
+const routeTargetId = computed(() =>
+  isEmbeddedInWorkspace.value ? String(route.params.conversationId ?? '') : String(route.params.id ?? ''))
 
 /**
  * EX-ARTIFACT-08：点击成果在右栏预览。宽屏（≥1280px）与对话并排；窄屏与空间内嵌时为抽屉。
@@ -129,10 +123,10 @@ watch(detailsOpen, (open) => { if (open) closePreview() })
 
 function conversationPath(target: string) {
   if (isTaskThreadRoute.value) {
-    return `/workspaces/${embeddedWorkspaceId.value}/tasks/${String(route.params.taskId)}/thread/${target}`
+    return spaceRoutes.taskThread(embeddedWorkspaceId.value, String(route.params.taskId), target)
   }
   return isEmbeddedInWorkspace.value
-    ? `/workspaces/${embeddedWorkspaceId.value}/conversations/${target}`
+    ? spaceRoutes.conversation(embeddedWorkspaceId.value, target)
     : `/conversations/${target}`
 }
 
@@ -299,8 +293,8 @@ async function loadProjectTask(workspaceId: string | undefined) {
     const page = await workbenchApi.listProjectTasks(workspaceId, { sessionId, limit: 1 })
     if (currentSessionId.value !== sessionId) return
     projectTask.value = page.items.find(item => item.sessionId === sessionId) ?? null
-    if (projectTask.value && route.name === 'workspace-conversation') {
-      await router.replace(`/workspaces/${workspaceId}/tasks/${projectTask.value.id}/thread/${routeTargetId.value}`)
+    if (projectTask.value && spaceView(route) === 'conversation') {
+      await router.replace(spaceRoutes.taskThread(workspaceId, projectTask.value.id, routeTargetId.value))
     }
   } catch (error) {
     if (currentSessionId.value !== sessionId) return
@@ -584,13 +578,17 @@ const isTerminalRun = computed(() =>
 function goBack() {
   if (isTaskThreadRoute.value) {
     const sessionId = task.value?.sessionId ?? sessionThread.value?.sessionId
-    void router.push(sessionId ? conversationPath(sessionId) : `/workspaces/${embeddedWorkspaceId.value}/tasks/${String(route.params.taskId)}`)
+    void router.push(sessionId ? conversationPath(sessionId) : spaceRoutes.task(embeddedWorkspaceId.value, String(route.params.taskId)))
     return
   }
   // 嵌入态的返回固定归位到所属空间页（线程返回控件回到列表）：外部旧链接
   // 经 replace 归位后，router.back() 会跳出空间上下文，不能依赖历史栈。
   if (isEmbeddedInWorkspace.value) {
     const workspaceId = String(route.params.id ?? embeddedWorkspaceId.value)
+    if (String(route.name ?? '').startsWith('collab-')) {
+      void router.push(workspaceId ? spaceRoutes.home(workspaceId) : { name: 'collab-chats' })
+      return
+    }
     if (!workspaceId) {
       void router.push({ name: 'workspaces' })
       return
@@ -1230,13 +1228,13 @@ async function reconcileConversationRoute() {
   const workspaceId = task.value?.workspaceId ?? sessionThread.value?.workspaceId
   if (isEmbeddedInWorkspace.value) {
     if (workspaceId && workspaceId !== embeddedWorkspaceId.value) {
-      await router.replace(`/workspaces/${workspaceId}/conversations/${routeTargetId.value}`)
+      await router.replace(spaceRoutes.conversation(workspaceId, routeTargetId.value))
     }
     return
   }
   const workspaceType = task.value?.workspaceType ?? sessionThread.value?.workspaceType
   if (workspaceType !== 'team' || !workspaceId) return
-  await router.replace(`/workspaces/${workspaceId}/conversations/${routeTargetId.value}`)
+  await router.replace(spaceRoutes.conversation(workspaceId, routeTargetId.value))
 }
 
 /**
@@ -1767,7 +1765,7 @@ watch(
         </el-button>
         <el-button
           :type="targetLoadFailed ? 'default' : 'primary'"
-          @click="isEmbeddedInWorkspace ? router.push(`/workspaces/${embeddedWorkspaceId}`) : router.push('/workbench')"
+          @click="isEmbeddedInWorkspace ? router.push(spaceRoutes.home(embeddedWorkspaceId)) : router.push('/workbench')"
         >
           {{ isEmbeddedInWorkspace ? '返回工作空间' : '返回工作台' }}
         </el-button>
