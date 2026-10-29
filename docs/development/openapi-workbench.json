@@ -119,6 +119,166 @@
         }
       }
     },
+    "/me/push/config": {
+      "get": {
+        "operationId": "getPushConfig",
+        "summary": "读取 Web Push 公钥",
+        "responses": {
+          "200": {
+            "description": "VAPID 公钥",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    { "$ref": "#/components/schemas/Envelope" },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": { "$ref": "#/components/schemas/PushConfig" }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Error" },
+          "503": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/me/push/subscriptions": {
+      "put": {
+        "operationId": "upsertPushSubscription",
+        "summary": "登记或更新本机 Push 订阅",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/PushSubscriptionInput" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "订阅已保存",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    { "$ref": "#/components/schemas/Envelope" },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": { "$ref": "#/components/schemas/PushSubscriptionUpsertResult" }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Error" },
+          "422": { "$ref": "#/components/responses/Error" },
+          "503": { "$ref": "#/components/responses/Error" }
+        }
+      },
+      "delete": {
+        "operationId": "deletePushSubscription",
+        "summary": "注销本机 Push 订阅",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/PushSubscriptionDeleteInput" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "订阅已删除",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    { "$ref": "#/components/schemas/Envelope" },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": { "$ref": "#/components/schemas/PushSubscriptionDeleteResult" }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Error" },
+          "422": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/me/notification-preferences": {
+      "get": {
+        "operationId": "getNotificationPreferences",
+        "summary": "读取通知偏好",
+        "responses": {
+          "200": {
+            "description": "通知偏好",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    { "$ref": "#/components/schemas/Envelope" },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": { "$ref": "#/components/schemas/NotificationPreferences" }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Error" }
+        }
+      },
+      "patch": {
+        "operationId": "patchNotificationPreferences",
+        "summary": "更新通知偏好",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/NotificationPreferencesPatch" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "保存后的通知偏好",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    { "$ref": "#/components/schemas/Envelope" },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": { "$ref": "#/components/schemas/NotificationPreferences" }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Error" },
+          "422": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
     "/me/conversation-targets": {
       "get": {
         "operationId": "listConversationTargets",
@@ -1887,6 +2047,56 @@
           "409": {
             "$ref": "#/components/responses/Error"
           }
+        }
+      }
+    },
+    "/runs/{runId}/approval": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/RunId"
+        }
+      ],
+      "post": {
+        "operationId": "resolveRunApproval",
+        "summary": "发起人确认本次 Run 的待决审批",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["decision"],
+                "properties": {
+                  "decision": {
+                    "type": "string",
+                    "enum": ["approved", "rejected"]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "决议已记录",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    { "$ref": "#/components/schemas/Envelope" },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": { "$ref": "#/components/schemas/RunApprovalResolution" }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "403": { "$ref": "#/components/responses/Error" },
+          "409": { "$ref": "#/components/responses/Error" }
         }
       }
     },
@@ -4837,6 +5047,75 @@
               "collab"
             ]
           }
+        }
+      },
+      "PushConfig": {
+        "type": "object",
+        "required": ["vapidPublicKey"],
+        "properties": {
+          "vapidPublicKey": { "type": "string" }
+        }
+      },
+      "PushSubscriptionInput": {
+        "type": "object",
+        "required": ["endpoint", "keys"],
+        "properties": {
+          "endpoint": { "type": "string" },
+          "keys": {
+            "type": "object",
+            "required": ["p256dh", "auth"],
+            "properties": {
+              "p256dh": { "type": "string" },
+              "auth": { "type": "string" }
+            }
+          }
+        }
+      },
+      "PushSubscriptionUpsertResult": {
+        "type": "object",
+        "required": ["endpoint", "updated"],
+        "properties": {
+          "endpoint": { "type": "string" },
+          "updated": { "type": "boolean", "const": true }
+        }
+      },
+      "PushSubscriptionDeleteInput": {
+        "type": "object",
+        "required": ["endpoint"],
+        "properties": {
+          "endpoint": { "type": "string" }
+        }
+      },
+      "PushSubscriptionDeleteResult": {
+        "type": "object",
+        "required": ["endpoint", "deleted"],
+        "properties": {
+          "endpoint": { "type": "string" },
+          "deleted": { "type": "boolean", "const": true }
+        }
+      },
+      "NotificationPreferences": {
+        "type": "object",
+        "required": ["collabUnread", "runFinished"],
+        "properties": {
+          "collabUnread": { "type": "boolean" },
+          "runFinished": { "type": "boolean" }
+        }
+      },
+      "NotificationPreferencesPatch": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "collabUnread": { "type": "boolean" },
+          "runFinished": { "type": "boolean" }
+        }
+      },
+      "RunApprovalResolution": {
+        "type": "object",
+        "required": ["runId", "decision"],
+        "properties": {
+          "runId": { "type": "string" },
+          "decision": { "type": "string", "enum": ["approved", "rejected"] }
         }
       },
       "WorkspaceNotificationState": {

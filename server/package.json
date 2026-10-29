@@ -93,6 +93,7 @@
   },
   "devDependencies": {
     "@types/node": "^24.7.2",
+    "@types/web-push": "^3.6.4",
     "typescript": "~5.9.3"
   },
   "dependencies": {
@@ -100,6 +101,7 @@
     "cron-parser": "5.10.1",
     "fflate": "^0.8.3",
     "postgres": "^3.4.9",
+    "web-push": "^3.6.7",
     "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz",
     "yaml": "^2.9.0"
   }

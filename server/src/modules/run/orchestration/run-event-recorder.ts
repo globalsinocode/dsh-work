@@ -2,6 +2,7 @@ import type { RuntimeEvent, RuntimeManifest } from '../../runtime/runtime-types.
 import type { JsonObject, RunRecord, RunState, StoredRunEvent } from '../run-types.ts'
 import type { AttemptBudget } from './attempt-budget.ts'
 import { tenantId, type OrchestrationDependencies } from './orchestration-dependencies.ts'
+import { getWebPushDispatch } from '../../workbench/application/web-push-dispatch.ts'
 
 const TERMINAL_RUN_STATUSES = new Set<RunState>(['succeeded', 'failed', 'cancelled'])
 const TERMINAL_ATTEMPT_STATUSES = new Set(['succeeded', 'failed', 'cancelled', 'cancel_requested'])
@@ -107,6 +108,11 @@ export class RunEventRecorder {
         await this.deps.runs.transitionRun(tenantId, run.id, 'waiting')
       }
       await this.deps.operations?.appendAudit(run.requestedBy, 'run.waiting', run.id, 'success', event.trace_id, 'Worker 已释放，等待动作审批')
+      getWebPushDispatch()?.enqueueRunFinished({
+        run: (await this.deps.runs.getRun(tenantId, run.id)) ?? run,
+        status: 'awaiting_approval',
+        eventId: `run:${event.event_id}`,
+      })
     } else if (event.event_type === 'assistant.completed' && event.display_message) {
       this.assistantRawOutputs.set(event.attempt_id, event.display_message)
       let assistantContent = this.deps.knowledge
@@ -162,6 +168,11 @@ export class RunEventRecorder {
           kind: 'run_failed',
           dedupeKey: `run-terminal:${event.event_id}`,
         })
+        getWebPushDispatch()?.enqueueRunFinished({
+          run: (await this.deps.runs.getRun(tenantId, run.id)) ?? run,
+          status: 'failed',
+          eventId: `run:${event.event_id}`,
+        })
       } else {
         await this.onSystemRunTerminal(run, 'failed', '')
       }
@@ -205,6 +216,11 @@ export class RunEventRecorder {
           requestedBy: run.requestedBy,
           kind: 'run_completed',
           dedupeKey: `run-terminal:${event.event_id}`,
+        })
+        getWebPushDispatch()?.enqueueRunFinished({
+          run: (await this.deps.runs.getRun(tenantId, run.id)) ?? run,
+          status: 'succeeded',
+          eventId: `run:${event.event_id}`,
         })
       }
       this.assistantOutputs.delete(event.attempt_id)

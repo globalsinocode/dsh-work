@@ -10,6 +10,7 @@ import { permissionDenied, requestInvalid } from '../../../domain/authorization-
 import { workspaceStateConflict } from './workspace-state-conflict-error.ts'
 import { stateConflict } from '../../../domain/request-errors.ts'
 import { writeNotifiableEvent } from './workspace-activity-writer.ts'
+import { getWebPushDispatch } from './web-push-dispatch.ts'
 import type { ContextMessage, MessagePosition, StoredConversationSummary } from '../../../domain/conversation-context.ts'
 
 const tenantId = 'tenant-dsh-work'
@@ -479,16 +480,18 @@ export class PostgresConversationRepository {
     messageId?: string
   }) {
     const id = input.messageId ?? `message-${randomUUID()}`
-    await this.database`
+    const [inserted] = await this.database<{ id: string }[]>`
       insert into messages (id, tenant_id, session_id, run_id, role, content, sender_user_id)
       values (${id}, ${tenantId}, ${input.sessionId}, ${input.runId ?? null}, ${input.role}, ${input.content},
               ${input.senderUserId ?? null})
       on conflict (id) do nothing
+      returning id
     `
     await this.database`
       update sessions set last_active_at = now()
        where tenant_id = ${tenantId} and id = ${input.sessionId}
     `
+    if (inserted?.id) getWebPushDispatch()?.enqueueMessagePush(inserted.id)
     return id
   }
 
@@ -508,7 +511,7 @@ export class PostgresConversationRepository {
     messageId: string
     mentionedUserIds?: string[]
   }): Promise<{ messageId: string; created: boolean }> {
-    return this.database.begin(async (transaction) => {
+    const result = await this.database.begin(async (transaction) => {
       const [locked] = await transaction<{
         workspaceId: string
         sessionStatus: string
@@ -611,6 +614,8 @@ export class PostgresConversationRepository {
       await activateDraftIfNeeded()
       return { messageId: input.messageId, created: false }
     })
+    if (result.created) getWebPushDispatch()?.enqueueMessagePush(result.messageId)
+    return result
   }
 
   async writeRunTerminalNotificationIfTeam(input: {

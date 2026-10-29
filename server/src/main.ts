@@ -21,6 +21,7 @@ import { registerWorkspaceAgentMemberRoutes } from './http/workbench/workspace-a
 import { registerWorkbenchAgentRoutes } from './http/workbench/agent-routes.ts'
 import { registerProjectRoutes } from './http/workbench/project-routes.ts'
 import { registerUserPreferenceRoutes } from './http/workbench/preference-routes.ts'
+import { registerPushRoutes } from './http/workbench/push-routes.ts'
 import { registerConversationTargetRoutes } from './http/workbench/conversation-target-routes.ts'
 import { registerWorkspaceTimelineRoutes } from './http/workbench/workspace-timeline-routes.ts'
 import { registerOidcRoutes } from './http/auth-routes.ts'
@@ -83,6 +84,9 @@ import { PostgresProjectArchiveService } from './modules/workbench/application/p
 import { PostgresProjectService } from './modules/workbench/application/postgres-project-service.ts'
 import { ProjectTaskTools, mapProjectTaskToolError } from './modules/workbench/application/project-task-tools.ts'
 import { PostgresUserPreferenceService } from './modules/workbench/application/postgres-user-preference-service.ts'
+import { WebPushService } from './modules/workbench/application/web-push-service.ts'
+import { bindWebPushDispatch, WebPushDispatchService } from './modules/workbench/application/web-push-dispatch.ts'
+import { registerRunApprovalRoutes } from './http/workbench/run-approval-routes.ts'
 import { PostgresConversationTargetService } from './modules/workbench/application/postgres-conversation-target-service.ts'
 import { PostgresWorkspaceTimelineService } from './modules/workbench/application/postgres-workspace-timeline-service.ts'
 import { resolvePlatformTimezone } from './domain/execution-time.ts'
@@ -314,11 +318,12 @@ async function start() {
   const workspaceMembers = new PostgresWorkspaceMemberService(database, authorization)
   const workspaceLifecycle = new PostgresWorkspaceLifecycleService(database)
   const notificationRecipientPorts = createPostgresNotificationRecipientPorts(database)
-  bindWorkspaceNotificationRecipients(new WorkspaceNotificationRecipientService(
+  const workspaceNotificationRecipients = new WorkspaceNotificationRecipientService(
     database,
     notificationRecipientPorts.participants,
     notificationRecipientPorts.members,
-  ))
+  )
+  bindWorkspaceNotificationRecipients(workspaceNotificationRecipients)
   const workspaceActivity = new PostgresWorkspaceActivityService(database, new PostgresWorkspaceService(database))
   const workspaceUsage = new PostgresWorkspaceUsageService(database, new PostgresWorkspaceService(database), authorization)
   const operations = new PostgresOperationsService(
@@ -524,6 +529,14 @@ async function start() {
   registerWorkspaceLifecycleRoutes(router, workspaceLifecycle, authorization)
   registerWorkspaceActivityRoutes(router, workspaceActivity, authorization)
   registerUserPreferenceRoutes(router, new PostgresUserPreferenceService(database))
+  const webPushService = new WebPushService(database, {
+    vapidPublicKey: process.env.DSH_VAPID_PUBLIC_KEY,
+    vapidPrivateKey: process.env.DSH_VAPID_PRIVATE_KEY,
+    vapidSubject: process.env.DSH_VAPID_SUBJECT,
+  })
+  bindWebPushDispatch(new WebPushDispatchService(database, webPushService, workspaceNotificationRecipients))
+  registerPushRoutes(router, webPushService)
+  registerRunApprovalRoutes(router, database, runs, persistentWait, 'postgres')
   registerConversationTargetRoutes(router, new PostgresConversationTargetService(database, agents), authorization)
   registerWorkspaceTimelineRoutes(router, new PostgresWorkspaceTimelineService(database, new PostgresWorkspaceService(database)), authorization)
   registerWorkspaceUsageRoutes(router, workspaceUsage, authorization)
