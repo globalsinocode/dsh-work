@@ -233,20 +233,14 @@ export class PostgresAutomationRepository {
     return row ? mapAutomation(row) : null
   }
 
-  async listByOwner(
-    ownerUserId: string,
-    input?: { status?: 'active' | 'archived' },
-  ): Promise<AutomationRecord[]> {
-    const archivedOnly = input?.status === 'archived'
+  async listByOwner(ownerUserId: string): Promise<AutomationRecord[]> {
     const rows = await this.database<AutomationRow[]>`
       select ${this.database.unsafe(AUTOMATION_DISPLAY_COLUMNS)}
         from agent_automations
         ${this.database.unsafe(AUTOMATION_AGENT_JOIN)}
        where agent_automations.tenant_id = ${tenantId}
          and agent_automations.owner_user_id = ${ownerUserId}
-         and ${archivedOnly
-           ? this.database`agent_automations.status = 'disabled'`
-           : this.database`agent_automations.status <> 'disabled'`}
+         and agent_automations.status <> 'disabled'
        order by agent_automations.created_at desc
     `
     return rows.map(mapAutomation)
@@ -269,26 +263,6 @@ export class PostgresAutomationRepository {
       where tenant_id = ${tenantId} and id = ${id}
         and owner_user_id = ${ownerUserId}
         and status in ('draft', 'enabled', 'paused')
-      returning id
-    `
-    return row ? this.getById(row.id) : null
-  }
-
-  async restoreArchived(
-    id: string,
-    ownerUserId: string,
-    tx?: DatabaseTransaction,
-  ): Promise<AutomationRecord | null> {
-    const executor = tx ?? this.database
-    const [row] = await executor<AutomationRow[]>`
-      update agent_automations set
-        status = 'paused',
-        archived_at = null,
-        archived_by = null,
-        updated_at = now()
-      where tenant_id = ${tenantId} and id = ${id}
-        and owner_user_id = ${ownerUserId}
-        and status = 'disabled'
       returning id
     `
     return row ? this.getById(row.id) : null

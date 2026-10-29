@@ -2,6 +2,7 @@ import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { registerVisibilityAuthRefresh } from '../utils/visibility-auth-refresh'
+import { useAuthStore } from './auth'
 
 const api = vi.hoisted(() => ({ getSession: vi.fn() }))
 vi.mock('../api/client', () => ({ workbenchApi: api, WorkbenchApiError: class WorkbenchApiError extends Error {
@@ -34,7 +35,6 @@ describe('workbench auth store', () => {
       ...oldSession,
       user: { ...oldSession.user, dataScopes: [] },
     })
-    const { useAuthStore } = await import('./auth')
     const store = useAuthStore()
     await store.load()
     expect(store.user.dataScopes).toEqual(['region:east'])

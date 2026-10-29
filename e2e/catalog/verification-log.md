@@ -2,6 +2,23 @@
 
 历史验证记录：每次实施的阶段、已运行的测试与未覆盖项。只追加，新记录写在最前面；不是验收标准。证据层级与写法见[验收目录索引](../TEST-CATALOG.md)。
 
+### 2026-10-29：release 2026.10.26-01 M6 最终红灯修复（dev@41eb100）
+
+**环境：** Windows 10，Node 24，Playwright Chromium Headless Shell；Integration/P1 使用 `127.0.0.1:5434` 的专用可丢弃 PostgreSQL，P0 使用仓库测试专用内存服务，均未连接开发业务库或生产库。
+
+| 命令 | 结果 | 层级与说明 |
+| --- | --- | --- |
+| `pnpm verify` / `pnpm typecheck` / `pnpm lint` | 通过 | Static；文档、契约、类型和 lint |
+| `pnpm ci:unit` | 通过 | server 454 通过/3 跳过；admin-web 170；workbench-web 584。3 个跳过项是 Windows 下不适用的 POSIX uid/mode/shebang 语义 |
+| `pnpm test:integration` | 654 通过/1 跳过/0 失败 | 655 项；一次性 PostgreSQL，含 0109 升级/新装、授权、MCP、项目空间、Automation 与文件版本 |
+| `pnpm test:e2e:agent-capabilities` | 1/1 | P1；Agent 定义、MCP 选择和草稿契约 |
+| `pnpm test:e2e:automation` | 6/6 | P1；分页、永久归档、暂停与执行历史 |
+| `pnpm test:e2e:mcp-admin` | 1/1 | P1；批准快照、停用与管理端展示 |
+| `pnpm test:e2e:project-space` | 10/10 | P1；项目简报、任务、档案和执行链路 |
+| `pnpm test:e2e` | 44/44 | P0；全量浏览器冒烟，进程正常退出 |
+
+**边界：** P0/P1 只证明隔离环境中的工程契约；未运行真实 DSH、真实 OIDC、多账号生产收权、企业 MCP、备份恢复或目标机部署，不将本记录作为 P2 证据。未快进 `main`、未打 tag、未部署。
+
 ### 2026-10-27：发版阻塞缺陷修复（dev@1768573）
 
 **环境：** Windows 10，Node 24；本机 shell 无 `pnpm` 可执行文件（`corepack pnpm typecheck` 失败）；`DSH_WORK_TEST_DATABASE_URL` 未用于本轮本地集成。

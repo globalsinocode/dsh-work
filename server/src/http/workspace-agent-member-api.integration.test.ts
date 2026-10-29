@@ -861,7 +861,7 @@ test('HTTP：提交负责人不可见的 Agent 返回 403 而不是 500', async 
   })
   // 授权拒绝必须走类型化错误映射为 403，不能落到 500。
   assert.equal(result.status, 403)
-  assert.equal((result.body.error as { code: string } | undefined)?.code, 'permission_denied')
+  assert.equal((result.body.error as { code: string } | undefined)?.code, 'authorization_denied')
 })
 
 test('加入 Agent 时复核角色可见范围：提交负责人不可见的 Agent 被拒绝', async () => {

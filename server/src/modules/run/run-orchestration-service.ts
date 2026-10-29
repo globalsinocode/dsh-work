@@ -197,11 +197,20 @@ export class RunOrchestrationService {
     const title = assertPrompt(input.title)
     const workspaceId = await this.deps.conversations.resolveWorkspaceId(input.workspaceId, input.userId)
     if (this.deps.authorization && input.agentVersionId) {
+      const additionalSkillReferences = input.selectedSkillReference ? [input.selectedSkillReference] : []
+      // 固定 Agent + Skill 的兼容性必须在 Session 落库前校验；仅做授权交集不足以
+      // 发现 Agent 未配置 Skill 所需工具，会把一个必然无法启动的会话持久化下来。
+      await this.deps.agents?.getRuntimeSnapshot(
+        input.agentVersionId,
+        additionalSkillReferences,
+        undefined,
+        input.userId,
+      )
       await this.deps.authorization.authorizeRuntime({
         userId: input.userId,
         workspaceId,
         agentVersionId: input.agentVersionId,
-        additionalSkillReferences: input.selectedSkillReference ? [input.selectedSkillReference] : [],
+        additionalSkillReferences,
         ...input.authorizationContext,
       })
     } else {
@@ -350,6 +359,7 @@ export class RunOrchestrationService {
     await this.deps.conversations.activateSession(session.id)
     let agentVersionId = session.agentVersionId
     let taskThread = false
+    let projectContext: NonNullable<RuntimeManifest['project_context']> | null = null
     if (session.workspaceType === 'team') {
       // 项目空间 S1：任务线程固定承接 Agent，回复无需 @；同一时间只允许一个执行。
       // 此处先行拒绝避免无谓授权；并发回复由 createRun 在 Session 行锁内复核。
@@ -357,6 +367,7 @@ export class RunOrchestrationService {
       taskThread = Boolean(thread)
       let workspaceAgentMemberId = input.workspaceAgentMemberId
       if (thread) {
+        projectContext = thread.projectContext
         if (workspaceAgentMemberId && workspaceAgentMemberId !== thread.agentMemberId) {
           throw requestInvalid('任务对话只能交给负责该任务的 Agent')
         }
@@ -429,8 +440,10 @@ export class RunOrchestrationService {
         preparedFiles,
         authorization,
         additionalSkillReferences,
+        selectedSkillReference: session.selectedSkillReference ?? undefined,
         history: context.history,
         conversationSummary: context.summary,
+        projectContext,
         limits: attemptLimitsForBudget(normalizedBudget),
         projectTaskToolMode: session.workspaceType === 'team'
           ? (input.scheduled ? 'read' : 'read-write')

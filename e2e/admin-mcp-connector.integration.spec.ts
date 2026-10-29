@@ -112,10 +112,11 @@ test('PF-MCP-01: Connector registration is effective at once and later capabilit
   await data(await page.request.post('/api/admin/v1/test/mcp/capabilities', { data: { changed: false } }))
   await row.getByRole('button', { name: '检查', exact: true }).click()
   await expect(row).toContainText('已停用')
-  evidence = await data(await page.request.get(
+  const disabledEvidence = await page.request.get(
     `/api/admin/v1/test/mcp/evidence?connector_id=${encodeURIComponent(connectorId!)}`,
-  ))
-  expect(evidence).toEqual({ resolvedConnectionCount: 0 })
+  )
+  expect(disabledEvidence.status()).toBe(403)
+  expect(await disabledEvidence.text()).toContain('已选 MCP Connector 不可用')
 
   await chooseMoreAction('启用')
   await page.getByRole('dialog', { name: `启用“${connectorName}”？` })

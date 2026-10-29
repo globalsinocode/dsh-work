@@ -154,6 +154,7 @@ export class RunEventRecorder {
       await this.deps.delegation?.cancelActiveDescendants(run.taskId, '父任务失败，终止所有活动子任务')
       await this.deps.delegation?.observeChildTerminal(run.id)
       if (run.sessionId) {
+        await this.deps.projectTasks?.noteTaskRunTerminal?.(run.sessionId, 'failed')
         await this.deps.conversations.writeRunTerminalNotificationIfTeam({
           sessionId: run.sessionId,
           runId: run.id,
@@ -189,6 +190,7 @@ export class RunEventRecorder {
       await this.deps.delegation?.observeChildTerminal(run.id)
       // 任务线程的一次执行成功后交给档案员整理（非任务线程时无操作）。
       if (run.sessionId) {
+        await this.deps.projectTasks?.noteTaskRunTerminal?.(run.sessionId, 'succeeded')
         if (assistantRawOutput) await this.deps.projectArchivist?.afterTaskRun(run, assistantRawOutput)
         // EX-02：会话 Run 结束后按需在后台生成摘要。
         void this.deps.sessionSummaries?.scheduleAfterRun(run)

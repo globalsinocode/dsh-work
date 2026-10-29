@@ -77,8 +77,7 @@ export class McpUserGrantService {
       connectorStatus: string
     }>>`
       select c.id as "connectorId", c.name, c.scope_description as "scopeDescription",
-             coalesce(p.capability_snapshot, '[]'::jsonb) as "capabilitySnapshot",
-             jsonb_array_length(coalesce(p.capability_snapshot, '[]'::jsonb))::int as "toolCount",
+             jsonb_array_length(coalesce(p.approved_snapshot, '[]'::jsonb))::int as "toolCount",
              g.status as "grantStatus", c.status as "connectorStatus"
         from connectors c
         join mcp_connector_profiles p on p.tenant_id = c.tenant_id and p.connector_id = c.id

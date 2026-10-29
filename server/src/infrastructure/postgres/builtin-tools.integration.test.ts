@@ -5,7 +5,7 @@ import { after, before, test } from 'node:test'
 import { PostgresAgentService } from '../../modules/agent/postgres-agent-service.ts'
 import { PostgresSkillService } from '../../modules/skill/postgres-skill-service.ts'
 import { PostgresOperationsService } from '../../modules/admin/application/postgres-operations-service.ts'
-import { builtinTools, missingDshBuiltinTools } from '../../modules/runtime/builtin-tools.ts'
+import { BUILTIN_TOOL_VERSION, builtinTools, missingDshBuiltinTools } from '../../modules/runtime/builtin-tools.ts'
 import type { DatabaseClient } from './database.ts'
 import { createThrowawayDatabase, type ThrowawayDatabase } from './test-database.ts'
 
@@ -72,6 +72,7 @@ test('Agent 运行装配默认内置工具，联网搜索按版本开关；Skill
     systemPrompt: '你是只读文档助手，只能读取当前工作空间已经授权的文件。',
     maxOutputBytes: 65536, maxToolCalls: 20, timeoutSeconds: 300,
     skills: ['skill-document@1.0.0'],
+    dataScopes: ['workspace:authorized'],
     changeSummary: '验证内置工具装配', actor: ADMIN,
     executionRoleIds: ['role-employee'], executionDataScopes: ['workspace:authorized'],
   }
@@ -79,8 +80,10 @@ test('Agent 运行装配默认内置工具，联网搜索按版本开关；Skill
   assert.equal(created.agent.webSearchEnabled, false)
   assert.equal(created.agent.projectTasksEnabled, false)
   const snapshot = await agents.getRuntimeSnapshot(created.version.id)
-  assert.deepEqual(snapshot.runtimeTools, builtinTools.filter(tool => tool.assembly === 'always').map(tool => tool.name))
-  assert.equal(snapshot.approvalMode, 'never')
+  assert.deepEqual(snapshot.runtimeTools, builtinTools
+    .filter(tool => tool.assembly === 'always')
+    .map(tool => `${tool.name}@${BUILTIN_TOOL_VERSION}`))
+  assert.equal(snapshot.approvalMode, 'risk_based')
   assert.deepEqual(snapshot.skillInstructions[0]?.tools, ['read@1.0.0'])
 
   const withSearch = await agents.createAgent({ ...base, id: `agent-builtin-web-${randomUUID().slice(0, 8)}`, webSearchEnabled: true })
@@ -88,7 +91,7 @@ test('Agent 运行装配默认内置工具，联网搜索按版本开关；Skill
     select web_search_enabled as "webSearchEnabled" from agent_versions where tenant_id = ${tenantId} and id = ${withSearch.version.id}
   `
   assert.equal(stored?.webSearchEnabled, true)
-  assert.ok((await agents.getRuntimeSnapshot(withSearch.version.id)).runtimeTools.includes('web_search'))
+  assert.ok((await agents.getRuntimeSnapshot(withSearch.version.id)).runtimeTools.includes(`web_search@${BUILTIN_TOOL_VERSION}`))
 
   const withTasks = await agents.createAgent({ ...base, id: `agent-builtin-tasks-${randomUUID().slice(0, 8)}`, projectTasksEnabled: true })
   const [taskFlag] = await database<{ projectTasksEnabled: boolean }[]>`

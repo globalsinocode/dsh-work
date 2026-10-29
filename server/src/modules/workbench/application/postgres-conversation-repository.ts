@@ -6,7 +6,7 @@ import { enrichTaskRunError } from '../../../domain/run-failure-reason.ts'
 import type { DatabaseClient, DatabaseTransaction } from '../../../infrastructure/postgres/database.ts'
 import type { JsonObject, RunState } from '../../../domain/run-state.ts'
 import { PostgresWorkspaceService, readableWorkspacePredicate } from './postgres-workspace-service.ts'
-import { authorizationDenied, requestInvalid } from '../../../domain/authorization-errors.ts'
+import { permissionDenied, requestInvalid } from '../../../domain/authorization-errors.ts'
 import { workspaceStateConflict } from './workspace-state-conflict-error.ts'
 import { stateConflict } from '../../../domain/request-errors.ts'
 import { writeNotifiableEvent } from './workspace-activity-writer.ts'
@@ -68,6 +68,7 @@ interface TaskRow {
   agentName: string | null
   owner: string
   requestedBy: string
+  stoppedBy: string | null
   errorCode: string | null
   selectedSkillId: string | null
   selectedSkillName: string | null
@@ -83,6 +84,7 @@ export interface WorkspaceSessionSummary {
   lastActiveAt: string
   runCount: number
   latestRun: { id: string; status: RunState } | null
+  projectTaskId: string | null
 }
 
 export interface WorkspaceSessionPage {
@@ -318,7 +320,7 @@ export class PostgresConversationRepository {
              for update
           `
           if (!locked || locked.status !== 'active') {
-            throw authorizationDenied('工作空间不存在、已归档或当前用户不是成员')
+            throw permissionDenied('工作空间不存在、已归档或当前用户不是成员')
           }
           const [member] = await transaction<{ role: string }[]>`
             select member_role as role from workspace_members
@@ -326,7 +328,7 @@ export class PostgresConversationRepository {
                and user_id = ${input.userId}
           `
           if (!member || member.role === 'viewer') {
-            throw authorizationDenied('当前用户角色没有权限创建共享会话')
+            throw permissionDenied('当前用户角色没有权限创建共享会话')
           }
           return insertSession(transaction)
         })
@@ -382,7 +384,7 @@ export class PostgresConversationRepository {
        where s.tenant_id = ${tenantId} and s.id = ${sessionId} and s.created_by = ${userId}
          and s.status = 'active' and s.audience = ${audience}
     `
-    if (!row) throw authorizationDenied(`Session 不存在或不可访问：${sessionId}`)
+    if (!row) throw permissionDenied(`Session 不存在或不可访问：${sessionId}`)
     return { ...row, createdAt: row.createdAt.toISOString() }
   }
 
@@ -396,7 +398,7 @@ export class PostgresConversationRepository {
          and s.created_by = ${userId} and s.audience = 'admin' and s.status = 'active'
          and s.workspace_id is null and s.agent_version_id is null
     `
-    if (!row) throw authorizationDenied(`Session 不存在或不可访问：${sessionId}`)
+    if (!row) throw permissionDenied(`Session 不存在或不可访问：${sessionId}`)
     return { ...row, createdAt: row.createdAt.toISOString(), workspaceId: null,
       agentVersionId: null, selectedSkillVersionId: null, selectedSkillReference: null }
   }
@@ -412,7 +414,7 @@ export class PostgresConversationRepository {
            and s.created_by = ${userId} and s.audience = 'workbench'
          for update of w
       `
-      if (!workspace) throw authorizationDenied('Session 不存在或不可访问')
+      if (!workspace) throw permissionDenied('Session 不存在或不可访问')
       await this.requireWritableWorkspace(workspace.id, userId, transaction)
       // 移除共享会话改变全队入口，属团队写入而非个人隐藏：团队会话的创建者
       // 还必须持有非 viewer 角色。readableWorkspacePredicate 放行 viewer，
@@ -426,7 +428,7 @@ export class PostgresConversationRepository {
              and user_id = ${userId}
         `
         if (!membership || membership.role === 'viewer') {
-          throw authorizationDenied('当前用户角色没有权限移除该共享会话')
+          throw permissionDenied('当前用户角色没有权限移除该共享会话')
         }
       }
       const [session] = await transaction<{ id: string; title: string; workspaceId: string; status: string }[]>`
@@ -435,7 +437,7 @@ export class PostgresConversationRepository {
            and audience = 'workbench' and status in ('active', 'archived')
          for update
       `
-      if (!session) throw authorizationDenied(`Session 不存在或不可访问：${sessionId}`)
+      if (!session) throw permissionDenied(`Session 不存在或不可访问：${sessionId}`)
       // 移除会话改变历史入口可见性，属写入：归档团队空间保持只读。
       // 这里不会删除消息、Run 或文件；个人内容按独立保留策略管理。
       if (session.status === 'archived') return { sessionId: session.id, title: session.title,
@@ -519,7 +521,7 @@ export class PostgresConversationRepository {
          for update of w, s
       `
       if (!locked || !['active', 'draft'].includes(locked.sessionStatus)) {
-        throw authorizationDenied('Session 不存在或不可访问')
+        throw permissionDenied('Session 不存在或不可访问')
       }
       const [membership] = await transaction<{ role: string }[]>`
         select wm.member_role as role
@@ -530,7 +532,7 @@ export class PostgresConversationRepository {
            and wm.user_id = ${input.userId}
       `
       if (!membership || membership.role === 'viewer') {
-        throw authorizationDenied('当前用户角色没有权限在该会话中发言')
+        throw permissionDenied('当前用户角色没有权限在该会话中发言')
       }
       const [inserted] = await transaction<{ id: string }[]>`
         insert into messages (id, tenant_id, session_id, run_id, role, content, sender_user_id)
@@ -873,6 +875,7 @@ export class PostgresConversationRepository {
       runCount: number
       latestRunId: string | null
       latestRunStatus: RunState | null
+      projectTaskId: string | null
     }[]>`
       select s.id as "sessionId", s.title,
              s.created_by as "creatorId", u.display_name as "creatorName",
@@ -881,6 +884,9 @@ export class PostgresConversationRepository {
              (select count(*)::integer from runs r
                where r.tenant_id = s.tenant_id and r.session_id = s.id) as "runCount",
              latest.id as "latestRunId", latest.status as "latestRunStatus"
+             , (select pt.id from project_tasks pt
+                  where pt.tenant_id = s.tenant_id and pt.session_id = s.id and pt.removed_at is null
+                  limit 1) as "projectTaskId"
         from sessions s
         join users u on u.tenant_id = s.tenant_id and u.id = s.created_by
         left join lateral (
@@ -910,6 +916,7 @@ export class PostgresConversationRepository {
       lastActiveAt: row.lastActiveAt.toISOString(),
       runCount: Number(row.runCount),
       latestRun: row.latestRunId ? { id: row.latestRunId, status: row.latestRunStatus as RunState } : null,
+      projectTaskId: row.projectTaskId,
       cursorTimestamp: row.cursorTimestamp,
     }))
     const last = items[items.length - 1]
@@ -929,7 +936,7 @@ export class PostgresConversationRepository {
   async getSessionForUser(sessionId: string, actorUserId: string): Promise<UserSessionSummary> {
     const page = await this.queryUserSessions({ actorUserId, scope: 'all', limit: 1 }, sessionId)
     const row = page.items[0]
-    if (!row) throw authorizationDenied('Session 不存在或不可访问')
+    if (!row) throw permissionDenied('Session 不存在或不可访问')
     return row
   }
 
@@ -950,6 +957,9 @@ export class PostgresConversationRepository {
              w.workspace_type as "workspaceType", w.status as "workspaceStatus",
              (select count(*)::integer from runs r where r.tenant_id = s.tenant_id and r.session_id = s.id) as "runCount",
              latest.id as "latestRunId", latest.status as "latestRunStatus",
+             (select pt.id from project_tasks pt
+                where pt.tenant_id = s.tenant_id and pt.session_id = s.id and pt.removed_at is null
+                limit 1) as "projectTaskId",
              (w.status = 'active' and (w.workspace_type = 'personal' or exists (
                 select 1 from workspace_members m where m.tenant_id = w.tenant_id and m.workspace_id = w.id
                   and m.user_id = ${input.actorUserId} and m.member_role <> 'viewer'))) as "canContinue",
@@ -981,6 +991,7 @@ export class PostgresConversationRepository {
       workspaceStatus: row.workspaceStatus, canContinue: row.canContinue, canRemove: row.canRemove,
       lastActiveAt: row.lastActiveAt.toISOString(), runCount: Number(row.runCount),
       latestRun: row.latestRunId ? { id: row.latestRunId, status: row.latestRunStatus! } : null,
+      projectTaskId: row.projectTaskId,
     }))
     const last = items.at(-1)
     return { items, nextCursor: rows.length > limit && last ? encodeSessionCursor(rows[items.length - 1]!.cursorTimestamp, last.sessionId) : null }
@@ -998,12 +1009,14 @@ export class PostgresConversationRepository {
        where w.tenant_id = ${tenantId} and w.id = ${workspaceId} and w.status = 'active'
          and (${readableWorkspacePredicate(sql, userId)})
     `
-    if (!workspace) throw authorizationDenied('工作空间不存在、已归档或当前用户无权访问')
+    if (!workspace) throw permissionDenied('工作空间不存在、已归档或当前用户无权访问')
   }
 
   async listTasks(userId: string): Promise<TaskRun[]> {
     const rows = await this.database<TaskRow[]>`
       select r.id, r.session_id as "sessionId", r.status,
+             (select stopper.display_name from users stopper
+               where stopper.tenant_id = r.tenant_id and stopper.id = r.cancel_requested_by) as "stoppedBy",
              r.current_attempt_id as "currentAttemptId", r.created_at as "createdAt",
              r.updated_at as "updatedAt", s.title, s.workspace_id as "workspaceId",
              w.name as "workspaceName", w.workspace_type as "workspaceType",
@@ -1037,6 +1050,8 @@ export class PostgresConversationRepository {
   private async findTaskRow(runId: string, userId: string): Promise<TaskRow | null> {
     const [row] = await this.database<TaskRow[]>`
       select r.id, r.session_id as "sessionId", r.status,
+             (select stopper.display_name from users stopper
+               where stopper.tenant_id = r.tenant_id and stopper.id = r.cancel_requested_by) as "stoppedBy",
              r.current_attempt_id as "currentAttemptId", r.created_at as "createdAt",
              r.updated_at as "updatedAt", s.title, s.workspace_id as "workspaceId",
              w.name as "workspaceName", w.workspace_type as "workspaceType",
@@ -1493,12 +1508,16 @@ export class PostgresConversationRepository {
       status: RunState
       requestedBy: string
       requesterName: string
+      stoppedByName: string | null
       createdAt: Date
     }[]>`
       select r.id, r.status, r.requested_by as "requestedBy",
-             ru.display_name as "requesterName", r.created_at as "createdAt"
+             ru.display_name as "requesterName",
+             case when r.status = 'cancelled' then stopper.display_name end as "stoppedByName",
+             r.created_at as "createdAt"
         from runs r
         join users ru on ru.tenant_id = r.tenant_id and ru.id = r.requested_by
+        left join users stopper on stopper.tenant_id = r.tenant_id and stopper.id = r.cancel_requested_by
        where r.tenant_id = ${tenantId} and r.session_id = ${sessionId}
        order by r.created_at asc
     `
@@ -1526,6 +1545,7 @@ export class PostgresConversationRepository {
         status: run.status,
         requestedBy: run.requestedBy,
         requesterName: run.requesterName,
+        stoppedByName: run.stoppedByName,
         createdAt: run.createdAt.toISOString(),
       })),
       latestRun: runs.length > 0
@@ -1706,6 +1726,7 @@ export class PostgresConversationRepository {
       updatedAt: formatDateTime(row.updatedAt),
       owner: row.owner,
       requestedBy: row.requestedBy,
+      stoppedBy: row.status === 'cancelled' ? row.stoppedBy : null,
       messages: messages.map(mapMessage),
       steps: mapSteps(row.id, evidence.events, row.status),
       result,
@@ -1860,14 +1881,25 @@ function mapSteps(runId: string, events: EventRow[], status: RunState): RunStep[
   if (events.length === 0) {
     return [{ id: `${runId}-queued`, title: '等待执行调度', detail: '任务已进入执行队列。', status: 'pending' }]
   }
+  const completedCallIds = new Set(events
+    .filter(event => event.eventType === 'tool.completed')
+    .map(event => event.safeMetadata['call_id'])
+    .filter((value): value is string => typeof value === 'string'))
   return events
     .filter((event) => !['assistant.delta', 'assistant.completed'].includes(event.eventType))
-    .map((event, index, visibleEvents) => event.eventType === 'tool.completed' ? toolStep(event) : ({
+    .filter(event => event.eventType !== 'tool.started'
+      || typeof event.safeMetadata['call_id'] !== 'string'
+      || !completedCallIds.has(event.safeMetadata['call_id']))
+    .map((event, index, visibleEvents) => event.eventType === 'tool.completed'
+      ? toolStep(event)
+      : event.eventType === 'tool.started'
+        ? pendingToolStep(event)
+        : ({
       id: event.id,
       title: eventTitle(event.eventType),
       detail: event.displayMessage ?? '执行状态已更新。',
       status: eventStepStatus(event.eventType, status, index === visibleEvents.length - 1),
-    }))
+        }))
 }
 
 /** EX-01：一次工具调用的结果（成功、失败原因或未收到结果）。 */
@@ -1879,6 +1911,17 @@ function toolStep(event: EventRow): RunStep {
     title: outcome === 'failed' ? '工具调用失败' : outcome === 'unknown' ? '工具结果未返回' : '调用工具',
     detail: event.displayMessage ?? '工具调用已结束。',
     status: outcome === 'failed' ? 'failed' : outcome === 'unknown' ? 'pending' : 'succeeded',
+    ...(toolName ? { tool: toolName } : {}),
+  }
+}
+
+function pendingToolStep(event: EventRow): RunStep {
+  const toolName = typeof event.safeMetadata['tool_name'] === 'string' ? event.safeMetadata['tool_name'] : undefined
+  return {
+    id: event.id,
+    title: '工具结果未返回',
+    detail: toolName ? `${toolName}：未收到调用结果` : '未收到工具调用结果。',
+    status: 'pending',
     ...(toolName ? { tool: toolName } : {}),
   }
 }

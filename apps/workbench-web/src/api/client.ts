@@ -677,12 +677,7 @@ export const workbenchApi = {
     )
   },
   // ---- AG-03 自动任务 ----
-  getAutomations: (input?: { status?: 'active' | 'archived' }) => {
-    const params = new URLSearchParams()
-    if (input?.status) params.set('status', input.status)
-    const suffix = params.size > 0 ? `?${params.toString()}` : ''
-    return request<Automation[]>(`/automations${suffix}`)
-  },
+  getAutomations: () => request<Automation[]>('/automations'),
   getAgentRoutineResults: () => request<AgentRoutineResult[]>('/agent-routine-results'),
   createAutomation: (input: {
     name: string
@@ -708,8 +703,6 @@ export const workbenchApi = {
     request<Automation>(`/automations/${encodeURIComponent(id)}/pause`, { method: 'POST' }),
   archiveAutomation: (id: string) =>
     request<Automation>(`/automations/${encodeURIComponent(id)}/archive`, { method: 'POST' }),
-  restoreAutomation: (id: string) =>
-    request<Automation>(`/automations/${encodeURIComponent(id)}/restore`, { method: 'POST' }),
   disableAutomation: (id: string) =>
     request<Automation>(`/automations/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   trialRunAutomation: (id: string, idempotencyKey: string) =>

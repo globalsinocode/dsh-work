@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto'
 import Ajv2020Module from 'ajv/dist/2020.js'
 
 import type { DatabaseClient, DatabaseTransaction } from '../../infrastructure/postgres/database.ts'
-import { authorizationDenied, requestInvalid } from '../../domain/authorization-errors.ts'
+import { authorizationDenied, permissionDenied, requestInvalid } from '../../domain/authorization-errors.ts'
 import { canonicalJson, sha256 } from '../runtime/canonical-json.ts'
 import type { RuntimeManifest } from '../runtime/runtime-types.ts'
 import type { AgentDataCollectionRequirement } from '../agent/agent-spec.ts'
@@ -937,18 +937,18 @@ export class PostgresAgentDataService {
       || proposal.taskWorkspaceId !== actor.workspaceId
       || proposal.taskRequestedBy !== actor.userId
       || (routine && proposal.taskInitiatedByPrincipalId !== actor.principalId)) {
-      throw authorizationDenied('提案来源 Task 与执行身份不一致')
+      throw permissionDenied('提案来源 Task 与执行身份不一致')
     }
     const required = source.dataRequirements.find(item => item.key === source.collectionKey
       && item.scope === source.collectionScope && item.actions.includes('propose'))
     if (!required || required.schemaVersion !== source.collectionSchemaVersion) {
-      throw authorizationDenied('提案来源 Agent Version 的集合声明或 Schema 版本已失效')
+      throw permissionDenied('提案来源 Agent Version 的集合声明或 Schema 版本已失效')
     }
     actor.declaredCollectionSchemaVersion = required.schemaVersion
     if (!proposal.roleIds.length || !proposal.dataScopes.length
       || (!routine && !proposal.roleIds.some(id => source.versionRoleIds.includes(id)))
       || proposal.dataScopes.some(scope => !source.versionDataScopes.includes(scope))) {
-      throw authorizationDenied('提案来源权限快照已失效')
+      throw permissionDenied('提案来源权限快照已失效')
     }
     const currentUserRoles = await tx<{ id: string; permissions: string[] }[]>`
       select role.id, role.permissions from user_roles ur
@@ -973,7 +973,7 @@ export class PostgresAgentDataService {
         : proposal.roleIds.some(id => !userRoleIds.has(id))
           || !currentUserRoles.some(row => proposal.roleIds.includes(row.id)
             && row.permissions.includes('workbench:use')))) {
-      throw authorizationDenied('提案来源的当前用户或 Agent 角色授权已撤销')
+      throw permissionDenied('提案来源的当前用户或 Agent 角色授权已撤销')
     }
     const userScopes = await tx<{ scopeValue: string }[]>`
       select scope_value as "scopeValue" from data_scope_grants
@@ -991,7 +991,7 @@ export class PostgresAgentDataService {
     const humanScopes = new Set(userScopes.map(row => row.scopeValue))
     const principalScopes = new Set(agentScopes.map(row => row.scopeValue))
     if (proposal.dataScopes.some(scope => !humanScopes.has(scope) || !principalScopes.has(scope))) {
-      throw authorizationDenied('提案来源的当前用户或 Agent 数据范围授权已撤销')
+      throw permissionDenied('提案来源的当前用户或 Agent 数据范围授权已撤销')
     }
     if (source.workspaceType === 'team') {
       const [member] = await tx<{ role: string }[]>`
@@ -1012,7 +1012,7 @@ export class PostgresAgentDataService {
       `
       if (!member || (!routine && member.role === 'viewer')
         || (agentMember && agentMember.status !== 'available') || !workspaceGrant) {
-        throw authorizationDenied('提案来源的团队 Agent 或执行权限已撤销')
+        throw permissionDenied('提案来源的团队 Agent 或执行权限已撤销')
       }
     }
   }

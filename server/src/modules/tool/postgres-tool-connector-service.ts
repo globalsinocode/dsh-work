@@ -10,7 +10,7 @@ import { DSH_RUNTIME_CONNECTOR_ID, DSH_WORK_EXECUTION_TOOL_REFS, resolveAllowedT
 import type { AddToolInput, AgentMcpScope, ConnectorDefinition, DshRuntimeToolConnectorStatus, McpConnectionTestResult, McpConnectorDeletionResult, McpInvocationAudit, RegisterMcpConnectorInput, TestMcpConnectionInput, ToolCatalogCandidate, ToolCatalogSyncResult, ToolDefinition } from '../../domain/types.ts'
 import type { DatabaseClient, DatabaseTransaction } from '../../infrastructure/postgres/database.ts'
 import type { AuditTrail } from '../../domain/audit-trail.ts'
-import { authorizationDenied } from '../../domain/authorization-errors.ts'
+import { authorizationDenied, permissionDenied } from '../../domain/authorization-errors.ts'
 import { MAX_MCP_CONNECTIONS_PER_ATTEMPT, type AgentRuntimePort, type McpConnectionSnapshot, type McpInspectionResult, type McpRuntimeConnection, type RuntimeManifest } from '../runtime/runtime-types.ts'
 import { assertDshToolApprovalPolicy, dshBuiltInToolCatalog, defaultAgentDshToolNames, hiddenRuntimeCatalogTools, isVisibleDshCatalogTool, normalizeToolPolicyInput, publicCatalogCandidate, requiredDshToolApprovalPolicy, runtimeToolToCatalogEntry, type CatalogEntry } from './dsh-built-in-tool-catalog.ts'
 import { isDefaultRunLocalAgentTool } from '../../domain/tool-category.ts'
@@ -20,6 +20,13 @@ import type { McpUserGrantService, McpOAuthProbeRegistrationInput } from './mcp-
 import { probeFingerprint } from './mcp-user-grant-service.ts'
 import { RequestError, accessDenied, dependencyUnavailable, invalidRequest, notFound, stateConflict } from '../../domain/request-errors.ts'
 import { builtinTools, missingDshBuiltinTools, normalizeDisabledTools, type BuiltinToolStatus } from '../runtime/builtin-tools.ts'
+import {
+  mcpCapabilityDigest,
+  mergeMcpCapabilities,
+  normalizeMcpCapabilities,
+  pendingMcpCapabilities,
+  type McpCapability,
+} from './mcp-capabilities.ts'
 
 const tenantId = 'tenant-dsh-work'
 /** 平台拥有的绑定记录在非管理员上下文首次物化时归属到 bootstrap 平台管理员。 */
@@ -105,7 +112,8 @@ interface McpProfileRow {
   approvalStatus: NonNullable<ConnectorDefinition['mcp']>['approvalStatus']
   capabilityDigest: string | null
   approvedDigest: string | null
-  capabilitySnapshot: Array<{ name: string; description: string; inputSchema: Record<string, unknown> }>
+  capabilitySnapshot: McpCapability[]
+  approvedSnapshot: McpCapability[]
   discoveredAt: Date | null
   reviewedAt: Date | null
   reviewedBy: string | null
@@ -502,6 +510,7 @@ export class PostgresToolConnectorService {
         select p.connector_id as "connectorId", p.server_name as "serverName", p.transport,
                p.approval_status as "approvalStatus", p.capability_digest as "capabilityDigest",
                p.approved_digest as "approvedDigest", p.capability_snapshot as "capabilitySnapshot",
+               p.approved_snapshot as "approvedSnapshot",
                p.discovered_at as "discoveredAt", p.reviewed_at as "reviewedAt",
                reviewer.display_name as "reviewedBy"
           from mcp_connector_profiles p
@@ -879,10 +888,12 @@ export class PostgresToolConnectorService {
         approvalStatus: string
         capabilityDigest: string | null
         approvedDigest: string | null
+        approvedCapabilityCount: number
       }[]>`
         select c.auth_type as "authType", cr.backend as "credentialBackend",
                cs.version as "credentialVersion", p.approval_status as "approvalStatus",
-               p.capability_digest as "capabilityDigest", p.approved_digest as "approvedDigest"
+               p.capability_digest as "capabilityDigest", p.approved_digest as "approvedDigest",
+               jsonb_array_length(p.approved_snapshot)::integer as "approvedCapabilityCount"
           from connectors c
           join mcp_connector_profiles p on p.tenant_id = c.tenant_id and p.connector_id = c.id
           left join credential_refs cr on cr.tenant_id = c.tenant_id and cr.id = c.credential_ref_id
@@ -896,9 +907,8 @@ export class PostgresToolConnectorService {
         && (connector.credentialBackend !== 'postgres-encrypted' || connector.credentialVersion === null)) {
         throw stateConflict('旧版 MCP Bearer 凭据需要先重新录入 Token，不能启用')
       }
-      if (input.status === 'enabled' && (connector.approvalStatus !== 'approved'
-        || connector.capabilityDigest !== connector.approvedDigest)) {
-        throw stateConflict('MCP 当前能力清单尚未成功同步，不能启用')
+      if (input.status === 'enabled' && (!connector.approvedDigest || connector.approvedCapabilityCount === 0)) {
+        throw stateConflict('MCP 当前没有已批准的能力，不能启用')
       }
       if (input.status === 'enabled') {
         await this.assertMcpConnectorCapacity(transaction, input.connectorId)
@@ -1067,15 +1077,18 @@ export class PostgresToolConnectorService {
       let digest: string | undefined
       if (connector.protocol === 'mcp' && capabilities) {
         digest = mcpCapabilityDigest(capabilities)
-        const profiles = await transaction<{ connectorId: string }[]>`
-          select connector_id as "connectorId"
+        const profiles = await transaction<{ connectorId: string; approvedSnapshot: McpCapability[] }[]>`
+          select connector_id as "connectorId", approved_snapshot as "approvedSnapshot"
             from mcp_connector_profiles
            where tenant_id = ${tenantId} and connector_id = ${input.connectorId}
            for update
         `
         if (!profiles[0]) throw invalidRequest('MCP Connector 缺少治理配置')
         status = 'healthy'
-        message = `MCP 能力清单已同步并自动生效，共 ${capabilities.length} 个 Tool`
+        const merged = mergeMcpCapabilities(profiles[0].approvedSnapshot, capabilities)
+        message = merged.pending.length
+          ? `发现 ${capabilities.length} 个 MCP Tool，已生效 ${merged.effective.length} 个，${merged.pending.length} 个待确认`
+          : `MCP 能力清单已同步，共 ${merged.effective.length} 个 Tool 生效`
       }
       const [lockedConnector] = await transaction<{ status: ConnectorDefinition['status'] }[]>`
         select status from connectors
@@ -1110,12 +1123,21 @@ export class PostgresToolConnectorService {
         await this.assertMcpConnectorCapacity(transaction, input.connectorId)
       }
       if (connector.protocol === 'mcp' && capabilities && digest) {
+        const [profile] = await transaction<{ approvedSnapshot: McpCapability[] }[]>`
+          select approved_snapshot as "approvedSnapshot"
+            from mcp_connector_profiles
+           where tenant_id = ${tenantId} and connector_id = ${input.connectorId}
+           for update
+        `
+        if (!profile) throw invalidRequest('MCP Connector 缺少治理配置')
+        const { effective, pending } = mergeMcpCapabilities(profile.approvedSnapshot, capabilities)
         await transaction`
           update mcp_connector_profiles
              set capability_snapshot = ${transaction.json(asJson(capabilities))}, capability_digest = ${digest},
-                 approval_status = 'approved', approved_digest = ${digest},
-                 approved_snapshot = ${transaction.json(asJson(capabilities))},
-                 reviewed_by = ${actor.id}, reviewed_at = now(), discovered_at = now(), updated_at = now()
+                 approval_status = ${pending.length ? 'changes_pending' : 'approved'},
+                 approved_digest = ${mcpCapabilityDigest(effective)},
+                 approved_snapshot = ${transaction.json(asJson(effective))},
+                 discovered_at = now(), updated_at = now()
            where tenant_id = ${tenantId} and connector_id = ${input.connectorId}
         `
       }
@@ -1145,6 +1167,36 @@ export class PostgresToolConnectorService {
     return this.requireConnector(input.connectorId)
   }
 
+  /** Explicitly promotes the currently discovered MCP capability set. */
+  async approveMcpCapabilities(input: { connectorId: string; capabilityDigest: string; actor: string }): Promise<ConnectorDefinition> {
+    const actor = await this.requireActor(input.actor)
+    let approvedCount = 0
+    await this.database.begin(async transaction => {
+      const [profile] = await transaction<{ capabilityDigest: string | null; capabilitySnapshot: McpCapability[] }[]>`
+        select p.capability_digest as "capabilityDigest", p.capability_snapshot as "capabilitySnapshot"
+          from mcp_connector_profiles p
+          join connectors c on c.tenant_id = p.tenant_id and c.id = p.connector_id
+         where p.tenant_id = ${tenantId} and p.connector_id = ${input.connectorId}
+           and c.protocol = 'mcp' and c.deleted_at is null
+         for update of p
+      `
+      if (!profile) throw notFound(`MCP Connector 不存在：${input.connectorId}`)
+      if (!profile.capabilityDigest || profile.capabilityDigest !== input.capabilityDigest) {
+        throw stateConflict('MCP 能力清单已变化，请刷新后再确认')
+      }
+      approvedCount = profile.capabilitySnapshot.length
+      await transaction`
+        update mcp_connector_profiles
+           set approved_snapshot = capability_snapshot, approved_digest = capability_digest,
+               approval_status = 'approved', reviewed_by = ${actor.id}, reviewed_at = now(), updated_at = now()
+         where tenant_id = ${tenantId} and connector_id = ${input.connectorId}
+      `
+    })
+    await this.audit(actor.id, 'connector.mcp.capabilities.approve', input.connectorId, 'success',
+      `确认 MCP 能力清单，共 ${approvedCount} 个 Tool 生效`)
+    return this.requireConnector(input.connectorId)
+  }
+
   /** Resolve the Agent Version's MCP policy for a new Attempt. */
   async resolveMcpConnectionsForAgentVersion(versionId: string, expectedScope?: AgentMcpScope): Promise<McpConnectionSnapshot[]> {
     const [version] = await this.database<{ scope: unknown }[]>`
@@ -1162,7 +1214,7 @@ export class PostgresToolConnectorService {
       credentialVersion: number | null
     }>>`
       select c.id as connector_id, p.server_name, p.transport, c.endpoint,
-             c.auth_type as auth_type, p.capability_digest as capability_digest,
+             c.auth_type as auth_type, p.approved_digest as capability_digest,
              cr.status as "credentialStatus", cr.backend as "credentialBackend",
              cs.version as "credentialVersion"
         from agent_versions av
@@ -1172,7 +1224,7 @@ export class PostgresToolConnectorService {
         left join credential_secrets cs on cs.tenant_id = c.tenant_id and cs.credential_ref_id = c.credential_ref_id
        where av.tenant_id = ${tenantId} and av.id = ${versionId}
          and c.protocol = 'mcp' and c.status = 'healthy' and c.deleted_at is null
-         and p.approval_status = 'approved' and p.capability_digest = p.approved_digest
+         and p.approved_digest is not null and jsonb_array_length(p.approved_snapshot) > 0
        order by p.server_name
     `
     const scopedRows = scope.mode === 'selected'
@@ -1361,8 +1413,8 @@ export class PostgresToolConnectorService {
       connectorStatus: string; credentialRefId: string | null; credentialStatus: string | null; credentialBackend: string | null
     }[]>`
       select c.id as "connectorId", p.server_name as "serverName", p.transport, c.endpoint,
-             c.auth_type as "authType", p.capability_digest as "capabilityDigest",
-             p.capability_snapshot as "capabilitySnapshot",
+             c.auth_type as "authType", p.approved_digest as "capabilityDigest",
+             p.approved_snapshot as "capabilitySnapshot",
              p.approval_status as "approvalStatus", c.status as "connectorStatus",
              cr.id as "credentialRefId", cr.status as "credentialStatus", cr.backend as "credentialBackend"
         from connectors c
@@ -1372,7 +1424,7 @@ export class PostgresToolConnectorService {
          and c.protocol = 'mcp' and c.deleted_at is null
     `
     if (!row) throw notFound(`MCP Connector 不存在：${connectorId}`)
-    if (expected && (row.connectorStatus !== 'healthy' || row.approvalStatus !== 'approved'
+    if (expected && (row.connectorStatus !== 'healthy'
       || row.capabilityDigest !== expected.capability_digest || row.serverName !== expected.server_name
       || row.endpoint !== expected.endpoint || row.authType !== expected.auth_type)) {
       throw authorizationDenied(`MCP Connector 当前配置与 Attempt 快照不一致：${connectorId}`)
@@ -1612,13 +1664,13 @@ export class PostgresToolConnectorService {
       `
       if (!row || row.status !== 'active' || row.toolId !== id || row.toolVersion !== version
         || row.revision !== pin.revision || row.contentDigest !== pin.digest) {
-        throw authorizationDenied(`固定的工具绑定修订已失效或被撤销：${pin.tool}`)
+        throw permissionDenied(`固定的工具绑定修订已失效或被撤销：${pin.tool}`)
       }
       // 持 tools 行锁复核当前快照：在发布/提交事务内与 updateToolPermissions、
       // setToolStatus 等写方串行化，杜绝“校验通过后被并发轮换”的发布竞态。
       const snapshot = await this.loadBindingSnapshot(db, id, version, true)
       if (!snapshot || toolBindingDigest(snapshot) !== pin.digest) {
-        throw authorizationDenied(`工具绑定的当前配置已偏离固定修订：${pin.tool}`)
+        throw permissionDenied(`工具绑定的当前配置已偏离固定修订：${pin.tool}`)
       }
     }
   }
@@ -1914,9 +1966,9 @@ function toConnectorDefinition(row: ConnectorRow, profile?: McpProfileRow): Conn
       approvalStatus: profile.approvalStatus,
       capabilityDigest: profile.capabilityDigest,
       approvedDigest: profile.approvedDigest,
-      capabilityCount: profile.capabilitySnapshot.length,
-      capabilities: profile.capabilitySnapshot,
-      pendingCapabilities: [],
+      capabilityCount: profile.approvedSnapshot.length,
+      capabilities: profile.approvedSnapshot,
+      pendingCapabilities: pendingMcpCapabilities(profile.approvedSnapshot, profile.capabilitySnapshot),
       discoveredAt: profile.discoveredAt?.toISOString() ?? null,
       reviewedAt: profile.reviewedAt?.toISOString() ?? null,
       reviewedBy: profile.reviewedBy,
@@ -1973,26 +2025,6 @@ function normalizeMcpEndpoint(value: string) {
     throw invalidRequest('MCP 服务地址只能使用 HTTP(S)，且不得包含账号、密码、查询参数或片段')
   }
   return endpoint.toString()
-}
-
-function normalizeMcpCapabilities(
-  capabilities: Array<{ name: string; description: string; inputSchema: Record<string, unknown> }>,
-) {
-  const names = new Set<string>()
-  return capabilities.map(capability => {
-    const name = capability.name.trim()
-    if (!name || name.length > 200 || names.has(name)) throw invalidRequest(`MCP 返回了无效或重复的 Tool 名称：${name || '空名称'}`)
-    names.add(name)
-    return {
-      name,
-      description: capability.description.trim().slice(0, 2000),
-      inputSchema: JSON.parse(JSON.stringify(capability.inputSchema)) as Record<string, unknown>,
-    }
-  }).sort((left, right) => left.name.localeCompare(right.name))
-}
-
-function mcpCapabilityDigest(capabilities: Array<{ name: string; description: string; inputSchema: Record<string, unknown> }>) {
-  return createHash('sha256').update(JSON.stringify(capabilities)).digest('hex')
 }
 
 const asJson = (value: unknown) => JSON.parse(JSON.stringify(value))

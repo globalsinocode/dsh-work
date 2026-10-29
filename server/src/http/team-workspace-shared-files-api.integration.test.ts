@@ -636,14 +636,14 @@ test('归档团队空间：现任成员仍可读文件/成果/列表，非成员
   assert.equal(artifactDenial.code, 'permission_denied')
   assert.match(artifactDenial.message, /Artifact 不存在或不可访问/)
 
-  // 接口层复核：类型化后响应仍是 403 + permission_denied（状态码与 code 均不变）。
+  // 接口层复核：员工边界把普通 permission_denied 收敛为公开的 authorization_denied。
   const outsiderFileResponse = await fetch(`${baseUrl}/api/workbench/v1/files/${fileId}/download`, {
     headers: { 'x-test-user-id': outsiderId },
   })
   assert.equal(outsiderFileResponse.status, 403)
   assert.equal(
     ((await outsiderFileResponse.json()) as { error?: { code?: string } }).error?.code,
-    'permission_denied',
+    'authorization_denied',
   )
   const outsiderArtifactResponse = await fetch(`${baseUrl}/api/workbench/v1/artifacts/${artifactId}/download`, {
     headers: { 'x-test-user-id': outsiderId },
@@ -651,7 +651,7 @@ test('归档团队空间：现任成员仍可读文件/成果/列表，非成员
   assert.equal(outsiderArtifactResponse.status, 403)
   assert.equal(
     ((await outsiderArtifactResponse.json()) as { error?: { code?: string } }).error?.code,
-    'permission_denied',
+    'authorization_denied',
   )
 
   assert.deepEqual(await content.listArtifacts(outsiderId), [], '非成员看不到归档空间成果')

@@ -1,7 +1,7 @@
 import type { DatabaseClient } from '../../../infrastructure/postgres/database.ts'
 import {
   AuthorizationDeniedError,
-  authorizationDenied,
+  permissionDenied,
   requestInvalid,
 } from '../../../domain/authorization-errors.ts'
 import type { PostgresAuthorizationService } from '../../authorization/postgres-authorization-service.ts'
@@ -204,7 +204,7 @@ export class PostgresWorkspaceUsageService {
       await this.authorization.requireTeamRole(workspaceId, actorUserId, ['owner', 'admin'], { purpose: 'read' })
     } catch (error) {
       if (error instanceof AuthorizationDeniedError && error.status === 403) {
-        throw authorizationDenied('仅负责人或管理员可以查看空间用量')
+        throw permissionDenied('仅负责人或管理员可以查看空间用量')
       }
       throw error
     }

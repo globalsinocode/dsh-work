@@ -267,7 +267,12 @@ async function inspectConnector(connector: ConnectorDefinition) {
     { label: '当前延迟', value: connector.latency },
     ...(connector.mcp ? [
       { label: 'MCP 命名空间', value: connector.mcp.serverName },
-      { label: '能力状态', value: connector.mcp.capabilityDigest === connector.mcp.approvedDigest ? '已同步生效' : '待重新检查' },
+      {
+        label: '能力状态',
+        value: connector.mcp.pendingCapabilities.length > 0
+          ? '有待确认变更'
+          : connector.mcp.capabilityDigest === connector.mcp.approvedDigest ? '已同步生效' : '待重新检查',
+      },
       { label: '能力摘要', value: connector.mcp.capabilityDigest ?? '尚未发现' },
       { label: 'Tool 描述与输入 Schema', value: formatMcpCapabilities(connector) },
       // 0102 起 MCP 工具不再对全部 Agent 开放：连接器下发后由 Agent 能力配置按需选择。
@@ -541,7 +546,9 @@ async function checkConnector(connector: ConnectorDefinition) {
       duration: 8000,
     })
     else if (updated.status === 'disabled') ElMessage.info(`${connector.name}检查完成，仍保持人工停用；需要恢复时请显式启用`)
-    else if (updated.status === 'healthy') ElMessage.success(`${connector.name}检查通过，${updated.mcp?.capabilityCount ?? 0} 个 Tool 已同步生效`)
+    else if (updated.status === 'healthy' && (updated.mcp?.pendingCapabilities.length ?? 0) > 0) {
+      ElMessage.success(`${connector.name}检查通过，${updated.mcp?.capabilityCount ?? 0} 个 Tool 生效，${updated.mcp?.pendingCapabilities.length ?? 0} 个新增或变更的 Tool 待确认`)
+    } else if (updated.status === 'healthy') ElMessage.success(`${connector.name}检查通过，${updated.mcp?.capabilityCount ?? 0} 个 Tool 已同步生效`)
     else ElNotification.error({
       title: `连接器异常：${connector.name}`,
       message: connectorRecoveryMessage(updated, '健康检查结果为性能下降'),
@@ -713,6 +720,26 @@ function formatConnectorDateTime(value?: string) {
 function openMcpTools(connector: ConnectorDefinition) {
   selectedMcpToolsConnectorId.value = connector.id
   mcpToolsDialogOpen.value = true
+}
+
+async function approveSelectedMcpCapabilities() {
+  const connector = selectedMcpToolsConnector.value
+  const digest = connector?.mcp?.capabilityDigest
+  if (!connector || !digest) return
+  try {
+    await ElMessageBox.confirm(
+      '确认后，当前待确认的新增或变更 Tool 将进入后续 Agent 运行。',
+      `确认“${connector.name}”的能力变更？`,
+      { confirmButtonText: '确认生效', cancelButtonText: '取消', type: 'warning' },
+    )
+    actionLoading.value = `mcp-approve:${connector.id}`
+    const updated = await contentStore.approveMcpCapabilities(connector.id, digest)
+    ElMessage.success(`已确认，${updated.mcp?.capabilityCount ?? 0} 个 Tool 生效`)
+  } catch (cause) {
+    if (cause instanceof Error) ElMessage.error(cause.message)
+  } finally {
+    actionLoading.value = ''
+  }
 }
 
 function formatMcpCapabilities(connector: ConnectorDefinition) {
@@ -936,7 +963,7 @@ onUnmounted(() => clearSkillTestPoll())
         <el-table-column label="名称" min-width="180"><template #default="scope"><strong class="mcp-name">{{ scope.row.name }}</strong></template></el-table-column>
         <el-table-column label="Endpoint" min-width="280"><template #default="scope"><code class="mcp-endpoint">{{ scope.row.endpoint }}</code></template></el-table-column>
         <el-table-column label="认证方式" width="120"><template #default="scope">{{ scope.row.authType === 'bearer' ? 'Bearer Token' : scope.row.authType === 'user_oauth' ? '用户授权' : '无认证' }}</template></el-table-column>
-        <el-table-column label="工具数量" width="130" align="center" header-align="center"><template #default="scope"><el-button link type="primary" data-action="view-mcp-tools" @click="openMcpTools(scope.row)">{{ scope.row.mcp?.capabilityCount ?? 0 }} 个</el-button></template></el-table-column>
+        <el-table-column label="工具数量" width="150" align="center" header-align="center"><template #default="scope"><el-button link type="primary" data-action="view-mcp-tools" @click="openMcpTools(scope.row)">{{ scope.row.mcp?.capabilityCount ?? 0 }} 个</el-button><small v-if="scope.row.mcp?.pendingCapabilities.length" class="mcp-pending-count">{{ scope.row.mcp.pendingCapabilities.length }} 待确认</small></template></el-table-column>
         <el-table-column label="状态" width="115"><template #default="scope"><StatusTag :status="scope.row.status" :label="connectorStatusLabel(scope.row)" dot /></template></el-table-column>
         <el-table-column label="更新时间" width="175"><template #default="scope">{{ formatConnectorDateTime(scope.row.updatedAt) }}</template></el-table-column>
         <el-table-column label="添加时间" width="175"><template #default="scope">{{ formatConnectorDateTime(scope.row.createdAt) }}</template></el-table-column>
@@ -965,6 +992,7 @@ onUnmounted(() => clearSkillTestPoll())
     </section>
 
     <el-dialog v-model="mcpToolsDialogOpen" :title="`工具清单 · ${selectedMcpToolsConnector?.name ?? ''}`" width="min(760px, calc(100vw - 32px))" destroy-on-close>
+      <el-alert v-if="selectedMcpToolsConnector?.mcp?.pendingCapabilities.length" type="warning" :closable="false" show-icon title="能力变更需确认" description="以下新增或 Schema 变化的 Tool 在确认前 Agent 不能调用。" />
       <div class="mcp-tool-list" aria-label="MCP 工具清单">
         <article v-for="capability in selectedMcpToolsConnector?.mcp?.capabilities ?? []" :key="capability.name" class="mcp-tool-item">
           <code>{{ capability.name }}</code>
@@ -974,7 +1002,18 @@ onUnmounted(() => clearSkillTestPoll())
         </article>
         <el-empty v-if="!(selectedMcpToolsConnector?.mcp?.capabilities.length)" description="当前未发现工具" :image-size="64" />
       </div>
-      <template #footer><el-button type="primary" @click="mcpToolsDialogOpen = false">关闭</el-button></template>
+      <div v-if="selectedMcpToolsConnector?.mcp?.pendingCapabilities.length" class="mcp-tool-list mcp-tool-list--pending" aria-label="待确认 MCP 工具清单">
+        <article v-for="capability in selectedMcpToolsConnector.mcp.pendingCapabilities" :key="capability.name" class="mcp-tool-item">
+          <code>{{ capability.name }}</code>
+          <p>{{ capability.description || '无描述' }}</p>
+          <strong>输入 Schema</strong>
+          <pre>{{ formatMcpInputSchema(capability.inputSchema) }}</pre>
+        </article>
+      </div>
+      <template #footer>
+        <el-button @click="mcpToolsDialogOpen = false">关闭</el-button>
+        <el-button v-if="selectedMcpToolsConnector?.mcp?.pendingCapabilities.length && authStore.canManage" type="primary" :loading="actionLoading === `mcp-approve:${selectedMcpToolsConnector.id}`" @click="approveSelectedMcpCapabilities">确认生效</el-button>
+      </template>
     </el-dialog>
 
     <el-dialog v-model="mcpCreateDialogOpen" title="新增 MCP Connector" width="min(640px, calc(100vw - 32px))" destroy-on-close @closed="resetMcpCreateForm">

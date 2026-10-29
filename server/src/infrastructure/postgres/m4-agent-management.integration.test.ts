@@ -57,7 +57,7 @@ test('Agent lifecycle publishes, versions, rolls back and controls employee visi
   // 状态直改不再能发布草稿：必须经验证与发布（全部案例判定通过）
   await assert.rejects(
     agents.setStatus({ agentId, status: 'published', actor: 'U00008' }),
-    /验证通过后才能发布/,
+    /草稿发布必须通过发布工作台完成封存试运行后发起/,
   )
   await publishDraft(agentId)
   assert.equal((await agents.getAgents()).find(agent => agent.id === agentId)?.status, 'published')

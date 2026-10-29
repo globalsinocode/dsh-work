@@ -151,6 +151,19 @@ test('两名员工各自授权后令牌隔离，解除只影响本人', async ()
   }], 'selected', 'U00002')).pins
   assert.match(await grantService.resolveAccessTokenForPin(pinsB[0]!), /token-b/)
 
+  await database`
+    update mcp_connector_profiles
+    set capability_snapshot = ${database.json([
+      ...JSON.parse(JSON.stringify(discovered)),
+      { name: 'pending_tool', description: 'pending', inputSchema: { type: 'object' } },
+    ])},
+        approved_snapshot = ${database.json(JSON.parse(JSON.stringify(discovered)))}
+    where tenant_id = 'tenant-dsh-work'
+      and connector_id = ${connectorId}
+  `
+  const withPendingChange = await grantService.listForUser('U00002')
+  assert.equal(withPendingChange.list.find(item => item.connectorId === connectorId)?.toolCount, 1)
+
   await grantService.revoke('U00001', connectorId)
   const afterRevoke = await grantService.listForUser('U00001')
   assert.equal(afterRevoke.list.find(item => item.connectorId === connectorId)?.status, 'unauthorized')

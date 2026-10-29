@@ -37,6 +37,7 @@ test('new Agent has a stable principal distinct from its governance owner, and d
   assert.equal(seededAgentPrincipal?.kind, 'agent')
 
   const actor = `user-principal-${randomUUID()}`
+  const consumer = `user-principal-consumer-${randomUUID()}`
   const agentId = `agent-principal-${randomUUID().slice(0, 20)}`
   await database`
     insert into users (id, tenant_id, external_subject, display_name, status, identity_provider, business_user)
@@ -49,6 +50,14 @@ test('new Agent has a stable principal distinct from its governance owner, and d
   await database`
     insert into user_roles (tenant_id, user_id, role_id, source_key)
     values (${tenantId}, ${actor}, 'role-employee', 'local')
+  `
+  await database`
+    insert into users (id, tenant_id, external_subject, display_name, status, identity_provider, business_user)
+    values (${consumer}, ${tenantId}, ${`directory:${consumer}`}, '普通使用者', 'active', 'ai-hub', true)
+  `
+  await database`
+    insert into user_roles (tenant_id, user_id, role_id, source_key)
+    values (${tenantId}, ${consumer}, 'role-employee', 'local')
   `
   const agents = new PostgresAgentService(database)
   const created = await agents.createAgent({
@@ -146,12 +155,12 @@ test('new Agent has a stable principal distinct from its governance owner, and d
   const hidden = await access.updateAccess({ agentId, actor, expectedRevision: revoked.revision,
     visibleRoleIds: [], roleIds: ['role-employee'], dataScopes: [],
   })
-  assert.equal((await agents.listWorkbenchAgents(actor)).some(agent => agent.id === agentId), false)
-  await assert.rejects(authorization.authorizeRuntime({ userId: actor, agentVersionId: versionId }), /不可使用所选 Agent/)
+  assert.equal((await agents.listWorkbenchAgents(consumer)).some(agent => agent.id === agentId), false)
+  await assert.rejects(authorization.authorizeRuntime({ userId: consumer, agentVersionId: versionId }), /不可使用所选 Agent/)
   const restored = await access.updateAccess({ agentId, actor, expectedRevision: hidden.revision,
     visibleRoleIds: ['role-employee'], roleIds: ['role-employee'], dataScopes: ['workspace:authorized'],
   })
-  assert.equal((await agents.listWorkbenchAgents(actor)).some(agent => agent.id === agentId), true)
+  assert.equal((await agents.listWorkbenchAgents(consumer)).some(agent => agent.id === agentId), true)
   const [audit] = await database<{ context: { visibleRoleIds: { added: string[] } } }[]>`
     select safe_context as context from audit_events
      where tenant_id = ${tenantId} and action = 'agent.access.update' and object_id = ${agentId}

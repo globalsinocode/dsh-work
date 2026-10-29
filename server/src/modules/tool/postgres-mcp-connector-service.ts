@@ -5,7 +5,7 @@ import type { DatabaseClient, DatabaseTransaction } from '../../infrastructure/p
 import type { AuditTrail } from '../../domain/audit-trail.ts'
 import { authorizationDenied } from '../../domain/authorization-errors.ts'
 import { RequestError, invalidRequest, notFound, stateConflict } from '../../domain/request-errors.ts'
-import type { AgentRuntimePort, McpConnectionSnapshot, McpRuntimeConnection, RuntimeManifest } from '../runtime/runtime-types.ts'
+import { MAX_MCP_CONNECTIONS_PER_ATTEMPT, type AgentRuntimePort, type McpConnectionSnapshot, type McpRuntimeConnection, type RuntimeManifest } from '../runtime/runtime-types.ts'
 import { normalizeAgentMcpScope } from './agent-mcp-scope.ts'
 import { mcpCapabilityDigest, mergeMcpCapabilities, normalizeMcpCapabilities, pendingMcpCapabilities, type McpCapability } from './mcp-capabilities.ts'
 import { normalizeBearerToken, type PostgresEncryptedCredentialStore } from './postgres-encrypted-credential-store.ts'
@@ -146,6 +146,8 @@ export class PostgresMcpConnectorService implements McpScopePort {
     const digest = mcpCapabilityDigest(inspected.capabilities)
 
     await this.database.begin(async transaction => {
+      await this.lockMcpConnectorCapacity(transaction)
+      await this.assertMcpConnectorCapacity(transaction)
       let credentialId: string | null = null
       if (input.authType === 'bearer') {
         credentialId = `credential-mcp-${randomUUID()}`
@@ -384,6 +386,7 @@ export class PostgresMcpConnectorService implements McpScopePort {
   async setMcpConnectorStatus(input: { connectorId: string; status: 'enabled' | 'disabled'; actor: string }): Promise<ConnectorDefinition> {
     const actor = await requirePlatformAdminActor(this.database, input.actor)
     await this.database.begin(async transaction => {
+      await this.lockMcpConnectorCapacity(transaction)
       const [connector] = await transaction<{ authType: string; credentialBackend: string | null; credentialVersion: number | null }[]>`
         select c.auth_type as "authType", cr.backend as "credentialBackend", cs.version as "credentialVersion"
           from connectors c
@@ -398,6 +401,7 @@ export class PostgresMcpConnectorService implements McpScopePort {
         && (connector.credentialBackend !== 'postgres-encrypted' || connector.credentialVersion === null)) {
         throw stateConflict('旧版 MCP Bearer 凭据需要先重新录入 Token，不能启用')
       }
+      if (input.status === 'enabled') await this.assertMcpConnectorCapacity(transaction, input.connectorId)
       await transaction`
         update connectors set status = ${input.status === 'enabled' ? 'healthy' : 'disabled'}, updated_at = now()
          where tenant_id = ${tenantId} and id = ${input.connectorId}
@@ -617,6 +621,31 @@ export class PostgresMcpConnectorService implements McpScopePort {
     const connector = (await this.getMcpConnectors()).find(item => item.id === connectorId)
     if (!connector) throw notFound(`MCP Connector 不存在：${connectorId}`)
     return connector
+  }
+
+  private async lockMcpConnectorCapacity(transaction: DatabaseTransaction) {
+    await transaction`
+      select pg_advisory_xact_lock(hashtextextended(${`${tenantId}:mcp-connector-capacity`}, 0))
+    `
+  }
+
+  private async assertMcpConnectorCapacity(transaction: DatabaseTransaction, excludedConnectorId?: string) {
+    const [usage] = excludedConnectorId
+      ? await transaction<{ connectorCount: number }[]>`
+          select count(*)::int as "connectorCount" from connectors
+           where tenant_id = ${tenantId} and protocol = 'mcp' and status = 'healthy'
+             and deleted_at is null and id <> ${excludedConnectorId}
+        `
+      : await transaction<{ connectorCount: number }[]>`
+          select count(*)::int as "connectorCount" from connectors
+           where tenant_id = ${tenantId} and protocol = 'mcp' and status = 'healthy' and deleted_at is null
+        `
+    if ((usage?.connectorCount ?? 0) >= MAX_MCP_CONNECTIONS_PER_ATTEMPT) {
+      throw Object.assign(
+        new Error(`租户最多只能同时启用 ${MAX_MCP_CONNECTIONS_PER_ATTEMPT} 个 MCP Connector；请先停用或删除一个连接器`),
+        { status: 409 as const, code: 'MCP_CONNECTOR_CAPACITY_EXCEEDED' },
+      )
+    }
   }
 
   private audit(actorId: string, action: string, objectId: string, result: 'success' | 'failed', detail: string) {

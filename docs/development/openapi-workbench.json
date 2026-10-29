@@ -2992,34 +2992,6 @@
         }
       }
     },
-    "/automations/{automationId}/restore": {
-      "parameters": [
-        {
-          "$ref": "#/components/parameters/AutomationId"
-        }
-      ],
-      "post": {
-        "operationId": "restoreAutomation",
-        "summary": "恢复已归档任务为 paused；复用 enable 同等授权校验，不自动启用调度",
-        "responses": {
-          "200": {
-            "$ref": "#/components/responses/Ok"
-          },
-          "401": {
-            "$ref": "#/components/responses/Error"
-          },
-          "403": {
-            "$ref": "#/components/responses/Error"
-          },
-          "404": {
-            "$ref": "#/components/responses/Error"
-          },
-          "409": {
-            "$ref": "#/components/responses/Error"
-          }
-        }
-      }
-    },
     "/automations/{automationId}/enable": {
       "parameters": [
         {

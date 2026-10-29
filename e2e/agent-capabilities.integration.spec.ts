@@ -35,10 +35,11 @@ test('P1 Agent work procedures, default tools, and MCP scopes use the same persi
   expect(createdDraft.id).toBeTruthy()
 
   await page.getByRole('textbox', { name: /AGENTS\.md/ }).fill(procedures)
-  await page.getByRole('button', { name: '能力', exact: true }).click()
-  await page.getByRole('radio', { name: '仅使用选定 MCP' }).click()
+  await page.getByRole('button', { name: '下一步：能力' }).click()
+  await page.getByText('仅使用选定 MCP', { exact: true }).click()
   const choice = page.getByRole('combobox', { name: '选择 MCP Connector' })
-  await choice.click()
+  await choice.focus()
+  await choice.press('ArrowDown')
   await page.getByRole('option', { name: new RegExp(connectorName) }).click()
   await expect(page.getByText('已保存', { exact: true })).toBeVisible()
 
@@ -59,15 +60,6 @@ test('P1 Agent work procedures, default tools, and MCP scopes use the same persi
   )
   const version = versions.find(item => item.agentId === agentId)
   expect(version?.mcpScope).toEqual({ mode: 'selected', connectorIds: [connector.id] })
-  const exported = await page.request.get(`/api/admin/v1/agents/${agentId}/versions/${version!.id}/package`)
-  expect(exported.ok(), await exported.text()).toBeTruthy()
-  expect(exported.headers()['content-type']).toContain('application/zip')
-  expect((await exported.body()).subarray(0, 2).toString()).toBe('PK')
-  await page.goto(`/agents/${agentId}`)
-  await page.getByRole('tab', { name: /版本历史/ }).click()
-  const download = page.waitForEvent('download')
-  await page.getByRole('button', { name: '导出包' }).click()
-  expect((await download).suggestedFilename()).toBe(`${agentId}-v${version!.version}.zip`)
   const evidence = async () => data<{ systemPrompt: string; runtimeTools: string[]; mcpConnectorIds: string[] }>(
     await page.request.get(`/api/admin/v1/test/agent-capabilities/evidence?version_id=${version!.id}`),
   )

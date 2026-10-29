@@ -51,6 +51,7 @@ import type {
 } from './runtime-types.ts'
 import { isAdminRunPurpose } from './runtime-types.ts'
 import { RequestError, dependencyTimeout, dependencyUnavailable, invalidRequest, stateConflict } from '../../domain/request-errors.ts'
+import { isAuthorizationChangeResponseCode, isAuthorizationDenial } from '../../domain/authorization-errors.ts'
 import { isDshBuiltinTool } from './builtin-tools.ts'
 
 const execFileAsync = promisify(execFile)
@@ -897,7 +898,7 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
     } catch (error) {
       if (!record.terminal) {
         record.bridge?.abort()
-        const code = typeof error === 'object' && error !== null && 'code' in error && error.code === 'permission_denied'
+        const code = isExecutionAuthorizationRevocation(error)
           ? 'AUTHORIZATION_REVOKED' : 'AUTHORIZATION_CHECK_UNAVAILABLE'
         if (record.cancelCause !== undefined) this.finishFromCancellationCause(record)
         else this.finishFailed(record, code, code === 'AUTHORIZATION_REVOKED' ? '当前执行授权已撤销' : '当前授权检查不可用')
@@ -1209,6 +1210,12 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
   private now(): string {
     return (this.configuration.now?.() ?? new Date()).toISOString()
   }
+}
+
+function isExecutionAuthorizationRevocation(error: unknown): boolean {
+  if (isAuthorizationDenial(error)) return true
+  if (typeof error !== 'object' || error === null || !('code' in error) || typeof error.code !== 'string') return false
+  return error.code === 'permission_denied' || isAuthorizationChangeResponseCode(error.code)
 }
 
 function isRuntimeToolContract(value: unknown): value is {

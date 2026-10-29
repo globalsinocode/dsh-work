@@ -17,6 +17,7 @@ import { PostgresSkillService } from '../../modules/skill/postgres-skill-service
 import { SkillArtifactStore } from '../../modules/skill/skill-artifact-store.ts'
 import { LocalObjectStorage } from '../../infrastructure/storage/local-object-storage.ts'
 import { PostgresToolConnectorService } from '../../modules/tool/postgres-tool-connector-service.ts'
+import { agentBuiltinToolNames } from '../../modules/runtime/builtin-tools.ts'
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -559,8 +560,10 @@ test('Run 本地文件 Skill 不要求新 Agent 领取员工业务角色或平�
   const manifest = trialRuntime.manifest(first.runId!)
   assert.deepEqual(manifest?.user_context.role_ids, [])
   assert.deepEqual(manifest?.data_scopes, [])
-  assert.ok(manifest?.tools.some(tool => tool.id === 'read'))
-  assert.ok(!manifest?.tools.some(tool => tool.id === 'glob' || tool.id === 'grep'))
+  assert.deepEqual(manifest?.tools.map(tool => tool.id), [
+    ...agentBuiltinToolNames({ webSearchEnabled: false }),
+    'activate_skill',
+  ])
   // F-02：试运行与员工执行使用同一权限策略（审批模式、工作区写入），外部效果由 purpose 隔离。
   const snapshot = await agents.getRuntimeSnapshot(manifest!.agent_version_id!)
   assert.equal(manifest?.purpose, 'agent-release-trial')

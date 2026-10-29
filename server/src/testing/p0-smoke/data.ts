@@ -115,6 +115,7 @@ export const mockTasks: TaskRun[] = [
     updatedAt: '刚刚',
     owner: '林岚',
     requestedBy: 'U10086',
+    stoppedBy: null,
     messages: [
       {
         id: 'msg-1',
@@ -176,6 +177,7 @@ export const mockTasks: TaskRun[] = [
     tokenUsage: 18340,
     owner: '林岚',
     requestedBy: 'U10086',
+    stoppedBy: null,
     messages: [
       {
         id: 'msg-11',
@@ -335,6 +337,7 @@ export const mockTasks: TaskRun[] = [
     updatedAt: '昨天 16:10',
     owner: '林岚',
     requestedBy: 'U10086',
+    stoppedBy: null,
     messages: [
       {
         id: 'msg-21',
@@ -425,6 +428,7 @@ export const mockTasks: TaskRun[] = [
     tokenUsage: 4260,
     owner: '林岚',
     requestedBy: 'U10086',
+    stoppedBy: null,
     messages: [
       {
         id: 'msg-31',
@@ -539,6 +543,7 @@ export const mockTasks: TaskRun[] = [
     duration: '2 分 04 秒',
     owner: '林岚',
     requestedBy: 'U10086',
+    stoppedBy: null,
     messages: [
       {
         id: 'msg-41',

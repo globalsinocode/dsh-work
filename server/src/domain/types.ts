@@ -119,6 +119,8 @@ export interface TaskRun {
   owner: string
   /** 触发人用户 id（TW-10 共享线程里用于区分「我发起的」与他人发起的 Run）。 */
   requestedBy: string
+  /** 取消终态的请求人；未取消或尚未终态时为 null。 */
+  stoppedBy: string | null
   /** 调用者在 Run 所属空间的当前角色（TW-10 读轨）；个人/独立空间为 null。 */
   currentUserRole?: 'owner' | 'admin' | 'member' | 'viewer' | null
   messages: ChatMessage[]

@@ -143,6 +143,9 @@ test('回滚兼容：删除 0022 对象后旧结构与个人数据完整，重�
     drop function if exists assert_team_workspace_single_owner();
     drop index if exists model_usage_by_attempt;
     drop index if exists runs_active_by_tenant;
+    -- 0087 的投影表外键依赖 0026 动态表；按依赖逆序显式移除，不用 CASCADE。
+    drop table if exists workspace_notification_deliveries;
+    drop table if exists workspace_notification_account_states;
     drop table if exists workspace_notification_states;
     drop table if exists workspace_activity_events;
     drop table if exists workspace_file_versions;
@@ -162,7 +165,9 @@ test('回滚兼容：删除 0022 对象后旧结构与个人数据完整，重�
       '0025_workspace_file_versions.sql',
       '0026_workspace_activity.sql',
       '0028_runs_and_usage_indexes.sql',
-      '0091_project_task_references.sql'
+      '0087_workspace_notifications.sql',
+      '0091_project_task_references.sql',
+      '0106_workspace_activity_kinds_restore.sql'
     );
   `)
 
@@ -185,6 +190,8 @@ test('回滚兼容：删除 0022 对象后旧结构与个人数据完整，重�
     reappliedVersions.includes('0026_workspace_activity.sql'),
     '0026（团队动态与通知，纯新增）必须能被重放',
   )
+  assert.ok(reappliedVersions.includes('0087_workspace_notifications.sql'))
+  assert.ok(reappliedVersions.includes('0106_workspace_activity_kinds_restore.sql'))
   assert.ok(
     reappliedVersions.includes('0028_runs_and_usage_indexes.sql'),
     '0028（runs 活动索引与每 attempt 唯一索引，纯新增）必须能被重放',

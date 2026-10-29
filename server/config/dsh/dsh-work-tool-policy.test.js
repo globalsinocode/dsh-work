@@ -49,7 +49,7 @@ test('DSH tool policy confines read and search paths to the immutable Run worksp
   await writeFile(join(workspace, 'inside.txt'), 'inside')
   await writeFile(join(workspace, 'inside.png'), 'image')
   await writeFile(join(outside, 'secret.txt'), 'secret')
-  await symlink(outside, join(workspace, 'outside-link'))
+  const symlinkCreated = await createSymlinkIfSupported(outside, join(workspace, 'outside-link'))
 
   process.env.DSH_ALLOWED_TOOLS_JSON = '["read","read_image","glob"]'
   process.env.DSH_WORKSPACE_ROOT = workspace
@@ -61,11 +61,23 @@ test('DSH tool policy confines read and search paths to the immutable Run worksp
   assert.equal(guard({ name: 'glob', arguments: { pattern: '**/*.txt' } }), undefined)
   assert.match(guard({ name: 'read', arguments: { file_path: join(outside, 'secret.txt') } }), /工作区之外/)
   assert.match(guard({ name: 'glob', arguments: { pattern: '*', path: '..' } }), /工作区之外/)
-  assert.match(guard({ name: 'read', arguments: { file_path: 'outside-link/secret.txt' } }), /符号链接/)
+  if (symlinkCreated) {
+    assert.match(guard({ name: 'read', arguments: { file_path: 'outside-link/secret.txt' } }), /符号链接/)
+  }
   assert.match(guard({ name: 'read_image', arguments: { file_path: 'inside.txt' } }), /图片读取/)
   assert.match(guard({ name: 'read_image', arguments: { file_path: join(outside, 'secret.png') } }), /工作区之外/)
   assert.match(guard({ name: 'write', arguments: {} }), /未授权工具/)
 })
+
+async function createSymlinkIfSupported(target, path) {
+  try {
+    await symlink(target, path)
+    return true
+  } catch (error) {
+    if (error && typeof error === 'object' && error.code === 'EPERM') return false
+    throw error
+  }
+}
 
 test('DSH tool policy fails closed when allow-list input is malformed', () => {
   process.env.DSH_ALLOWED_TOOLS_JSON = '{not-json}'

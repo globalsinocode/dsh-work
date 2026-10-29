@@ -234,9 +234,12 @@ test('AE-05 old scheduled slots are recorded as missed and never backfilled', as
     expectedRevision: unchangedSchedule.revision, roleIds: ['role-employee'],
     dataScopes: ['enterprise:authorized', 'workspace:authorized'],
   })
-  const stale = new Date(Date.now() - 48 * 60 * 60 * 1000)
+  // 固定到上海时间 12:00，避免测试恰好在 09:00 后的 10 分钟准入窗口内运行，
+  // 将“当前有效时段”误当成历史补跑。
+  const now = new Date('2026-10-29T04:00:00.000Z')
+  const stale = new Date(now.getTime() - 48 * 60 * 60 * 1000)
   await database`update agent_routines set next_slot_utc = ${stale} where id = ${draft.id}`
-  await service.processDue(new Date())
+  await service.processDue(now)
   const executions = await service.executions('U00008', agentId, draft.id)
   assert.equal(executions.some(item => item.kind === 'missed' && item.reasonCode === 'slot_expired'), true)
   assert.equal(executions.some(item => item.admissionStatus === 'accepted'), false)

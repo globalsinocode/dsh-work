@@ -134,6 +134,12 @@ test('停用执行身份后该 Agent 不能执行；重新启用恢复', async (
 test('GET access returns capability requirements from draft tool refs', async () => {
   const capAgentId = `agent-access-cap-${randomUUID().slice(0, 8)}`
   const agents = new PostgresAgentService(database, new PostgresOperationsService(database), undefined, toolService)
+  // 代码注册表中的默认 run-local 策略不要求 Agent 领取员工角色；把本用例的
+  // 显式 read 引用改成非默认岗位策略，专门验证权限摘要的缺口投影。
+  await database`
+    update tools set allowed_role_ids = '["role-employee"]'::jsonb
+     where tenant_id = ${tenantId} and id = 'read'
+  `
   await agents.createAgent({
     id: capAgentId,
     name: '能力摘要测试',
@@ -141,8 +147,8 @@ test('GET access returns capability requirements from draft tool refs', async ()
     owner: '陈默',
     department: '数字化中心',
     welcomeMessage: '',
-    examplePrompts: [],
-    systemPrompt: '你是测试 Agent。',
+    examplePrompts: ['请读取当前工作空间的文档并整理要点'],
+    systemPrompt: '你是能力摘要测试 Agent，只处理明确授权的任务并报告越界请求。',
     maxOutputBytes: 65536,
     maxToolCalls: 20,
     timeoutSeconds: 300,

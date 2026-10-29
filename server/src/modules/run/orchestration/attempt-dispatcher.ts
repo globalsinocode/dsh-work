@@ -7,6 +7,7 @@ import { toManifestToolBinding } from '../../../domain/tool-binding.ts'
 import type { RuntimeAuthorizationDecision } from '../../authorization/postgres-authorization-service.ts'
 import type { PreparedRuntimeFile } from '../../runtime/runtime-types.ts'
 import { authorizationDenied } from '../../../domain/authorization-errors.ts'
+import { BUILTIN_TOOL_VERSION, projectTaskToolNames } from '../../runtime/builtin-tools.ts'
 import type { JsonObject, RunRecord } from '../run-types.ts'
 import type { AttemptBudget } from './attempt-budget.ts'
 import type { AttemptScheduler } from './attempt-scheduler.ts'
@@ -67,6 +68,8 @@ export class AttemptDispatcher {
     delegation?: NonNullable<RuntimeManifest['delegation_context']>
     /** 项目空间 S6：任务工具读/写模式（定时触发等场景）。 */
     projectTaskToolMode?: 'none' | 'read' | 'read-write'
+    /** 项目任务受理时固定的简报/档案版本，不在调度后重新读取。 */
+    projectContext?: RuntimeManifest['project_context'] | null
     /** 员工时区：用于 Manifest 相对日期说明（定时任务等）。 */
     timezone?: string
   }) {
@@ -181,6 +184,10 @@ export class AttemptDispatcher {
         ...(delegationPolicy.allowedAgentVersionIds.length ? [{ id: 'delegate_agent', version: '1.0.0' }] : []),
         ...(this.deps.memory && input.purpose !== 'agent-routine'
           ? [{ id: 'propose_memory', version: '1.0.0' }] : []),
+        ...projectTaskToolNames({
+          enabled: Boolean(this.deps.projectTasks) && agent.projectTasksEnabled === true,
+          mode: input.projectTaskToolMode ?? 'none',
+        }).map(id => ({ id, version: BUILTIN_TOOL_VERSION })),
         ...agentDataToolRefs(agent),
       ],
       // B-03/I-04：Attempt 固定本次解析的平台绑定修订；执行复核据此验证当前授权。
@@ -214,6 +221,7 @@ export class AttemptDispatcher {
         },
       } : {}),
       ...(input.delegation ? { delegation_context: input.delegation } : {}),
+      ...(input.projectContext ? { project_context: input.projectContext } : {}),
       model_route_id: route.routeId,
       input: {
         message: (input.message ?? input.prompt).trim(),

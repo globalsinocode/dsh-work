@@ -135,6 +135,7 @@ test('OpenAPI publishes governed platform capabilities and omits employee memory
   assert.equal(admin.paths['/connectors/mcp/credential']?.patch?.operationId, 'rotateMcpCredential')
   assert.equal(admin.paths['/connectors/check']?.post?.operationId, 'checkConnector')
   assert.ok(admin.paths['/connectors/check']?.post?.responses?.['409'])
+  assert.equal(admin.paths['/connectors/mcp/capabilities/approve']?.post?.operationId, 'approveMcpCapabilities')
   assert.equal(admin.paths['/connectors/mcp/approve'], undefined)
   assert.equal(admin.paths['/connectors/mcp/status']?.patch?.operationId, 'setMcpConnectorStatus')
   assert.ok(admin.paths['/connectors/mcp/status']?.patch?.responses?.['409'])

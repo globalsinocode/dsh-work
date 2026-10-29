@@ -22,6 +22,7 @@ import { PostgresSkillService } from '../../modules/skill/postgres-skill-service
 import { SkillArtifactStore } from '../../modules/skill/skill-artifact-store.ts'
 import { LocalObjectStorage } from '../../infrastructure/storage/local-object-storage.ts'
 import { PostgresToolConnectorService } from '../../modules/tool/postgres-tool-connector-service.ts'
+import { agentBuiltinToolNames, BUILTIN_TOOL_VERSION } from '../../modules/runtime/builtin-tools.ts'
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -176,18 +177,16 @@ test('authorization is fail-closed and compiles the effective identity into Runt
       agentVersionId: 'agent-version-dsh-work-assistant-1',
     })
     assert.ok(!narrowed.dataScopes.includes('workspace:authorized'), '基础文件工具不会补回已撤销的数据范围')
-    // 默认文件工具可在隔离工作区运行；管理员收紧策略后必须复核实际所需范围。
+    // 内置工具以代码注册表为权威；数据库中的历史 tools 行漂移不得改变运行授权。
     await database`
       update tools set data_scopes = '["workspace:authorized", "enterprise:authorized"]'::jsonb
        where tenant_id = 'tenant-dsh-work' and id = 'read'
     `
-    await assert.rejects(
-      authorization.authorizeRuntime({
-        userId: 'U00001',
-        agentVersionId: 'agent-version-dsh-work-assistant-1',
-      }),
-      /工具 read@1\.0\.0要求未授权的数据范围：workspace:authorized/,
-    )
+    const registryOwned = await authorization.authorizeRuntime({
+      userId: 'U00001',
+      agentVersionId: 'agent-version-dsh-work-assistant-1',
+    })
+    assert.ok(!registryOwned.dataScopes.includes('workspace:authorized'))
   } finally {
     await database`
       update tools set data_scopes = ${database.json(readToolBefore.dataScopes)}
@@ -233,8 +232,9 @@ test('authorization is fail-closed and compiles the effective identity into Runt
   assert.ok(!manifest?.data_scopes.includes('domain:supply-chain'))
   assert.deepEqual(manifest?.skills, [{ id: 'skill-document', version: '1.0.0' }])
   assert.deepEqual(manifest?.tools, [
-    { id: 'read', version: '1.0.0' },
-    { id: 'activate_skill', version: '1.0.0' },
+    ...agentBuiltinToolNames({ webSearchEnabled: false })
+      .map(id => ({ id, version: BUILTIN_TOOL_VERSION })),
+    { id: 'activate_skill', version: BUILTIN_TOOL_VERSION },
   ])
   // 未指定 Skill 的会话不得凭空出现 selected_skill（字段缺失而非 null）。
   assert.equal(manifest?.selected_skill, undefined)
@@ -289,10 +289,10 @@ test('personal Skill sessions use a compatible stable default Agent and reject a
     await transaction`
       insert into agents (
         id, tenant_id, name, description, welcome_message, owner_user_id, created_by,
-        status, active_version_id, updated_at
+        status, active_version_id, visible_role_ids, updated_at
       ) values (
         ${agentId}, 'tenant-dsh-work', '无读取能力的候选 Agent', '验证 Skill 与 Agent 的工具兼容选择。', '',
-        'U00008', 'U00008', 'published', null, now() + interval '1 hour'
+        'U00008', 'U00008', 'published', null, '["role-employee"]', now() + interval '1 hour'
       )
     `
     await transaction`
@@ -314,7 +314,7 @@ test('personal Skill sessions use a compatible stable default Agent and reject a
   assert.equal(listed[0]?.id, 'agent-dsh-work-assistant', '默认 Agent 不应随最近更新时间漂移')
   assert.equal(
     await agents.resolveWorkbenchAgentVersion(undefined, 'U00001', undefined, ['skill-document@1.0.0']),
-    'agent-version-dsh-work-assistant-output-1',
+    'agent-version-dsh-work-assistant-project-tasks-1',
   )
   await assert.rejects(
     agents.resolveWorkbenchAgentVersion(agentId, 'U00001', undefined, ['skill-document@1.0.0']),

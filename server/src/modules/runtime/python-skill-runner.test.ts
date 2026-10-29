@@ -32,7 +32,7 @@ function argumentOptions(overrides: Partial<PythonSandboxArgumentOptions> = {}):
 
 test('Python Skill runner requires a digest-pinned image and builds a closed sandbox command', () => {
   assert.throws(() => new PythonSkillRunner('python:3.13'), /sha256/)
-  assert.equal(new PythonSkillRunner(image).user, `${process.getuid?.()}:${process.getgid?.()}`)
+  assert.equal(new PythonSkillRunner(image).user, resolvePythonSandboxUser())
   assert.throws(() => resolvePythonSandboxUser('0:0'), /uid:gid/)
   assert.throws(() => resolvePythonSandboxUser('root'), /uid:gid/)
   assert.equal(resolvePythonSandboxUser('65534:65534'), '65534:65534')
@@ -102,7 +102,11 @@ test('output collection drops truncated, excess, unsafe and uncollected files', 
     const outside = join(parent, 'secret.txt')
     await mkdir(root)
     await writeFile(outside, 'secret')
-    await symlink(outside, join(root, 'linked'))
+    try {
+      await symlink(outside, join(root, 'linked'))
+    } catch (error) {
+      if (!(error && typeof error === 'object' && 'code' in error && error.code === 'EPERM')) throw error
+    }
     await writeFile(join(root, 'has space.txt'), 'nope')
     await mkdir(join(root, 'nested'))
     await writeFile(join(root, 'nested', 'inner.txt'), 'x')
@@ -135,13 +139,17 @@ test('output collection drops truncated, excess, unsafe and uncollected files', 
   }
 })
 
-test('mount readability follows the sandbox uid and does not follow links', async () => {
+test('mount readability follows the sandbox uid and does not follow links', async t => {
+  if (!process.getuid || !process.getgid) {
+    t.skip('POSIX uid and file-mode semantics are unavailable on this platform')
+    return
+  }
   const root = await mkdtemp(join(tmpdir(), 'dsh-py-mount-'))
   try {
     await writeFile(join(root, 'run.py'), 'print(1)\n', { mode: 0o400 })
     await chmod(join(root, 'run.py'), 0o400)
-    const uid = process.getuid?.() ?? 0
-    const gid = process.getgid?.() ?? 0
+    const uid = process.getuid()
+    const gid = process.getgid()
     assert.equal(await pythonMountReadable(root, uid, gid), true)
     assert.equal(await pythonMountReadable(root, 65534, 65534), false)
     await symlink(join(root, 'run.py'), join(root, 'alias.py'))
@@ -151,7 +159,11 @@ test('mount readability follows the sandbox uid and does not follow links', asyn
   }
 })
 
-test('abort stops the mock container before the call settles and a failed removal is reported', async () => {
+test('abort stops the mock container before the call settles and a failed removal is reported', async t => {
+  if (process.platform === 'win32') {
+    t.skip('the executable mock uses a POSIX shebang; the same lifecycle is covered on POSIX CI')
+    return
+  }
   const root = await mkdtemp(join(tmpdir(), 'dsh-py-mock-'))
   const script = join(root, 'docker.mjs')
   await writeFile(script, mockDocker, { mode: 0o755 })
@@ -159,7 +171,7 @@ test('abort stops the mock container before the call settles and a failed remova
   await writeFile(join(root, 'info.out'), 'true\n["name=apparmor"]\n')
   const previous = process.env.DSH_PY_SANDBOX_SENTINEL
   process.env.DSH_PY_SANDBOX_SENTINEL = 'sentinel'
-  const user = `${process.getuid?.()}:${process.getgid?.()}`
+  const user = resolvePythonSandboxUser()
   const runner = new PythonSkillRunner(image, { command: script, user })
   try {
     await runner.preflight()

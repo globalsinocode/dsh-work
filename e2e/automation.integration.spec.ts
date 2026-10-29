@@ -55,7 +55,9 @@ async function runNowFromPage(page: Page, name: string) {
 }
 
 async function executions(request: APIRequestContext, automationId: string): Promise<ExecutionRow[]> {
-  return data<ExecutionRow[]>(await request.get(`/api/workbench/v1/automations/${automationId}/executions`))
+  return (await data<{ items: ExecutionRow[] }>(
+    await request.get(`/api/workbench/v1/automations/${automationId}/executions`),
+  )).items
 }
 
 async function openExecutions(page: Page, name: string) {
@@ -64,19 +66,16 @@ async function openExecutions(page: Page, name: string) {
   return page.getByRole('dialog', { name: `执行记录 · ${name}` })
 }
 
-test('AU-01 archive hides task from active list but keeps history readable', async ({ page }) => {
+test('AU-01 archive removes the task and its history from employee reads', async ({ page }) => {
   const name = `P1-归档-${randomUUID().slice(0, 8)}`
   const task = await createAutomation(page.request, name, 'P1-普通完成')
   await enableFromPage(page, name)
   await taskCard(page, name).getByRole('button', { name: '归档', exact: true }).click()
   await page.getByRole('button', { name: '归档', exact: true }).last().click()
   await expect(taskCard(page, name)).toHaveCount(0)
-  await page.getByRole('combobox', { name: '任务状态筛选' }).click()
-  await page.getByRole('option', { name: '已归档' }).click()
-  const archivedCard = taskCard(page, name)
-  await expect(archivedCard).toBeVisible()
-  await archivedCard.getByRole('button', { name: '执行记录', exact: true }).click()
-  await expect(page.getByRole('dialog', { name: `执行记录 · ${name}` })).toBeVisible()
+  expect((await page.request.get(`/api/workbench/v1/automations/${task.id}`)).status()).toBe(404)
+  expect((await page.request.get(`/api/workbench/v1/automations/${task.id}/executions`)).status()).toBe(404)
+  await expect(page.getByRole('combobox', { name: '任务状态筛选' })).toHaveCount(0)
 })
 
 test('AG-AUTO-20: duplicate trigger has one Run and interrupted preparation is visible', async ({ page }) => {

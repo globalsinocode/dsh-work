@@ -11,6 +11,7 @@ import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { ALLOWED_TOOL_CONNECTOR_IDS_ENV, resolveAllowedToolConnectorIds } from '../../domain/tool-category.ts'
+import { agentBuiltinToolNames, BUILTIN_TOOL_VERSION } from '../../modules/runtime/builtin-tools.ts'
 import type { AgentRuntimePort, RuntimeHealth } from '../../modules/runtime/runtime-types.ts'
 import type { DatabaseClient } from './database.ts'
 import { createThrowawayDatabase, type ThrowawayDatabase } from './test-database.ts'
@@ -366,7 +367,8 @@ test('Tool and Connector management gates immutable Agent and Skill references',
   await publishDraftWithSealedTrial(database, agents, created.agent.id, 'U00008')
   const snapshot = await agents.getRuntimeSnapshot(created.version.id)
   assert.deepEqual(snapshot.tools, ['glob@1.0.0', 'read@1.0.0'])
-  assert.deepEqual(snapshot.runtimeTools, ['glob@1.0.0', 'read@1.0.0'])
+  assert.deepEqual(snapshot.runtimeTools, agentBuiltinToolNames({ webSearchEnabled: false })
+    .map(name => `${name}@${BUILTIN_TOOL_VERSION}`))
   assert.equal(snapshot.approvalMode, 'never')
   assert.deepEqual(snapshot.skillInstructions[0]?.tools, ['read@1.0.0'])
 

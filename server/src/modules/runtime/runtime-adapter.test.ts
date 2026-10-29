@@ -3,7 +3,8 @@ import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
+import process from 'node:process'
 import { fileURLToPath } from 'node:url'
 import { afterEach, describe, it } from 'node:test'
 import { buildAcpChildEnvironment } from './acp-json-rpc-client.ts'
@@ -28,6 +29,12 @@ import type { RuntimeEvent, RuntimeManifest } from './runtime-types.ts'
 const moduleDirectory = dirname(fileURLToPath(import.meta.url))
 const mockWorker = join(moduleDirectory, 'testing/mock-acp-worker.ts')
 const adapters: DshAcpRuntimeAdapter[] = []
+
+async function assertReadOnlyFile(path: string) {
+  const mode = (await stat(path)).mode & 0o777
+  if (process.platform === 'win32') assert.equal(mode & 0o222, 0)
+  else assert.equal(mode, 0o400)
+}
 
 afterEach(async () => {
   await Promise.all(adapters.splice(0).map(adapter => adapter.close()))
@@ -358,7 +365,7 @@ describe('Runtime Manifest compiler', () => {
 
     const attachmentPath = join(result.attemptDirectory, 'workspace/input/attachments/image-1.png')
     assert.deepEqual(await readFile(attachmentPath), bytes)
-    assert.equal((await stat(attachmentPath)).mode & 0o777, 0o400)
+    await assertReadOnlyFile(attachmentPath)
     const stored = JSON.parse(await readFile(join(result.attemptDirectory, 'manifest.json'), 'utf8')) as RuntimeManifest
     const systemPrompt = renderSystemPrompt(stored)
     assert.match(systemPrompt, /# 当前 Run 输入附件（图片）/)
@@ -532,12 +539,14 @@ describe('DSH ACP Runtime Adapter', () => {
   })
 
   it('mounts DSH managed credentials without copying a secret into process config', () => {
+    const runtimeHome = resolve('/opt/dsh-runtime')
+    const projectRoot = resolve('/opt/dsh-work')
     const configuration = createManagedDshAcpProcessConfiguration({
       runtimeHome: '/opt/dsh-runtime',
       projectRoot: '/opt/dsh-work',
     })
 
-    assert.equal(configuration.cwd, '/opt/dsh-runtime')
+    assert.equal(configuration.cwd, runtimeHome)
     assert.equal(configuration.env?.['DEEPSEEK_API_KEY'], undefined)
     assert.equal(configuration.env?.['DSH_ACP_BASE_CONFIG'], undefined)
     assert.deepEqual(configuration.args, [
@@ -547,11 +556,12 @@ describe('DSH ACP Runtime Adapter', () => {
       '--profile',
       'acp',
       '--patch',
-      '/opt/dsh-work/server/config/dsh/acp-managed-credentials.cordis.yml',
+      resolve(projectRoot, 'server/config/dsh/acp-managed-credentials.cordis.yml'),
     ])
   })
 
   it('uses the legacy ACP example only for the explicit compatibility adapter', () => {
+    const projectRoot = resolve('/opt/dsh-work')
     const configuration = createManagedDshAcpProcessConfiguration({
       runtimeHome: '/opt/dsh-runtime',
       projectRoot: '/opt/dsh-work',
@@ -564,7 +574,7 @@ describe('DSH ACP Runtime Adapter', () => {
       'tsx',
       'packages/examples/acp-demo/src/bin.ts',
       '--config',
-      '/opt/dsh-work/server/config/dsh/acp-managed-credentials.legacy.cordis.yml',
+      resolve(projectRoot, 'server/config/dsh/acp-managed-credentials.legacy.cordis.yml'),
     ])
     assert.equal(
       configuration.env?.['DSH_ACP_BASE_CONFIG'],
@@ -589,6 +599,7 @@ describe('DSH ACP Runtime Adapter', () => {
   })
 
   it('accepts a managed command without requiring a sibling source checkout', () => {
+    const runtimeHome = resolve('/opt/dsh-runtime')
     const configuration = createManagedDshAcpProcessConfiguration({
       runtimeHome: '/opt/dsh-runtime',
       projectRoot: '/opt/dsh-work',
@@ -596,7 +607,7 @@ describe('DSH ACP Runtime Adapter', () => {
       args: ['--profile', 'acp', '--patch', '/opt/dsh-work/server/config/dsh/acp-managed-credentials.cordis.yml'],
     })
     assert.equal(configuration.command, '/opt/dsh-runtime/bin/dsh')
-    assert.equal(configuration.cwd, '/opt/dsh-runtime')
+    assert.equal(configuration.cwd, runtimeHome)
   })
 
   it('verifies a managed DSH distribution against the runtime lock', async () => {
@@ -698,7 +709,8 @@ describe('DSH ACP Runtime Adapter', () => {
       'utf8',
     )
     assert.doesNotMatch(generatedOverlay, /__DSH_(?:ACP_BASE_CONFIG|WORK_TOOL_POLICY_MODULE)__/)
-    assert.match(generatedOverlay, new RegExp(escapeRegExp(join(fixture.runtimeHome, 'examples/acp-agent/cordis.yml'))))
+    const serializedBaseConfig = join(fixture.runtimeHome, 'examples/acp-agent/cordis.yml').replaceAll('\\', '\\\\')
+    assert.match(generatedOverlay, new RegExp(escapeRegExp(serializedBaseConfig)))
   })
 
   it('does not select the legacy Runtime implicitly', async () => {
@@ -831,10 +843,10 @@ describe('DSH ACP Runtime Adapter', () => {
     assert.equal(result.manifestSha256, compileRuntimeManifest(input).sha256)
     const mountedPath = join(result.attemptDirectory, 'workspace/input/inventory.csv.txt')
     assert.equal(await readFile(mountedPath, 'utf8'), '物料,库存\nA-01,120')
-    assert.equal((await stat(mountedPath)).mode & 0o777, 0o400)
+    await assertReadOnlyFile(mountedPath)
     const memoryPath = join(result.attemptDirectory, 'workspace/memory.md')
     assert.match(await readFile(memoryPath, 'utf8'), /memory-version-approved-1/)
-    assert.equal((await stat(memoryPath)).mode & 0o777, 0o400)
+    await assertReadOnlyFile(memoryPath)
     const systemPrompt = renderSystemPrompt(stored)
     assert.match(systemPrompt, /已启用 Skill（兼容模式）/)
     assert.match(systemPrompt, /Read references\/value\.txt/)
@@ -842,7 +854,7 @@ describe('DSH ACP Runtime Adapter', () => {
     assert.ok(resourceDirectory)
     const resourcePath = join(result.attemptDirectory, 'workspace/skills', resourceDirectory, 'references/value.txt')
     assert.equal(await readFile(resourcePath, 'utf8'), resource)
-    assert.equal((await stat(resourcePath)).mode & 0o777, 0o400)
+    await assertReadOnlyFile(resourcePath)
   })
 
   it('keeps Token usage unavailable when only MCP call evidence exists', async () => {
