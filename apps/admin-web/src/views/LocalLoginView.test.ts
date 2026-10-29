@@ -23,6 +23,7 @@ beforeEach(() => {
 })
 afterEach(() => {
   wrappers.splice(0).forEach(wrapper => wrapper.unmount())
+  vi.useRealTimers()
   vi.unstubAllGlobals()
   vi.restoreAllMocks()
 })
@@ -136,15 +137,20 @@ describe.each(['admin', 'workbench'] as const)('%s shared login page', audience 
 })
 
 it('retries a failed configuration load without silently redirecting', async () => {
-  fetchMock.mockResolvedValueOnce({ ok: false })
+  vi.useFakeTimers()
+  fetchMock.mockResolvedValue({ ok: false })
   const wrapper = render('admin')
+  await vi.runAllTimersAsync()
   await flushPromises()
   expect(wrapper.get('[role="alert"]').text()).toContain('暂时无法加载登录配置')
   expect(wrapper.find('form').exists()).toBe(false)
+  expect(fetchMock.mock.calls.length).toBeGreaterThan(1)
+  fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({ mode: 'oidc', localEnabled: true, aiHubEnabled: true }) })
   await button(wrapper, '重试').trigger('click')
   await flushPromises()
   expect(wrapper.find('#local-username').exists()).toBe(true)
   expect(window.location.assign).not.toHaveBeenCalled()
+  vi.useRealTimers()
 })
 
 it('keeps first-password changes separate from the AI Hub entry and validates confirmation', async () => {
