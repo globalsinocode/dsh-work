@@ -181,7 +181,7 @@ watch(() => props.enabled, (value) => {
 .notification-settings__intro {
   margin: 8px 0 16px;
   color: #5c5f5b;
-  font-size: 14px;
+  font-size: var(--dsh-font-size-body);
 }
 
 .notification-settings__row {
@@ -196,6 +196,6 @@ watch(() => props.enabled, (value) => {
 .notification-settings__hint {
   margin: 4px 0 0;
   color: #9a6b2f;
-  font-size: 13px;
+  font-size: var(--dsh-font-size-caption);
 }
 </style>

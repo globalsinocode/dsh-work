@@ -76,7 +76,7 @@ function open() {
 
 .system-notification-banner__title {
   overflow: hidden;
-  font-size: 14px;
+  font-size: var(--dsh-font-size-body);
   font-weight: 600;
   line-height: 1.35;
   text-overflow: ellipsis;
@@ -86,7 +86,7 @@ function open() {
 .system-notification-banner__body {
   overflow: hidden;
   color: #5c5f5b;
-  font-size: 13px;
+  font-size: var(--dsh-font-size-caption);
   line-height: 1.35;
   text-overflow: ellipsis;
   white-space: nowrap;

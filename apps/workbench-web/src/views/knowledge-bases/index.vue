@@ -106,7 +106,7 @@ watch(() => route.query.bind, () => { if (route.path === '/knowledge') void load
 
 .knowledge-page__header h1 {
   margin: 0 0 16px;
-  font-size: 24px;
+  font-size: var(--dsh-font-size-page-title);
 }
 
 .knowledge-card {
@@ -116,6 +116,6 @@ watch(() => route.query.bind, () => { if (route.path === '/knowledge') void load
 
 .knowledge-card h2 {
   margin: 0 0 8px;
-  font-size: 18px;
+  font-size: var(--dsh-font-size-section);
 }
 </style>
