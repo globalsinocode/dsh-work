@@ -869,7 +869,7 @@ describe('ConversationView 归档只读态（design §2.7 / AC-23）', () => {
       workspace: workspace({ id: 'ws-personal', type: 'personal' }),
     })
 
-    await wrapper.get('[data-testid="artifact-open-preview"]').trigger('click')
+    await wrapper.get('[data-testid="preview-artifact-artifact-1"]').trigger('click')
     await flushPromises()
 
     expect(wrapper.text()).toContain('成果预览')
@@ -878,7 +878,7 @@ describe('ConversationView 归档只读态（design §2.7 / AC-23）', () => {
     expect(downloadArtifact).toHaveBeenCalledTimes(1)
     expect(downloadArtifact).toHaveBeenCalledWith('artifact-1', 1)
 
-    await wrapper.get('[data-testid="artifact-download"]').trigger('click')
+    await wrapper.get('[aria-label="下载成果 周报.md"]').trigger('click')
     await flushPromises()
     expect(downloadArtifact).toHaveBeenCalledTimes(2)
     expect(wrapper.get('[data-testid="continue-editing-artifact-1"]').text()).toContain('继续修改')

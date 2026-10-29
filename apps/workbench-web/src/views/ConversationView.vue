@@ -10,7 +10,6 @@ import {
   CopyDocument,
   DataLine,
   Document,
-  EditPen,
   Lock,
   RefreshRight,
   Share,
@@ -490,21 +489,6 @@ function messageInputAttachments(
   }
 
   return runAttachmentsById.value.get(runId) ?? (task.value?.id === runId ? task.value.attachments : [])
-}
-
-function inputAttachmentSubtitle(fileName: string) {
-  const extension = fileName.split('.').pop()?.toLowerCase() ?? ''
-  const labels: Record<string, string> = {
-    pdf: 'PDF',
-    docx: 'Word',
-    xlsx: 'Excel',
-    xls: 'Excel',
-    csv: 'CSV',
-    txt: '文本',
-    md: 'Markdown',
-  }
-  const kind = labels[extension] ?? (extension ? extension.toUpperCase() : '文件')
-  return `${kind} · 已上传`
 }
 
 let prefetchRunArtifactsEpoch = 0
@@ -1598,27 +1582,23 @@ watch(
                 </div>
               </div>
               <div class="assistant-answer user-message">
-                <div
+                <p>{{ message.content }}</p>
+                <ul
                   v-if="messageInputAttachments(message, firstUserMessageIdByRunInThread).length"
-                  class="user-message-attachments answer-artifacts"
+                  class="message-attachments"
                   data-testid="user-message-attachments"
-                  :aria-label="`附件 ${messageInputAttachments(message, firstUserMessageIdByRunInThread).length} 个`"
+                  aria-label="附带文件"
                 >
-                  <div
+                  <li
                     v-for="name in messageInputAttachments(message, firstUserMessageIdByRunInThread)"
                     :key="name"
-                    class="answer-artifact"
+                    class="message-attachment"
+                    :title="name"
                   >
-                    <div class="answer-artifact__card">
-                      <span><el-icon><Document /></el-icon></span>
-                      <span>
-                        <strong>{{ name }}</strong>
-                        <small>{{ inputAttachmentSubtitle(name) }}</small>
-                      </span>
-                    </div>
-                  </div>
-                </div>
-                <p>{{ message.content }}</p>
+                    <el-icon><Document /></el-icon>
+                    <span>{{ name }}</span>
+                  </li>
+                </ul>
               </div>
             </template>
             <template v-else>
@@ -1857,27 +1837,23 @@ watch(
                 </div>
               </div>
               <div class="assistant-answer user-message">
-                <div
+                <p>{{ message.content }}</p>
+                <ul
                   v-if="messageInputAttachments(message, firstUserMessageIdByRun).length"
-                  class="user-message-attachments answer-artifacts"
+                  class="message-attachments"
                   data-testid="user-message-attachments"
-                  :aria-label="`附件 ${messageInputAttachments(message, firstUserMessageIdByRun).length} 个`"
+                  aria-label="附带文件"
                 >
-                  <div
+                  <li
                     v-for="name in messageInputAttachments(message, firstUserMessageIdByRun)"
                     :key="name"
-                    class="answer-artifact"
+                    class="message-attachment"
+                    :title="name"
                   >
-                    <div class="answer-artifact__card">
-                      <span><el-icon><Document /></el-icon></span>
-                      <span>
-                        <strong>{{ name }}</strong>
-                        <small>{{ inputAttachmentSubtitle(name) }}</small>
-                      </span>
-                    </div>
-                  </div>
-                </div>
-                <p>{{ message.content }}</p>
+                    <el-icon><Document /></el-icon>
+                    <span>{{ name }}</span>
+                  </li>
+                </ul>
               </div>
             </template>
 
@@ -1903,48 +1879,15 @@ watch(
               <div class="assistant-answer">
                 <AssistantMessageContent :text="message.content" />
 
-                <div
-                  v-if="messageArtifacts(message).length"
-                  class="answer-artifacts"
-                >
-                  <div
-                    v-for="artifact in messageArtifacts(message)"
-                    :key="artifact.id"
-                    class="answer-artifact"
-                  >
-                    <button
-                      type="button"
-                      class="answer-artifact__open"
-                      data-testid="artifact-open-preview"
-                      @click="openPreview(artifact)"
-                    >
-                      <span><el-icon><Document /></el-icon></span>
-                      <span>
-                        <strong>{{ artifact.name }}</strong>
-                        <small>{{ artifact.size }} · V{{ artifact.version }}</small>
-                      </span>
-                    </button>
-                    <button
-                      type="button"
-                      class="answer-artifact__download"
-                      data-testid="artifact-download"
-                      @click="download(artifact)"
-                    >
-                      下载
-                    </button>
-                    <button
-                      v-if="canFollowUp && belongsToCurrentRun(message) && artifact.canReference && artifact.fileId"
-                      type="button"
-                      class="answer-artifact__revise"
-                      :data-testid="`continue-editing-${artifact.id}`"
-                      :disabled="referencedArtifacts.some(item => item.fileId === artifact.fileId)"
-                      @click="continueEditing(artifact)"
-                    >
-                      <el-icon><EditPen /></el-icon>
-                      {{ referencedArtifacts.some(item => item.fileId === artifact.fileId) ? '已引用' : '继续修改' }}
-                    </button>
-                  </div>
-                </div>
+                <RunArtifactCards
+                  :artifacts="messageArtifacts(message)"
+                  :can-continue-editing="canFollowUp && belongsToCurrentRun(message)"
+                  :referenced-file-ids="referencedArtifacts.map(item => item.fileId)"
+                  :preview-key="previewKey"
+                  @preview="openPreview"
+                  @download="download"
+                  @continue-editing="continueEditing"
+                />
 
                 <div class="assistant-actions">
                   <button type="button" aria-label="复制回答" @click="copyAnswer(message.content)">

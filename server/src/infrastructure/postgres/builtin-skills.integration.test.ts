@@ -68,12 +68,12 @@ function orchestration() {
   )
 }
 
-async function createAgent(agentSkills: string[] = []) {
+async function createAgent(agentSkills: string[] = [], tools: string[] = []) {
   return agents.createAgent({
     id: `agent-bsk-${randomUUID().slice(0, 8)}`,
     name: '资料整理助手', description: '整理员工提供的资料并输出成果。', owner: '平台治理', department: '平台治理',
     welcomeMessage: '', examplePrompts: ['整理资料'], systemPrompt: '你是资料整理助手，只处理当前工作区中已经授权的资料。',
-    maxOutputBytes: 65536, maxToolCalls: 20, timeoutSeconds: 300, skills: agentSkills,
+    maxOutputBytes: 65536, maxToolCalls: 20, timeoutSeconds: 300, skills: agentSkills, tools,
     changeSummary: '验证平台内置 Skill 装配', actor: ADMIN,
     dataScopes: ['workspace:authorized'],
     executionRoleIds: ['role-employee'], executionDataScopes: ['workspace:authorized'],
@@ -175,7 +175,8 @@ test('标记覆盖 html-page 的 Skill 让位对应内置 Skill，未标记的�
   assert.equal(manifest.skills.filter(skill => skill.id.startsWith('dsh-work-')).length, 2, '另两个内置 Skill 仍在')
 
   // Skill 广场：员工在会话中选择标记覆盖的 Skill，同样只对该会话生效。
-  const bare = await createAgent()
+  // 会话临时选用的 Skill 仍须落在 Agent 已授权的工具内。
+  const bare = await createAgent([], ['read@1.0.0'])
   manifest = await manifestFor(bare.version.id, report)
   assert.deepEqual(manifest.builtin_skill_exclusions, [{ skill: html.reference, reason: 'covered', covered_by: report.reference }])
   assert.ok((await manifestFor(bare.version.id)).skills.some(skill => skill.id === html.id), '未选择时仍提供')
