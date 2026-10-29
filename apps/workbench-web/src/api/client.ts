@@ -178,7 +178,10 @@ async function requestBlobDownload(path: string) {
 
 function redirectToLogin() {
   if (typeof window === 'undefined') return
-  const returnTo = `${window.location.pathname}${window.location.search}${window.location.hash}`
+  const path = window.location.pathname
+  // 登录页上的 401（例如通知轮询赶在路由就绪前）不能再把当前 /login 嵌进 return_to，否则会层层加长直到 431。
+  if (path === '/login' || path.startsWith('/login-error') || path.startsWith('/forbidden') || path.startsWith('/change-password') || path.startsWith('/auth/')) return
+  const returnTo = `${path}${window.location.search}${window.location.hash}`
   window.location.assign(`/auth/workbench/login?return_to=${encodeURIComponent(returnTo)}`)
 }
 

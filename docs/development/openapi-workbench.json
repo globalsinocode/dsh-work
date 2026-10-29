@@ -26,6 +26,82 @@
         "responses": { "200": { "$ref": "#/components/responses/Ok" }, "403": { "$ref": "#/components/responses/Error" } }
       }
     },
+    "/integrations/weknora/status": {
+      "get": {
+        "operationId": "getWeknoraStatus",
+        "summary": "查询当前员工的 WeKnora 知识库连接状态",
+        "responses": { "200": { "$ref": "#/components/responses/Ok" }, "401": { "$ref": "#/components/responses/Error" }, "503": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/integrations/weknora/bind/start": {
+      "post": {
+        "operationId": "startWeknoraBind",
+        "summary": "开始把当前员工绑定到 WeKnora 账号",
+        "responses": { "200": { "$ref": "#/components/responses/Ok" }, "401": { "$ref": "#/components/responses/Error" }, "503": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/integrations/weknora/bind/callback": {
+      "get": {
+        "operationId": "completeWeknoraBindCallback",
+        "summary": "完成 WeKnora 绑定并重定向回知识库页",
+        "parameters": [
+          { "name": "state", "in": "query", "schema": { "type": "string" } },
+          { "name": "bind_code", "in": "query", "schema": { "type": "string" } },
+          { "name": "bind_error", "in": "query", "schema": { "type": "string" } }
+        ],
+        "responses": { "302": { "description": "重定向到知识库页" }, "503": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/integrations/weknora/link": {
+      "delete": {
+        "operationId": "unlinkWeknora",
+        "summary": "解除当前员工与 WeKnora 的绑定",
+        "responses": { "200": { "$ref": "#/components/responses/Ok" }, "401": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/integrations/weknora/knowledge-bases": {
+      "get": {
+        "operationId": "listWeknoraKnowledgeBases",
+        "summary": "列出当前员工可读的 WeKnora 知识库",
+        "responses": { "200": { "$ref": "#/components/responses/Ok" }, "401": { "$ref": "#/components/responses/Error" }, "503": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/integrations/weknora/knowledge-bases/{id}": {
+      "get": {
+        "operationId": "getWeknoraKnowledgeBase",
+        "summary": "读取一个 WeKnora 知识库",
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "$ref": "#/components/responses/Ok" }, "401": { "$ref": "#/components/responses/Error" }, "503": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/integrations/weknora/knowledge-bases/{id}/documents": {
+      "get": {
+        "operationId": "listWeknoraDocuments",
+        "summary": "列出一个 WeKnora 知识库中的文档",
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "$ref": "#/components/responses/Ok" }, "401": { "$ref": "#/components/responses/Error" }, "503": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/integrations/weknora/knowledge-bases/{id}/search": {
+      "post": {
+        "operationId": "searchWeknoraKnowledgeBase",
+        "summary": "在一个 WeKnora 知识库中检索",
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["query"], "properties": { "query": { "type": "string" } } } } } },
+        "responses": { "200": { "$ref": "#/components/responses/Ok" }, "401": { "$ref": "#/components/responses/Error" }, "422": { "$ref": "#/components/responses/Error" }, "503": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/integrations/weknora/documents/{id}/content": {
+      "get": {
+        "operationId": "getWeknoraDocumentContent",
+        "summary": "读取一份 WeKnora 文档内容",
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "disposition", "in": "query", "schema": { "type": "string", "enum": ["inline", "attachment"] } }
+        ],
+        "responses": { "200": { "description": "上游文档内容" }, "401": { "$ref": "#/components/responses/Error" }, "503": { "$ref": "#/components/responses/Error" } }
+      }
+    },
     "/session": {
       "get": {
         "operationId": "getCurrentSession",

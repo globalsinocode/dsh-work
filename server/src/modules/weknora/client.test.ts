@@ -98,5 +98,4 @@ test('listKnowledgeBases uses user token and maps camelCase fields', async () =>
   const session = await client.exchangeSession({ subject: 'ok' })
   const list = await client.listKnowledgeBases(session.accessToken)
   assert.deepEqual(list, [{ id: 'kb-1', name: '手册', description: '说明' }])
-  assert.equal(list[0]?.documentCount, undefined)
 })

@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto'
-import type { IncomingMessage, ServerResponse } from 'node:http'
+import type { IncomingMessage } from 'node:http'
 
 import { invalidRequest, RequestError } from '../../domain/request-errors.ts'
 import type { DatabaseClient } from '../../infrastructure/postgres/database.ts'

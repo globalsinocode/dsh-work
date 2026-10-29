@@ -82,7 +82,7 @@ export function useSystemNotifications() {
 
   async function pollConversationUnread() {
     if (!active || document.visibilityState !== 'visible') return
-    if (isLoginOrErrorRoute(route.path)) return
+    if (isLoginOrErrorRoute(route.path) || isLoginOrErrorRoute(window.location.pathname)) return
     try {
       const page = await workbenchApi.listConversationTargets({ limit: 50 })
       for (const target of page.items) {
