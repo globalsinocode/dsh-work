@@ -120,7 +120,7 @@ flowchart LR
 
 | 表 | 作用 | 关键不变量 |
 | --- | --- | --- |
-| `skills`、`skill_versions` | Skill 与其版本 | 已发布版本不可修改（触发器）；文件夹正文经存储端口按内容寻址保存，数据库只存引用与文件索引 |
+| `skills`、`skill_versions` | Skill 与其版本 | 已发布版本不可修改（触发器）；文件夹正文经存储端口按内容寻址保存，数据库只存引用与文件索引；`skills.covered_builtin_scenarios` 是管理员设置的“覆盖内置场景”（Skill 级，不随版本固定）。平台内置 Skill 随代码发布，不在这两张表中 |
 | `skill_version_dependencies` | Skill 依赖 | 依赖精确版本，不能依赖自身；Skill 声明的内置工具（`tool_refs`）须在注册表中且引用它的 Agent 可装配 |
 | `skill_installations` | 管理端安装计划 | 每次安装 Run 一条；完成时必须指向已保存的版本 |
 | `skill_test_bindings` | 严格试运行与精确 Attempt 的绑定 | 不可修改（触发器）；绑定配置与 Runtime 指纹 |
@@ -143,7 +143,7 @@ flowchart LR
 | 表 | 作用 | 关键不变量 |
 | --- | --- | --- |
 | `model_providers`、`provider_models`、`model_routes` | Provider、模型与平台路由 | 只存凭据引用；路由只写入 Attempt 快照，实际模型由 DSH Profile 固定（仅记录）；没有可用路由时新运行被拒绝 |
-| `runtimes`、`runtime_configurations` | Runtime 与其配置 | 健康与调度状态分离；配置追加版本，包含内置工具紧急停用清单 `disabled_tools`（只接受 DSH 工具）；Runtime 不等于每次执行的 Worker |
+| `runtimes`、`runtime_configurations` | Runtime 与其配置 | 健康与调度状态分离；配置追加版本，包含内置工具紧急停用清单 `disabled_tools`（只接受 DSH 工具）与内置 Skill 紧急停用清单 `disabled_builtin_skills`；Runtime 不等于每次执行的 Worker |
 
 ## 9. 文件与成果
 

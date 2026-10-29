@@ -57,6 +57,7 @@ import type {
 import { isAdminRunPurpose } from './runtime-types.ts'
 import { RequestError, dependencyTimeout, dependencyUnavailable, invalidRequest, stateConflict } from '../../domain/request-errors.ts'
 import { isDshBuiltinTool } from './builtin-tools.ts'
+import { isBuiltinSkillReference } from '../../domain/builtin-skill-ref.ts'
 
 const execFileAsync = promisify(execFile)
 const DEFAULT_SETUP_TIMEOUT_MS = 120_000
@@ -139,6 +140,11 @@ export interface DshAcpRuntimeAdapterConfiguration {
    * 只拒绝本次调用并告知模型原因，不终止 Attempt。未配置时视为没有停用。
    */
   disabledBuiltinTools?: () => Promise<readonly string[]>
+  /**
+   * Runtime 配置当前紧急停用的平台内置 Skill（ID）。激活时读取：被停用的内置 Skill
+   * 只拒绝本次激活并告知模型原因，不终止 Attempt。未配置时视为没有停用。
+   */
+  disabledBuiltinSkills?: () => Promise<readonly string[]>
   permissionDecision?: (
     request: AcpPermissionRequest,
     manifest: RuntimeManifest,
@@ -591,6 +597,11 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
           const exactName = skill.name ?? skill.id
           if (skill.disable_model_invocation && !record.manifest.input.message.includes(exactName)) {
             throw new PlatformToolError({ status: 403, code: 'TOOL_PERMISSION_DENIED', message: `Skill ${exactName} 只允许用户显式激活` })
+          }
+          if (isBuiltinSkillReference(skill.id) && this.configuration.disabledBuiltinSkills) {
+            let disabled: readonly string[]
+            try { disabled = await this.configuration.disabledBuiltinSkills() } catch { throw toolUnavailable('内置 Skill 停用状态暂不可读，本次未激活') }
+            if (disabled.includes(skill.id)) throw toolUnavailable(`平台内置 Skill ${exactName} 已被管理员临时停用，请不依赖它继续完成任务`)
           }
           const materialized = record.materializedSkills.get(skill.id)
           if (!materialized) throw toolUnavailable(`Skill 文件夹未装载：${exactName}`)

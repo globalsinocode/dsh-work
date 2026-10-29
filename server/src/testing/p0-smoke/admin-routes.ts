@@ -60,6 +60,11 @@ export function registerAdminRoutes(router: Router, service: AdminQueryService) 
     }))
   })
   router.get(`${basePath}/skills`, async () => envelope('admin', await service.getSkills()))
+  router.get(`${basePath}/skills/builtin`, async () => envelope('admin', await service.getBuiltinSkillStatus()))
+  router.patch(`${basePath}/skills/builtin-coverage`, async (request, context) => {
+    const input = await readJsonBody<{ skillId: string; scenarios: unknown }>(request)
+    return envelope('admin', await service.setCoveredBuiltinScenarios({ ...input, actor: requireRequestIdentity(context, 'admin').userId }))
+  })
   router.get(`${basePath}/skill-versions`, async () => envelope(
     'admin',
     (await service.getSkills()).map(prototypeSkillVersion),

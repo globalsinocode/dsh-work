@@ -75,6 +75,12 @@ export interface RuntimeManifest {
       files?: Array<{ path: string; content?: string; sha256: string; size: number }>
     }>
   }
+  /** 平台内置 Skill 中本次未装配的：被本次 Skill 覆盖或被 Runtime 紧急停用（builtin-skills-plan 5.3）。 */
+  builtin_skill_exclusions?: Array<{
+    skill: string
+    reason: 'covered' | 'disabled'
+    covered_by?: string
+  }>
   user_context: {
     user_id: string
     tenant_id: string

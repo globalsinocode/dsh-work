@@ -1,6 +1,6 @@
 # 管理端与平台
 
-冒烟环境、登录与身份、管理端、内置工具与操作计划、开发接入文档、MCP、持久化等待与审批。证据层级与写法见[验收目录索引](../TEST-CATALOG.md)。
+冒烟环境、登录与身份、管理端、内置工具与操作计划、开发接入文档、MCP、持久化等待与审批、平台内置 Skill。证据层级与写法见[验收目录索引](../TEST-CATALOG.md)。
 
 ### E2E-ENV-01 默认冒烟环境隔离
 
@@ -248,3 +248,54 @@
 3. 在审批前后重启服务并重放决定/事件；对真实外部动作制造超时未知，核对权威状态后再继续。
 
 **验收：** 留存身份、Run/Attempt、检查点、审批、外部回执、重启和撤权证据。一次性 PostgreSQL、合成 ACP Worker和组件测试通过不能替代本层。
+
+## 平台内置 Skill
+
+设计见[平台内置 Skill 方案](../../docs/design/builtin-skills-plan.md)，规则见[功能规则 5.5](../../docs/development/feature-rules.md#55-平台内置-skill)。
+
+### BSK-01 管理端查看内置 Skill、设置覆盖场景与紧急停用
+
+**优先级：** P0
+**角色：** 平台管理员
+**运行层级：** P0 冒烟服务与管理端组件测试；接口契约测试补充边界
+**前置数据：** 代码中的三个内置 Skill；一个已发布的已安装 Skill；默认 Runtime
+**spec：** `e2e/mvp-smoke.spec.ts`、`apps/admin-web/src/views/CapabilityManagementView.test.ts`、`apps/admin-web/src/views/RuntimeManagementView.test.ts`、`server/src/http/api-contract.test.ts`
+
+1. 进入“Skill 管理”，看到“平台内置”区域列出文件分析、HTML 页面、Office 文档三个内置 Skill，各自显示版本与场景；打开详情只能查看说明与正文，没有编辑、发布、回滚、停用或删除入口。
+2. 打开一个已安装 Skill 的详情，在“覆盖内置场景”中勾选“HTML 页面”并保存；再次打开时准确回显，审计日志出现对应记录。
+3. 进入“安全与运维 → Runtimes”，Runtime 详情列出内置 Skill 及版本；在“配置 Runtime”中选择紧急停用“HTML 页面”内置 Skill，保存后详情显示已停用；清空后恢复。
+
+**验收：** 内置 Skill 只读展示；唯一可改的是已安装 Skill 的覆盖场景与 Runtime 级紧急停用；覆盖场景只接受三个固定场景，内置 Skill 不能设置覆盖。
+
+### BSK-02 员工侧运行装配内置 Skill，按覆盖与停用让位
+
+**优先级：** P1
+**角色：** 员工、平台管理员
+**运行层级：** 专用可丢弃 PostgreSQL、受控测试身份与 Mock ACP Worker
+**前置数据：** 未固定任何 Skill 的已发布 Agent；一个已发布并标记覆盖 `html-page` 的 Skill；一个团队空间（只授权该 Agent，不授权额外 Skill）
+**spec：** `server/src/infrastructure/postgres/builtin-skills.integration.test.ts`、`server/src/modules/skill/builtin-skills.test.ts`、`server/src/modules/run/current-execution-authorization.test.ts`、`server/src/modules/runtime/runtime-adapter.test.ts`
+
+1. 员工在个人空间与该 Agent 对话：Manifest 含三个内置 Skill（内联正文、`id@version`），装配 `activate_skill`；目录中内置 Skill 排在最后。
+2. 在团队空间与该 Agent 对话并让运行排队后再执行：派发授权与执行前复核都不因内置 Skill 报“工作空间未授权 Skill”。
+3. 为 Agent 固定标记覆盖 `html-page` 的 Skill 并发布，再对话：Manifest 中没有 HTML 页面内置 Skill，并记录被覆盖的内置 Skill 与覆盖者；另两个内置 Skill 仍在。员工从 Skill 广场选择该 Skill 时同样生效。
+4. 管理员在 Runtime 中紧急停用“文件分析”内置 Skill：新运行不再装配，Manifest 记录停用；执行中的运行再激活它时只拒绝这一次并告知模型，运行继续。
+5. 管理助手、Skill 安装与试运行、会话摘要、项目档案员运行的 Manifest 中没有内置 Skill。
+6. 以“（平台内置）”结尾的名称上传、链接安装或经旧文本接口创建 Skill，被拒绝并说明原因。
+
+**验收：** 内置 Skill 不需要 Skill 授权或空间授权，不进入依赖闭包；覆盖与停用确定性生效并可从 Manifest 追溯；系统与管理运行不受影响。
+
+### BSK-P2 真实 DSH 下内置 Skill 提升产出
+
+**优先级：** P2
+**角色：** 员工
+**运行层级：** 真实 DSH Run/Attempt、Runtime Adapter 与执行容器
+**前置数据：** 未固定任何 Skill 的 Agent；一份含表格数据的 PDF 或 xlsx 附件
+**spec：** 手工执行，按第 5.2 节留证
+
+1. 上传附件要求分析并“生成一份 HTML 报告”：模型激活文件分析与 HTML 页面内置 Skill，成果为单个可离线预览的 HTML，结论标注出处、数值经计算。
+2. 要求“整理成 Word 文档”：模型激活 Office 文档内置 Skill，成果 docx 可打开、通过成果登记。
+3. 在 Runtime 中紧急停用 `bash` 后重复第 1 步：回答为 Markdown 并说明无法生成 HTML，运行不失败。
+
+另需观察：模型调用 `activate_skill` 时传入的名称能否唯一匹配（目录行形如“文件分析（平台内置）（dsh-work-file-analysis@1.0.0）”，只传“文件分析”会得到“没有唯一匹配”）。
+
+**验收：** 留存 Run/Attempt、激活记录、成果与版本；与不装配内置 Skill 的同题产出对比的人工结论写入发布说明。P0/P1 绿灯不能替代本层。

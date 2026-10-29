@@ -392,6 +392,25 @@ describe('Runtime Manifest Schema / compiler boundary', () => {
     assert.throws(() => compileRuntimeManifest(manifest), /摘要不匹配/)
   })
 
+  it('records built-in Skills that were covered or disabled, and rejects malformed exclusions', () => {
+    const withExclusions = (exclusions: unknown) => ({ ...baseManifest(), builtin_skill_exclusions: exclusions }) as RuntimeManifest
+    assertBothAccept(withExclusions([
+      { skill: 'dsh-work-html-page@1.0.0', reason: 'covered', covered_by: 'skill-inventory@1.0.0' },
+      { skill: 'dsh-work-file-analysis@1.0.0', reason: 'disabled' },
+    ]), 'covered and disabled built-in Skills')
+    assertBothReject(withExclusions([{ skill: 'skill-inventory@1.0.0', reason: 'disabled' }]), /built-in Skill reference/, 'non built-in exclusion')
+    assertBothReject(withExclusions([{ skill: 'dsh-work-html-page@1.0.0', reason: 'removed' }]), /reason is invalid/, 'unknown reason')
+    assertBothReject(withExclusions([{ skill: 'dsh-work-html-page@1.0.0', reason: 'disabled', note: 'x' }]), /unsupported field/, 'extra field')
+    assertBothReject(withExclusions([]), /non-empty/, 'empty exclusions')
+    // Cross references are content checks: the schema only sees well-formed strings.
+    const dangling = withExclusions([{ skill: 'dsh-work-html-page@1.0.0', reason: 'covered', covered_by: 'skill-other@1.0.0' }])
+    assert.equal(schemaErrors(dangling).valid, true)
+    assert.throws(() => compileRuntimeManifest(dangling), /covered_by must reference an assembled Skill/)
+    const both = withExclusions([{ skill: 'dsh-work-html-page@1.0.0', reason: 'disabled' }])
+    both.skills = [...both.skills, { id: 'dsh-work-html-page', version: '1.0.0' }]
+    assert.throws(() => compileRuntimeManifest(both), /both excluded and assembled/)
+  })
+
   it('pins model requirements and rejects unknown, repeated or malformed declarations', () => {
     assertBothAccept({ ...baseManifest(), model_requirements: ['long-context', 'structured-output'] }, 'declared requirements')
     assertBothAccept({ ...baseManifest(), model_requirements: [] }, 'no extra requirements')

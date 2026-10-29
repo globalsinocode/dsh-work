@@ -226,10 +226,13 @@ lines.on('line', (line) => {
       void emitPermissionRequest(requestId, sessionId).catch(() => failPrompt(pending, 'Permission log write failed', 'tool'))
       return
     }
-    if (process.env.DSH_PLATFORM_TOOL_SOCKET && JSON.parse(process.env.DSH_ALLOWED_TOOLS_JSON ?? '[]').some((name: string) => ['activate_skill', 'prepare_skill_installation', 'propose_admin_task', 'prepare_admin_action', 'propose_memory'].includes(name))) {
+    // 平台内置 Skill（dsh-work-*）出现在每个员工侧运行的目录中；替身只激活已安装 Skill，
+    // 只有内置 Skill 时照常走普通回答，不改变其他用例的行为。
+    const mockSkillName = mockActivationTarget(process.env.DSH_AGENT_SYSTEM_PROMPT ?? '')
+    if (process.env.DSH_PLATFORM_TOOL_SOCKET && JSON.parse(process.env.DSH_ALLOWED_TOOLS_JSON ?? '[]').some((name: string) => ['prepare_skill_installation', 'propose_admin_task', 'prepare_admin_action', 'propose_memory'].includes(name) || (name === 'activate_skill' && mockSkillName))) {
       const allowedTools = JSON.parse(process.env.DSH_ALLOWED_TOOLS_JSON ?? '[]') as string[]
-      const activating = allowedTools.includes('activate_skill')
-      const skillName = process.env.DSH_AGENT_SYSTEM_PROMPT?.match(/(?:必须先调用 activate_skill 激活 |^- )([^（，\n]+)/m)?.[1]?.trim() ?? ''
+      const skillName = mockSkillName
+      const activating = allowedTools.includes('activate_skill') && Boolean(skillName)
       void (async () => {
         try {
           if (allowedTools.includes('propose_memory')) {
@@ -475,4 +478,14 @@ function postToBridge(path: string, input: Record<string, unknown>): Promise<str
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
+}
+
+/** 替身要激活的 Skill：显式“必须先调用 activate_skill 激活 X”，否则目录中第一个非内置 Skill。 */
+function mockActivationTarget(systemPrompt: string): string {
+  const explicit = systemPrompt.match(/必须先调用 activate_skill 激活 ([^（，\n]+)/)?.[1]?.trim()
+  if (explicit) return explicit
+  for (const match of systemPrompt.matchAll(/^- (.+?)（([^（）@]+)@[^（）]+）：/gm)) {
+    if (!match[2]!.startsWith('dsh-work-')) return match[1]!.trim()
+  }
+  return ''
 }

@@ -44,7 +44,9 @@ DSH 工具策略在会话开始和工具清单变化时，用 DSH 的 agent 作�
 
 服务启动时通过 `AgentRuntimePort.listTools()` 读取一次 DSH 当前工具目录并与注册表比对，缺失的 DSH 工具在 `GET /runtimes/builtin-tools` 中报告（`catalog.missingTools`），读取失败时报告错误；比对结果不改变执行行为。目录探测启动一个短生命周期、无平台工具桥、无 MCP、空工具授权的隔离 ACP 会话；dsh-work 的受信 Tool Policy 仅在显式目录探测模式下，于 DSH `agent/session-start` 后调用该 Agent 作用域的 `ctx.tools.schemas(agent)`。Adapter 只接受与本次 Session ID 匹配且摘要正确的 v3 目录，读取后关闭 Worker 并删除临时目录。普通 Attempt 会移除目录发布环境变量。
 
-`GET /connectors` 是 MCP 管理边界，只返回外部 MCP Connector。内置工具通过 `GET /runtimes/builtin-tools` 在 Runtime 运维详情中只读展示，停用清单随 `PATCH /runtimes/configuration` 的 `disabledTools` 保存（省略时保留当前清单）。租户内 MCP Connector 总数不设上限；单个 Agent Version 最多选择 20 个，与 Runtime Manifest 上限一致。
+`GET /connectors` 是 MCP 管理边界，只返回外部 MCP Connector。内置工具通过 `GET /runtimes/builtin-tools` 在 Runtime 运维详情中只读展示，停用清单随 `PATCH /runtimes/configuration` 的 `disabledTools` 保存（省略时保留当前清单）。
+
+平台内置 Skill（[方案](../design/builtin-skills-plan.md)）同样随代码发布：`BuiltinSkillCatalog`（`server/src/modules/skill/builtin-skills.ts`）在启动时从 `server/config/builtin-skills/` 加载并按 `versions.lock.json` 校验，不写入 Skill 表。员工侧派发（`AttemptDispatcher.dispatch`）用 `RuntimeAgentSnapshot.coveringSkills`（Agent 固定与会话选择的根 Skill 及其 `skills.covered_builtin_scenarios`）与 `RunOperationsPort.getRuntimePolicy().disabledBuiltinSkills`（`runtime_configurations.disabled_builtin_skills`）解析本次装配集合，以内联 Skill 追加到 Manifest `skills`/`skill_instructions` 之后，未装配的写入 `builtin_skill_exclusions`。执行前复核用 `installedSkillReferences` 从 Manifest 重建附加 Skill，内置 Skill（ID 前缀 `dsh-work-`，见 `domain/builtin-skill-ref.ts`）不进入依赖闭包与空间能力授权；Runtime Adapter 在 `activate_skill` 时经 `disabledBuiltinSkills` 回调拒绝被紧急停用的内置 Skill。管理接口：`GET /skills/builtin` 只读展示，`PATCH /skills/builtin-coverage` 设置覆盖场景，停用清单随 `PATCH /runtimes/configuration` 的 `disabledBuiltinSkills` 保存（省略时保留）。租户内 MCP Connector 总数不设上限；单个 Agent Version 最多选择 20 个，与 Runtime Manifest 上限一致。
 
 dsh-work 平台工具由契约目录编译严格 JSON Schema，并在 Unix socket 桥两侧执行校验；DSH 包装器对非 2xx 响应抛出错误，不把错误正文当成成功结果。由于 DSH ToolRuntime 对普通 `Error` 只保留 `message`，包装器同时把 `code/retryable/effect_state` 以 `DSH_WORK_TOOL_ERROR` 前缀投影到模型可见消息，并保留同名属性供直接调用方使用。DSH 原生文件/任务工具的输入由 DSH 与平台路径策略约束，但结构化输出尚未穿过平台验证边界；提升验证级别前须接通实际输出校验。
 

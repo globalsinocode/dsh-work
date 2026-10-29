@@ -2,6 +2,7 @@ import { normalizeSkillTestScenario } from '../../domain/skill-test-scenario.ts'
 import { archiveDigest, normalizeArchiveItems } from '../../domain/project-archive.ts'
 import { MAX_SKILL_FILES, MAX_SKILL_BYTES } from '../../domain/skill-package-limits.ts'
 import { SKILL_ARTIFACT_REF_PATTERN } from '../../domain/skill-artifact-ref.ts'
+import { isBuiltinSkillReference } from '../../domain/builtin-skill-ref.ts'
 import { canonicalJson, sha256 } from './canonical-json.ts'
 import { isValidTimezone } from '../../domain/execution-time.ts'
 import { isSafeResumeWorkspacePath } from './resume-workspace-path.ts'
@@ -109,6 +110,24 @@ export function compileRuntimeManifest(input: RuntimeManifest): CompiledRuntimeM
     if (externalized && !(skill.files ?? []).some(file => file.path === 'SKILL.md')) throw new TypeError('Skill 文件夹索引缺少 SKILL.md')
     if (!skillReferences.has(`${skill.id}@${skill.version}`)) {
       throw new TypeError(`skill instruction is not declared in skills: ${skill.id}@${skill.version}`)
+    }
+  }
+  if (input.builtin_skill_exclusions !== undefined) {
+    const exclusions = input.builtin_skill_exclusions
+    if (!Array.isArray(exclusions) || exclusions.length === 0 || exclusions.length > 32) throw new TypeError('builtin_skill_exclusions must be a non-empty bounded array')
+    const excluded = new Set<string>()
+    for (const exclusion of exclusions) {
+      for (const key of Object.keys(exclusion)) {
+        if (!['skill', 'reason', 'covered_by'].includes(key)) throw new TypeError(`builtin_skill_exclusions contains unsupported field: ${key}`)
+      }
+      if (typeof exclusion.skill !== 'string' || !isBuiltinSkillReference(exclusion.skill) || !/^[^@]+@[^@]+$/.test(exclusion.skill)) throw new TypeError('builtin_skill_exclusions.skill must be a built-in Skill reference')
+      if (excluded.has(exclusion.skill) || skillReferences.has(exclusion.skill)) throw new TypeError(`built-in Skill is both excluded and assembled: ${exclusion.skill}`)
+      excluded.add(exclusion.skill)
+      if (exclusion.reason === 'covered') {
+        if (typeof exclusion.covered_by !== 'string' || !skillReferences.has(exclusion.covered_by)) throw new TypeError('builtin_skill_exclusions.covered_by must reference an assembled Skill')
+      } else if (exclusion.reason !== 'disabled' || exclusion.covered_by !== undefined) {
+        throw new TypeError('builtin_skill_exclusions.reason is invalid')
+      }
     }
   }
   if (input.test_scenario !== undefined) {

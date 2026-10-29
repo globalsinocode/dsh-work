@@ -1210,6 +1210,42 @@
         }
       }
     },
+    "/skills/builtin": {
+      "get": {
+        "operationId": "getBuiltinSkills",
+        "summary": "只读查看平台内置 Skill（随代码发布，含正文、版本与场景）、固定场景清单与 Runtime 当前的内置 Skill 停用清单；内置 Skill 没有编辑、发布或删除接口",
+        "responses": {
+          "200": { "$ref": "#/components/responses/Ok" }
+        }
+      }
+    },
+    "/skills/builtin-coverage": {
+      "patch": {
+        "operationId": "setSkillBuiltinCoverage",
+        "summary": "设置已安装 Skill 的“覆盖内置场景”（file-analysis、html-page、office-document，可多选，空数组表示不覆盖）；Skill 级配置，不随版本固定，对新运行立即生效并写审计",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["skillId", "scenarios"],
+                "properties": {
+                  "skillId": { "type": "string" },
+                  "scenarios": { "type": "array", "items": { "type": "string", "enum": ["file-analysis", "html-page", "office-document"] } }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "$ref": "#/components/responses/Ok" },
+          "403": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error", "description": "Skill 不存在（平台内置 Skill 不能设置覆盖）" },
+          "422": { "$ref": "#/components/responses/Error", "description": "场景不在固定清单中" }
+        }
+      }
+    },
     "/runtimes/configuration": {
       "get": {
         "operationId": "getRuntimeConfiguration",
@@ -1222,7 +1258,7 @@
       },
       "patch": {
         "operationId": "updateRuntimeConfiguration",
-        "summary": "更新并发、Attempt 超时、接收任务/排空/停用状态与内置工具紧急停用清单（disabledTools，省略时保留当前清单）",
+        "summary": "更新并发、Attempt 超时、接收任务/排空/停用状态、内置工具紧急停用清单（disabledTools）与平台内置 Skill 紧急停用清单（disabledBuiltinSkills，只接受注册的内置 Skill ID）；两个清单省略时均保留当前设置",
         "responses": {
           "200": {
             "$ref": "#/components/responses/Ok"

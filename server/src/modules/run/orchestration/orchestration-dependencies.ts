@@ -15,6 +15,7 @@ import type { TaskRepository } from '../../task/task-repository.ts'
 import type { PostgresPersistentWaitService } from '../postgres-persistent-wait-service.ts'
 import type { ProjectTaskThreadPort } from '../../workbench/application/postgres-project-service.ts'
 import type { ProjectArchivePort } from '../../workbench/application/postgres-project-archive-service.ts'
+import type { BuiltinSkillCatalog } from '../../skill/builtin-skills.ts'
 
 export const tenantId = 'tenant-dsh-work'
 export const runtimeId = 'runtime-local-01'
@@ -45,6 +46,8 @@ export interface OrchestrationDependencies {
   /** 项目空间 S2：项目档案与档案员整理批次。 */
   readonly projectArchive?: ProjectArchivePort
   readonly toolChecks?: ExecutionToolCheckPort
+  /** 平台内置 Skill：员工侧 Agent 运行按覆盖与紧急停用装配（builtin-skills-plan 5.3）。 */
+  readonly builtinSkills?: BuiltinSkillCatalog
   readonly tasks?: TaskRepository
   readonly automationMaxConcurrent: number
   /** Platform default IANA timezone for a run's current time (DSH_WORK_TIMEZONE). */

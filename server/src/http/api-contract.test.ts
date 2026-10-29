@@ -131,6 +131,8 @@ test('OpenAPI publishes governed platform capabilities and omits employee memory
   assert.equal(admin.paths['/connectors/mcp/agent-access'], undefined)
   assert.equal(admin.paths['/connectors/mcp/invocations']?.get?.operationId, 'listMcpInvocationAudits')
   assert.equal(admin.paths['/runtimes/builtin-tools']?.get?.operationId, 'getBuiltinTools')
+  assert.equal(admin.paths['/skills/builtin']?.get?.operationId, 'getBuiltinSkills')
+  assert.equal(admin.paths['/skills/builtin-coverage']?.patch?.operationId, 'setSkillBuiltinCoverage')
   assert.equal(admin.paths['/runtimes/dsh-tool-connector'], undefined)
   assert.equal(admin.paths['/tools'], undefined)
   assert.equal(admin.paths['/approvals']?.get?.operationId, 'listPersistentApprovals')
@@ -310,6 +312,29 @@ test('prototype admin lists only MCP connectors and shows built-in tools read-on
   assert.deepEqual(builtin.body.data.disabledTools, [])
   const removed = await fetch(`${baseUrl}/api/admin/v1/tools`)
   assert.equal(removed.status, 404)
+})
+
+test('prototype admin shows built-in Skills read-only and only accepts fixed coverage scenarios', async () => {
+  const builtin = await getJson<{
+    data: { skills: Array<{ id: string; scenario: string; version: string }>; scenarios: Array<{ id: string }>; disabledBuiltinSkills: string[] }
+  }>('/api/admin/v1/skills/builtin')
+  assert.equal(builtin.response.status, 200)
+  assert.deepEqual(builtin.body.data.skills.map(skill => skill.scenario).sort(), ['file-analysis', 'html-page', 'office-document'])
+  assert.ok(builtin.body.data.skills.every(skill => skill.id.startsWith('dsh-work-')))
+  assert.deepEqual(builtin.body.data.disabledBuiltinSkills, [])
+
+  const patch = (body: unknown) => fetch(`${baseUrl}/api/admin/v1/skills/builtin-coverage`, {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+  })
+  const skills = await getJson<{ data: Array<{ id: string }> }>('/api/admin/v1/skills')
+  const skillId = skills.body.data[0]!.id
+  const rejected = await patch({ skillId, scenarios: ['chart'] })
+  assert.ok(rejected.status >= 400 && rejected.status < 500, String(rejected.status))
+  const accepted = await patch({ skillId, scenarios: ['html-page'] })
+  const updated = await accepted.json() as { data: { coveredBuiltinScenarios: string[] } }
+  assert.equal(accepted.status, 200)
+  assert.deepEqual(updated.data.coveredBuiltinScenarios, ['html-page'])
+  await patch({ skillId, scenarios: [] })
 })
 
 test('unavailable conversation commands return an actionable 503 instead of a route 404', async () => {

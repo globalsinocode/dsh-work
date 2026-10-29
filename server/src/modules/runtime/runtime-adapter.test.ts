@@ -510,6 +510,27 @@ describe('DSH ACP Runtime Adapter', () => {
     assert.match(prompt, /- LibreOffice（soffice） 25\.2\.3\.2：/)
     assert.match(prompt, /- pdftoppm 25\.03\.0：/)
   })
+  it('rejects activating an emergency-disabled built-in Skill once, without failing the Attempt', async () => {
+    const run = async (disabled: string[]) => {
+      const activations: string[] = []
+      const adapter = await createAdapter(500, undefined, undefined, {
+        disabledBuiltinSkills: async () => disabled,
+        recordSkillActivation: async (_manifest, skill) => { activations.push(skill.id) },
+      })
+      const input = manifest(`run-builtin-${disabled.length}`, 'attempt-builtin')
+      input.agent_configuration.system_prompt = '必须先调用 activate_skill 激活 html-page-builtin，然后按说明完成任务。'
+      input.skills = [{ id: 'dsh-work-html-page', version: '1.0.0' }]
+      input.agent_configuration.skill_instructions = [{
+        id: 'dsh-work-html-page', name: 'html-page-builtin', description: '平台内置的 HTML 页面方法', version: '1.0.0',
+        instructions: '生成单个离线可用的 HTML 文件，不引用任何外部地址。',
+      }]
+      input.tools = [...input.tools, { id: 'activate_skill', version: '1.0.0' }]
+      const result = await (await adapter.execute(input)).done
+      return { status: result.status, activations }
+    }
+    assert.deepEqual(await run([]), { status: 'completed', activations: ['dsh-work-html-page'] })
+    assert.deepEqual(await run(['dsh-work-html-page']), { status: 'completed', activations: [] })
+  })
   it('discovers the session-scoped tool schemas from an isolated active DSH Profile', async () => {
     const root = await mkdtemp(join(tmpdir(), 'dsh-work-runtime-catalog-test-'))
     const adapter = new DshAcpRuntimeAdapter({

@@ -17,6 +17,8 @@ import type {
   AuditEvent,
   ConnectorDefinition,
   BuiltinToolStatus,
+  BuiltinSkillScenario,
+  BuiltinSkillStatus,
   McpConnectionTestResult,
   McpConnectorDeletionResult,
   McpInvocationAudit,
@@ -296,6 +298,9 @@ export const adminApi = {
     request<{ skill: SkillDefinition; release: SkillReleaseRecord }>('/skills/rollback', { method: 'POST', body: JSON.stringify(input) }),
   getMcpConnectors: () => request<ConnectorDefinition[]>('/connectors'),
   getBuiltinTools: () => request<BuiltinToolStatus>('/runtimes/builtin-tools'),
+  getBuiltinSkills: () => request<BuiltinSkillStatus>('/skills/builtin'),
+  setSkillBuiltinCoverage: (input: { skillId: string; scenarios: BuiltinSkillScenario[] }) =>
+    request<SkillDefinition>('/skills/builtin-coverage', { method: 'PATCH', body: JSON.stringify(input) }),
   getMcpInvocationAudits: (connectorId: string) =>
     request<McpInvocationAudit[]>(`/connectors/mcp/invocations?connector_id=${encodeURIComponent(connectorId)}`),
   testMcpConnection: (input: {

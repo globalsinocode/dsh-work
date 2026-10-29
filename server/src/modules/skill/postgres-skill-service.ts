@@ -20,6 +20,7 @@ import type { DatabaseClient, DatabaseTransaction } from '../../infrastructure/p
 import type { AuditTrail } from '../../domain/audit-trail.ts'
 import { invalidSkillToolReferences } from '../runtime/builtin-tools.ts'
 import type { SkillArtifactStore } from './skill-artifact-store.ts'
+import { BUILTIN_SKILL_NAME_SUFFIX, isReservedBuiltinSkillName, normalizeBuiltinSkillScenarios } from './builtin-skills.ts'
 
 const tenantId = 'tenant-dsh-work'
 
@@ -45,6 +46,7 @@ interface SkillRow {
   activeVersion: string | null
   toolIds: string[]
   testPrompt: string
+  coveredBuiltinScenarios: string[]
   updatedAt: Date
 }
 
@@ -683,6 +685,38 @@ export class PostgresSkillService {
     return { skill: await this.requireSkill(input.skillId), release }
   }
 
+  /**
+   * 管理员设置已安装 Skill 的“覆盖内置场景”（builtin-skills-plan 5.4）。Skill 级配置，不随版本固定，
+   * 立即作用于新运行；不改变 Skill 版本、试运行证据或 Agent 验证结果。
+   */
+  async setCoveredBuiltinScenarios(input: { skillId: string; scenarios: unknown; actor: string }) {
+    const actor = await this.requireActor(input.actor)
+    assertSkillId(input.skillId)
+    let scenarios: string[]
+    try { scenarios = normalizeBuiltinSkillScenarios(input.scenarios) }
+    catch (error) { throw skillInvalid(error instanceof Error ? error.message : '覆盖内置场景无效') }
+    const updated = await this.database<{ id: string }[]>`
+      update skills set covered_builtin_scenarios = ${this.database.json(scenarios)}, updated_at = now()
+       where tenant_id = ${tenantId} and id = ${input.skillId}
+       returning id
+    `
+    if (!updated.length) throw skillNotFound(`Skill 不存在：${input.skillId}`)
+    await this.audit(actor.id, 'skill.builtin_cover.update', input.skillId, 'success', `覆盖内置场景：${scenarios.join('、') || '无'}`)
+    return this.requireSkill(input.skillId)
+  }
+
+  /** 本次运行可覆盖内置 Skill 的场景，按 Skill ID 返回；未设置的 Skill 不出现。 */
+  async readCoveredBuiltinScenarios(skillIds: string[]): Promise<Map<string, string[]>> {
+    const ids = unique(skillIds)
+    if (!ids.length) return new Map()
+    const rows = await this.database<{ id: string; scenarios: string[] }[]>`
+      select id, covered_builtin_scenarios as scenarios from skills
+       where tenant_id = ${tenantId} and id in ${this.database(ids)}
+         and jsonb_array_length(covered_builtin_scenarios) > 0
+    `
+    return new Map(rows.map(row => [row.id, row.scenarios]))
+  }
+
   async assertPublishedReferences(references: string[]): Promise<void> {
     for (const reference of unique(references)) {
       const { id, version } = parseReference(reference)
@@ -982,7 +1016,8 @@ export class PostgresSkillService {
                 where installation.tenant_id = s.tenant_id and installation.skill_id = s.id
                   and installation.status = 'installed'
              ) as "isInstallationRoot",
-             (sv.manifest ? 'installationId') as "strictTest", sv.test_prompt as "testPrompt", s.updated_at as "updatedAt"
+             (sv.manifest ? 'installationId') as "strictTest", sv.test_prompt as "testPrompt",
+             s.covered_builtin_scenarios as "coveredBuiltinScenarios", s.updated_at as "updatedAt"
         from skills s
         join users owner on owner.tenant_id = s.tenant_id and owner.id = s.owner_user_id
         join skill_versions sv on sv.tenant_id = s.tenant_id
@@ -1078,6 +1113,7 @@ function normalizeTestRunStatus(status: string): SkillTestRunProgress['status'] 
 function assertConfiguration(input: SkillConfiguration) {
   if (!/^skill-[a-z0-9-]{6,48}$/.test(input.id)) throw skillInvalid('Skill 标识格式不正确')
   if (input.name.length < 2 || input.name.length > 40) throw skillInvalid('Skill 名称长度为 2～40 个字符')
+  if (isReservedBuiltinSkillName(input.name)) throw skillInvalid(`Skill 名称不能以“${BUILTIN_SKILL_NAME_SUFFIX}”结尾，该后缀保留给平台内置 Skill`)
   if (!input.category || input.category.length > 40) throw skillInvalid('Skill 分类不能为空且不能超过 40 个字符')
   if (input.description.length < 10 || input.description.length > 200) throw skillInvalid('Skill 说明长度为 10～200 个字符')
   if (input.instructions.length < 20 || input.instructions.length > 10000) throw skillInvalid('执行指令长度为 20～10000 个字符')
@@ -1100,6 +1136,7 @@ function toSkillDefinition(row: SkillRow): SkillDefinition {
     installationRole: row.installationRole,
     ...(row.dependencies?.length ? { dependencies: row.dependencies } : {}),
     testPrompt: row.testPrompt,
+    coveredBuiltinScenarios: row.coveredBuiltinScenarios,
     updatedAt: formatDateTime(row.updatedAt),
   }
 }

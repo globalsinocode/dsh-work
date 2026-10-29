@@ -74,6 +74,8 @@ cp "${project_root}/server/config/dsh/runtime-lock.json" "${bundle}/server/confi
 cp "${project_root}/server/config/dsh/execution-container.cordis.patch.yml" "${bundle}/server/config/dsh/"
 cp "${project_root}/server/config/dsh/dsh-work-remote-subprocess.js" "${bundle}/server/config/dsh/"
 cp "${project_root}/server/config/execution/extract_artifact_text.py" "${bundle}/server/config/execution/"
+# 平台内置 Skill 随代码发布；服务启动时按 versions.lock.json 校验，缺失或不一致时不启动。
+cp -R "${project_root}/server/config/builtin-skills" "${bundle}/server/config/builtin-skills"
 cp -R "${server_stage}/node_modules" "${bundle}/server/node_modules"
 cp -R "${project_root}/apps/workbench-web/dist" "${bundle}/apps/workbench-web/dist"
 cp -R "${project_root}/apps/admin-web/dist" "${bundle}/apps/admin-web/dist"

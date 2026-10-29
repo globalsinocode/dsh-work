@@ -169,6 +169,7 @@ router.get(`${base}/session`, (_request, context) => {
 for (const path of ['tasks', 'runtimes', 'workspaces', 'skills', 'skill-versions', 'skill-release-records', 'health', 'usage', 'assistant/sessions']) {
   router.get(`${base}/${path}`, () => envelope('admin', [], 'postgres'))
 }
+router.get(`${base}/skills/builtin`, () => envelope('admin', { skills: [], scenarios: [], disabledBuiltinSkills: [] }, 'postgres'))
 router.get(`${base}/platform-status`, () => envelope('admin', {
   mode: 'test', identity: 'prototype', persistence: 'postgres', runtime: 'synthetic',
 }, 'postgres'))

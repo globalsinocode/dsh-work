@@ -96,6 +96,8 @@ export class RunOrchestrationService {
       projectArchive?: OrchestrationDependencies['projectArchive']
       /** Platform default IANA timezone for a run's current time; defaults to Asia/Shanghai. */
       timezone?: string
+      /** 平台内置 Skill；未接线（测试替身等）时员工侧运行不装配内置 Skill。 */
+      builtinSkills?: OrchestrationDependencies['builtinSkills']
     },
   ) {
     this.deps = {
@@ -109,6 +111,7 @@ export class RunOrchestrationService {
       memory: options?.memory,
       projectTasks: options?.projectTasks,
       projectArchive: options?.projectArchive,
+      builtinSkills: options?.builtinSkills,
     }
     const budget = new AttemptBudget(this.deps)
     const events = new RunEventRecorder(this.deps, budget)

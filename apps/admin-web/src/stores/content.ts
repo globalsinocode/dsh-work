@@ -13,6 +13,8 @@ import type {
   AuditEvent,
   ConnectorDefinition,
   BuiltinToolStatus,
+  BuiltinSkillScenario,
+  BuiltinSkillStatus,
   GrantSourceReconciliationView,
   HealthComponent,
   ManagedWorkspaceDefinition,
@@ -39,6 +41,7 @@ export const useContentStore = defineStore('admin-content', () => {
   const skillReleaseRecords = ref<SkillReleaseRecord[]>([])
   const connectors = ref<ConnectorDefinition[]>([])
   const builtinTools = ref<BuiltinToolStatus | null>(null)
+  const builtinSkills = ref<BuiltinSkillStatus | null>(null)
   const auditEvents = ref<AuditEvent[]>([])
   const operationsSummary = ref<OperationsSummary | null>(null)
   const health = ref<HealthComponent[]>([])
@@ -91,6 +94,7 @@ export const useContentStore = defineStore('admin-content', () => {
       skillReleaseData,
       connectorData,
       builtinToolData,
+      builtinSkillData,
       healthData,
       usageData,
       statusData,
@@ -105,6 +109,7 @@ export const useContentStore = defineStore('admin-content', () => {
       adminApi.getSkillReleaseRecords(),
       adminApi.getMcpConnectors(),
       adminApi.getBuiltinTools(),
+      adminApi.getBuiltinSkills(),
       adminApi.getHealth(),
       adminApi.getUsage(),
       adminApi.getPlatformStatus(),
@@ -119,6 +124,7 @@ export const useContentStore = defineStore('admin-content', () => {
     skillReleaseRecords.value = skillReleaseData
     connectors.value = connectorData
     builtinTools.value = builtinToolData
+    builtinSkills.value = builtinSkillData
     health.value = healthData
     usage.value = usageData
     platformStatus.value = statusData
@@ -250,6 +256,12 @@ export const useContentStore = defineStore('admin-content', () => {
     return result.skill
   }
 
+  async function setSkillBuiltinCoverage(skillId: string, scenarios: BuiltinSkillScenario[]) {
+    const skill = await adminApi.setSkillBuiltinCoverage({ skillId, scenarios })
+    replaceById(skills.value, skill)
+    return skill
+  }
+
   async function rollbackSkill(skillId: string, version: string) {
     const result = await adminApi.rollbackSkill({ skillId, version })
     replaceById(skills.value, result.skill)
@@ -315,6 +327,7 @@ export const useContentStore = defineStore('admin-content', () => {
     const runtime = await adminApi.updateRuntimeConfiguration(input)
     replaceById(runtimes.value, runtime)
     if (input.disabledTools) builtinTools.value = await adminApi.getBuiltinTools()
+    if (input.disabledBuiltinSkills) builtinSkills.value = await adminApi.getBuiltinSkills()
     return runtime
   }
 
@@ -329,6 +342,7 @@ export const useContentStore = defineStore('admin-content', () => {
     skillReleaseRecords,
     connectors,
     builtinTools,
+    builtinSkills,
     auditEvents,
     operationsSummary,
     health,
@@ -355,6 +369,7 @@ export const useContentStore = defineStore('admin-content', () => {
     startSkillTestRun,
     getSkillTestRun,
     rollbackSkill,
+    setSkillBuiltinCoverage,
     checkConnector,
     testMcpConnection,
     registerMcpConnector,

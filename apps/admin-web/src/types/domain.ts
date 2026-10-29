@@ -195,6 +195,8 @@ export interface RuntimeDefinition {
   capabilities: string[]
   /** 管理员紧急停用的 DSH 内置工具；新运行不再装配，在途运行下一次调用被拒绝。 */
   disabledTools: string[]
+  /** 管理员紧急停用的平台内置 Skill；新运行不再装配，在途运行再激活时被拒绝。 */
+  disabledBuiltinSkills: string[]
 }
 
 /** 内置工具注册表条目：随代码发布，只读展示。 */
@@ -228,6 +230,28 @@ export interface UpdateRuntimeConfigurationInput {
   schedulingStatus: RuntimeDefinition['schedulingStatus']
   /** 省略时保留当前停用清单。 */
   disabledTools?: string[]
+  /** 省略时保留当前内置 Skill 停用清单。 */
+  disabledBuiltinSkills?: string[]
+}
+
+export type BuiltinSkillScenario = 'file-analysis' | 'html-page' | 'office-document'
+
+/** 平台内置 Skill：随代码发布，只读展示。 */
+export interface BuiltinSkill {
+  id: string
+  name: string
+  description: string
+  version: string
+  scenario: BuiltinSkillScenario
+  instructions: string
+  tools: string[]
+  files: Array<{ path: string; size: number }>
+}
+
+export interface BuiltinSkillStatus {
+  skills: BuiltinSkill[]
+  scenarios: Array<{ id: BuiltinSkillScenario; label: string }>
+  disabledBuiltinSkills: string[]
 }
 
 export interface SessionDefinition {
@@ -484,6 +508,8 @@ export interface SkillDefinition {
   instructions: string
   toolIds: string[]
   testPrompt: string
+  /** 管理员设置的“覆盖内置场景”：运行中有该 Skill 时去掉对应场景的平台内置 Skill。 */
+  coveredBuiltinScenarios?: BuiltinSkillScenario[]
   updatedAt: string
 }
 

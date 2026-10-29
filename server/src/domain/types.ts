@@ -186,6 +186,8 @@ export interface RuntimeDefinition {
   attemptTimeoutMinutes: number
   /** Runtime 配置紧急停用的内置工具。 */
   disabledTools: string[]
+  /** Runtime 配置紧急停用的平台内置 Skill。 */
+  disabledBuiltinSkills: string[]
   lastHeartbeat: string
   checkedAt: string
   healthMessage: string
@@ -199,6 +201,8 @@ export interface UpdateRuntimeConfigurationInput {
   schedulingStatus: RuntimeDefinition['schedulingStatus']
   /** 省略时保留当前停用清单。 */
   disabledTools?: string[]
+  /** 省略时保留当前内置 Skill 停用清单。 */
+  disabledBuiltinSkills?: string[]
   actor: string
 }
 
@@ -391,6 +395,8 @@ export interface SkillDefinition {
   instructions: string
   toolIds: string[]
   testPrompt: string
+  /** 管理员设置的“覆盖内置场景”：运行中有该 Skill 时去掉对应场景的平台内置 Skill。 */
+  coveredBuiltinScenarios: string[]
   updatedAt: string
 }
 

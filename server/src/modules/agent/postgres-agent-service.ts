@@ -14,6 +14,7 @@ import type {
 import type { DatabaseClient, DatabaseTransaction } from '../../infrastructure/postgres/database.ts'
 import type { AuditTrail } from '../../domain/audit-trail.ts'
 import type { PostgresSkillService, RuntimeSkillConfiguration } from '../skill/postgres-skill-service.ts'
+import type { CoveringSkill } from '../skill/builtin-skills.ts'
 import type { McpScopePort } from '../tool/postgres-mcp-connector-service.ts'
 import { agentBuiltinToolNames, parseBuiltinToolReference, unavailableSkillTools } from '../runtime/builtin-tools.ts'
 import type { McpConnectionSnapshot } from '../runtime/runtime-types.ts'
@@ -149,6 +150,8 @@ export interface RuntimeAgentSnapshot {
   systemPrompt: string
   skills: string[]
   skillInstructions: RuntimeSkillConfiguration[]
+  /** Agent 固定与会话选择的 Skill（不含依赖）及其“覆盖内置场景”，派发时据此去掉被覆盖的平台内置 Skill。 */
+  coveringSkills: CoveringSkill[]
   /** 本 Agent 装配的内置工具名称（注册表默认工具、开启的联网搜索、Skill 需要的 Python 执行）。 */
   runtimeTools: string[]
   /** Agent 版本是否开启项目任务管理；实际工具由派发时按运行场景装配。 */
@@ -799,11 +802,19 @@ export class PostgresAgentService {
     const runtimeSkills = this.skillService
       ? skillInstructions.map(skill => `${skill.id}@${skill.version}`)
       : skills
+    const rootIds = new Set(skills.map(reference => reference.slice(0, reference.lastIndexOf('@'))))
+    const covered = this.skillService ? await this.skillService.readCoveredBuiltinScenarios([...rootIds]) : new Map<string, string[]>()
+    const coveringSkills: CoveringSkill[] = skillInstructions.filter(skill => rootIds.has(skill.id)).map(skill => ({
+      reference: `${skill.id}@${skill.version}`,
+      name: skill.name ?? skill.id,
+      scenarios: covered.get(skill.id) ?? [],
+      modelInvocable: !skill.disableModelInvocation,
+    }))
     const systemPrompt = row.agentSpec
       ? assembleAgentInstructions(row.agentSpec)
       : row.systemPrompt
     const { agentId: _agentId, agentSpec: _agentSpec, versionStatus: _versionStatus, ...snapshot } = row
-    return { ...snapshot, systemPrompt, skills: runtimeSkills, skillInstructions, runtimeTools, mcpConnections, approvalMode }
+    return { ...snapshot, systemPrompt, skills: runtimeSkills, skillInstructions, coveringSkills, runtimeTools, mcpConnections, approvalMode }
   }
 
   /** Skill 必须已发布；Skill 需要的内置工具必须能由该 Agent 提供（联网搜索须开启）。 */

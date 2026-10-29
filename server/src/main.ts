@@ -52,6 +52,7 @@ import { startExecutionContainers } from './modules/runtime/execution-container-
 import { freeSpace } from './modules/runtime/workspace-usage.ts'
 import { ExecutionContainerPythonRunner } from './modules/runtime/execution-container-python.ts'
 import { normalizePythonPackageName } from './modules/skill/skill-installation-plan.ts'
+import { loadBuiltinSkillCatalog } from './modules/skill/builtin-skills.ts'
 import { redactSensitiveText } from './security/safe-observability.ts'
 import {
   preflightDshRuntime,
@@ -158,6 +159,8 @@ async function start() {
   let executionContainerCapability: CapabilityState = { status: 'unavailable', code: 'EXECUTION_CONTAINER_UNAVAILABLE' }
   const projectRoot = fileURLToPath(new URL('../..', import.meta.url))
   const dataRoot = resolve(projectRoot, process.env.DSH_WORK_DATA_ROOT ?? '.runtime')
+  // 平台内置 Skill 随代码发布；内容与版本锁不一致属于发布缺陷，服务不启动（builtin-skills-plan 5.1）。
+  const builtinSkills = loadBuiltinSkillCatalog(resolve(projectRoot, 'server/config/builtin-skills'))
   const skillArtifacts = new SkillArtifactStore(new LocalObjectStorage(resolve(dataRoot, 'skills'), { fileMode: 0o400 }))
   await migrateSkillFilesToFileSystem(database, skillArtifacts)
   // Database migrations and identity initialization above stay fail-closed.
@@ -249,6 +252,7 @@ async function start() {
       await orchestration.assertCurrentRunAuthorization(manifest)
     },
     disabledBuiltinTools: async () => (await operations.getRuntimePolicy('runtime-local-01')).disabledTools ?? [],
+    disabledBuiltinSkills: async () => (await operations.getRuntimePolicy('runtime-local-01')).disabledBuiltinSkills ?? [],
     resolveMcpConnections: async manifest => {
       if (!mcpServiceRef.current) throw new Error('MCP Connector 服务尚未就绪')
       return mcpServiceRef.current.resolveRuntimeConnections(manifest)
@@ -342,6 +346,7 @@ async function start() {
     runtime,
     authorization,
     identityConfiguration.mode === 'oidc' ? 'ai-hub-oidc' : identityConfiguration.mode === 'local' ? 'local-password' : 'mock',
+    builtinSkills,
   )
   const runtimePolicy = await operations.getRuntimePolicy('runtime-local-01')
   await runtime.configureScheduling(runtimePolicy.schedulingStatus)
@@ -427,6 +432,7 @@ async function start() {
       projectTasks: projects,
       projectArchive,
       timezone: resolvePlatformTimezone(process.env.DSH_WORK_TIMEZONE),
+      builtinSkills,
     },
   )
   projects.attachRunStarter(orchestration)
@@ -535,7 +541,7 @@ async function start() {
   const validationRecovery = await agentValidation.recoverInterruptedValidations()
   if (validationRecovery.interrupted > 0) console.warn('agent validation recovery completed', validationRecovery)
   registerAgentValidationRoutes(router, agents, agentValidation, new PostgresAgentRunHistory(database))
-  registerSkillRoutes(router, skills)
+  registerSkillRoutes(router, skills, async () => builtinSkills.status((await operations.getRuntimePolicy('runtime-local-01')).disabledBuiltinSkills))
   registerToolRoutes(router, mcpService, builtinToolStatus)
   registerWorkbenchAgentRoutes(router, agents, authorization)
   registerModelGovernanceRoutes(router, new ModelGovernanceService(modelRepository))

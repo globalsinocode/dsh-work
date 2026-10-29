@@ -32,6 +32,16 @@ test('personal checks exact Agent and extra Skill references without mutating th
   } }), undefined, manifest)
   assert.equal(count, 1); assert.equal(JSON.stringify(manifest), original)
 })
+test('built-in Skills are platform-provided: team re-checks never treat them as extra Skills', async () => {
+  const withBuiltin = { ...manifest, skills: [...manifest.skills, { id: 'dsh-work-html-page', version: '1.0.0' }] } as RuntimeManifest
+  const auth = ports()
+  let checked: string[] | undefined
+  await assertCurrentExecutionAuthorization(ports({
+    async workspaceTypeOf() { return 'team' },
+    async authorizeTeamRunExecution(input) { checked = input.additionalSkillReferences; return auth.authorizeTeamRunExecution(input) },
+  }), undefined, withBuiltin)
+  assert.deepEqual(checked, ['selected@1.0.0'])
+})
 test('team-specific membership gate is preserved', async () => {
   await assert.rejects(assertCurrentExecutionAuthorization(ports({ async workspaceTypeOf() { return 'team' },
     async authorizeTeamRunExecution() { throw authorizationDenied('removed') },

@@ -82,6 +82,7 @@ export class AttemptDispatcher {
           systemPrompt: '你是 dsh-work 企业员工助手。请给出准确、简洁、可执行的中文回答。',
           skills: [],
           skillInstructions: [],
+          coveringSkills: [],
           runtimeTools: [],
           projectTasksEnabled: false,
           mcpConnections: [],
@@ -143,6 +144,13 @@ export class AttemptDispatcher {
       max_output_bytes: Math.min(agent.maxOutputBytes, 1024 * 1024, input.limits?.maxOutputBytes ?? Number.POSITIVE_INFINITY),
       max_tool_calls: Math.min(agent.maxToolCalls, input.limits?.maxToolCalls ?? Number.POSITIVE_INFINITY),
     }
+    // 平台内置 Skill 排在 Agent 固定与会话选择的 Skill 之后；被覆盖或紧急停用的记录在 Manifest 中。
+    // 内置 Skill 不经 Skill 授权或空间授权，执行前复核也不把它们当作附加 Skill（builtin-skills-plan 5.3）。
+    const builtin = this.deps.builtinSkills?.resolve({
+      disabled: runtimePolicy?.disabledBuiltinSkills ?? [],
+      covering: agent.coveringSkills,
+    }) ?? { skills: [], exclusions: [] }
+    const skillInstructions = [...agent.skillInstructions, ...builtin.skills]
     // 内置工具按注册表装配，去掉 Runtime 配置紧急停用的工具。
     // 项目任务工具按运行场景装配（S6），不进入 Agent 快照的默认 runtimeTools。
     // bash 始终装配（执行容器为必需，执行隔离方案 4.9；不可用时 Runtime 拒绝运行）；本方法只服务员工侧 Agent 运行，
@@ -150,7 +158,7 @@ export class AttemptDispatcher {
     const toolNames = [
       ...agent.runtimeTools,
       ...executionToolNames(),
-      ...(agent.skillInstructions.length ? ['activate_skill'] : []),
+      ...(skillInstructions.length ? ['activate_skill'] : []),
       ...(this.deps.memory && input.purpose !== 'agent-routine' ? ['propose_memory'] : []),
       ...(!input.purpose
         ? projectTaskToolNames({
@@ -180,7 +188,7 @@ export class AttemptDispatcher {
       agent_version_id: input.agentVersionId,
       agent_configuration: {
         system_prompt: agent.systemPrompt,
-        skill_instructions: agent.skillInstructions.map(toRuntimeManifestSkill),
+        skill_instructions: skillInstructions.map(toRuntimeManifestSkill),
       },
       user_context: {
         user_id: input.userId,
@@ -199,7 +207,14 @@ export class AttemptDispatcher {
         network_policy: agent.mcpConnections?.length ? 'allowlist' : 'deny',
         write_policy: 'workspace_only',
       },
-      skills: agent.skills.map(toCapabilityReference),
+      skills: [...agent.skills, ...builtin.skills.map(skill => `${skill.id}@${skill.version}`)].map(toCapabilityReference),
+      ...(builtin.exclusions.length ? {
+        builtin_skill_exclusions: builtin.exclusions.map(item => ({
+          skill: item.skill,
+          reason: item.reason,
+          ...(item.coveredBy ? { covered_by: item.coveredBy } : {}),
+        })),
+      } : {}),
       tools: toolNames.map(name => toCapabilityReference(builtinToolReference(name))),
       ...(agent.mcpConnections?.length ? { mcp_connections: agent.mcpConnections } : {}),
       data_scopes: effectiveDataScopes,

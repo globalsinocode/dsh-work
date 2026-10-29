@@ -155,6 +155,39 @@ describe('Skill installation sibling tab', () => {
     expect(wrapper.text()).toContain('无（使用平台默认装配的内置工具）')
   })
 
+  it('lists read-only built-in Skills and saves an installed Skill\'s covered scenarios', async () => {
+    const { wrapper, content } = await render()
+    content.builtinSkills = {
+      skills: [{ id: 'dsh-work-html-page', name: 'HTML 页面（平台内置）', description: '生成单文件页面', version: '1.0.0', scenario: 'html-page', instructions: '生成单个离线可用的 HTML 文件。', tools: ['read@1.0.0'], files: [] }],
+      scenarios: [{ id: 'file-analysis', label: '文件分析' }, { id: 'html-page', label: 'HTML 页面' }, { id: 'office-document', label: 'Office 文档' }],
+      disabledBuiltinSkills: ['dsh-work-html-page'],
+    }
+    content.skills.push({ ...strictDraftSkill(), status: 'published', coveredBuiltinScenarios: [] })
+    await flushPromises()
+
+    const section = wrapper.get('[aria-labelledby="builtin-skills-title"]')
+    expect(section.text()).toContain('HTML 页面（平台内置）')
+    expect(section.text()).toContain('已紧急停用')
+    await section.get('[data-action="view-builtin-skill"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('不能编辑、发布、回滚或停用')
+    expect(wrapper.text()).toContain('生成单个离线可用的 HTML 文件。')
+
+    const save = vi.spyOn(content, 'setSkillBuiltinCoverage').mockImplementation(async (_skillId, scenarios) => {
+      const skill = { ...content.skills[0]!, coveredBuiltinScenarios: scenarios }
+      content.skills.splice(0, 1, skill)
+      return skill
+    })
+    await wrapper.get('[data-action="view-skill"]').trigger('click')
+    await flushPromises()
+    const coverage = wrapper.get('.capability-detail__coverage')
+    expect(coverage.get('[data-action="save-builtin-coverage"]').attributes('disabled')).toBeDefined()
+    await coverage.findAll('input[type="checkbox"]')[1]!.setValue(true)
+    await coverage.get('[data-action="save-builtin-coverage"]').trigger('click')
+    await flushPromises()
+    expect(save).toHaveBeenCalledWith('skill-strict-test', ['html-page'])
+  })
+
   it('keeps offline status ahead of a retained legacy MCP review state', async () => {
     const { wrapper, content } = await render(true, '/connectors')
     const connector = offlinePendingMcp()

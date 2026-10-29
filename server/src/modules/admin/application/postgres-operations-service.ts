@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 
 import { normalizeDisabledTools } from '../../runtime/builtin-tools.ts'
+import type { BuiltinSkillCatalog } from '../../skill/builtin-skills.ts'
 import type {
   AuditEvent,
   AuditEventListQuery,
@@ -35,6 +36,8 @@ export interface RuntimeMutationSnapshot {
   attemptTimeoutMinutes: number
   schedulingStatus: RuntimeDefinition['schedulingStatus']
   disabledTools: string[]
+  /** 不参与计划比对：任何配置变更都会推进 revision。 */
+  disabledBuiltinSkills?: string[]
   revision: number
 }
 
@@ -43,17 +46,20 @@ export class PostgresOperationsService {
   private readonly runtime?: AgentRuntimePort
   private readonly authorization?: PostgresAuthorizationService
   private readonly sso: 'mock' | 'ai-hub-oidc' | 'local-password'
+  private readonly builtinSkills?: BuiltinSkillCatalog
 
   constructor(
     database: DatabaseClient,
     runtime?: AgentRuntimePort,
     authorization?: PostgresAuthorizationService,
     sso: 'mock' | 'ai-hub-oidc' | 'local-password' = 'mock',
+    builtinSkills?: BuiltinSkillCatalog,
   ) {
     this.database = database
     this.runtime = runtime
     this.authorization = authorization
     this.sso = sso
+    this.builtinSkills = builtinSkills
   }
 
   async getTaskSummaries() {
@@ -68,6 +74,7 @@ export class PostgresOperationsService {
       id: string; nodeName: string; runtimeVersion: string; healthStatus: RuntimeDefinition['status'];
       schedulingStatus: RuntimeDefinition['schedulingStatus']; capacity: number; lastHeartbeatAt: Date | null;
       activeWorkers: number; queuedRuns: number; timeoutSeconds: number; disabledTools: string[]
+      disabledBuiltinSkills: string[]
     }[]>`
       select r.id, r.node_name as "nodeName", r.runtime_version as "runtimeVersion",
              r.health_status as "healthStatus", r.scheduling_status as "schedulingStatus",
@@ -79,7 +86,10 @@ export class PostgresOperationsService {
                         order by revision desc limit 1), 300)::integer as "timeoutSeconds",
              coalesce((select disabled_tools from runtime_configurations c
                         where c.tenant_id = r.tenant_id and c.runtime_id = r.id
-                        order by revision desc limit 1), '[]'::jsonb) as "disabledTools"
+                        order by revision desc limit 1), '[]'::jsonb) as "disabledTools",
+             coalesce((select disabled_builtin_skills from runtime_configurations c
+                        where c.tenant_id = r.tenant_id and c.runtime_id = r.id
+                        order by revision desc limit 1), '[]'::jsonb) as "disabledBuiltinSkills"
         from runtimes r
         left join run_attempts a on a.tenant_id = r.tenant_id and a.runtime_id = r.id
        where r.tenant_id = ${tenantId}
@@ -102,6 +112,7 @@ export class PostgresOperationsService {
       queuedRuns: row.queuedRuns,
       attemptTimeoutMinutes: Math.ceil(row.timeoutSeconds / 60),
       disabledTools: row.disabledTools,
+      disabledBuiltinSkills: row.disabledBuiltinSkills,
       lastHeartbeat: row.lastHeartbeatAt ? formatDateTime(row.lastHeartbeatAt) : '—',
       checkedAt: '刚刚',
       healthMessage: liveHealth?.runtimeId === row.id
@@ -146,6 +157,12 @@ export class PostgresOperationsService {
     let disabledTools: string[] | undefined
     try { disabledTools = input.disabledTools === undefined ? undefined : normalizeDisabledTools(input.disabledTools) }
     catch (error) { throw invalidRequest(error instanceof Error ? error.message : '停用工具清单无效') }
+    let disabledBuiltinSkills: string[] | undefined
+    if (input.disabledBuiltinSkills !== undefined) {
+      if (!this.builtinSkills) throw dependencyUnavailable('平台内置 Skill 未加载，不能修改停用清单')
+      try { disabledBuiltinSkills = this.builtinSkills.normalizeDisabled(input.disabledBuiltinSkills) }
+      catch (error) { throw invalidRequest(error instanceof Error ? error.message : '停用内置 Skill 清单无效') }
+    }
     let runtimeConfigurationStarted = false
     try {
       await this.database.begin(async (transaction) => {
@@ -172,11 +189,13 @@ export class PostgresOperationsService {
 
         await transaction`
           insert into runtime_configurations (
-            tenant_id, runtime_id, revision, concurrency_limit, timeout_seconds, sandbox_policy, disabled_tools, updated_by
+            tenant_id, runtime_id, revision, concurrency_limit, timeout_seconds, sandbox_policy, disabled_tools,
+            disabled_builtin_skills, updated_by
           ) select ${tenantId}, ${input.runtimeId}, coalesce(max(revision), 0) + 1,
                    ${input.maxConcurrentWorkers}, ${input.attemptTimeoutMinutes * 60},
                    '{"network":"deny","write":"workspace_only","approval":"risk_based"}',
-                   ${transaction.json(disabledTools ?? runtime.disabledTools)}, ${actor.id}
+                   ${transaction.json(disabledTools ?? runtime.disabledTools)},
+                   ${transaction.json(disabledBuiltinSkills ?? runtime.disabledBuiltinSkills ?? [])}, ${actor.id}
             from runtime_configurations
            where tenant_id = ${tenantId} and runtime_id = ${input.runtimeId}
         `
@@ -200,7 +219,7 @@ export class PostgresOperationsService {
       }
       throw error
     }
-    await this.appendAudit(actor.id, 'runtime.configuration.update', input.runtimeId, 'success', `trace-runtime-${input.runtimeId}`, `${input.schedulingStatus} · 并发 ${input.maxConcurrentWorkers} · 超时 ${input.attemptTimeoutMinutes} 分钟 · 停用工具 ${(disabledTools ?? []).join('、') || '无'}`)
+    await this.appendAudit(actor.id, 'runtime.configuration.update', input.runtimeId, 'success', `trace-runtime-${input.runtimeId}`, `${input.schedulingStatus} · 并发 ${input.maxConcurrentWorkers} · 超时 ${input.attemptTimeoutMinutes} 分钟 · 停用工具 ${(disabledTools ?? []).join('、') || '无'}${disabledBuiltinSkills ? ` · 停用内置 Skill ${disabledBuiltinSkills.join('、') || '无'}` : ''}`)
     return (await this.getRuntimes()).find((runtime) => runtime.id === input.runtimeId)
   }
 
@@ -212,10 +231,11 @@ export class PostgresOperationsService {
       timeoutSeconds: number
       sandboxPolicy: Record<string, unknown>
       disabledTools: string[]
+      disabledBuiltinSkills: string[]
     }[]>`
       select revision, concurrency_limit as "concurrencyLimit",
              timeout_seconds as "timeoutSeconds", sandbox_policy as "sandboxPolicy",
-             disabled_tools as "disabledTools"
+             disabled_tools as "disabledTools", disabled_builtin_skills as "disabledBuiltinSkills"
         from runtime_configurations
        where tenant_id = ${tenantId} and runtime_id = ${runtimeId}
        order by revision desc limit 1
@@ -228,6 +248,7 @@ export class PostgresOperationsService {
       revision: configuration?.revision ?? 0,
       sandboxPolicy: configuration?.sandboxPolicy ?? {},
       disabledTools: configuration?.disabledTools ?? [],
+      disabledBuiltinSkills: configuration?.disabledBuiltinSkills ?? [],
     }
   }
 
@@ -242,16 +263,18 @@ export class PostgresOperationsService {
       attemptTimeoutMinutes: number
       schedulingStatus: RuntimeDefinition['schedulingStatus']
       disabledTools: string[]
+      disabledBuiltinSkills: string[]
       revision: number
     }[]>`
       select r.id as "runtimeId", r.capacity as "maxConcurrentWorkers",
              r.scheduling_status as "schedulingStatus",
              ceil(coalesce(configuration.timeout_seconds, 300) / 60.0)::integer as "attemptTimeoutMinutes",
              coalesce(configuration.disabled_tools, '[]'::jsonb) as "disabledTools",
+             coalesce(configuration.disabled_builtin_skills, '[]'::jsonb) as "disabledBuiltinSkills",
              coalesce(configuration.revision, 0)::integer as revision
         from runtimes r
         left join lateral (
-          select revision, timeout_seconds, disabled_tools
+          select revision, timeout_seconds, disabled_tools, disabled_builtin_skills
             from runtime_configurations
            where tenant_id = r.tenant_id and runtime_id = r.id
            order by revision desc limit 1

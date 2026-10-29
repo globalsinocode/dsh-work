@@ -9,7 +9,7 @@ import SkillInstallationPanel from '@/components/SkillInstallationPanel.vue'
 import { useListPagination } from '@/composables/use-list-pagination'
 import { useAuthStore } from '@/stores/auth'
 import { useContentStore } from '@/stores/content'
-import type { ConnectorDefinition, McpConnectionTestResult, SkillDefinition, SkillReleaseRecord, SkillTestRunProgress, SkillVersionRecord } from '@/types/domain'
+import type { BuiltinSkill, BuiltinSkillScenario, ConnectorDefinition, McpConnectionTestResult, SkillDefinition, SkillReleaseRecord, SkillTestRunProgress, SkillVersionRecord } from '@/types/domain'
 
 type CapabilityTab = 'skills' | 'install' | 'connectors'
 
@@ -106,6 +106,40 @@ const skillTestResultDescription = computed(() => {
 })
 
 const selectedSkill = computed(() => contentStore.skills.find((item) => item.id === detailTargetId.value))
+
+// 平台内置 Skill 随代码发布，只读；已安装 Skill 可设置“覆盖内置场景”，紧急停用在 Runtime 配置中。
+const builtinSkills = computed(() => contentStore.builtinSkills?.skills ?? [])
+const builtinScenarioOptions = computed(() => contentStore.builtinSkills?.scenarios ?? [])
+const disabledBuiltinSkillIds = computed(() => new Set(contentStore.builtinSkills?.disabledBuiltinSkills ?? []))
+const selectedBuiltinSkill = ref<BuiltinSkill | null>(null)
+const builtinDetailOpen = ref(false)
+const coverageDraft = ref<BuiltinSkillScenario[]>([])
+const coverageChanged = computed(() =>
+  [...coverageDraft.value].sort().join(',') !== [...(selectedSkill.value?.coveredBuiltinScenarios ?? [])].sort().join(','))
+watch(selectedSkill, skill => { coverageDraft.value = [...(skill?.coveredBuiltinScenarios ?? [])] }, { immediate: true })
+
+function builtinScenarioLabel(scenario: string) {
+  return builtinScenarioOptions.value.find(item => item.id === scenario)?.label ?? scenario
+}
+
+function inspectBuiltinSkill(skill: BuiltinSkill) {
+  selectedBuiltinSkill.value = skill
+  builtinDetailOpen.value = true
+}
+
+async function saveSkillCoverage() {
+  const skill = selectedSkill.value
+  if (!skill) return
+  actionLoading.value = `skill-coverage:${skill.id}`
+  try {
+    await contentStore.setSkillBuiltinCoverage(skill.id, [...coverageDraft.value])
+    ElMessage.success('覆盖内置场景已保存，对新运行立即生效')
+  } catch (cause) {
+    ElMessage.error(cause instanceof Error ? cause.message : '覆盖内置场景保存失败，请稍后重试')
+  } finally {
+    actionLoading.value = ''
+  }
+}
 const selectedSkillVersions = computed(() => contentStore.skillVersions.filter((item) => item.skillId === detailTargetId.value))
 const selectedSkillReleases = computed(() => contentStore.skillReleaseRecords.filter((item) => item.skillId === detailTargetId.value))
 
@@ -764,6 +798,19 @@ onUnmounted(() => clearSkillTestPoll())
         <el-table-column label="操作" width="210" fixed="right"><template #default="scope"><el-button link type="primary" :icon="View" data-action="view-skill" @click="inspectSkill(scope.row)">查看</el-button><el-button v-if="authStore.canManage" link type="primary" :loading="actionLoading === `skill:${scope.row.id}`" :data-action="scope.row.status === 'published' ? 'disable-skill' : 'publish-skill'" @click="changeSkillStatus(scope.row)">{{ scope.row.status === 'published' ? '停用' : scope.row.status === 'draft' ? (scope.row.packageSha256 ? '试运行并发布' : '校验并发布') : '启用' }}</el-button></template></el-table-column>
       </el-table>
       <div class="table-footer table-footer--pager"><el-pagination v-model:current-page="skillPage" background layout="prev, pager, next" :total="filteredSkills.length" :page-size="10" /></div>
+      <section class="builtin-skills" aria-labelledby="builtin-skills-title">
+        <header class="builtin-skills__header">
+          <h2 id="builtin-skills-title">平台内置 Skill</h2>
+          <p>随平台发布，自动提供给员工侧 Agent 作为基线方法，只读。已安装 Skill 覆盖对应场景或在 Runtime 中紧急停用时不再提供。</p>
+        </header>
+        <el-table class="data-table" :data="builtinSkills" empty-text="平台内置 Skill 加载失败">
+          <el-table-column label="内置 Skill" min-width="300"><template #default="scope"><div class="builtin-skills__name"><strong>{{ scope.row.name }}</strong><small>{{ scope.row.description }}</small></div></template></el-table-column>
+          <el-table-column label="场景" width="120"><template #default="scope">{{ builtinScenarioLabel(scope.row.scenario) }}</template></el-table-column>
+          <el-table-column label="版本" width="100"><template #default="scope"><span class="mono">v{{ scope.row.version }}</span></template></el-table-column>
+          <el-table-column label="状态" width="120"><template #default="scope"><StatusTag :status="disabledBuiltinSkillIds.has(scope.row.id) ? 'disabled' : 'published'" :label="disabledBuiltinSkillIds.has(scope.row.id) ? '已紧急停用' : '提供中'" /></template></el-table-column>
+          <el-table-column label="操作" width="90" fixed="right"><template #default="scope"><el-button link type="primary" :icon="View" data-action="view-builtin-skill" @click="inspectBuiltinSkill(scope.row)">查看</el-button></template></el-table-column>
+        </el-table>
+      </section>
       </template>
 
       <template v-else>
@@ -923,7 +970,15 @@ onUnmounted(() => clearSkillTestPoll())
           </dd>
         </div>
       </dl>
-      <section v-else-if="detailType === 'skill' && skillDetailTab === 'versions'" class="capability-detail__table">
+      <section v-if="detailType === 'skill' && skillDetailTab === 'config' && selectedSkill && builtinScenarioOptions.length" class="capability-detail__coverage" aria-labelledby="skill-coverage-title">
+        <h3 id="skill-coverage-title">覆盖内置场景</h3>
+        <p>勾选后，运行中有这个 Skill 时不再提供对应的平台内置 Skill。只对可由模型调用的 Skill 生效，修改立即作用于新运行。</p>
+        <el-checkbox-group v-model="coverageDraft" :disabled="!authStore.canManage" aria-labelledby="skill-coverage-title">
+          <el-checkbox v-for="scenario in builtinScenarioOptions" :key="scenario.id" :value="scenario.id">{{ scenario.label }}</el-checkbox>
+        </el-checkbox-group>
+        <el-button v-if="authStore.canManage" size="small" type="primary" :disabled="!coverageChanged" :loading="actionLoading === `skill-coverage:${selectedSkill.id}`" data-action="save-builtin-coverage" @click="saveSkillCoverage">保存覆盖场景</el-button>
+      </section>
+      <section v-if="detailType === 'skill' && skillDetailTab === 'versions'" class="capability-detail__table">
         <el-table class="data-table" :data="pagedSkillVersions" empty-text="暂无版本记录">
           <el-table-column label="版本" width="95"><template #default="scope"><span class="mono">v{{ scope.row.version }}</span></template></el-table-column>
           <el-table-column label="变更说明" min-width="210"><template #default="scope"><div class="version-summary"><strong>{{ scope.row.summary }}</strong><small>{{ scope.row.createdBy }} · {{ scope.row.createdAt }}</small></div></template></el-table-column>
@@ -932,7 +987,7 @@ onUnmounted(() => clearSkillTestPoll())
         </el-table>
         <el-pagination v-model:current-page="skillVersionPage" class="list-pagination" background hide-on-single-page layout="prev, pager, next" :total="selectedSkillVersions.length" :page-size="10" />
       </section>
-      <section v-else-if="detailType === 'skill'" class="capability-detail__releases">
+      <section v-else-if="detailType === 'skill' && skillDetailTab === 'releases'" class="capability-detail__releases">
         <el-empty v-if="!selectedSkillReleases.length" description="暂无发布记录" />
         <template v-else>
           <el-timeline><el-timeline-item v-for="record in pagedSkillReleases" :key="record.id" :timestamp="record.time" placement="top"><article class="release-record"><strong>{{ releaseActionLabel(record) }} · v{{ record.version }}</strong><p>{{ record.note }}</p><small>操作人：{{ record.actor }}</small></article></el-timeline-item></el-timeline>
@@ -940,6 +995,22 @@ onUnmounted(() => clearSkillTestPoll())
         </template>
       </section>
       <div v-if="authStore.canManage && detailType === 'skill'" class="capability-detail__actions"><template v-if="selectedSkill"><el-button :type="selectedSkill.status === 'published' ? 'danger' : 'primary'" :loading="actionLoading === `skill:${selectedSkill.id}`" @click="changeSkillStatus(selectedSkill)">{{ selectedSkill.status === 'published' ? '停用 Skill' : selectedSkill.status === 'draft' ? (selectedSkill.packageSha256 ? '试运行并发布' : '校验并发布') : '启用 Skill' }}</el-button></template></div>
+    </el-drawer>
+
+    <el-drawer v-model="builtinDetailOpen" size="min(620px, 100vw)" :title="selectedBuiltinSkill?.name ?? '平台内置 Skill'">
+      <template v-if="selectedBuiltinSkill">
+        <div class="capability-detail__notice"><el-icon><Connection /></el-icon><p>平台内置 Skill 随平台发布，不能编辑、发布、回滚或停用；紧急停用在“安全与运维 → Runtimes”中配置。</p></div>
+        <dl class="capability-detail__rows">
+          <div><dt>Skill 标识</dt><dd><code>{{ selectedBuiltinSkill.id }}</code></dd></div>
+          <div><dt>版本</dt><dd>v{{ selectedBuiltinSkill.version }}</dd></div>
+          <div><dt>场景</dt><dd>{{ builtinScenarioLabel(selectedBuiltinSkill.scenario) }}</dd></div>
+          <div><dt>状态</dt><dd>{{ disabledBuiltinSkillIds.has(selectedBuiltinSkill.id) ? '已紧急停用' : '提供中' }}</dd></div>
+          <div><dt>说明</dt><dd>{{ selectedBuiltinSkill.description }}</dd></div>
+          <div><dt>引用工具</dt><dd>{{ toolNames(selectedBuiltinSkill.tools) }}</dd></div>
+          <div v-if="selectedBuiltinSkill.files.length"><dt>参考资料</dt><dd>{{ selectedBuiltinSkill.files.map(file => file.path).join('、') }}</dd></div>
+          <div><dt>执行指令</dt><dd>{{ selectedBuiltinSkill.instructions }}</dd></div>
+        </dl>
+      </template>
     </el-drawer>
 
   </div>
@@ -1029,6 +1100,15 @@ onUnmounted(() => clearSkillTestPoll())
 .capability-detail__identifier code { color: var(--color-text-primary); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: var(--font-size-badge); }
 .capability-detail__code { padding: 9px; border-radius: var(--radius-button); background: var(--color-bg-subtle); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: var(--font-size-badge) !important; }
 .capability-detail__actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 24px; }
+.capability-detail__coverage { display: grid; justify-items: start; gap: 10px; margin-top: 20px; padding: 14px; border: 1px solid var(--color-border); border-radius: var(--radius-card); }
+.capability-detail__coverage h3 { margin: 0; color: var(--color-text-heading); font-size: var(--font-size-caption); }
+.capability-detail__coverage p { margin: 0; color: var(--color-text-secondary); font-size: var(--font-size-badge); line-height: 1.6; }
+.builtin-skills { padding: 18px 0 4px; border-top: 1px solid var(--color-border); }
+.builtin-skills__header { padding: 0 18px 12px; }
+.builtin-skills__header h2 { margin: 0; color: var(--color-text-heading); font-size: var(--dsh-font-size-section); }
+.builtin-skills__header p { margin: 6px 0 0; color: var(--color-text-secondary); font-size: var(--font-size-badge); line-height: 1.6; }
+.builtin-skills__name { display: grid; gap: 4px; min-width: 0; }
+.builtin-skills__name small { color: var(--color-text-muted); font-size: var(--font-size-badge); line-height: 1.5; }
 .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: var(--font-size-badge); }
 .cell-sub { display: block; margin-top: 3px; color: var(--color-text-muted); font-size: var(--font-size-badge); }
 .muted { color: var(--color-text-muted); }

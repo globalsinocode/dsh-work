@@ -680,6 +680,7 @@ export const mockRuntimes: RuntimeDefinition[] = [
     queuedRuns: 1,
     attemptTimeoutMinutes: 30,
     disabledTools: [],
+    disabledBuiltinSkills: [],
     lastHeartbeat: '刚刚',
     checkedAt: '刚刚',
     healthMessage: '本地调度服务当前可用。',
@@ -699,6 +700,7 @@ export const mockRuntimes: RuntimeDefinition[] = [
     queuedRuns: 0,
     attemptTimeoutMinutes: 30,
     disabledTools: [],
+    disabledBuiltinSkills: [],
     lastHeartbeat: '从未连接',
     checkedAt: '尚未检查',
     healthMessage: 'Runtime 尚未安装或注册。',
@@ -718,6 +720,7 @@ export const mockRuntimes: RuntimeDefinition[] = [
     queuedRuns: 0,
     attemptTimeoutMinutes: 30,
     disabledTools: [],
+    disabledBuiltinSkills: [],
     lastHeartbeat: '从未连接',
     checkedAt: '尚未检查',
     healthMessage: '灾备 Runtime 当前未启用。',
@@ -951,6 +954,7 @@ export const mockSkills: SkillDefinition[] = [
     instructions: '先检索当前有效的制度与 SOP，只依据命中的企业资料回答，并在结论后列出来源。',
     toolIds: ['read@1.0.0'],
     testPrompt: '差旅报销需要哪些审批材料？',
+    coveredBuiltinScenarios: [],
     updatedAt: '2026-08-26',
   },
   {
@@ -964,6 +968,7 @@ export const mockSkills: SkillDefinition[] = [
     instructions: '按订单交付日期聚合销售订单、生产进度与库存信息，标注口径并输出风险排序。',
     toolIds: ['read@1.0.0', 'grep@1.0.0'],
     testPrompt: '分析本月订单交付风险。',
+    coveredBuiltinScenarios: [],
     updatedAt: '2026-08-27',
   },
   {
@@ -977,6 +982,7 @@ export const mockSkills: SkillDefinition[] = [
     instructions: '读取工单和库存数据，计算预计缺口，按影响订单数量和交期紧迫度给出处置优先级。',
     toolIds: ['read@1.0.0'],
     testPrompt: '检查未来两周的缺料风险。',
+    coveredBuiltinScenarios: [],
     updatedAt: '2026-08-24',
   },
   {
@@ -990,6 +996,7 @@ export const mockSkills: SkillDefinition[] = [
     instructions: '识别用户上传表格的字段和数据类型，先说明分析口径，再进行指标计算和异常检测。',
     toolIds: [],
     testPrompt: '分析上传表格中的异常订单。',
+    coveredBuiltinScenarios: [],
     updatedAt: '2026-08-28',
   },
 ]
