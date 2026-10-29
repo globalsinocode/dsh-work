@@ -1,5 +1,4 @@
 import type { DatabaseClient } from '../../../infrastructure/postgres/database.ts'
-import type { RunRecord } from '../../run/run-types.ts'
 import type { WorkspaceNotificationRecipientService } from './workspace-notification-recipient-service.ts'
 import {
   buildCollabUnreadPayload,
@@ -10,6 +9,13 @@ import {
 } from './web-push-copy.ts'
 import type { WebPushService } from './web-push-service.ts'
 import type { ConversationTargetType } from './conversation-targets.ts'
+
+/** 推送只需 Run 的标识字段；避免 workbench → run 类型导入造成模块环。 */
+interface RunFinishedPushRun {
+  id: string
+  sessionId: string | null
+  requestedBy: string
+}
 
 const tenantId = 'tenant-dsh-work'
 
@@ -48,7 +54,7 @@ export class WebPushDispatchService {
   }
 
   enqueueRunFinished(input: {
-    run: RunRecord
+    run: RunFinishedPushRun
     status: RunFinishedStatus
     eventId: string
   }): void {
@@ -122,7 +128,7 @@ export class WebPushDispatchService {
   }
 
   private async deliverRunFinished(input: {
-    run: RunRecord
+    run: RunFinishedPushRun
     status: RunFinishedStatus
     eventId: string
   }): Promise<void> {
