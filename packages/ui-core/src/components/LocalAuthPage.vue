@@ -45,7 +45,7 @@ async function loadConfiguration(): Promise<{ mode: string; localEnabled?: boole
       }
     }
   }
-  throw new Error('暂时无法加载登录配置，请确认后端已启动后重试')
+  throw lastError ?? new Error('暂时无法加载登录配置，请确认后端已启动后重试')
 }
 
 async function initialize() {
