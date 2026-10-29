@@ -15,25 +15,25 @@ const manifestIcons = [
     src: 'pwa-192.png',
     sizes: '192x192',
     type: 'image/png',
-    purpose: 'any',
+    purpose: 'any' as const,
   },
   {
     src: 'pwa-512.png',
     sizes: '512x512',
     type: 'image/png',
-    purpose: 'any',
+    purpose: 'any' as const,
   },
   {
     src: 'pwa-512.png',
     sizes: '512x512',
     type: 'image/png',
-    purpose: 'maskable',
+    purpose: 'maskable' as const,
   },
 ]
 
 export function createDshWorkPwaOptions(manifest: DshWorkPwaManifest) {
   return {
-    registerType: 'autoUpdate',
+    registerType: 'autoUpdate' as const,
     injectRegister: false as const,
     manifestFilename: 'manifest.webmanifest',
     includeAssets: brandIconAssets,
@@ -45,7 +45,7 @@ export function createDshWorkPwaOptions(manifest: DshWorkPwaManifest) {
       id: manifest.id ?? manifest.start_url,
       theme_color: brandThemeColor,
       background_color: brandThemeColor,
-      display: 'standalone',
+      display: 'standalone' as const,
       scope: '/',
       lang: 'zh-CN',
       icons: manifestIcons,
