@@ -320,6 +320,25 @@ describe('Skill installation sibling tab', () => {
     expect(info).not.toHaveBeenCalled()
   })
 
+  it('labels discovered MCP changes as awaiting confirmation in connector details', async () => {
+    const { wrapper, content } = await render(true, '/connectors')
+    const connector = offlinePendingMcp()
+    connector.status = 'healthy'
+    connector.mcp!.approvalStatus = 'changes_pending'
+    connector.mcp!.approvedDigest = 'b'.repeat(64)
+    connector.mcp!.pendingCapabilities = [{
+      name: 'pending_tool', description: '待确认工具', inputSchema: { type: 'object' },
+    }]
+    content.connectors.push(connector)
+    vi.spyOn(content, 'getMcpInvocationAudits').mockResolvedValue([])
+    await flushPromises()
+
+    await wrapper.get('[data-action="view-connector"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('有待确认变更')
+  })
+
   it('does not expose the DSH Runtime internal connector in MCP management', async () => {
     const { wrapper, content } = await render(true, '/connectors')
     content.connectors.push({

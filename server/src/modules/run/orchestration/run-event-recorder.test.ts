@@ -147,3 +147,35 @@ test('写入期间 Attempt 被平台结束时补标 late（P1-8）', async () =>
   assert.deepEqual(marked, ['event-1'])
   assert.deepEqual(transitions, [])
 })
+
+test('项目任务只把成功和失败计入连续结果，用户取消不计入', async () => {
+  const terminalResults: Array<'succeeded' | 'failed'> = []
+  const makeRecorder = () => new RunEventRecorder(permissive<OrchestrationDependencies>({
+    runs: permissive({
+      getRun: async () => run,
+      getAttempt: async () => ({ id: 'attempt-1', status: 'running' }),
+    }),
+    conversations: permissive({ getRunPrompt: async () => '分析缺货原因' }),
+    projectTasks: permissive({
+      noteTaskRunTerminal: async (_sessionId: string, status: 'succeeded' | 'failed') => { terminalResults.push(status) },
+    }),
+    operations: undefined,
+    sessionSummaries: undefined,
+    persistentWait: undefined,
+    delegation: undefined,
+  }), permissive<AttemptBudget>({ settle: async () => undefined }))
+
+  const completed = makeRecorder()
+  completed.record(run, event(1, 'run.completed'))
+  await completed.flush(run.id)
+
+  const failed = makeRecorder()
+  failed.record(run, event(2, 'run.failed'))
+  await failed.flush(run.id)
+
+  const cancelled = makeRecorder()
+  cancelled.record(run, event(3, 'run.cancelled'))
+  await cancelled.flush(run.id)
+
+  assert.deepEqual(terminalResults, ['succeeded', 'failed'])
+})

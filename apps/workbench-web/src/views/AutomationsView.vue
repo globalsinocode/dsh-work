@@ -22,7 +22,6 @@ const router = useRouter()
 const contentStore = useContentStore()
 const intentStore = useAutomationIntentStore()
 
-const statusFilter = ref<'active' | 'archived'>('active')
 const automations = ref<Automation[]>([])
 const uncertainTrigger = ref<{ automationId: string; operation: AutomationIntentOperation } | null>(null)
 const agentResults = ref<AgentRoutineResult[]>([])
@@ -124,7 +123,7 @@ async function load() {
   loading.value = true
   loadError.value = ''
   try {
-    automations.value = await workbenchApi.getAutomations({ status: statusFilter.value })
+    automations.value = await workbenchApi.getAutomations()
   } catch (error) {
     loadError.value = error instanceof Error ? error.message : '定时任务加载失败'
   } finally {
@@ -328,7 +327,7 @@ function retryUncertainTrigger(item: Automation) {
 async function archive(item: Automation) {
   try {
     await ElMessageBox.confirm(
-      '归档后任务从默认列表隐藏，可在「已归档」筛选中查看历史执行并恢复。恢复后任务为暂停状态，需再次启用才会按规则执行。已开始的执行不受影响。',
+      '归档后任务及其历史执行记录将不再可读，且不能恢复。如需保留历史，请改用「暂停」。已开始的执行不受影响。',
       `归档定时任务“${item.name}”？`,
       {
         confirmButtonText: '归档',
@@ -342,9 +341,6 @@ async function archive(item: Automation) {
   }
   await runAction(() => workbenchApi.archiveAutomation(item.id), '归档', item)
 }
-
-const restore = (item: Automation) =>
-  runAction(() => workbenchApi.restoreAutomation(item.id), '恢复', item)
 
 // ---- 执行记录抽屉 ----
 
@@ -505,15 +501,6 @@ async function loadAgentResults() {
         </p>
       </div>
       <div class="automations-header__actions">
-        <el-select
-          v-model="statusFilter"
-          aria-label="任务状态筛选"
-          class="automation-status-filter"
-          @change="load"
-        >
-          <el-option label="进行中" value="active" />
-          <el-option label="已归档" value="archived" />
-        </el-select>
         <el-button type="primary" :icon="Plus" @click="openCreate">新建定时任务</el-button>
       </div>
     </header>
@@ -614,21 +601,12 @@ async function loadAgentResults() {
           >试运行</el-button>
           <el-button size="small" text @click="openExecutions(item)">执行记录</el-button>
           <el-button
-            v-if="statusFilter === 'active'"
             size="small"
             text
             type="danger"
             :disabled="actingId === item.id"
             @click="archive(item)"
           >归档</el-button>
-          <el-button
-            v-if="statusFilter === 'archived'"
-            size="small"
-            type="primary"
-            plain
-            :disabled="actingId === item.id"
-            @click="restore(item)"
-          >恢复</el-button>
         </div>
       </section>
     </div>

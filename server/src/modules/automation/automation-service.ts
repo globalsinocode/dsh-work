@@ -190,11 +190,8 @@ export class AutomationService {
     return updated
   }
 
-  async listMine(
-    ownerUserId: string,
-    input?: { status?: 'active' | 'archived' },
-  ): Promise<AutomationRecord[]> {
-    return this.automations.listByOwner(ownerUserId, input)
+  async listMine(ownerUserId: string): Promise<AutomationRecord[]> {
+    return this.automations.listByOwner(ownerUserId)
   }
 
   async getMine(ownerUserId: string, id: string): Promise<AutomationRecord> {
@@ -214,7 +211,7 @@ export class AutomationService {
     automationId: string,
     input?: { limit?: number; cursor?: string | null },
   ): Promise<AutomationExecutionPage> {
-    await this.getOwned(ownerUserId, automationId)
+    await this.getMine(ownerUserId, automationId)
     const page = await this.automations.listExecutions(automationId, input)
     const runIds = page.items.map(execution => execution.runId).filter((id): id is string => id !== null)
     const outcomes = await this.conversations.getTaskResultOutcomes(runIds)
@@ -234,34 +231,6 @@ export class AutomationService {
     await this.convergeQueuedExecutions(automationId, '任务已归档', AutomationReasonCodes.taskDisabled)
     await this.operations?.appendAudit(
       ownerUserId, 'automation.archive', automationId, 'success', `trace-automation-${automationId}`, '员工归档自动任务',
-    )
-    return updated
-  }
-
-  async restore(ownerUserId: string, automationId: string, _sessionRoleIds?: string[]): Promise<AutomationRecord> {
-    // 恢复只校验归属与状态；角色快照保留在签名里供调用方兼容，当前不参与判定。
-    void _sessionRoleIds
-    const automation = await this.getOwned(ownerUserId, automationId)
-    if (automation.status !== 'disabled') {
-      throw conflict('只有已归档的自动任务可以恢复', 'state_conflict')
-    }
-    await this.authorization.resolveAutomationSubject(ownerUserId)
-    await this.authorizeExecution({
-      userId: ownerUserId,
-      workspaceId: automation.workspaceId,
-      agentVersionId: automation.agentVersionId,
-      scopeCeiling: automation.scopeCeiling,
-    })
-    await this.content.assertRuntimeFileAccess({
-      fileIds: automation.inputTemplate.fileIds ?? [],
-      userId: ownerUserId,
-      workspaceId: automation.workspaceId,
-      tenantId,
-    })
-    const updated = await this.automations.restoreArchived(automationId, ownerUserId)
-    if (!updated) throw conflict('自动任务状态已变化，请刷新后重试', 'state_conflict')
-    await this.operations?.appendAudit(
-      ownerUserId, 'automation.restore', automationId, 'success', `trace-automation-${automationId}`, '员工恢复已归档自动任务',
     )
     return updated
   }

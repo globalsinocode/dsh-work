@@ -197,20 +197,20 @@ export const adminApi = {
       method: 'POST',
       body: JSON.stringify(input),
     }),
-  updateAgentDraft: ({ agentId, ...input }: UpdateAgentDraftInput) =>
-    request<{ agent: AgentDefinition; version: AgentVersionRecord }>(`/agents/${encodeURIComponent(agentId)}/draft`, {
+  updateAgentDraft: (input: UpdateAgentDraftInput) =>
+    request<{ agent: AgentDefinition; version: AgentVersionRecord }>('/agents/draft', {
       method: 'PATCH',
       body: JSON.stringify(input),
     }),
   setAgentStatus: (input: { agentId: string; status: 'published' | 'disabled' }) =>
-    request<{ agent: AgentDefinition }>(`/agents/${encodeURIComponent(input.agentId)}/status`, {
+    request<{ agent: AgentDefinition }>('/agents/status', {
       method: 'PATCH',
-      body: JSON.stringify({ status: input.status }),
+      body: JSON.stringify(input),
     }),
   rollbackAgent: (input: { agentId: string; version: string }) =>
-    request<{ agent: AgentDefinition }>(`/agents/${encodeURIComponent(input.agentId)}/rollback`, {
+    request<{ agent: AgentDefinition }>('/agents/rollback', {
       method: 'POST',
-      body: JSON.stringify({ version: input.version }),
+      body: JSON.stringify(input),
     }),
   setAgentWorkspaceJoin: (input: { agentId: string; allowWorkspaceJoin: boolean }) =>
     request<{ agent: AgentDefinition }>(`/agents/${encodeURIComponent(input.agentId)}`, {

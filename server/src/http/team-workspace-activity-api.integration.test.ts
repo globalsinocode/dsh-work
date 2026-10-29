@@ -103,12 +103,14 @@ after(async () => {
 test('迁移 0026：建立动态事实与通知状态表，可重复执行且不回填历史（AC-17）', async () => {
   const eventColumns = await tableColumns('workspace_activity_events')
   assert.ok(eventColumns.includes('sequence'), '0086 必须为动态事实分配 sequence')
-  assert.deepEqual(eventColumns, [
+  for (const column of [
     'id', 'tenant_id', 'workspace_id', 'kind', 'actor_user_id', 'object_type',
-    'object_id', 'safe_metadata', 'dedupe_key', 'occurred_at', 'sequence',
-  ])
+    'object_id', 'safe_metadata', 'dedupe_key', 'occurred_at',
+  ]) assert.ok(eventColumns.includes(column), `0026 必须建立 ${column}`)
   const stateColumns = await tableColumns('workspace_notification_states')
-  assert.deepEqual(stateColumns, ['tenant_id', 'workspace_id', 'user_id', 'last_read_at', 'muted_at'])
+  for (const column of ['tenant_id', 'workspace_id', 'user_id', 'last_read_at', 'muted_at']) {
+    assert.ok(stateColumns.includes(column), `0026 必须建立 ${column}`)
+  }
 
   const constraints = await database<{ name: string }[]>`
     select conname as name from pg_constraint

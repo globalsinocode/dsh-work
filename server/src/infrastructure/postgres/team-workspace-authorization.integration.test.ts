@@ -847,7 +847,8 @@ async function createCandidateAgent(input: {
 /**
  * 断言一个拒绝已经是**类型化授权拒绝**，且消息不变、HTTP 映射仍是 403 permission_denied。
  * `classifyHttpError` 对类型化错误走 status/code 分支、对裸 Error 走文案正则，两者都必须给出
- * 403——这正是「去文案分类」要保证的可观察行为不变。
+ * 403。服务层保留 permission_denied，员工 HTTP 边界按公开契约收敛为
+ * authorization_denied——这正是「去文案分类」要保证的可观察行为。
  */
 async function expectTypedDenial(label: string, message: string, run: () => Promise<unknown>) {
   const error = await run().then(() => null, (thrown: unknown) => thrown)
@@ -858,7 +859,7 @@ async function expectTypedDenial(label: string, message: string, run: () => Prom
   assert.equal(isAuthorizationDenial(error), true, `${label} 必须仍被撤权分类器识别`)
   const mapped = classifyHttpError(error, '/api/workbench/v1/workspaces/ws-t2-typed/agents')
   assert.equal(mapped.status, 403)
-  assert.equal(mapped.error.code, 'permission_denied')
+  assert.equal(mapped.error.code, 'authorization_denied')
 }
 
 /** 测试 Agent Principal 获得调用者角色和其声明的最小数据范围。 */

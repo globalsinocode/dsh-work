@@ -87,7 +87,7 @@ test('负责人与管理员可读空间用量；普通成员与只读成员得�
     const denied = await api('GET', `/api/workbench/v1/workspaces/${ws}/usage`, { as: userId })
     assert.notEqual(denied.status, 500, `${label}不得落 500（requireTeamRole 的裸 Error 必须被翻译）`)
     assert.equal(denied.status, 403, `${label}必须 403`)
-    assert.equal(errorOf(denied)?.code, 'permission_denied', `${label}必须是类型化 403`)
+    assert.equal(errorOf(denied)?.code, 'authorization_denied', `${label}必须是员工端收敛后的类型化 403`)
     assert.equal(errorOf(denied)?.message, '仅负责人或管理员可以查看空间用量')
   }
 })

@@ -51,9 +51,8 @@ export function registerAutomationRoutes(router: Router, service: AutomationServ
   router.get(`${basePath}/automations`, async (request, context) => {
     const identity = requireRequestIdentity(context, 'workbench')
     const statusParam = new URL(request.url ?? '', 'http://localhost').searchParams.get('status')
-    const status = statusParam === 'archived' ? 'archived' : statusParam === 'active' || statusParam === null ? 'active' : null
-    if (status === null) throw routeValidationFailed('status 只能是 active 或 archived')
-    return envelope('workbench', await service.listMine(identity.userId, { status }), 'postgres')
+    if (statusParam !== null && statusParam !== 'active') throw routeValidationFailed('status 只能是 active')
+    return envelope('workbench', await service.listMine(identity.userId), 'postgres')
   })
 
   router.post(`${basePath}/automations`, async (request, context) => {
@@ -127,19 +126,6 @@ export function registerAutomationRoutes(router: Router, service: AutomationServ
   router.post(`${basePath}/automations/:automationId/archive`, async (_request, context) => {
     const identity = requireRequestIdentity(context, 'workbench')
     return envelope('workbench', await service.archive(identity.userId, context.params['automationId'] ?? ''), 'postgres')
-  })
-
-  router.post(`${basePath}/automations/:automationId/restore`, async (_request, context) => {
-    const identity = requireRequestIdentity(context, 'workbench')
-    return envelope(
-      'workbench',
-      await service.restore(
-        identity.userId,
-        context.params['automationId'] ?? '',
-        sessionAuthorizationContext(identity).roleIds,
-      ),
-      'postgres',
-    )
   })
 
   router.delete(`${basePath}/automations/:automationId`, async (_request, context, response) => {

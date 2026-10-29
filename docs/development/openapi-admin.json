@@ -2273,10 +2273,27 @@
     "/connectors/check": {
       "post": {
         "operationId": "checkConnector",
-        "summary": "检查外部 MCP Connector，通过 DSH 发现 Tool 并自动生效当前能力摘要；恢复健康时校验 20 个容量上限",
+        "summary": "检查外部 MCP Connector，通过 DSH 发现 Tool；未变化的已批准能力继续生效，新增或 Schema 变化等待确认",
         "responses": {
           "200": {
             "$ref": "#/components/responses/Ok"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/connectors/mcp/capabilities/approve": {
+      "post": {
+        "operationId": "approveMcpCapabilities",
+        "summary": "显式确认当前 MCP 能力清单；摘要已变化时拒绝并要求刷新",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
           },
           "409": {
             "$ref": "#/components/responses/Error"

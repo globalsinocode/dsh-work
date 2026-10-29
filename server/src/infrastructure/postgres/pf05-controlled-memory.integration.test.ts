@@ -556,7 +556,7 @@ test('PF-05 withdrawal blocks new retrieval while preserving historical referenc
       workspace_id: source.manifest.workspace_id,
       agent_version_id: source.manifest.agent_version_id,
     }),
-    (error: unknown) => typeof error === 'object' && error !== null && 'code' in error && error.code === 'permission_denied',
+    (error: unknown) => typeof error === 'object' && error !== null && 'code' in error && error.code === 'authorization_denied',
   )
   const governed = await memory.listCandidates('approved')
   assert.equal(governed.find(item => item.id === approved.id)?.content, '[内容已撤回或超过可使用期限，不再展示正文]')
@@ -608,7 +608,7 @@ test('AE-04 shares reviewed memory across versions of the same Agent while prese
       workspace_id: source.manifest.workspace_id,
       agent_version_id: 'agent-version-dsh-work-assistant-output-1',
     }), (error: unknown) => typeof error === 'object' && error !== null
-      && 'code' in error && error.code === 'permission_denied')
+      && 'code' in error && error.code === 'authorization_denied')
   } finally {
     await database`
       update execution_principals set status = 'active'
@@ -659,7 +659,7 @@ test('PF-05 never injects private memory into a team workspace', async () => {
       agent_version_id: source.manifest.agent_version_id,
     }),
     (error: unknown) => typeof error === 'object' && error !== null && 'code' in error
-      && error.code === 'permission_denied',
+      && error.code === 'authorization_denied',
   )
 })
 
@@ -707,7 +707,7 @@ test('PF-05 intersects current roles with the roles pinned by the source Attempt
         agent_version_id: source.manifest.agent_version_id,
       }),
       (error: unknown) => typeof error === 'object' && error !== null && 'code' in error
-        && error.code === 'permission_denied',
+        && error.code === 'authorization_denied',
     )
   } finally {
     await database`
@@ -739,7 +739,7 @@ test('PF-05 requires current access to the source workspace at submission, revie
       visibility: 'private', retentionDays: 30,
     }),
     (error: unknown) => typeof error === 'object' && error !== null && 'code' in error
-      && error.code === 'permission_denied',
+      && error.code === 'permission_revoked',
   )
 
   await database`
@@ -795,7 +795,7 @@ test('PF-05 requires current access to the source workspace at submission, revie
       agent_version_id: source.manifest.agent_version_id,
     }),
     (error: unknown) => typeof error === 'object' && error !== null && 'code' in error
-      && error.code === 'permission_denied',
+      && error.code === 'authorization_denied',
   )
   await assert.rejects(
     memory.reviewCandidate({

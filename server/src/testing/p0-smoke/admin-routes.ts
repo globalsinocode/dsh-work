@@ -41,22 +41,25 @@ export function registerAdminRoutes(router: Router, service: AdminQueryService) 
     const input = await readJsonBody<Omit<Parameters<AdminQueryService['createAgentDraft']>[0], 'actor'>>(request)
     return envelope('admin', await service.createAgentDraft({ ...input, actor: requireRequestIdentity(context, 'admin').userId }))
   })
-  router.patch(`${basePath}/agents/:agentId/draft`, async (request, context) => {
-    const input = await readJsonBody<Omit<Parameters<AdminQueryService['updateAgentDraft']>[0], 'actor' | 'agentId'>>(request)
+  router.patch(`${basePath}/agents/draft`, async (request, context) => {
+    const input = await readJsonBody<Omit<Parameters<AdminQueryService['updateAgentDraft']>[0], 'actor'>>(request)
     return envelope('admin', await service.updateAgentDraft({
-      ...input, agentId: context.params.agentId ?? '', actor: requireRequestIdentity(context, 'admin').userId,
+      ...input, actor: requireRequestIdentity(context, 'admin').userId,
     }))
   })
-  router.patch(`${basePath}/agents/:agentId/status`, async (request, context) => {
-    const input = await readJsonBody<{ status: Extract<PublishStatus, 'published' | 'disabled'> }>(request)
+  router.patch(`${basePath}/agents/status`, async (request, context) => {
+    const input = await readJsonBody<{
+      agentId: string
+      status: Extract<PublishStatus, 'published' | 'disabled'>
+    }>(request)
     return envelope('admin', await service.setAgentStatus({
-      status: input.status, agentId: context.params.agentId ?? '', actor: requireRequestIdentity(context, 'admin').userId,
+      ...input, actor: requireRequestIdentity(context, 'admin').userId,
     }))
   })
-  router.post(`${basePath}/agents/:agentId/rollback`, async (request, context) => {
-    const input = await readJsonBody<{ version: string }>(request)
+  router.post(`${basePath}/agents/rollback`, async (request, context) => {
+    const input = await readJsonBody<{ agentId: string; version: string }>(request)
     return envelope('admin', await service.rollbackAgent({
-      version: input.version, agentId: context.params.agentId ?? '', actor: requireRequestIdentity(context, 'admin').userId,
+      ...input, actor: requireRequestIdentity(context, 'admin').userId,
     }))
   })
   router.get(`${basePath}/skills`, async () => envelope('admin', await service.getSkills()))

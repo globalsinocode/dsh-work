@@ -75,12 +75,12 @@ before(async () => {
   )
   projects.attachRunStarter(orchestration)
   tools = new ProjectTaskTools(projects, database)
-  // 装配验证用：记录提交给 Runtime 的 Manifest，执行停在受理后。
+  // 装配验证用：记录提交给 Runtime 的 Manifest，并立即完成以释放测试车道。
   assembling = new RunOrchestrationService(
     runs,
     conversations,
     new ModelGovernanceService(new PostgresModelGovernanceRepository(database)),
-    new CapturingRuntime(),
+    new CompletingCapturingRuntime(),
     undefined,
     undefined,
     agents,
@@ -281,7 +281,20 @@ test('装配：群聊 @Agent 与重试装配读写工具，定时执行只装配
       await new Promise(resolve => setImmediate(resolve))
       await new Promise(resolve => setTimeout(resolve, 10))
     }
-    throw new Error(`没有等到运行 ${runId} 的 Manifest`)
+    const [state] = await database<{ runStatus: string; attemptStatus: string | null; errorCode: string | null }[]>`
+      select r.status as "runStatus", a.status as "attemptStatus", a.error_code as "errorCode"
+        from runs r left join run_attempts a on a.tenant_id = r.tenant_id and a.id = r.current_attempt_id
+       where r.tenant_id = ${tenantId} and r.id = ${runId}
+    `
+    throw new Error(`没有等到运行 ${runId} 的 Manifest：${JSON.stringify(state ?? null)}`)
+  }
+  const finishRun = async (runId: string) => {
+    await database`
+      update run_attempts set status = 'succeeded', ended_at = now(), error_code = null
+       where tenant_id = ${tenantId}
+         and id = (select current_attempt_id from runs where tenant_id = ${tenantId} and id = ${runId})
+    `
+    await database`update runs set status = 'succeeded' where tenant_id = ${tenantId} and id = ${runId}`
   }
   // 经正式入口建群（含 Agent 成员的授权来源），与线上一致。
   const workspaceId = await agentMembers.createTeamWorkspace({ name: 'S6 装配验证', description: '' }, [space.agentId], space.owner, ['role-employee'])
@@ -300,12 +313,56 @@ test('装配：群聊 @Agent 与重试装配读写工具，定时执行只装配
     idempotencyKey: `s6-scheduled-${randomUUID()}`, workspaceAgentMemberId: member!.id, scheduled: true,
   }))!
   assert.deepEqual(taskTools(await manifestFor(scheduledRun.id)), ['project_tasks_list', 'project_task_get'])
+  await finishRun(scheduledRun.id)
 
   // 原运行失败后由人重试：沿用读写工具。
   await database`update run_attempts set status = 'failed', ended_at = now() where tenant_id = ${tenantId} and run_id = ${run.id}`
   await database`update runs set status = 'failed' where tenant_id = ${tenantId} and id = ${run.id}`
   await assembling.retry(run.id, space.owner)
   assert.deepEqual(taskTools(await manifestFor(run.id, 2)), ['project_tasks_list', 'project_task_get', 'project_task_create', 'project_task_update'])
+  await finishRun(run.id)
+
+  // Agent 定义显式关闭项目任务能力时，即使它仍是项目空间成员，也不得装配任何项目任务工具。
+  const disabledVersionId = `${space.agentVersionId}-tasks-disabled`
+  await database`
+    insert into agent_versions
+    select * from jsonb_populate_record(null::agent_versions,
+      (select to_jsonb(av) from agent_versions av where av.tenant_id = ${tenantId} and av.id = ${space.agentVersionId})
+        || jsonb_build_object(
+          'id', ${disabledVersionId}::text,
+          'version', '1.0.2',
+          'project_tasks_enabled', false
+        ))
+  `
+  await database`
+    update workspace_agent_members set agent_version_id = ${disabledVersionId}
+     where tenant_id = ${tenantId} and id = ${member!.id}
+  `
+  await database`
+    update workspace_capability_grants set capability_version_id = ${disabledVersionId}
+     where tenant_id = ${tenantId} and workspace_id = ${workspaceId}
+       and capability_type = 'agent' and capability_version_id = ${space.agentVersionId}
+  `
+  try {
+    const disabledSession = await assembling.createSession({
+      userId: space.owner, title: '关闭项目任务能力', workspaceId, agentVersionId: null,
+    })
+    const disabledRun = (await assembling.startRun({
+      userId: space.owner, sessionId: disabledSession.id, prompt: '@S6 助手 看看任务',
+      idempotencyKey: `s6-disabled-${randomUUID()}`, workspaceAgentMemberId: member!.id,
+    }))!
+    assert.deepEqual(taskTools(await manifestFor(disabledRun.id)), [])
+  } finally {
+    await database`
+      update workspace_agent_members set agent_version_id = ${space.agentVersionId}
+       where tenant_id = ${tenantId} and id = ${member!.id}
+    `
+    await database`
+      update workspace_capability_grants set capability_version_id = ${space.agentVersionId}
+       where tenant_id = ${tenantId} and workspace_id = ${workspaceId}
+         and capability_type = 'agent' and capability_version_id = ${disabledVersionId}
+    `
+  }
 })
 
 test('截止日期早于今天（按运行时区）时拒绝写入并报告未执行；今天可以', async () => {
@@ -444,10 +501,27 @@ function manifest(userId: string): RuntimeManifest {
 }
 
 /** 记录 Manifest、受理后不结束的 Runtime。 */
-class CapturingRuntime implements AgentRuntimePort {
+class CompletingCapturingRuntime implements AgentRuntimePort {
   async execute(manifest: RuntimeManifest): Promise<RuntimeExecutionHandle> {
     captured.push(manifest)
-    return { runId: manifest.run_id, attemptId: manifest.attempt_id, acceptedAt: new Date().toISOString(), done: new Promise(() => undefined) }
+    const now = new Date().toISOString()
+    return {
+      runId: manifest.run_id,
+      attemptId: manifest.attempt_id,
+      acceptedAt: now,
+      done: Promise.resolve({
+        runId: manifest.run_id,
+        attemptId: manifest.attempt_id,
+        status: 'completed',
+        acceptedAt: now,
+        startedAt: now,
+        endedAt: now,
+        manifestSha256: 'project-task-tools-test',
+        attemptDirectory: '/tmp/project-task-tools-test',
+        errorCode: null,
+        errorMessage: null,
+      }),
+    }
   }
   subscribe() { return () => undefined }
   async cancel() { return { accepted: false } }

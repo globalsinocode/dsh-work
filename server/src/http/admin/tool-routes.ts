@@ -113,6 +113,13 @@ export function registerToolRoutes(router: Router, service: PostgresToolConnecto
       actor: requireRequestIdentity(context, 'admin').userId,
     }), 'postgres')
   })
+  router.post(`${basePath}/connectors/mcp/capabilities/approve`, async (request, context) => {
+    const input = await readJsonBody<{ connectorId: string; capabilityDigest: string }>(request)
+    return envelope('admin', await service.approveMcpCapabilities({
+      ...input,
+      actor: requireRequestIdentity(context, 'admin').userId,
+    }), 'postgres')
+  })
   router.patch(`${basePath}/connectors/mcp/status`, async (request, context) => {
     const input = await readJsonBody<{ connectorId: string; status: 'enabled' | 'disabled' }>(request)
     return envelope('admin', await service.setMcpConnectorStatus({

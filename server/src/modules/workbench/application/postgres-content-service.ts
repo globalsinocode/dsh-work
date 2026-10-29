@@ -7,7 +7,7 @@ import { isStrictResolvedPathInside } from '../../../domain/host-path.ts'
 import type { Artifact, Workspace, WorkspaceFile, WorkspaceFileProjection } from '../../../domain/types.ts'
 import type { DatabaseClient, DatabaseTransaction } from '../../../infrastructure/postgres/database.ts'
 import type { PostgresAuthorizationService } from '../../authorization/postgres-authorization-service.ts'
-import { authorizationDenied, canReadWorkspaceObject, isAuthorizationDenial, requestInvalid } from '../../../domain/authorization-errors.ts'
+import { authorizationDenied, canReadWorkspaceObject, isAuthorizationDenial, permissionDenied, requestInvalid } from '../../../domain/authorization-errors.ts'
 import { dependencyUnavailable } from '../../../domain/request-errors.ts'
 import type { FileAttachment, PreparedRuntimeFile } from '../../runtime/runtime-types.ts'
 import { isAdminRunPurpose } from '../../runtime/runtime-types.ts'
@@ -268,8 +268,8 @@ export class PostgresContentService {
     }
     const teamIds = rows.filter(row => row.type === 'team').map(row => row.id)
     const personalIds = rows.filter(row => row.type === 'personal').map(row => row.id)
-    const [teamFileCounts, personalFiles] = await Promise.all([
-      teamIds.length ? this.countTeamWorkspaceFiles(teamIds) : Promise.resolve(new Map<string, number>()),
+    const [teamFiles, personalFiles] = await Promise.all([
+      teamIds.length ? this.listTeamWorkspaceFileSummaries(teamIds) : Promise.resolve(new Map<string, WorkspaceFile[]>()),
       personalIds.length ? this.listPersonalWorkspaceFileSummaries(personalIds) : Promise.resolve(new Map<string, WorkspaceFile[]>()),
     ])
     return rows.map((row) => ({
@@ -282,24 +282,62 @@ export class PostgresContentService {
       memberCount: row.memberCount,
       sessionCount: row.sessionCount,
       artifactCount: row.artifactCount,
-      fileCount: row.type === 'team' ? (teamFileCounts.get(row.id) ?? 0) : (personalFiles.get(row.id)?.length ?? 0),
+      fileCount: row.type === 'team' ? (teamFiles.get(row.id)?.length ?? 0) : (personalFiles.get(row.id)?.length ?? 0),
       updatedAt: formatDateTime(row.updatedAt),
       owner: row.owner,
       members: memberNames.get(row.id) ?? [],
-      files: row.type === 'team' ? [] : (personalFiles.get(row.id) ?? []),
+      files: row.type === 'team' ? (teamFiles.get(row.id) ?? []) : (personalFiles.get(row.id) ?? []),
     }))
   }
 
-  private async countTeamWorkspaceFiles(workspaceIds: string[]) {
-    const rows = await this.database<{ workspaceId: string; fileCount: number }[]>`
-      select wf.workspace_id as "workspaceId", count(*)::integer as "fileCount"
+  /** 团队空间摘要沿用文件列表的版本与可见性口径：成功优先，否则最高版本；仅 blocked 隐藏。 */
+  private async listTeamWorkspaceFileSummaries(workspaceIds: string[]) {
+    const rows = await this.database<{
+      workspaceId: string; logicalFileId: string; name: string; fileId: string
+      versionNo: number; versionCount: number; sizeBytes: string | number
+      scanStatus: string; parseStatus: string; uploadedBy: string; createdAt: Date
+    }[]>`
+      select wf.workspace_id as "workspaceId", wf.id as "logicalFileId", wf.name,
+             f.id as "fileId", shown.version_no as "versionNo",
+             (select count(*)::integer from workspace_file_versions c
+               where c.tenant_id = wf.tenant_id and c.logical_file_id = wf.id) as "versionCount",
+             f.size_bytes as "sizeBytes", f.scan_status as "scanStatus",
+             shown.parse_status as "parseStatus", u.display_name as "uploadedBy", f.created_at as "createdAt"
         from workspace_files wf
-       where wf.tenant_id = ${tenantId}
-         and wf.workspace_id = any(${workspaceIds})
-         and wf.status = 'active'
-       group by wf.workspace_id
+        join lateral (
+          select v.version_no, v.file_object_id, v.parse_status
+            from workspace_file_versions v
+           where v.tenant_id = wf.tenant_id and v.logical_file_id = wf.id
+           order by (v.parse_status = 'succeeded') desc, v.version_no desc
+           limit 1
+        ) shown on true
+        join file_objects f on f.tenant_id = wf.tenant_id and f.id = shown.file_object_id
+        join users u on u.tenant_id = f.tenant_id and u.id = f.uploaded_by
+       where wf.tenant_id = ${tenantId} and wf.workspace_id = any(${workspaceIds})
+         and wf.status = 'active' and f.removed_at is null and f.scan_status <> 'blocked'
+       order by f.created_at desc
     `
-    return new Map(rows.map(row => [row.workspaceId, row.fileCount]))
+    const summaries = new Map<string, WorkspaceFile[]>()
+    for (const row of rows) {
+      const list = summaries.get(row.workspaceId) ?? []
+      list.push({
+        id: row.fileId,
+        logicalFileId: row.logicalFileId,
+        name: row.name,
+        type: extname(row.name).slice(1).toUpperCase() || 'FILE',
+        size: formatSize(Number(row.sizeBytes)),
+        uploadedBy: row.uploadedBy,
+        uploadedAt: formatDateTime(row.createdAt),
+        versionNo: row.versionNo,
+        versionCount: row.versionCount,
+        scanStatus: row.scanStatus,
+        parseStatus: row.parseStatus,
+        canDownload: row.scanStatus === 'clean',
+        canReference: row.scanStatus === 'clean' && row.parseStatus === 'succeeded',
+      })
+      summaries.set(row.workspaceId, list)
+    }
+    return summaries
   }
 
   /** 个人空间保持既有路径（AC-23）：不读逻辑文件，行为与 TW-07 之前一致。批量版同上。 */
@@ -485,7 +523,7 @@ export class PostgresContentService {
 
   async getPersonalFile(fileId: string, actorUserId: string): Promise<PersonalFileSummary> {
     const page = await this.queryPersonalFiles({ actorUserId, limit: 1 }, fileId)
-    if (!page.items[0]) throw authorizationDenied('文件不存在或不可访问')
+    if (!page.items[0]) throw permissionDenied('文件不存在或不可访问')
     return page.items[0]
   }
 
@@ -975,7 +1013,7 @@ export class PostgresContentService {
       throw error
     }
 
-    await this.finalizeVersionExtraction({
+    const parseStatus = await this.finalizeVersionExtraction({
       logicalFileId: input.logicalFileId,
       versionNo,
       fileId: prepared.fileId,
@@ -983,6 +1021,7 @@ export class PostgresContentService {
       bytes: input.bytes,
       extension: prepared.extension,
     })
+    if (parseStatus === 'failed') throw requestInvalid('文件解析失败，已保留该版本记录')
     return this.projectWorkspaceFile(input.logicalFileId, input.actorUserId)
   }
 
@@ -1420,13 +1459,13 @@ export class PostgresContentService {
            )
          )
     `
-    if (!row) throw authorizationDenied(`文件不存在、不可访问或解析未成功：${input.fileId}`)
+    if (!row) throw permissionDenied(`文件不存在、不可访问或解析未成功：${input.fileId}`)
     // Recheck current identity AND source-space access before reading bytes.
     // This does not trust cached role/data-scope values from the creating request.
     try {
       await this.authorization.authorizeWorkbench({ userId: input.userId, workspaceId: row.workspaceId })
     } catch (error) {
-      if (isAuthorizationDenial(error)) throw authorizationDenied('文件不存在、不可访问或解析未成功')
+      if (isAuthorizationDenial(error)) throw permissionDenied('文件不存在、不可访问或解析未成功')
       throw error
     }
     return row
@@ -1435,13 +1474,13 @@ export class PostgresContentService {
   /** Reauthorize immutable inputs without loading or replacing their snapshotted bytes. */
   async recheckRuntimeFiles(manifest: import('../../runtime/runtime-types.ts').RuntimeManifest): Promise<void> {
     if (manifest.session_id === null && manifest.input.file_mounts.length) {
-      throw authorizationDenied('无 Session Task 尚未固定输入文件归属')
+      throw permissionDenied('无 Session Task 尚未固定输入文件归属')
     }
     for (const mount of manifest.input.file_mounts) {
       const row = await this.resolveRuntimeFile({
         sessionId: manifest.session_id!, fileId: mount.file_id, userId: manifest.user_context.user_id,
       })
-      if (row.textSha256 !== mount.content_sha256) throw authorizationDenied('输入文件解析版本已变化，不能执行旧快照')
+      if (row.textSha256 !== mount.content_sha256) throw permissionDenied('输入文件解析版本已变化，不能执行旧快照')
     }
   }
 
@@ -1680,7 +1719,7 @@ export class PostgresContentService {
       `
       // 成员存在不等于可写：被降级为 viewer 的发起人同样不得追加成果。
       if (!membership || membership.role === 'viewer') {
-        throw authorizationDenied('Run 发起人当前没有该空间的写权限，不能发布成果文件')
+        throw permissionDenied('Run 发起人当前没有该空间的写权限，不能发布成果文件')
       }
       const [run] = await transaction<{ id: string; status: string }[]>`
         select r.id, r.status from runs r
@@ -1931,7 +1970,7 @@ export class PostgresContentService {
        where wf.tenant_id = ${tenantId} and wf.id = ${logicalFileId} and wf.status = 'active'
          and f.removed_at is null and f.scan_status <> 'blocked'
     `
-    if (!row) throw authorizationDenied('文件不存在或不可访问')
+    if (!row) throw permissionDenied('文件不存在或不可访问')
     const parseStatus = row.parseStatus as WorkspaceFileProjection['parseStatus']
     const parseErrorCode = parseStatus === 'failed'
       ? await this.parseErrorCodeForFile(row.id, transaction)
@@ -2150,7 +2189,7 @@ export class PostgresContentService {
            )
          )
     `
-    if (!row) throw authorizationDenied('文件不存在或不可访问')
+    if (!row) throw permissionDenied('文件不存在或不可访问')
     // 会话作者分支不校验团队身份：被移出/退出的成员仍能命中本人旧会话文件，
     // 必须再按对象所属空间复核当前团队读权限（1B-T4 / AC-09）。3-T1 起该门禁走
     // 读取轨：归档空间的现任成员可读，被移出成员与非成员一律拒绝。拒绝统一走
@@ -2160,7 +2199,7 @@ export class PostgresContentService {
         userId: actorUserId, workspaceId: row.workspaceId, allowArchived: true,
       })
     } catch (error) {
-      if (isAuthorizationDenial(error)) throw authorizationDenied('文件不存在或不可访问')
+      if (isAuthorizationDenial(error)) throw permissionDenied('文件不存在或不可访问')
       throw error
     }
     return { name: row.originalName, mimeType: row.mimeType, bytes: await this.storage.get(row.storageKey) }
@@ -2184,10 +2223,10 @@ export class PostgresContentService {
          and (${version ?? null}::integer is null or av.version_no = ${version ?? null})
        order by av.version_no desc limit 1
     `
-    if (!row) throw authorizationDenied('Artifact 不存在或不可访问')
+    if (!row) throw permissionDenied('Artifact 不存在或不可访问')
     // 成果读取与团队运行同一收权口径：作者身份不足以越过当前团队读权限（AC-09）。
     if (!(await canReadWorkspaceObject(this.authorization, row.workspaceId, actorUserId))) {
-      throw authorizationDenied('Artifact 不存在或不可访问')
+      throw permissionDenied('Artifact 不存在或不可访问')
     }
     return row.fileId
   }

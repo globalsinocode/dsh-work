@@ -571,26 +571,34 @@ test('PF-03 deletion removes the Connector from Agent selections and destroys an
   await assert.rejects(service.deleteMcpConnector({ connectorId, actor: 'U00008' }), /不存在/)
 })
 
-test('PF-03 has no tenant-wide Connector cap; the per-Attempt limit applies to each Agent selection', async () => {
+test('PF-03 limits each tenant to 20 active MCP Connectors', async () => {
   const suffix = randomUUID().slice(0, 8)
   discovered = [{ name: 'capacity_read', description: 'Read capacity test data.', inputSchema: { type: 'object', properties: {} } }]
   const ids: string[] = []
-  for (let index = 0; index <= MAX_MCP_CONNECTIONS_PER_ATTEMPT; index += 1) {
-    ids.push((await service.registerMcpConnector({
-      name: `容量 MCP ${index} ${suffix}`,
-      endpoint: `https://capacity-${index}-${suffix}.example.test/rpc`,
+  try {
+    const [initial] = await database<{ connectorCount: number }[]>`
+      select count(*)::int as "connectorCount" from connectors
+       where tenant_id = 'tenant-dsh-work' and protocol = 'mcp' and status = 'healthy' and deleted_at is null
+    `
+    for (let index = initial!.connectorCount; index < MAX_MCP_CONNECTIONS_PER_ATTEMPT; index += 1) {
+      ids.push((await service.registerMcpConnector({
+        name: `容量 MCP ${index} ${suffix}`,
+        endpoint: `https://capacity-${index}-${suffix}.example.test/rpc`,
+        authType: 'none',
+        scopeDescription: '租户最多启用 20 个连接器',
+        actor: 'U00008',
+      })).id)
+    }
+    await assert.rejects(service.registerMcpConnector({
+      name: `超限 MCP ${suffix}`,
+      endpoint: `https://capacity-overflow-${suffix}.example.test/rpc`,
       authType: 'none',
-      scopeDescription: '租户不再限制连接器总数',
+      scopeDescription: '容量超限应明确拒绝',
       actor: 'U00008',
-    })).id)
+    }), { status: 409, code: 'MCP_CONNECTOR_CAPACITY_EXCEEDED' })
+  } finally {
+    for (const connectorId of ids) await service.deleteMcpConnector({ connectorId, actor: 'U00008' })
   }
-  const [final] = await database<{ connectorCount: number }[]>`
-    select count(*)::int as "connectorCount" from connectors
-     where tenant_id = 'tenant-dsh-work' and protocol = 'mcp' and status = 'healthy' and deleted_at is null
-  `
-  assert.ok(final!.connectorCount > MAX_MCP_CONNECTIONS_PER_ATTEMPT)
-  await assert.rejects(service.resolveConnections({ mode: 'selected', connectorIds: ids }), { status: 422 })
-  assert.equal((await service.resolveConnections({ mode: 'selected', connectorIds: ids.slice(0, MAX_MCP_CONNECTIONS_PER_ATTEMPT) })).length, MAX_MCP_CONNECTIONS_PER_ATTEMPT)
 })
 
 test('Tool service registration, credential rotation and check keep approved snapshot resolvable', async () => {

@@ -100,7 +100,7 @@ test('illegal draft updates return 422 and leave revision and version count unch
   }
   delete (draft as { id?: string }).id
 
-  for (const field of ['welcomeMessage', 'name', 'description', 'visibility', 'systemPrompt', 'changeSummary'] as const) {
+  for (const field of ['welcomeMessage', 'name', 'description', 'systemPrompt', 'changeSummary'] as const) {
     const body = { ...draft }
     delete body[field]
     const rejected = await api('PATCH', '/api/admin/v1/agents/draft', body)
@@ -120,6 +120,20 @@ test('illegal draft updates return 422 and leave revision and version count unch
   assert.equal(await currentRevision(agentId), revision)
   assert.equal(await countRows('agent_versions', agentId), versionsBefore)
   assert.equal(await countAudits(agentId, 'agent.draft.update', 'success'), 0)
+})
+
+test('draft update keeps visibility optional and preserves the current value when omitted', async () => {
+  const agentId = `agent-draft-visibility-${randomUUID().slice(0, 8)}`
+  const created = await api('POST', '/api/admin/v1/agents', validDraft(agentId))
+  const { id: _id, visibility: expectedVisibility, ...draftWithoutVisibility } = validDraft(agentId)
+  const body = {
+    ...draftWithoutVisibility,
+    agentId,
+    expectedRevision: created.body.data?.agent.revision,
+  }
+  const accepted = await api('PATCH', '/api/admin/v1/agents/draft', body)
+  assert.equal(accepted.status, 200)
+  assert.equal((accepted.body.data?.agent as { visibility?: string } | undefined)?.visibility, expectedVisibility)
 })
 
 function validDraft(id: string) {

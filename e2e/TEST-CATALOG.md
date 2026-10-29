@@ -621,11 +621,11 @@ Agent 发布主线已由服务端接口持久化（`agent_release_submissions` /
 
 | ID | 优先级 | 角色 | 旅程 | 前置 | 操作 | 可观察结果 | spec |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| AU-01 | P1 | employee | 归档和恢复自动任务 | 已启用任务及历史 | 归档；切到归档筛选；恢复 | 默认列表隐藏、历史可读、恢复后为 paused | `e2e/automation.integration.spec.ts`（计划） |
+| AU-01 | P1 | employee | 永久归档定时任务 | 已启用任务及历史 | 归档；刷新列表；直接读取任务和历史 | 默认列表隐藏，任务与历史均不可读，且无恢复入口 | `e2e/automation.integration.spec.ts`、`server/src/infrastructure/postgres/automation.integration.test.ts` |
 | AU-02 | P1 | employee | 超过 50 条历史分页 | 75 条执行 | 连续加载更多 | 75 条不重不漏且 hasMore 最终 false | `e2e/automation.integration.spec.ts`（计划） |
 | AU-03 | P1 | employee | 执行抽屉自动收敛 | running execution | 保持抽屉打开 | 状态变终态，取消按钮消失，轮询停止 | `apps/workbench-web/src/views/AutomationsView.test.ts` |
 | AU-04 | P1 | employee | 手工触发响应丢失重试 | 服务端受理后丢弃响应 | 点击重试同一意图 | 只产生一个 execution/Run | `apps/workbench-web/src/stores/automation-intents.test.ts` |
-| AU-05 | P1 | employee | 恢复时重新授权 | 归档后撤销 workspace/Agent 权限 | 点击恢复 | 明确拒绝，任务保持 archived | `server/src/infrastructure/postgres/automation.integration.test.ts` |
+| AU-05 | P1 | employee | 保留历史时暂停并恢复调度 | 已启用且有历史的任务 | 暂停；读取历史；重新启用 | 历史持续可读，暂停期间不调度，重新启用后只安排未来槽位 | `e2e/automation.integration.spec.ts`、`server/src/infrastructure/postgres/automation.integration.test.ts` |
 
 ## AG-03 轻量自动任务（首版已实现，P0 冒烟通过；P1/P2 待补）
 

@@ -3,7 +3,12 @@ import { randomUUID } from 'node:crypto'
 import type { DatabaseClient } from '../../infrastructure/postgres/database.ts'
 import { unavailableSkillTools } from '../runtime/builtin-tools.ts'
 import { redactSensitiveText } from '../../security/safe-observability.ts'
-import { authorizationDenied } from '../../domain/authorization-errors.ts'
+import {
+  authorizationDenied,
+  permissionDenied,
+  permissionRevoked,
+  roleDisabled,
+} from '../../domain/authorization-errors.ts'
 import { requirePlatformAdminActor } from './platform-admin-actor.ts'
 import { resolveAudienceCeiling, type AudienceCeiling } from './agent-audience-ceiling.ts'
 import type { RuntimeManifest } from '../runtime/runtime-types.ts'
@@ -157,7 +162,7 @@ export class PostgresAuthorizationService {
       if (!identity.permissions.includes('workbench:use')) {
         // 5-T4：授权拒绝统一类型化，HTTP 仍是 403 permission_denied，只是不再依赖
         // 「没有…权限」这条中文正则。
-        throw authorizationDenied('当前用户没有员工工作台使用权限')
+        throw permissionDenied('当前用户没有员工工作台使用权限')
       }
       const workspaceType = workspaceId
         ? await this.requireWorkspaceMembership(input.userId, workspaceId, input.allowArchived === true)
@@ -334,7 +339,7 @@ export class PostgresAuthorizationService {
       // 5-T4 发现、父代理修复：这是真授权拒绝，但文案不含 403 正则里的任何片段
       // （「不可使用」不在 `/没有.*权限|不可访问|不是成员|不可调用|未授权|不是平台管理员/`），
       // 因此此前经 HTTP 暴露会落 500 operation_failed——那是误分类。现改为类型化 403。
-      throw authorizationDenied('当前用户角色不可使用所选 Agent')
+      throw permissionDenied('当前用户角色不可使用所选 Agent')
     }
     // Data collections enforce the scopes they actually require; built-in tools only touch
     // the Run workspace and are not role-gated.
@@ -387,8 +392,8 @@ export class PostgresAuthorizationService {
       // 「不是该团队空间成员」里「不是成员」不连续 → 500 operation_failed；
       // 「只读…不能继续执行任务」先命中 `/当前状态|只有.*可以|不能/` → 409 state_conflict。
       // 按权限矩阵它们都是「无权限」，现统一类型化为 403（消息文本不变，避免枚举空间）。
-      if (!member) throw authorizationDenied('当前用户已不是该团队空间成员')
-      if (member.role === 'viewer') throw authorizationDenied('当前用户角色为只读，不能继续执行任务')
+      if (!member) throw permissionRevoked('当前用户已不是该团队空间成员')
+      if (member.role === 'viewer') throw permissionDenied('当前用户角色为只读，不能继续执行任务')
 
       // Agent 关联状态必须与能力授权分开校验：对账把 legacy 来源改写为 manual 后，
       // 停用 Agent 成员不会删除该 grant，仅靠 requireWorkspaceCapabilities 会放行已
@@ -409,10 +414,10 @@ export class PostgresAuthorizationService {
       `
       if (!agentMember) {
         if (input.requireAgentMember === true) {
-          throw authorizationDenied('Agent 未加入该团队空间，不能继续执行任务')
+          throw permissionDenied('Agent 未加入该团队空间，不能继续执行任务')
         }
       } else if (agentMember.status !== 'available') {
-        throw authorizationDenied('Agent 成员已停用或已移出该团队空间，不能继续执行任务')
+        throw permissionRevoked('Agent 成员已停用或已移出该团队空间，不能继续执行任务')
       }
       await this.recordDecision(input.userId, input.agentVersionId, 'authorization.runtime', 'success')
       return decision
@@ -604,7 +609,7 @@ export class PostgresAuthorizationService {
   async assertAgentVersionVisibleToRoles(agentVersionId: string, roleIds: string[], label = '所选 Agent') {
     const agent = await this.requireAgentVersion(agentVersionId)
     if (!intersects(roleIds, agent.visibleRoleIds)) {
-      throw authorizationDenied(`当前用户角色不可使用${label}`)
+      throw permissionDenied(`当前用户角色不可使用${label}`)
     }
     return agent
   }
@@ -771,7 +776,7 @@ export class PostgresAuthorizationService {
               and (r.permissions ? 'admin:*' or r.permissions ? 'admin:write' or r.permissions ? 'admin:read')
          )
     `
-    if (!row) throw authorizationDenied(`操作人不存在、已停用或没有管理读取权限：${userId}`)
+    if (!row) throw permissionDenied(`操作人不存在、已停用或没有管理读取权限：${userId}`)
     return row
   }
 
@@ -804,19 +809,19 @@ export class PostgresAuthorizationService {
            ? this.database.unsafe(`w.status in ('active', 'archived')`)
            : this.database.unsafe(`w.status = 'active'`)}
     `
-    if (!workspace) throw authorizationDenied('工作空间不存在、已归档或当前用户不是成员')
+    if (!workspace) throw permissionDenied('工作空间不存在、已归档或当前用户不是成员')
     if (workspace.type === 'personal') return
     const [member] = await this.database<{ role: TeamMemberRole }[]>`
       select wm.member_role as role from workspace_members wm
        where wm.tenant_id = ${tenantId} and wm.workspace_id = ${workspaceId}
          and wm.user_id = ${userId}
     `
-    if (!member) throw authorizationDenied('工作空间不存在、已归档或当前用户不是成员')
+    if (!member) throw permissionRevoked('工作空间不存在、已归档或当前用户不是成员')
     if (!allowedRoles.includes(member.role)) {
       // 类型化拒绝（批次 4 评审 S2）：原先抛裸 Error，HTTP 层会把它分类成 500，
       // 调用方只能靠匹配中文消息前缀来兜。消息文本保持不变，仍满足既有调用点
       // （`workspace-member-routes.ts` 的 `isTeamRoleDenial`）与既有断言。
-      throw authorizationDenied(`当前用户角色无权执行此操作（允许角色：${allowedRoles.join('、')}）`)
+      throw permissionDenied(`当前用户角色无权执行此操作（允许角色：${allowedRoles.join('、')}）`)
     }
   }
 
@@ -859,7 +864,7 @@ export class PostgresAuthorizationService {
          where u.tenant_id = ${tenantId} and u.id = ${userId} and u.status = 'active'
            and exists (select 1 from tenants t where t.id = u.tenant_id and t.status = 'active')
       `
-      if (!user) throw authorizationDenied('当前用户不存在、已停用或所属企业不可用')
+      if (!user) throw roleDisabled('当前用户不存在、已停用或所属企业不可用')
       const requestedRoleIds = unique(sessionRoleIds)
       if (requestedRoleIds.length === 0) return { id: user.id, roleIds: [], permissions: [] }
       const rows = await this.database<{ id: string; permissions: string[] }[]>`
@@ -895,7 +900,7 @@ export class PostgresAuthorizationService {
          and exists (select 1 from tenants t where t.id = u.tenant_id and t.status = 'active')
        group by u.id
     `
-    if (!row) throw authorizationDenied('当前用户不存在、已停用或所属企业不可用')
+    if (!row) throw roleDisabled('当前用户不存在、已停用或所属企业不可用')
     return row
   }
 
@@ -943,7 +948,7 @@ export class PostgresAuthorizationService {
            )
          )
     `
-    if (!row) throw authorizationDenied('工作空间不存在、已归档或当前用户不是成员')
+    if (!row) throw permissionRevoked('工作空间不存在、已归档或当前用户不是成员')
     return row.type
   }
 
@@ -1057,7 +1062,7 @@ export class PostgresAuthorizationService {
        where av.tenant_id = ${tenantId} and av.id = ${versionId}
          and av.status = 'published' and a.status = 'published'
     `
-    if (!row) throw authorizationDenied('Agent Version 不存在、未发布或 Agent 执行身份已停用')
+    if (!row) throw permissionDenied('Agent Version 不存在、未发布或 Agent 执行身份已停用')
     return row
   }
 
@@ -1092,12 +1097,12 @@ export class PostgresAuthorizationService {
     if (rows.length === 0) {
       // 5-T4 发现、父代理修复：「未配置…授权」不匹配任何一条授权正则，此前落 500；
       // 语义上就是「该空间没有这项能力授权」，属授权拒绝，现类型化为 403。
-      throw authorizationDenied(`工作空间未配置${capabilityLabel(capabilityType)}授权`)
+      throw permissionDenied(`工作空间未配置${capabilityLabel(capabilityType)}授权`)
     }
     const allowed = new Set(rows.map(row => row.capabilityVersionId))
     const denied = capabilities.filter(capability => !allowed.has(capability.versionId))
     if (denied.length) {
-      throw authorizationDenied(`工作空间未授权${capabilityLabel(capabilityType)}：${denied.map(item => item.reference).join('、')}`)
+      throw permissionDenied(`工作空间未授权${capabilityLabel(capabilityType)}：${denied.map(item => item.reference).join('、')}`)
     }
   }
 

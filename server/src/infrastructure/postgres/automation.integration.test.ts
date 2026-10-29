@@ -657,7 +657,7 @@ test('cancelQueuedRun 与领取竞态：Attempt 被先锁走时不取消', async
   assert.equal(runRow?.status, 'running')
 })
 
-test('archived automation remains queryable with history', async () => {
+test('archived automation and its execution history are no longer readable', async () => {
   const { userId, workspaceId, agentId } = await seedOwner('archive-history')
   const created = await service.create(userId, {
     name: '归档历史',
@@ -671,59 +671,9 @@ test('archived automation remains queryable with history', async () => {
   const archived = await service.archive(userId, created.id)
   assert.equal(archived.status, 'disabled')
   assert.ok(archived.archivedAt)
-  assert.equal((await service.listMine(userId, { status: 'archived' })).length, 1)
-  assert.equal((await service.listExecutions(userId, created.id, { limit: 20 })).items.length, 1)
-})
-
-test('restore archived automation to paused with authorization revalidation', async () => {
-  const { userId, workspaceId, agentId } = await seedOwner('restore-ok')
-  const created = await service.create(userId, {
-    name: '可恢复',
-    agentId,
-    workspaceId,
-    schedule: { kind: 'manual', timezone: 'UTC' },
-    inputTemplate: { prompt: '执行' },
-  })
-  await service.enable(userId, created.id)
-  await service.archive(userId, created.id)
-  const restored = await service.restore(userId, created.id, ['role-employee'])
-  assert.equal(restored.status, 'paused')
-  assert.equal(restored.archivedAt, null)
-})
-
-test('restore rejects non-archived automation', async () => {
-  const { userId, workspaceId, agentId } = await seedOwner('restore-conflict')
-  const created = await service.create(userId, {
-    name: '未归档',
-    agentId,
-    workspaceId,
-    schedule: { kind: 'manual', timezone: 'UTC' },
-    inputTemplate: { prompt: '执行' },
-  })
-  await assert.rejects(
-    () => service.restore(userId, created.id, ['role-employee']),
-    /只有已归档/,
-  )
-})
-
-test('restore rejects when authorization revoked and keeps archived state', async () => {
-  const { userId, workspaceId, agentId } = await seedOwner('restore-denied')
-  const created = await service.create(userId, {
-    name: '撤权恢复',
-    agentId,
-    workspaceId,
-    schedule: { kind: 'manual', timezone: 'UTC' },
-    inputTemplate: { prompt: '执行' },
-  })
-  await service.enable(userId, created.id)
-  await service.archive(userId, created.id)
-  await database`delete from user_roles where tenant_id = ${tenantId} and user_id = ${userId}`
-  await assert.rejects(
-    () => service.restore(userId, created.id, ['role-employee']),
-    /授权|权限|拒绝|不满足/,
-  )
-  const still = await automations.getByIdForOwner(created.id, userId)
-  assert.equal(still?.status, 'disabled')
+  assert.equal((await service.listMine(userId)).length, 0)
+  await assert.rejects(() => service.getMine(userId, created.id), /不存在|不可访问/)
+  await assert.rejects(() => service.listExecutions(userId, created.id, { limit: 20 }), /不存在|不可访问/)
 })
 
 test('execution history paginates with stable cursor', async () => {

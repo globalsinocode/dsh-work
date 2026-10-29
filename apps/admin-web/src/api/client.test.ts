@@ -63,4 +63,44 @@ describe('admin API client', () => {
       expect.objectContaining({ credentials: 'include' }),
     )
   })
+
+  it('uses the fixed Agent mutation routes and carries agentId in each body', async () => {
+    const fetchMock = vi.fn().mockImplementation(async () => new Response(JSON.stringify({
+      data: { agent: {}, version: {} },
+      meta: { api: 'admin', adapter: 'postgres', timestamp: new Date().toISOString() },
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const draftInput = {
+      agentId: 'agent/a',
+      name: '更新后的 Agent',
+      description: '验证固定 Agent 草稿路由。',
+      owner: '平台组',
+      department: '研发部',
+      welcomeMessage: '你好',
+      examplePrompts: ['介绍能力'],
+      systemPrompt: '遵守当前授权边界完成任务。',
+      maxOutputBytes: 65_536,
+      maxToolCalls: 20,
+      timeoutSeconds: 300,
+      skills: [],
+      changeSummary: '更新名称',
+    }
+    await adminApi.updateAgentDraft(draftInput)
+    await adminApi.setAgentStatus({ agentId: 'agent/a', status: 'disabled' })
+    await adminApi.rollbackAgent({ agentId: 'agent/a', version: '1.0.0' })
+
+    expect(fetchMock).toHaveBeenNthCalledWith(1, '/api/admin/v1/agents/draft', expect.objectContaining({
+      method: 'PATCH',
+      body: JSON.stringify(draftInput),
+    }))
+    expect(fetchMock).toHaveBeenNthCalledWith(2, '/api/admin/v1/agents/status', expect.objectContaining({
+      method: 'PATCH',
+      body: JSON.stringify({ agentId: 'agent/a', status: 'disabled' }),
+    }))
+    expect(fetchMock).toHaveBeenNthCalledWith(3, '/api/admin/v1/agents/rollback', expect.objectContaining({
+      method: 'POST',
+      body: JSON.stringify({ agentId: 'agent/a', version: '1.0.0' }),
+    }))
+  })
 })

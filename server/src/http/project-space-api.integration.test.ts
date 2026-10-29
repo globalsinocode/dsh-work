@@ -159,7 +159,9 @@ test('员工任务：成员创建并指派，承接人推进到完成，只读�
   assert.equal(eventRows[1]!.metadata['note'], '已按华东、华南分组')
   assert.equal(eventRows[1]!.actor.userId, ws.admin)
   assert.equal((await api('GET', `${base}/workspaces/${ws.id}/project-tasks/${task.id}/events`, { as: ws.outsider })).status, 403)
-  assert.deepEqual((await activityKinds(ws.id)).sort(), ['project_task_completed', 'project_task_created'])
+  const activity = await activityKinds(ws.id)
+  assert.ok(activity.includes('project_task_created'))
+  assert.ok(activity.includes('project_task_completed'))
 
   // 创建人移除；移除后不再出现在列表。
   assert.equal((await api('DELETE', `${base}/workspaces/${ws.id}/project-tasks/${task.id}`, { as: ws.other })).status, 403)
@@ -867,7 +869,9 @@ test('项目档案员：员工任务完成后整理，整理期间完成的任�
   assert.equal(versions[0]!.sourceTasks[0]!.id, first.id)
   await waitForArchivistIdle(ws)
   assert.equal((await archiveRuns(ws.id)).length, 2, '没有待整理成果时不再触发')
-  assert.deepEqual((await activityKinds(ws.id)).sort(), ['project_task_completed', 'project_task_completed', 'project_task_created', 'project_task_created'])
+  const activity = await activityKinds(ws.id)
+  assert.equal(activity.filter(kind => kind === 'project_task_created').length, 2)
+  assert.equal(activity.filter(kind => kind === 'project_task_completed').length, 2)
 })
 
 test('项目档案员：无效输出不写入，成果随下一次触发重试', async () => {

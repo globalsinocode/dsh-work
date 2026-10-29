@@ -1,5 +1,5 @@
 import type { DatabaseClient, DatabaseTransaction } from '../../../infrastructure/postgres/database.ts'
-import { authorizationDenied } from '../../../domain/authorization-errors.ts'
+import { permissionDenied } from '../../../domain/authorization-errors.ts'
 import { notFound } from '../../../domain/request-errors.ts'
 
 const tenantId = 'tenant-dsh-work'
@@ -22,7 +22,7 @@ export class PostgresWorkspaceService {
     // An already-provisioned workspace does not override account/tenant revocation.
     const [actor] = await this.database`select u.id from users u join tenants t on t.id = u.tenant_id
       where u.tenant_id = ${tenantId} and u.id = ${userId} and u.status = 'active' and t.status = 'active'`
-    if (!actor) throw authorizationDenied('当前用户不存在、已停用或所属企业不可用')
+    if (!actor) throw permissionDenied('当前用户不存在、已停用或所属企业不可用')
     const proposedId = personalWorkspaceIdFor(userId)
     await this.database`
       insert into workspaces (
@@ -113,7 +113,7 @@ export class PostgresWorkspaceService {
            )
          )
     `
-    if (!workspace) throw authorizationDenied('工作空间不存在、已归档或当前用户无权访问')
+    if (!workspace) throw permissionDenied('工作空间不存在、已归档或当前用户无权访问')
     return workspace
   }
 }

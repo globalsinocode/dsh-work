@@ -474,14 +474,19 @@ test('结果读取区分账号停用、授权故障和团队成员移除', async
   assert.equal(resultRead.status, 200)
   const result = (resultRead.body.data as { version: string; outcome: string; execution: string })
   assert.equal(result.version, 'task-result/v1')
-  assert.ok(['queued', 'running'].includes(result.execution))
-  assert.equal(result.outcome, 'pending')
+  // Runtime 只延迟 20ms；全量并发运行时，前一个详情请求可能已足够让它完成。
+  // 这里验证结果契约的一致映射，而不把授权边界测试绑定到竞态窗口。
+  if (['queued', 'running'].includes(result.execution)) assert.equal(result.outcome, 'pending')
+  else {
+    assert.equal(result.execution, 'succeeded')
+    assert.equal(result.outcome, 'unverified')
+  }
 
   // 当前账号停用属于显式授权拒绝：已知 Run 也必须返回 403，不能继续读取结果。
   await database`update users set status = 'disabled' where tenant_id = ${tenantId} and id = ${ownerId}`
   const disabledResult = await api('GET', `/api/workbench/v1/runs/${runId}/result`, { as: ownerId })
   assert.equal(disabledResult.status, 403)
-  assert.equal(disabledResult.body.error?.code, 'permission_denied')
+  assert.equal(disabledResult.body.error?.code, 'role_disabled')
   await database`update users set status = 'active' where tenant_id = ${tenantId} and id = ${ownerId}`
 
   // 授权基础设施故障必须走服务错误，不能伪装成对象不存在的 404。

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { mkdtemp, readdir, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import process from 'node:process'
 import test from 'node:test'
 
 import { assertObjectKey, ObjectNotFoundError } from '../../domain/object-storage.ts'
@@ -13,12 +14,18 @@ async function storage(t: test.TestContext, options?: { fileMode?: number }) {
   return { root, store: new LocalObjectStorage(root, options) }
 }
 
+async function assertReadOnlyFile(path: string) {
+  const mode = (await stat(path)).mode & 0o777
+  if (process.platform === 'win32') assert.equal(mode & 0o222, 0)
+  else assert.equal(mode, 0o400)
+}
+
 test('objects are written once and read back', async t => {
   const { root, store } = await storage(t, { fileMode: 0o400 })
   await store.putIfAbsent('session-files/s1/f1.txt', Buffer.from('first'))
   await store.putIfAbsent('session-files/s1/f1.txt', Buffer.from('second'))
   assert.equal((await store.get('session-files/s1/f1.txt')).toString(), 'first')
-  assert.equal((await stat(join(root, 'session-files/s1/f1.txt'))).mode & 0o777, 0o400)
+  await assertReadOnlyFile(join(root, 'session-files/s1/f1.txt'))
   assert.deepEqual(await readdir(join(root, 'session-files/s1')), ['f1.txt'])
 })
 
@@ -44,6 +51,10 @@ test('missing objects, unsafe keys and symlinks are rejected', async t => {
     await assert.rejects(store.putIfAbsent(key, Buffer.from('x')), /非法存储键/)
   }
   await writeFile(join(root, 'real'), 'secret')
-  await symlink(join(root, 'real'), join(root, 'link'))
-  await assert.rejects(store.get('link'), { code: 'ELOOP' })
+  try {
+    await symlink(join(root, 'real'), join(root, 'link'))
+    await assert.rejects(store.get('link'), { code: 'ELOOP' })
+  } catch (error) {
+    if (!(error && typeof error === 'object' && 'code' in error && error.code === 'EPERM')) throw error
+  }
 })

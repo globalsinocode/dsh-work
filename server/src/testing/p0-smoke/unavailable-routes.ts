@@ -72,8 +72,6 @@ export function registerUnavailableWorkbenchCommandRoutes(router: Router) {
     envelope('workbench', { items: [], nextCursor: null, hasMore: false }))
   router.post(`${basePath}/automations/:automationId/archive`, async (_request, context) =>
     unavailable(`自动任务 ${context.params['automationId'] ?? ''}`))
-  router.post(`${basePath}/automations/:automationId/restore`, async (_request, context) =>
-    unavailable(`自动任务 ${context.params['automationId'] ?? ''}`))
 }
 
 function unavailable(object: string) {

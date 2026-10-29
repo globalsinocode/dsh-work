@@ -24,6 +24,7 @@ import { requirePlatformAdminActor } from '../authorization/platform-admin-actor
 import { isPlatformGovernance } from '../authorization/authorization-roles.ts'
 import { agentSpecFromConfiguration, assembleAgentInstructions, assertAgentSpecContent, type AgentSpec } from './agent-spec.ts'
 import { normalizeAgentMcpScope } from '../tool/agent-mcp-scope.ts'
+import { agentBuiltinToolNames, BUILTIN_TOOL_VERSION, unavailableSkillTools } from '../runtime/builtin-tools.ts'
 import { RequestError, accessDenied, invalidRequest, notFound, stateConflict } from '../../domain/request-errors.ts'
 
 const tenantId = 'tenant-dsh-work'
@@ -374,7 +375,9 @@ export class PostgresAgentService {
       throw stateConflict('Agent 执行数据授权不能超过当前定义的平台数据范围')
     }
     await this.assertInitialAgentGrants(executionRoleIds)
-    const effectiveTools = await this.resolveConfiguredToolReferences(configuration.skills, configuration.tools)
+    const effectiveTools = await this.resolveConfiguredToolReferences(
+      configuration.skills, configuration.tools, configuration.webSearchEnabled,
+    )
     await this.assertMcpConnectorSelection(configuration.mcpScope)
     await this.assertDelegationTargets(normalizeDelegationPolicy(configuration.delegationPolicy))
     const versionId = `agent-version-${randomUUID()}`
@@ -386,10 +389,11 @@ export class PostgresAgentService {
         await transaction`
           insert into agents (
             id, tenant_id, name, description, welcome_message, owner_user_id, created_by,
-            status, draft_version_id
+            status, draft_version_id, visible_role_ids
           ) values (
             ${configuration.id}, ${tenantId}, ${configuration.name}, ${configuration.description},
-            ${configuration.welcomeMessage}, ${actor.id}, ${actor.id}, 'draft', null
+            ${configuration.welcomeMessage}, ${actor.id}, ${actor.id}, 'draft', null,
+            ${transaction.json(configuration.roleIds)}
           )
         `
         await this.assertVisibleRoles(configuration.roleIds)
@@ -397,14 +401,16 @@ export class PostgresAgentService {
           insert into agent_versions (
             id, tenant_id, agent_id, version, name, description, welcome_message,
             example_prompts, system_prompt, visible_role_ids, data_scopes, max_output_bytes,
-            max_tool_calls, timeout_seconds, skill_refs, tool_refs, mcp_scope, delegation_policy, agent_spec, status, created_by, change_summary
+            max_tool_calls, timeout_seconds, skill_refs, tool_refs, web_search_enabled, project_tasks_enabled,
+            mcp_scope, delegation_policy, agent_spec, status, created_by, change_summary
           ) values (
             ${versionId}, ${tenantId}, ${configuration.id}, ${version}, ${configuration.name},
             ${configuration.description}, ${configuration.welcomeMessage}, ${transaction.json(configuration.examplePrompts)},
             ${configuration.systemPrompt}, ${transaction.json(configuration.roleIds)},
             ${transaction.json(configuration.dataScopes)}, ${configuration.maxOutputBytes},
             ${configuration.maxToolCalls}, ${configuration.timeoutSeconds}, ${transaction.json(configuration.skills)},
-            ${transaction.json(effectiveTools)}, ${transaction.json(asJson(configuration.mcpScope))},
+            ${transaction.json(effectiveTools)}, ${configuration.webSearchEnabled}, ${configuration.projectTasksEnabled},
+            ${transaction.json(asJson(configuration.mcpScope))},
             ${transaction.json(asJson(configuration.delegationPolicy))},
             ${transaction.json(asJson(spec))}, 'draft', ${actor.id}, ${configuration.changeSummary}
           )
@@ -496,7 +502,9 @@ export class PostgresAgentService {
       current.department,
     )
     assertConfiguration(configuration)
-    const effectiveTools = await this.resolveConfiguredToolReferences(configuration.skills, configuration.tools)
+    const effectiveTools = await this.resolveConfiguredToolReferences(
+      configuration.skills, configuration.tools, configuration.webSearchEnabled,
+    )
     await this.assertMcpConnectorSelection(configuration.mcpScope)
     await this.assertDelegationTargets(normalizeDelegationPolicy(configuration.delegationPolicy))
 
@@ -523,6 +531,8 @@ export class PostgresAgentService {
                  max_output_bytes = ${configuration.maxOutputBytes}, max_tool_calls = ${configuration.maxToolCalls},
                  timeout_seconds = ${configuration.timeoutSeconds},
                  skill_refs = ${transaction.json(configuration.skills)}, tool_refs = ${transaction.json(effectiveTools)},
+                 web_search_enabled = ${configuration.webSearchEnabled},
+                 project_tasks_enabled = ${configuration.projectTasksEnabled},
                  mcp_scope = ${transaction.json(asJson(configuration.mcpScope))},
                  delegation_policy = ${transaction.json(asJson(configuration.delegationPolicy))},
                  agent_spec = ${transaction.json(asJson(agentSpecFromConfiguration(configuration, locked.version, locked.agentSpec)))},
@@ -546,7 +556,8 @@ export class PostgresAgentService {
           insert into agent_versions (
             id, tenant_id, agent_id, version, name, description, welcome_message,
             example_prompts, system_prompt, visible_role_ids, data_scopes, max_output_bytes,
-            max_tool_calls, timeout_seconds, skill_refs, tool_refs, mcp_scope, delegation_policy, agent_spec, status, created_by, source_version, change_summary
+            max_tool_calls, timeout_seconds, skill_refs, tool_refs, web_search_enabled, project_tasks_enabled,
+            mcp_scope, delegation_policy, agent_spec, status, created_by, source_version, change_summary
           ) values (
             ${draftVersionId}, ${tenantId}, ${input.agentId}, ${newVersion},
             ${configuration.name}, ${configuration.description}, ${configuration.welcomeMessage},
@@ -554,6 +565,7 @@ export class PostgresAgentService {
             ${transaction.json(configuration.roleIds)}, ${transaction.json(configuration.dataScopes)},
             ${configuration.maxOutputBytes}, ${configuration.maxToolCalls}, ${configuration.timeoutSeconds},
             ${transaction.json(configuration.skills)}, ${transaction.json(effectiveTools)},
+            ${configuration.webSearchEnabled}, ${configuration.projectTasksEnabled},
             ${transaction.json(asJson(configuration.mcpScope))},
             ${transaction.json(asJson(configuration.delegationPolicy))},
             ${transaction.json(asJson(agentSpecFromConfiguration(configuration, newVersion, locked.agentSpec)))},
@@ -1019,6 +1031,8 @@ export class PostgresAgentService {
              av.tool_refs as tools, av.visible_role_ids as "roleIds", av.data_scopes as "dataScopes",
              av.max_output_bytes as "maxOutputBytes", av.max_tool_calls as "maxToolCalls",
              av.timeout_seconds as "timeoutSeconds",
+             av.web_search_enabled as "webSearchEnabled",
+             av.project_tasks_enabled as "projectTasksEnabled",
              av.agent_spec as "agentSpec",
              av.binding_refs as "bindingRefs", av.status as "versionStatus",
              coalesce(av.agent_spec #> '{model,requirements}', '[]'::jsonb) as "modelRequirements",
@@ -1057,10 +1071,15 @@ export class PostgresAgentService {
     const runtimeToolNames = this.toolService
       ? await this.toolService.resolveRuntimeToolNames(tools)
       : tools.map(reference => parseReference(reference).id)
-    const runtimeTools = tools.map((reference, index) => {
+    const configuredRuntimeTools = tools.map((reference, index) => {
       const { version } = parseReference(reference)
       return `${runtimeToolNames[index]}@${version}`
     })
+    const runtimeTools = unique([
+      ...agentBuiltinToolNames({ webSearchEnabled: row.webSearchEnabled ?? false })
+        .map(name => `${name}@${BUILTIN_TOOL_VERSION}`),
+      ...configuredRuntimeTools,
+    ])
     const approvalMode = this.toolService
       ? await this.toolService.resolveRuntimeApprovalMode(tools)
       : 'risk_based'
@@ -1171,11 +1190,13 @@ export class PostgresAgentService {
 
   /** Persist effective Skill dependencies separately from author-declared AgentSpec tools. */
   private async resolveConfiguredToolReferences(
-    skills: string[], declaredTools: string[],
+    skills: string[], declaredTools: string[], webSearchEnabled: boolean,
   ): Promise<string[]> {
     const runtimeSkills = this.skillService ? await this.skillService.resolveRuntimeSkills(skills) : []
     const dependencies = runtimeSkills.flatMap(skill => skill.tools)
       .filter(reference => !['activate_skill@1.0.0', 'python_execute@1.0.0'].includes(reference))
+    const unavailable = unavailableSkillTools(dependencies, { webSearchEnabled })
+    if (unavailable.length) throw invalidRequest(`Skill 依赖的工具不可用：${unavailable.join('、')}`)
     const effectiveTools = unique([...declaredTools, ...dependencies])
     await this.assertCapabilityReferences(skills, effectiveTools)
     return effectiveTools
