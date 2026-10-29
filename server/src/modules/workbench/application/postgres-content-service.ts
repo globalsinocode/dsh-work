@@ -1190,14 +1190,27 @@ export class PostgresContentService {
   }
 
   async storeSessionFile(sessionId: string, name: string, mimeType: string, bytes: Buffer, actorUserId: string) {
-    const [session] = await this.database<{ id: string; workspaceId: string; createdBy: string; workspaceType: string | null }[]>`
-      select s.id, s.workspace_id as "workspaceId", s.created_by as "createdBy",
+    const [session] = await this.database<{
+      id: string
+      workspaceId: string
+      createdBy: string
+      workspaceType: string | null
+      status: string
+    }[]>`
+      select s.id, s.workspace_id as "workspaceId", s.created_by as "createdBy", s.status,
              w.workspace_type as "workspaceType"
         from sessions s
         left join workspaces w on w.tenant_id = s.tenant_id and w.id = s.workspace_id
-       where s.tenant_id = ${tenantId} and s.id = ${sessionId} and s.status = 'active'
+       where s.tenant_id = ${tenantId} and s.id = ${sessionId} and s.status in ('draft', 'active')
     `
     if (!session) throw authorizationDenied('Session 不存在或不可访问')
+    // 草稿会话（0085）是「首条内容之前」的临时态：附件本身就是首条内容，创建者
+    // 上传即转正，否则前端「建会话 → 上传附件 → startRun」的首次发送必然 403。
+    // 转正只对创建者开放：其他人既拿不到草稿会话入口，也不应借上传探测或写入。
+    const draft = session.status === 'draft'
+    if (draft && session.createdBy !== actorUserId) {
+      throw authorizationDenied('Session 不存在或不可访问')
+    }
     // 上传属执行轨（3-T1）：归档不改 session.status，必须单独校验所属空间仍活跃，
     // 否则归档空间仍可上传会话附件（符合性评审 P1-2，实测返回 201）。
     await this.requireActiveWorkspace(session.workspaceId, actorUserId)
@@ -1231,8 +1244,8 @@ export class PostgresContentService {
     const { sessionId, workspaceId, name, mimeType, bytes, actorUserId } = input
     const prepared = await this.prepareObjectWrite({ workspaceId, sessionId, name, mimeType, bytes, actorUserId })
     await this.database.begin(async (transaction) => {
-      const [locked] = await transaction<{ sessionStatus: string }[]>`
-        select s.status as "sessionStatus"
+      const [locked] = await transaction<{ sessionStatus: string; createdBy: string }[]>`
+        select s.status as "sessionStatus", s.created_by as "createdBy"
           from sessions s
           join workspaces w on w.tenant_id = s.tenant_id and w.id = s.workspace_id
          where s.tenant_id = ${tenantId} and s.id = ${sessionId}
@@ -1240,8 +1253,18 @@ export class PostgresContentService {
            and w.workspace_type = 'team' and w.status = 'active'
          for update of w, s
       `
-      if (!locked || locked.sessionStatus !== 'active') {
+      if (!locked || (locked.sessionStatus !== 'active' && locked.sessionStatus !== 'draft')) {
         throw authorizationDenied('Session 不存在或不可访问')
+      }
+      // 草稿会话：附件即首条内容，只允许创建者在锁内转正；其他人即便持有会话
+      // 标识也不能往别人的草稿里写内容。
+      if (locked.sessionStatus === 'draft') {
+        if (locked.createdBy !== actorUserId) throw authorizationDenied('Session 不存在或不可访问')
+        await transaction`
+          update sessions
+             set status = 'active', last_active_at = now()
+           where tenant_id = ${tenantId} and id = ${sessionId} and status = 'draft'
+        `
       }
       const [member] = await transaction<{ role: string }[]>`
         select member_role as role from workspace_members
@@ -2116,7 +2139,7 @@ export class PostgresContentService {
   }) {
     const { workspaceId, sessionId, name, mimeType, bytes, actorUserId } = input
     const prepared = await this.prepareObjectWrite(input)
-    await this.database`
+    const insertFileObject = (sql: DatabaseClient | DatabaseTransaction) => sql`
       insert into file_objects (
         id, tenant_id, workspace_id, session_id, storage_key, original_name, mime_type,
         size_bytes, sha256, scan_status, uploaded_by
@@ -2126,6 +2149,31 @@ export class PostgresContentService {
         ${bytes.length}, ${prepared.sha256}, 'clean', ${actorUserId}
       )
     `
+    if (sessionId === null) {
+      await insertFileObject(this.database)
+    } else {
+      // 会话附件与「草稿转正」在同一事务内落库（0085）：并发上传同一草稿的多个
+      // 附件时，会话行锁让后来者看到 active，而不是各自 update 出 0 行再误判 403；
+      // 归档落在受理与写入之间时也会在锁内被拒。
+      await this.database.begin(async (transaction) => {
+        const [locked] = await transaction<{ status: string }[]>`
+          select status from sessions
+           where tenant_id = ${tenantId} and id = ${sessionId} and created_by = ${actorUserId}
+           for update
+        `
+        if (!locked || (locked.status !== 'draft' && locked.status !== 'active')) {
+          throw authorizationDenied('Session 不存在或不可访问')
+        }
+        if (locked.status === 'draft') {
+          await transaction`
+            update sessions
+               set status = 'active', last_active_at = now()
+             where tenant_id = ${tenantId} and id = ${sessionId} and status = 'draft'
+          `
+        }
+        await insertFileObject(transaction)
+      })
+    }
     await this.extractInto(prepared.fileId, name, bytes, prepared.extension)
     return {
       id: prepared.fileId,
