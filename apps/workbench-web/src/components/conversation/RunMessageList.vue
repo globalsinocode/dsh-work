@@ -8,7 +8,9 @@ import RunArtifactCards from './RunArtifactCards.vue'
 import RunProgressCard from './RunProgressCard.vue'
 import RunProgressSummary from './RunProgressSummary.vue'
 import { resultOutcomeLabels, useRunProgress } from '@/composables/useRunProgress'
+import { useAuthStore } from '@/stores/auth'
 import type { Artifact, ChatMessage, TaskRun } from '@/types/domain'
+import { mentionsUser } from '@/utils/mentions'
 import '@/styles/conversation-thread.css'
 
 /**
@@ -30,6 +32,8 @@ const props = withDefaults(defineProps<{
   /** 右栏正在预览的成果版本（`id@version`），对应卡片标为选中。 */
   previewKey?: string | null
 }>(), { canFollowUp: false, canRetry: false, referencedFileIds: () => [], previewKey: null })
+
+const authStore = useAuthStore()
 
 const emit = defineEmits<{
   preview: [artifact: Artifact]
@@ -97,6 +101,7 @@ function messageMeta(message: ChatMessage) {
     :message="message"
     :own="isOwn(message)"
     :meta="messageMeta(message)"
+    :tag="!isOwn(message) && mentionsUser(message, authStore.user.id) ? '@了你' : undefined"
   >
     <template v-if="isTerminalRun && message.id === firstAssistantMessageId" #before>
       <RunProgressSummary :task="task" />

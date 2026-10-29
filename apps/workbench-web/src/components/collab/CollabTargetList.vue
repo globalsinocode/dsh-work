@@ -66,6 +66,7 @@ function unreadLabel(count: number) {
 function rowAriaLabel(target: ConversationTarget) {
   const parts = [target.name]
   if (target.type === 'agent' && !target.available) parts.push('不可用')
+  if (target.mentioned) parts.push('有人@我')
   if (target.unreadCount > 0) {
     const unread = target.unreadCount > 99 ? '99 条以上未读' : `${target.unreadCount} 条未读`
     parts.push(target.muted ? `${unread}（已静音）` : unread)
@@ -157,7 +158,9 @@ function onPick(agentId: string) {
                   <span class="collab-target__name-text">{{ target.name }}</span>
                   <span v-if="target.type === 'agent' && !target.available" class="collab-target__tag">不可用</span>
                 </span>
-                <span class="collab-target__preview">{{ preview(target) }}</span>
+                <span class="collab-target__preview">
+                  <span v-if="target.mentioned" class="collab-target__mention" data-testid="conversation-mention">[有人@我]</span>{{ preview(target) }}
+                </span>
               </span>
               <span class="collab-target__side" aria-hidden="true">
                 <time class="collab-target__time" :datetime="target.lastActiveAt">{{ formatActivityTimeShort(target.lastActiveAt) }}</time>
@@ -231,6 +234,7 @@ function onPick(agentId: string) {
   min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; color: #fff; background: var(--dsh-color-danger);
   font-size: var(--dsh-font-size-micro); font-weight: 600; line-height: 18px; text-align: center;
 }
+.collab-target__mention { margin-right: 2px; color: var(--el-color-danger); }
 .collab-target__unread--muted { color: var(--dsh-color-muted); background: var(--dsh-color-border); }
 .collab-target-list__sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 </style>

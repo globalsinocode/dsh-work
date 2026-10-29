@@ -12,7 +12,7 @@ withDefaults(defineProps<{
   referencedArtifacts?: ReferencedArtifact[]
   running?: boolean
   stopping?: boolean
-  mentionOptions?: Array<{ id: string; name: string }>
+  mentionOptions?: Array<{ id: string; name: string; kind?: 'agent' | 'member' }>
   filesRequireMention?: boolean
   showWorkspaceContext?: boolean
   placeholder?: string

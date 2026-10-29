@@ -96,6 +96,19 @@ let loadToken = 0
  */
 const syncedAt = ref<string>(new Date().toISOString())
 
+/** D38：本空间中有 @ 本人未读提醒的讨论；读取失败时不标记，不打扰列表。 */
+const mentionedSessionIds = ref<Set<string>>(new Set())
+async function loadMentions() {
+  const workspaceId = props.workspaceId
+  try {
+    const { items: mentions } = await workbenchApi.getMentions()
+    if (workspaceId !== props.workspaceId) return
+    mentionedSessionIds.value = new Set(mentions.filter(item => item.workspaceId === workspaceId).map(item => item.sessionId))
+  } catch {
+    mentionedSessionIds.value = new Set()
+  }
+}
+
 /**
  * 在途恢复请求 + 待刷新标记（五审）：持续截断会让服务端周期性发 resync，
  * 每次 resync 若都作废在途请求并另起新请求，正常但稍慢的响应永远无法被
@@ -227,6 +240,7 @@ watch(() => props.workspaceId, (workspaceId, previous) => {
   if (workspaceId) taskStore.subscribeWorkspaceSessions(workspaceId, syncedAt.value)
   reset()
   void load()
+  void loadMentions()
 })
 
 /**
@@ -241,13 +255,17 @@ watch(
     // 首屏响应到达——此时必须再发一次 load()，loadToken 会让旧的慢响应作废，
     // 保证「旧请求不覆盖新状态」。
     if (liveRefreshTimer) clearTimeout(liveRefreshTimer)
-    liveRefreshTimer = setTimeout(() => void load(true), 300)
+    liveRefreshTimer = setTimeout(() => {
+      void load(true)
+      void loadMentions()
+    }, 300)
   },
 )
 
 onMounted(() => {
   taskStore.subscribeWorkspaceSessions(props.workspaceId, syncedAt.value)
   void load()
+  void loadMentions()
 })
 
 onBeforeUnmount(() => {
@@ -334,7 +352,8 @@ onBeforeUnmount(() => {
           :aria-label="dotLabel(item)"
         ></span>
         <span class="session-history-row__title" :title="item.title">
-          <span v-if="item.projectTaskId" class="session-history-row__task" data-testid="session-history-task-badge">任务</span>{{ item.title }}
+          <span v-if="item.projectTaskId" class="session-history-row__task" data-testid="session-history-task-badge">任务</span>
+          <span v-if="mentionedSessionIds.has(item.sessionId)" class="session-history-row__mention" data-testid="session-history-mention">@我</span>{{ item.title }}
         </span>
         <span class="session-history-row__creator" data-testid="session-history-creator">{{ item.creatorName }}</span>
         <span class="session-history-row__time">
@@ -472,6 +491,13 @@ onBeforeUnmount(() => {
   font-weight: 630;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.session-history-row__mention {
+  margin-right: 6px;
+  color: var(--el-color-danger);
+  font-size: var(--dsh-font-size-micro);
+  font-weight: 600;
 }
 
 .session-history-row__task {

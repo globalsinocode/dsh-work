@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
   AlarmClock,
@@ -17,11 +18,13 @@ import { AppLogo } from '@dsh-work/ui-core'
 import ModeSwitchMenu from '@/components/ModeSwitchMenu.vue'
 import { useWorkbenchBootstrap } from '@/composables/useWorkbenchBootstrap'
 import { roleLabels, useAuthStore } from '@/stores/auth'
+import { useCollabConversationStore } from '@/stores/collab-conversations'
 
 /** 协作模式壳层（项目空间方案 12.3）：窄图标栏（只显示图标）+ 主内容；窄屏改为底部标签栏。 */
 const route = useRoute()
 const router = useRouter()
 const authStore = useAuthStore()
+const conversations = useCollabConversationStore()
 
 const navigation = [
   { label: '对话', path: '/c/chats', icon: ChatDotRound },
@@ -29,6 +32,11 @@ const navigation = [
   { label: '群组', path: '/c/groups', icon: Collection },
   { label: '定时任务', path: '/automations', icon: AlarmClock },
 ]
+
+/** “对话”入口的 @ 提醒圆点（D38）。 */
+function mentionDot(path: string) {
+  return path === '/c/chats' && conversations.hasMention
+}
 
 function isActive(path: string) {
   return route.path === path || route.path.startsWith(`${path}/`)
@@ -58,6 +66,10 @@ function onAccountCommand(command: string | number | object) {
 }
 
 useWorkbenchBootstrap()
+// D38：主导航“对话”在有 @ 本人的群组时显示提醒圆点；不在对话页时也加载一次对话列表。
+onMounted(() => {
+  if (!conversations.loaded) void conversations.load()
+})
 </script>
 
 <template>
@@ -75,11 +87,12 @@ useWorkbenchBootstrap()
             class="collab-nav-item"
             :class="{ 'collab-nav-item--active': isActive(item.path) }"
             type="button"
-            :aria-label="item.label"
+            :aria-label="mentionDot(item.path) ? `${item.label}，有人@我` : item.label"
             :aria-current="isActive(item.path) ? 'page' : undefined"
             @click="navigate(item.path)"
           >
             <el-icon aria-hidden="true"><component :is="item.icon" /></el-icon>
+            <span v-if="mentionDot(item.path)" class="collab-nav-item__dot" aria-hidden="true" data-testid="nav-mention-dot"></span>
             <!-- 宽屏只显示图标（名称在悬停提示与可访问名称中）；窄屏底部标签栏显示名称。 -->
             <span class="collab-nav-item__label" aria-hidden="true">{{ item.label }}</span>
           </button>
@@ -182,6 +195,7 @@ useWorkbenchBootstrap()
 }
 
 .collab-nav-item {
+  position: relative;
   display: flex;
   width: 40px;
   height: 40px;
@@ -202,6 +216,16 @@ useWorkbenchBootstrap()
 .collab-nav-item--active:hover { color: var(--collab-nav-active-text); background: var(--collab-nav-active); }
 .collab-nav-item .el-icon { font-size: var(--dsh-font-size-section); }
 .collab-nav-item__label { display: none; font-size: var(--dsh-font-size-badge); line-height: 1.2; }
+.collab-nav-item__dot {
+  position: absolute;
+  top: 7px;
+  right: 7px;
+  width: 8px;
+  height: 8px;
+  border: 1.5px solid var(--collab-nav-bg);
+  border-radius: 50%;
+  background: var(--el-color-danger);
+}
 
 .collab-avatar {
   display: grid;
@@ -264,6 +288,7 @@ useWorkbenchBootstrap()
   }
 
   .collab-nav-item { flex: 1; width: auto; height: auto; padding: 8px 0 6px; border-radius: var(--dsh-radius-sm); }
+  .collab-nav-item__dot { top: 5px; right: calc(50% - 15px); }
   .collab-nav-item__label { display: block; }
   .collab-nav-item--active,
   .collab-nav-item--active:hover { color: var(--collab-nav-active-text); background: var(--collab-nav-active); }

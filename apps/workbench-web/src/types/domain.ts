@@ -194,6 +194,8 @@ export interface ChatMessage {
   agentName?: string
   /** 用户消息随发送附带的输入文件名（上传附件与引用文件）；无文件时缺省。 */
   attachments?: string[]
+  /** D38：该消息 @ 并登记了提醒的同事（用户 id）；没有时缺省。 */
+  mentionedUserIds?: string[]
 }
 
 /**
@@ -216,6 +218,8 @@ export interface SessionThreadMessage {
   agentName: string | null
   /** 用户消息随发送附带的输入文件名；无文件时缺省。 */
   attachments?: string[]
+  /** D38：该消息 @ 并登记了提醒的同事（用户 id）；没有时缺省。 */
+  mentionedUserIds?: string[]
 }
 
 export interface SessionThread {
@@ -839,6 +843,8 @@ export interface ConversationTarget {
   unreadCount: number
   /** 群组已按空间静音：未读以弱化样式显示。 */
   muted: boolean
+  /** D38：群组中有 @ 本人的未读提醒（不受静音影响）；单聊恒为 false。 */
+  mentioned?: boolean
 }
 
 export interface AgentConversationSegment {
@@ -867,6 +873,8 @@ export type WorkspaceTimelineItem =
       role: 'user' | 'assistant'; content: string; senderId: string | null; senderName: string | null
       agentName: string | null; runId: string | null; runRequesterName: string | null
       attachments?: string[] | null
+      /** D38：该发言 @ 并登记了提醒的同事。 */
+      mentionedUserIds?: string[]
     }
   | {
       kind: 'run'; id: string; at: string; sessionId: string; sessionTitle: string; runId: string
@@ -1054,4 +1062,12 @@ export interface PersonalFileQuery {
   query?: string
   cursor?: string
   limit?: number
+}
+
+/** D38：本人未读 @ 提醒，按项目空间与讨论汇总。 */
+export interface MentionSummary {
+  workspaceId: string
+  sessionId: string
+  count: number
+  latestAt: string
 }

@@ -502,3 +502,28 @@ test('MODE-E2E-13: unread counts show in the chat list and clear when the conver
   await expect(list.getByRole('button', { name: /^dsh-work Assistant/ })).toHaveAccessibleName(/\d+ 条未读/)
   await expect(list.getByRole('button', { name: /供应链经营分析/ }).first().getByTestId('conversation-unread')).toHaveCount(0)
 })
+
+test('MODE-E2E-17: an @ mention shows in both modes and clears when the group is opened', async ({ page }) => {
+  // 冒烟夹具预置一条 @ 测试身份的未读提醒（ws-supply）；登记与成员校验由 MODE-API-04 集成测试覆盖。
+  await page.goto('/workspaces')
+  await expect(page.getByRole('button', { name: /供应链经营分析/ }).getByTestId('workspace-card-mention')).toHaveText('有人@我')
+  await expect(page.getByRole('button', { name: /月度经营复盘/ }).getByTestId('workspace-card-mention')).toHaveCount(0)
+
+  await switchToCollab(page)
+  const navigation = page.getByRole('navigation', { name: '协作模式主导航' })
+  await expect(navigation.getByRole('button', { name: '对话，有人@我' })).toBeVisible()
+  const list = page.getByRole('list', { name: '对话' })
+  const group = list.getByRole('button', { name: /^供应链经营分析，有人@我/ })
+  await expect(group.getByTestId('conversation-mention')).toHaveText('[有人@我]')
+
+  await group.click()
+  await expect(page).toHaveURL(/\/c\/chats\/group\/ws-supply$/)
+  await expect(list.getByTestId('conversation-mention')).toHaveCount(0)
+  await expect(navigation.getByTestId('nav-mention-dot')).toHaveCount(0)
+
+  // 已读保存在服务端：重新加载后不再提醒。
+  await page.reload()
+  await expect(list.getByRole('button', { name: /供应链经营分析/ }).first()).toBeVisible()
+  await expect(list.getByTestId('conversation-mention')).toHaveCount(0)
+  await expect(navigation.getByRole('button', { name: '对话', exact: true })).toBeVisible()
+})

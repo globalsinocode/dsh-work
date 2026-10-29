@@ -46,6 +46,7 @@ const props = {
   archived: false,
   roleKnown: true,
   mentionOptions: [{ id: 'wam-1', name: '库存助手' }],
+  colleagueOptions: [] as Array<{ id: string; name: string; kind: 'member' }>,
   hasAgentMembers: true,
   pendingFile: null as WorkspaceFile | null,
 }
@@ -133,7 +134,7 @@ describe('CollabGroupTimeline (S5d 群聊)', () => {
     const start = vi.spyOn(store, 'startRunWithSessionFiles')
     await wrapper.get('.collab-group-timeline__preset-toggle').trigger('click')
     const confirm = await submit(wrapper, '大家怎么看')
-    expect(post).toHaveBeenCalledWith('s-new', '大家怎么看')
+    expect(post).toHaveBeenCalledWith('s-new', '大家怎么看', [])
     expect(start).not.toHaveBeenCalled()
     expect(confirm).toHaveBeenCalled()
   })
@@ -144,11 +145,62 @@ describe('CollabGroupTimeline (S5d 群聊)', () => {
     const start = vi.spyOn(store, 'startRunWithSessionFiles').mockResolvedValue({ id: 'run-x' } as TaskRun)
     vi.spyOn(store, 'subscribe').mockImplementation(() => undefined)
     await submit(wrapper, '分析一下')
-    expect(start).toHaveBeenCalledWith('s-new', { prompt: '分析一下', attachments: [], referencedFileIds: [], workspaceAgentMemberId: 'wam-1' })
+    expect(start).toHaveBeenCalledWith('s-new', { prompt: '分析一下', attachments: [], referencedFileIds: [], workspaceAgentMemberId: 'wam-1', mentionedUserIds: [] })
 
     const multi = await mountTimeline({ mentionOptions: [{ id: 'wam-1', name: '库存助手' }, { id: 'wam-2', name: '排产助手' }] })
     await submit(multi, '@排产助手 排一下', ['wam-2'])
     expect(start).toHaveBeenLastCalledWith('s-new', expect.objectContaining({ workspaceAgentMemberId: 'wam-2' }))
+  })
+
+  it('lists colleagues for @ and only reminds them; @Agent with a colleague still runs (D38)', async () => {
+    const colleagueOptions = [{ id: 'user:U2', name: '周航', kind: 'member' as const }]
+    const wrapper = await mountTimeline({ mentionOptions: [{ id: 'wam-1', name: '库存助手' }, { id: 'wam-2', name: '排产助手' }], colleagueOptions })
+    expect(wrapper.findComponent(TaskComposer).props('mentionOptions')).toEqual([
+      { id: 'wam-1', name: '库存助手', kind: 'agent' },
+      { id: 'wam-2', name: '排产助手', kind: 'agent' },
+      ...colleagueOptions,
+    ])
+    expect(wrapper.text()).toContain('@ 同事只提醒对方')
+    const store = useTaskStore()
+    const post = vi.spyOn(store, 'postSessionMessage').mockResolvedValue(undefined as never)
+    const start = vi.spyOn(store, 'startRunWithSessionFiles').mockResolvedValue({ id: 'run-z' } as TaskRun)
+    vi.spyOn(store, 'subscribe').mockImplementation(() => undefined)
+
+    await submit(wrapper, '@周航 看下排期', ['user:U2'])
+    expect(post).toHaveBeenLastCalledWith('s-new', '@周航 看下排期', ['U2'])
+    expect(start).not.toHaveBeenCalled()
+
+    await submit(wrapper, '@排产助手 @周航 排一下', ['wam-2', 'user:U2'])
+    expect(start).toHaveBeenLastCalledWith('s-new', expect.objectContaining({ workspaceAgentMemberId: 'wam-2', mentionedUserIds: ['U2'] }))
+  })
+
+  it('sends a colleague-only mention as discussion instead of handing it to the preselected Agent (D38)', async () => {
+    const wrapper = await mountTimeline({ colleagueOptions: [{ id: 'user:U2', name: '周航', kind: 'member' }] })
+    const store = useTaskStore()
+    const post = vi.spyOn(store, 'postSessionMessage').mockResolvedValue(undefined as never)
+    const start = vi.spyOn(store, 'startRunWithSessionFiles').mockResolvedValue({ id: 'run-z' } as TaskRun)
+    vi.spyOn(store, 'subscribe').mockImplementation(() => undefined)
+    await submit(wrapper, '@周航 一起看看', ['user:U2'])
+    expect(post).toHaveBeenCalledWith('s-new', '@周航 一起看看', ['U2'])
+    expect(start).not.toHaveBeenCalled()
+
+    // 没有 @ 任何人时仍交给预选的 Agent。
+    await submit(wrapper, '分析一下')
+    expect(start).toHaveBeenCalledWith('s-new', expect.objectContaining({ workspaceAgentMemberId: 'wam-1', mentionedUserIds: [] }))
+  })
+
+  it('tags messages from others that mention me with “@了你” (D38)', async () => {
+    api.getWorkspaceTimeline.mockResolvedValue({
+      workspaceId: 'ws-1',
+      nextCursor: null,
+      items: [
+        { kind: 'message', id: 'm:3', at: '2026-10-09T00:00:00Z', sessionId: 's-new', sessionTitle: '第二段', role: 'user', content: '@林岚 请确认', senderId: 'U2', senderName: '周航', agentName: null, runId: null, runRequesterName: null, mentionedUserIds: ['U1'] },
+        { kind: 'message', id: 'm:4', at: '2026-10-08T00:00:00Z', sessionId: 's-new', sessionTitle: '第二段', role: 'user', content: '@赵宁 看下', senderId: 'U2', senderName: '周航', agentName: null, runId: null, runRequesterName: null, mentionedUserIds: ['U3'] },
+      ],
+    })
+    const wrapper = await mountTimeline()
+    const tags = wrapper.findAll('[data-testid="task-conversation-tag"]')
+    expect(tags.map(tag => tag.text())).toEqual(['@了你'])
   })
 
   it('starts the first topic when the group has no discussion yet', async () => {
@@ -159,7 +211,7 @@ describe('CollabGroupTimeline (S5d 群聊)', () => {
     const post = vi.spyOn(store, 'postSessionMessage').mockResolvedValue(undefined as never)
     await submit(wrapper, '开个头')
     expect(api.createSession).toHaveBeenCalledWith({ title: '开个头', workspaceId: 'ws-1' })
-    expect(post).toHaveBeenCalledWith('s-first', '开个头')
+    expect(post).toHaveBeenCalledWith('s-first', '开个头', [])
   })
 
   it('requires @Agent for a referenced workspace file', async () => {

@@ -259,7 +259,7 @@
       "post": {
         "operationId": "markConversationTargetRead",
         "summary": "标记对话对象已读",
-        "description": "员工端双模式 S5e：把本人在该对话对象（agent = 与该 AI 同事的单聊，group = 本人所在的群组）上的已读位置前进到 upTo（缺省或晚于当前时间按当前时间），只进不退。只写本人的已读位置，与按空间的通知已读和静音分开。无权群组与不存在的 AI 同事返回 404。",
+        "description": "员工端双模式 S5e：把本人在该对话对象（agent = 与该 AI 同事的单聊，group = 本人所在的群组）上的已读位置前进到 upTo（缺省或晚于当前时间按当前时间），只进不退。只写本人的已读位置，与按空间的通知已读和静音分开。无权群组与不存在的 AI 同事返回 404。群组同时把本人在该群组、不晚于新已读位置的 @ 提醒标为已读（D38）。",
         "parameters": [
           {
             "name": "type",
@@ -332,6 +332,68 @@
           "422": {
             "$ref": "#/components/responses/Error"
           }
+        }
+      }
+    },
+    "/me/mentions": {
+      "get": {
+        "operationId": "listMyMentions",
+        "summary": "本人未读的 @ 提醒",
+        "description": "D38：按项目空间与讨论汇总本人未读的 @ 提醒，只含本人当前是成员的活动项目空间（读取时重查成员身份，失权后不再返回）；不受按空间静音影响。",
+        "responses": {
+          "200": {
+            "description": "未读提醒汇总",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    { "$ref": "#/components/schemas/Envelope" },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "type": "object",
+                          "required": ["items"],
+                          "properties": {
+                            "items": { "type": "array", "items": { "$ref": "#/components/schemas/MentionSummary" } }
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/me/mentions/read": {
+      "post": {
+        "operationId": "markMyMentionsRead",
+        "summary": "把本人的 @ 提醒标为已读",
+        "description": "D38：把本人在该项目空间（给出 sessionId 时只限该讨论）的 @ 提醒标为已读；只写本人的提醒状态。无权或不存在的项目空间返回 404。",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["workspaceId"],
+                "properties": {
+                  "workspaceId": { "type": "string", "maxLength": 200 },
+                  "sessionId": { "type": "string", "maxLength": 200 }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "$ref": "#/components/responses/Ok" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" },
+          "422": { "$ref": "#/components/responses/Error" }
         }
       }
     },
@@ -1654,6 +1716,14 @@
                   },
                   "cumulativeBudget": {
                     "$ref": "#/components/schemas/TaskCumulativeBudgetInput"
+                  },
+                  "mentionedUserIds": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "maxItems": 50,
+                    "description": "D38：同一条消息 @ 的同事（用户 ID）。服务端只为现任成员登记站内提醒，发送者本人与非成员被忽略，按“消息 + 接收人”去重；不影响是否执行。"
                   }
                 }
               }
@@ -2979,6 +3049,14 @@
                     "type": "string",
                     "minLength": 1,
                     "maxLength": 20000
+                  },
+                  "mentionedUserIds": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "maxItems": 50,
+                    "description": "D38：同一条消息 @ 的同事（用户 ID）。服务端只为现任成员登记站内提醒，发送者本人与非成员被忽略，按“消息 + 接收人”去重；不影响是否执行。"
                   }
                 }
               }
@@ -4018,7 +4096,8 @@
           "lastActiveAt",
           "available",
           "unreadCount",
-          "muted"
+          "muted",
+          "mentioned"
         ],
         "properties": {
           "type": {
@@ -4073,7 +4152,21 @@
           "muted": {
             "type": "boolean",
             "description": "群组已按空间静音（3.7）：未读照常计数，列表弱化显示；单聊恒为 false。"
+          },
+          "mentioned": {
+            "type": "boolean",
+            "description": "D38：群组中有 @ 本人的未读提醒（不受按空间静音影响）；单聊恒为 false。"
           }
+        }
+      },
+      "MentionSummary": {
+        "type": "object",
+        "required": ["workspaceId", "sessionId", "count", "latestAt"],
+        "properties": {
+          "workspaceId": { "type": "string" },
+          "sessionId": { "type": "string" },
+          "count": { "type": "integer", "minimum": 1 },
+          "latestAt": { "type": "string", "format": "date-time" }
         }
       },
       "ConversationMessagePreview": {
@@ -4352,6 +4445,11 @@
                   "string",
                   "null"
                 ]
+              },
+              "mentionedUserIds": {
+                "type": "array",
+                "items": { "type": "string" },
+                "description": "D38：该发言 @ 并登记了提醒的同事（用户 ID）。"
               },
               "attachments": {
                 "type": [

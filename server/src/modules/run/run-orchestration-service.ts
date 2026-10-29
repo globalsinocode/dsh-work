@@ -263,7 +263,10 @@ export class RunOrchestrationService {
     idempotencyKey?: string | null
     /** 项目空间 S3：平台写入的任务说明（任务对话首条消息）不算成员发言，不推进任务状态。 */
     skipProjectTaskSync?: boolean
+    /** D38：@ 的同事（用户 id）；只为现任成员登记站内提醒。 */
+    mentionedUserIds?: unknown
   }) {
+    const mentionedUserIds = assertMentionedUserIds(input.mentionedUserIds)
     if (typeof input.content !== 'string') throw requestInvalid('消息内容必须是字符串')
     const content = input.content.trim()
     if (!content) throw requestInvalid('消息内容不能为空')
@@ -287,6 +290,7 @@ export class RunOrchestrationService {
       userId: input.userId,
       content,
       messageId,
+      mentionedUserIds,
     })
     // 项目空间 S3：任务对话中的发言可能推进员工任务状态（承接人首次发言）。
     if (committed.created && !input.skipProjectTaskSync) {
@@ -313,8 +317,11 @@ export class RunOrchestrationService {
     scheduled?: boolean
     cumulativeBudget?: TaskBudgetInput
     authorizationContext?: SessionAuthorizationContext
+    /** D38：同一条消息同时 @ 的同事；只为现任成员登记站内提醒，不影响执行。 */
+    mentionedUserIds?: unknown
   }) {
     const prompt = assertPrompt(input.prompt)
+    const mentionedUserIds = assertMentionedUserIds(input.mentionedUserIds)
     const normalizedBudget = normalizeTaskBudget(input.cumulativeBudget)
     if (typeof input.idempotencyKey !== 'string' || !input.idempotencyKey.trim()) {
       throw requestInvalid('idempotencyKey 必须是非空字符串')
@@ -401,6 +408,7 @@ export class RunOrchestrationService {
       content: prompt,
       senderUserId: input.userId,
       messageId: `message-user-${run.id}`,
+      ...(session.workspaceType === 'team' ? { mentionedUserIds } : {}),
     })
     await this.dispatcher.failUndispatchedRun(run, async () => {
       const context = await this.conversationContext(session.id, run.id)
@@ -740,4 +748,14 @@ export class RunOrchestrationService {
     }
     return run
   }
+}
+
+/** D38：@ 同事的接收人列表；成员资格在写入事务内按现任成员复核。 */
+function assertMentionedUserIds(value: unknown): string[] {
+  if (value === undefined || value === null) return []
+  if (!Array.isArray(value) || value.some(id => typeof id !== 'string' || !id.trim())) {
+    throw requestInvalid('mentionedUserIds 必须是用户标识数组')
+  }
+  if (value.length > 50) throw requestInvalid('一条消息最多 @ 50 位同事')
+  return [...new Set(value as string[])]
 }

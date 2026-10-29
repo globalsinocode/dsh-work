@@ -89,6 +89,7 @@ describe('ConversationStarter', () => {
       [],
       undefined,
       undefined,
+      [],
     )
   })
 
@@ -129,6 +130,7 @@ describe('ConversationStarter', () => {
       [],
       undefined,
       'wam-001',
+      [],
     )
   })
 
@@ -157,7 +159,40 @@ describe('ConversationStarter', () => {
 
     expect(createTask).toHaveBeenCalledWith(
       '分析订单波动', [], 'ws-team', '供应链团队', undefined, [], undefined, 'wam-1',
+      [],
     )
+  })
+
+  it('starts a discussion instead of using the preselected Agent when only colleagues are mentioned (D38)', async () => {
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    const wrapper = mount(ConversationStarter, {
+      props: {
+        workspaceId: 'ws-team',
+        workspaceName: '供应链团队',
+        workspaceLocked: true,
+        requiresAgentMember: true,
+        startableAgentMemberIds: ['wam-1'],
+        mentionOptions: [{ id: 'wam-1', name: '订单分析助手' }],
+        colleagueOptions: [{ id: 'user:U2', name: '周航', kind: 'member' }],
+      },
+      global: { plugins: [pinia, ElementPlus] },
+    })
+    const taskStore = useTaskStore(pinia)
+    const createTask = vi.spyOn(taskStore, 'createTask')
+    const postSessionMessage = vi.spyOn(taskStore, 'postSessionMessage')
+      .mockResolvedValue({ messageId: 'msg-1', sessionId: 'session-new' })
+    apiMocks.createSession.mockResolvedValue({
+      id: 'session-new', workspaceId: 'ws-team', agentVersionId: null, title: '@周航 看下', createdAt: '2026-09-18T00:00:00.000Z',
+    })
+
+    wrapper.findComponent(TaskComposer).vm.$emit('submit', {
+      prompt: '@周航 看下', files: [], workspaceId: 'ws-team', mentions: ['user:U2'],
+    })
+    await flushPromises()
+
+    expect(postSessionMessage).toHaveBeenCalledWith('session-new', '@周航 看下', ['U2'])
+    expect(createTask).not.toHaveBeenCalled()
   })
 
   it('does not auto-select when multiple startable Agent members are available', async () => {
@@ -213,6 +248,7 @@ describe('ConversationStarter', () => {
       [],
       undefined,
       undefined,
+      [],
     )
   })
 
@@ -253,7 +289,7 @@ describe('ConversationStarter', () => {
     })
     await flushPromises()
     expect(apiMocks.createSession).toHaveBeenCalledWith({ title: '帮我看看库存', workspaceId: 'ws-team' })
-    expect(postSessionMessage).toHaveBeenCalledWith('session-new', '帮我看看库存')
+    expect(postSessionMessage).toHaveBeenCalledWith('session-new', '帮我看看库存', [])
     expect(createTask).not.toHaveBeenCalled()
     expect(router.push).toHaveBeenCalledWith('/workspaces/ws-team/conversations/session-new')
   })
@@ -295,6 +331,7 @@ describe('ConversationStarter', () => {
       [],
       undefined,
       'wam-9',
+      [],
     )
   })
 
@@ -367,6 +404,7 @@ describe('ConversationStarter', () => {
       [],
       undefined,
       'wam-1',
+      [],
     )
   })
 

@@ -45,6 +45,7 @@ describe('ConversationStarter 员工目录预选', () => {
 
     expect(createTask).toHaveBeenCalledWith(
       '分析本月订单交付情况', [], undefined, '', 'agent-assistant', [], undefined, undefined,
+      [],
     )
   })
 })

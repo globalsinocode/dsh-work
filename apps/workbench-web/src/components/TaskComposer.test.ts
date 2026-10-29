@@ -177,6 +177,28 @@ describe('TaskComposer', () => {
     expect(wrapper.text()).toContain('库存计划.xlsx')
   })
 
+  it('lists colleagues next to Agent members and submits the selected colleague (D38)', async () => {
+    const wrapper = mountComposer({
+      mentionOptions: [
+        { id: 'wam-1', name: '库存助手', kind: 'agent' },
+        { id: 'user:U2', name: '周航', kind: 'member' },
+      ],
+    })
+    const input = wrapper.get<HTMLTextAreaElement>('[aria-label="对话输入"]')
+    await input.setValue('@')
+    await wrapper.vm.$nextTick()
+    const panel = wrapper.get('[data-testid="mention-options"]')
+    expect(panel.attributes('aria-label')).toBe('提及 Agent 或同事')
+    const options = wrapper.findAll('.composer__mention-option')
+    expect(options.map(option => option.get('.composer__mention-kind').text())).toEqual(['Agent', '同事'])
+
+    await options[1]!.trigger('mousedown')
+    expect(input.element.value).toBe('@周航 ')
+    await input.setValue('@周航 @库存助手 看下排期')
+    await wrapper.get('[aria-label="发送消息"]').trigger('click')
+    expect(submitPayload(wrapper).mentions).toEqual(['user:U2', 'wam-1'])
+  })
+
   it('only resolves @mentions at a token boundary, not inside words', async () => {
     const mentionOptions = [{ id: 'wam-1', name: '助手' }]
     const embedded = mountComposer({ mentionOptions })

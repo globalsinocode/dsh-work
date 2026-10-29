@@ -110,6 +110,25 @@ describe('WorkspaceSessionHistory 团队历史对话视图', () => {
     expect(rows[1]?.find('.status-tag').text()).toBe('已完成')
   })
 
+  it('tags discussions with an unread @ of the current user (D38)', async () => {
+    mockSessionPages(() => page([
+      session({ sessionId: 's-1', title: '季度复盘' }),
+      session({ sessionId: 's-2', title: '库存异常排查' }),
+    ]))
+    vi.spyOn(workbenchApi, 'getMentions').mockResolvedValue({
+      items: [
+        { workspaceId: 'ws-team', sessionId: 's-2', count: 1, latestAt: '2026-09-10T08:00:00.000Z' },
+        { workspaceId: 'ws-other', sessionId: 's-1', count: 1, latestAt: '2026-09-10T08:00:00.000Z' },
+      ],
+    })
+    const wrapper = mountHistory()
+    await flushPromises()
+
+    const rows = wrapper.findAll('[data-testid="session-history-row"]')
+    expect(rows[0]?.find('[data-testid="session-history-mention"]').exists()).toBe(false)
+    expect(rows[1]?.get('[data-testid="session-history-mention"]').text()).toBe('@我')
+  })
+
   it('navigates to the latest Run of the row on click', async () => {
     mockSessionPages(() => page([session({ latestRun: { id: 'run/9', status: 'failed' } })]))
     const wrapper = mountHistory()

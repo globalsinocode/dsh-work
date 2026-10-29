@@ -22,6 +22,7 @@ import type {
   AgentConversation,
   ConversationLocation,
   ConversationTarget,
+  MentionSummary,
   WorkspaceTimelineItem,
   UserPreferences,
   WorkbenchAgent,
@@ -181,6 +182,14 @@ export const workbenchApi = {
       `/me/conversation-targets/${type}/${encodeURIComponent(id)}/read`,
       { method: 'POST', body: JSON.stringify(upTo ? { upTo } : {}) },
     ),
+  /** D38：本人未读的 @ 提醒（按项目空间与讨论汇总）。 */
+  getMentions: () => request<{ items: MentionSummary[] }>('/me/mentions'),
+  /** D38：把本人在该空间（或其中一个讨论）的 @ 提醒标为已读。 */
+  markMentionsRead: (workspaceId: string, sessionId?: string) =>
+    request<{ workspaceId: string; sessionId: string | null; read: number }>('/me/mentions/read', {
+      method: 'POST',
+      body: JSON.stringify({ workspaceId, ...(sessionId ? { sessionId } : {}) }),
+    }),
   resolveConversation: (conversationId: string) =>
     request<ConversationLocation>(`/me/conversation-targets/resolve?conversation=${encodeURIComponent(conversationId)}`),
   getTasks: () => request<TaskRun[]>('/tasks'),
@@ -203,16 +212,23 @@ export const workbenchApi = {
   getSessionThread: (sessionId: string, before?: string) =>
     request<SessionThread>(`/sessions/${encodeURIComponent(sessionId)}${before ? `?before=${encodeURIComponent(before)}` : ''}`),
   /** TW-10：不产生 Run 的讨论消息（仅团队空间会话）。幂等键由调用方提供。 */
-  postSessionMessage: (sessionId: string, content: string, idempotencyKey: string) =>
+  postSessionMessage: (sessionId: string, content: string, idempotencyKey: string, mentionedUserIds: string[] = []) =>
     request<{ messageId: string; sessionId: string }>(`/sessions/${encodeURIComponent(sessionId)}/messages`, {
       method: 'POST',
-      body: JSON.stringify({ content, idempotencyKey }),
+      body: JSON.stringify({ content, idempotencyKey, ...(mentionedUserIds.length ? { mentionedUserIds } : {}) }),
     }),
   /**
    * 在会话中发起一次执行。团队会话按消息绑定 Agent 成员（@ 触发），传
    * `workspaceAgentMemberId`；个人会话沿用会话绑定版本，忽略该字段。
    */
-  startRun: (sessionId: string, input: { prompt: string; idempotencyKey: string; fileIds?: string[]; workspaceAgentMemberId?: string }) =>
+  startRun: (sessionId: string, input: {
+    prompt: string
+    idempotencyKey: string
+    fileIds?: string[]
+    workspaceAgentMemberId?: string
+    /** D38：同一条消息同时 @ 的同事，只登记站内提醒。 */
+    mentionedUserIds?: string[]
+  }) =>
     request<TaskRun>(`/sessions/${encodeURIComponent(sessionId)}/runs`, {
       method: 'POST',
       body: JSON.stringify(input),

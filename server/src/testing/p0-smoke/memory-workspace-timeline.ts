@@ -29,7 +29,7 @@ export class MemoryWorkspaceTimeline {
           sessionId: task.sessionId, sessionTitle: task.title, role: message.role === 'user' ? 'user' : 'assistant',
           content: message.content, senderId: message.role === 'user' ? task.requestedBy : null,
           senderName: message.role === 'user' ? task.owner : null, agentName: message.role === 'user' ? null : 'dsh-work Assistant',
-          runId: task.id, runRequesterName: task.owner,
+          runId: task.id, runRequesterName: task.owner, mentionedUserIds: [],
         })
       })
       items.push({

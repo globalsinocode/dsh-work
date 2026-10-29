@@ -166,6 +166,20 @@ describe('CollabTargetList', () => {
     wrapper.unmount()
   })
 
+  it('marks a muted group that mentions me with “[有人@我]” (D38)', async () => {
+    vi.mocked(workbenchApi.listConversationTargets).mockResolvedValue(page([
+      { ...targets[2]!, mentioned: true },
+      targets[0]!,
+    ]))
+    const wrapper = mountList()
+    await flushPromises()
+    const buttons = wrapper.findAll('ul[aria-label="对话"] button')
+    expect(buttons[0]!.get('[data-testid="conversation-mention"]').text()).toBe('[有人@我]')
+    expect(buttons[0]!.attributes('aria-label')).toBe('采购群，有人@我，99 条以上未读（已静音）')
+    expect(buttons[1]!.find('[data-testid="conversation-mention"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
   it('refreshes the first page when mounted again', async () => {
     const first = mountList()
     await flushPromises()

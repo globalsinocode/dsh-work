@@ -21,6 +21,7 @@ import { useTaskStore } from '@/stores/tasks'
 import type { Artifact, ProjectTask, ProjectTaskEvent, SessionThread, SessionThreadMessage, TaskSource, TeamMemberRole, WorkspaceAgentMember } from '@/types/domain'
 import { notifyActionFailure } from '@/utils/feedback'
 import { continueChoice, type ContinueChoice } from '@/utils/continue-intent'
+import { colleagueMentionOptions, mentionsUser, splitMentions, type MentionOption } from '@/utils/mentions'
 import { scheduleLabel, scheduleReasonLabel } from '@/utils/project-task-schedule'
 import ArtifactPreviewPanel from '@/components/conversation/ArtifactPreviewPanel.vue'
 import ConversationMessageItem from '@/components/conversation/ConversationMessageItem.vue'
@@ -176,11 +177,14 @@ function isOwnMessage(message: { role: string; senderId?: string | null }) {
 
 /** 当前空间可 @ 的 Agent 成员（仅团队会话加载；只读成员的名册可读但无发起权）。 */
 const agentMembers = ref<WorkspaceAgentMember[]>([])
-const mentionOptions = computed(() =>
-  agentMembers.value
+/** D38：可 @ 的同事（现任成员，不含本人）；任务对话中不 @ 同事。 */
+const colleagues = ref<Array<{ userId: string; displayName: string }>>([])
+const mentionOptions = computed<MentionOption[]>(() => [
+  ...agentMembers.value
     .filter(member => member.status === 'available' && member.allowedActions.includes('start_conversation'))
-    .map(member => ({ id: member.id, name: member.name })),
-)
+    .map(member => ({ id: member.id, name: member.name, kind: 'agent' as const })),
+  ...(projectTask.value ? [] : colleagueMentionOptions(colleagues.value, authStore.user.id)),
+])
 
 /**
  * 项目空间 S1：当前线程若是 Agent 任务线程，回复默认交给承接 Agent，无需 @；
@@ -240,14 +244,46 @@ function reloadProjectTask() {
 async function loadAgentMembers(workspaceId: string | undefined) {
   if (!workspaceId || !isTeamSession.value) {
     agentMembers.value = []
+    colleagues.value = []
     return
   }
-  try {
-    agentMembers.value = await workbenchApi.listWorkspaceAgentMembers(workspaceId)
-  } catch {
-    agentMembers.value = []
-  }
+  await Promise.all([
+    (async () => {
+      try {
+        agentMembers.value = await workbenchApi.listWorkspaceAgentMembers(workspaceId)
+      } catch {
+        agentMembers.value = []
+      }
+    })(),
+    (async () => {
+      try {
+        colleagues.value = (await workbenchApi.listWorkspaceMembers(workspaceId)).items
+      } catch {
+        colleagues.value = []
+      }
+    })(),
+  ])
 }
+
+/**
+ * D38：打开团队对话（讨论或其中一次执行）即把该讨论的 @ 提醒标为已读——执行详情只载入本次执行的
+ * 消息，不能以“页面里有没有 @ 本人的发言”为条件；停留期间新到 @ 本人的发言也随即已读。只写本人的
+ * 提醒状态，失败不影响阅读（下次打开再标）。
+ */
+const mentionsOfMeInView = computed(() => {
+  const messages: Array<{ senderId?: string | null; mentionedUserIds?: string[] }> =
+    sessionThread.value?.messages ?? task.value?.messages ?? []
+  return messages.filter(message => message.senderId !== authStore.user.id && mentionsUser(message, authStore.user.id)).length
+})
+watch([currentSessionId, isTeamSession, mentionsOfMeInView], async ([sessionId, team]) => {
+  const workspaceId = task.value?.workspaceId ?? sessionThread.value?.workspaceId
+  if (!sessionId || !team || !workspaceId) return
+  try {
+    await workbenchApi.markMentionsRead(workspaceId, sessionId)
+  } catch {
+    // 标记失败不打扰阅读：提醒保留，下次打开再标。
+  }
+}, { immediate: true })
 
 const sourceTypeLabels: Record<TaskSource['type'], string> = {
   knowledge: '企业知识',
@@ -610,14 +646,16 @@ async function submitFollowUp(payload: { prompt: string; files: File[]; workspac
     return
   }
   try {
-    const mentionedMemberId = isTeamSession.value ? payload.mentions?.[0] ?? taskThreadAgentId.value : undefined
+    const { agentMemberIds, userIds } = splitMentions(payload.mentions)
+    const mentionedUserIds = isTeamSession.value && !taskThreadAgentId.value ? userIds : []
+    const mentionedMemberId = isTeamSession.value ? agentMemberIds[0] ?? taskThreadAgentId.value : undefined
     if (isTeamSession.value && !mentionedMemberId) {
-      // TW-10：团队共享会话里不 @ 的消息是全员可见的讨论，不产生执行。
+      // TW-10：团队共享会话里不 @ Agent 的消息是全员可见的讨论，不产生执行；@ 同事只提醒（D38）。
       if (payload.files.length || referencedArtifacts.value.length) {
         ElMessage.warning('带附件或引用成果的消息需要 @Agent 发起执行；纯讨论消息不支持附件。')
         return
       }
-      await taskStore.postSessionMessage(task.value.sessionId, payload.prompt)
+      await taskStore.postSessionMessage(task.value.sessionId, payload.prompt, mentionedUserIds)
       payload.confirm?.()
       try {
         await taskStore.refreshRun(task.value.id)
@@ -645,6 +683,7 @@ async function submitFollowUp(payload: { prompt: string; files: File[]; workspac
       const nextTask = await taskStore.sendMessage(
         task.value.id, payload.prompt, payload.files, mentionedMemberId,
         referencedArtifacts.value.map(item => item.fileId),
+        mentionedUserIds,
       )
       referencedArtifacts.value = []
       if (nextTask) await router.replace(conversationPath(nextTask.id))
@@ -675,13 +714,16 @@ async function submitSessionMessage(payload: { prompt: string; files: File[]; wo
     return
   }
   try {
-    const mentionedMemberId = isTeamSession.value ? payload.mentions?.[0] ?? taskThreadAgentId.value : undefined
+    const { agentMemberIds, userIds } = splitMentions(payload.mentions)
+    const mentionedUserIds = isTeamSession.value && !taskThreadAgentId.value ? userIds : []
+    const mentionedMemberId = isTeamSession.value ? agentMemberIds[0] ?? taskThreadAgentId.value : undefined
     // 团队会话 @ 成员，或个人会话（沿用会话绑定 Agent）：发起 Run。
     if (mentionedMemberId || !isTeamSession.value) {
       const createdRun = await taskStore.startRunWithSessionFiles(thread.sessionId, {
         prompt: payload.prompt,
         attachments: payload.files,
         workspaceAgentMemberId: mentionedMemberId,
+        mentionedUserIds,
       })
       taskStore.subscribe(createdRun.id)
       await router.replace(conversationPath(createdRun.id))
@@ -692,7 +734,7 @@ async function submitSessionMessage(payload: { prompt: string; files: File[]; wo
       ElMessage.warning('带附件的消息需要 @Agent 发起执行；纯讨论消息不支持附件。')
       return
     }
-    await taskStore.postSessionMessage(thread.sessionId, payload.prompt)
+    await taskStore.postSessionMessage(thread.sessionId, payload.prompt, mentionedUserIds)
     payload.confirm?.()
     try {
       sessionThread.value = await taskStore.loadSessionThread(thread.sessionId)

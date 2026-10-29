@@ -126,6 +126,8 @@ interface MessageRow {
   runRequesterId: string | null
   runRequesterName: string | null
   agentName: string | null
+  /** D38：该消息登记了提醒的同事。 */
+  mentionedUserIds: string[]
 }
 
 export interface ConversationHistoryMessage {
@@ -415,18 +417,25 @@ export class PostgresConversationRepository {
     /** 用户消息作者；Agent 回复为空（归因经 runId → Run 关联）。 */
     senderUserId?: string | null
     messageId?: string
+    /** D38：@ 的同事；只为现任成员登记提醒，与消息同一事务写入。 */
+    mentionedUserIds?: string[]
   }) {
     const id = input.messageId ?? `message-${randomUUID()}`
-    await this.database`
-      insert into messages (id, tenant_id, session_id, run_id, role, content, sender_user_id)
-      values (${id}, ${tenantId}, ${input.sessionId}, ${input.runId ?? null}, ${input.role}, ${input.content},
-              ${input.senderUserId ?? null})
-      on conflict (id) do nothing
-    `
-    await this.database`
-      update sessions set last_active_at = now()
-       where tenant_id = ${tenantId} and id = ${input.sessionId}
-    `
+    await this.database.begin(async (transaction) => {
+      await transaction`
+        insert into messages (id, tenant_id, session_id, run_id, role, content, sender_user_id)
+        values (${id}, ${tenantId}, ${input.sessionId}, ${input.runId ?? null}, ${input.role}, ${input.content},
+                ${input.senderUserId ?? null})
+        on conflict (id) do nothing
+      `
+      await transaction`
+        update sessions set last_active_at = now()
+         where tenant_id = ${tenantId} and id = ${input.sessionId}
+      `
+      if (input.senderUserId && input.mentionedUserIds?.length) {
+        await recordMentions(transaction, id, input.sessionId, input.senderUserId, input.mentionedUserIds)
+      }
+    })
     return id
   }
 
@@ -444,6 +453,8 @@ export class PostgresConversationRepository {
     userId: string
     content: string
     messageId: string
+    /** D38：@ 的同事；只为现任成员登记提醒。 */
+    mentionedUserIds?: string[]
   }): Promise<{ messageId: string; created: boolean }> {
     return this.database.begin(async (transaction) => {
       const [locked] = await transaction<{
@@ -483,6 +494,9 @@ export class PostgresConversationRepository {
           update sessions set last_active_at = now()
            where tenant_id = ${tenantId} and id = ${input.sessionId}
         `
+        if (input.mentionedUserIds?.length) {
+          await recordMentions(transaction, input.messageId, input.sessionId, input.userId, input.mentionedUserIds)
+        }
         return { messageId: input.messageId, created: true }
       }
       // 键冲突即同一次逻辑请求的重放：必须核对确实是「同会话、同发送者、
@@ -1131,7 +1145,10 @@ export class PostgresConversationRepository {
              coalesce(m.sender_user_id, r.requested_by) as "senderId",
              su.display_name as "senderName",
              r.requested_by as "runRequesterId", ru.display_name as "runRequesterName",
-             ag.name as "agentName"
+             ag.name as "agentName",
+             array(select mm.mentioned_user_id from message_mentions mm
+                    where mm.tenant_id = m.tenant_id and mm.message_id = m.id
+                    order by mm.mentioned_user_id) as "mentionedUserIds"
         from messages m
         left join runs r on r.tenant_id = m.tenant_id and r.id = m.run_id
         left join users su on su.tenant_id = m.tenant_id
@@ -1695,6 +1712,7 @@ function mapMessage(row: MessageRow): ChatMessage {
     runRequesterId: row.runRequesterId ?? undefined,
     runRequesterName: row.runRequesterName ?? undefined,
     agentName: row.agentName ?? undefined,
+    ...(row.mentionedUserIds?.length ? { mentionedUserIds: row.mentionedUserIds } : {}),
   }
 }
 
@@ -1824,4 +1842,30 @@ function decodeSessionCursor(cursor: string): { lastActiveAt: string; id: string
   } catch {
     throw requestInvalid('无效的分页游标')
   }
+}
+
+/**
+ * D38：为一条消息登记 @ 提醒。接收人只取消息所在团队空间的现任成员（账号有效），
+ * 发送者本人与非成员被忽略；按“消息 + 接收人”去重，幂等重放不重复登记。
+ */
+async function recordMentions(
+  sql: DatabaseTransaction,
+  messageId: string,
+  sessionId: string,
+  senderUserId: string,
+  mentionedUserIds: string[],
+) {
+  const candidates = [...new Set(mentionedUserIds)].filter(userId => userId !== senderUserId)
+  if (!candidates.length) return
+  await sql`
+    insert into message_mentions (tenant_id, message_id, mentioned_user_id, workspace_id, session_id, sender_user_id)
+    select ${tenantId}, ${messageId}, wm.user_id, s.workspace_id, s.id, ${senderUserId}
+      from sessions s
+      join workspaces w on w.tenant_id = s.tenant_id and w.id = s.workspace_id and w.workspace_type = 'team'
+      join workspace_members wm on wm.tenant_id = s.tenant_id and wm.workspace_id = s.workspace_id
+      join users u on u.tenant_id = wm.tenant_id and u.id = wm.user_id and u.status = 'active'
+     where s.tenant_id = ${tenantId} and s.id = ${sessionId}
+       and wm.user_id in ${sql(candidates)}
+    on conflict do nothing
+  `
 }

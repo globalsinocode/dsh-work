@@ -270,6 +270,7 @@ const {
   isOwner,
   startableAgentMemberIds,
   startableMentionOptions,
+  colleagueOptions,
   workspaceFiles: activityFiles,
   workspaceArtifacts,
   canWriteTeamContent,
@@ -988,6 +989,7 @@ const chatScope = computed(() => ({
   archived: isArchived.value,
   roleKnown: currentUserRole.value !== null,
   mentionOptions: startableMentionOptions.value,
+  colleagueOptions: canWriteTeamContent.value ? colleagueOptions.value : [],
   hasAgentMembers: agentMembers.value.length > 0,
 }))
 </script>
@@ -1177,6 +1179,7 @@ const chatScope = computed(() => ({
                 :requires-agent-member="isTeam"
                 :can-discuss="!isTeam || canWriteTeamContent"
                 :mention-options="isTeam ? startableMentionOptions : []"
+                :colleague-options="isTeam && canWriteTeamContent ? colleagueOptions : []"
               />
 
               <WorkspaceSessionHistory

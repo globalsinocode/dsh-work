@@ -78,6 +78,7 @@ Task 创建时由触发器写入发起 Principal：员工请求为本人，系�
 | `workspace_activity_events` | 团队动态（成员、Agent、文件、归档） | 按去重键幂等；元数据不含文件正文；会话附件不进入动态 |
 | `workspace_notification_states` | 每位成员的已读位置与静音 | 已读时间只前进不回拨 |
 | `conversation_read_states` | 协作模式对话列表按对话对象（单聊的 AI 同事 / 群组）的已读位置（迁移 0096） | 按账号 + 对话对象唯一；已读时间只前进不回拨；与 `workspace_notification_states` 分开保存；迁移时已有对话对象记为已读 |
+| `message_mentions` | 群聊与共享讨论中 @ 同事的站内提醒（项目空间方案 D38，迁移 0103） | 按消息 + 接收人唯一，与消息同一事务写入；只登记发送时的现任成员且不含发送者；读取时重查成员身份；`read_at` 为本人已读时间，与对话对象已读位置和按空间静音分开 |
 
 ## 4. 会话、Task 与运行
 

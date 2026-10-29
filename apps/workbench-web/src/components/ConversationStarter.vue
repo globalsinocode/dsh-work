@@ -16,6 +16,7 @@ import { useContentStore } from '@/stores/content'
 import { useTaskStore } from '@/stores/tasks'
 import type { WorkbenchAgent, WorkbenchSkill, WorkspaceFile } from '@/types/domain'
 import { notifyActionFailure } from '@/utils/feedback'
+import { splitMentions, type MentionOption } from '@/utils/mentions'
 
 const props = withDefaults(
   defineProps<{
@@ -46,6 +47,8 @@ const props = withDefaults(
      * startable 过滤口径一致；非团队锁定场景传空。
      */
     mentionOptions?: Array<{ id: string; name: string }>
+    /** D38：可 @ 的同事（不含本人），@ 只登记站内提醒、不执行；非团队锁定场景传空。 */
+    colleagueOptions?: MentionOption[]
   }>(),
   {
     workspaceId: '',
@@ -57,6 +60,7 @@ const props = withDefaults(
     requiresAgentMember: false,
     canDiscuss: true,
     mentionOptions: () => [],
+    colleagueOptions: () => [],
   },
 )
 
@@ -109,6 +113,10 @@ const effectivePresetAgentMember = computed(() => {
   const startable = props.mentionOptions.filter(option => props.startableAgentMemberIds.includes(option.id))
   return startable.length === 1 ? { ...startable[0]!, status: 'available' as const } : null
 })
+const composerMentionOptions = computed<MentionOption[]>(() => [
+  ...props.mentionOptions.map(option => ({ ...option, kind: 'agent' as const })),
+  ...props.colleagueOptions,
+])
 
 const commonTasks = [
   {
@@ -177,8 +185,13 @@ async function submitTask(payload: { prompt: string; files: File[]; workspaceId:
     const presetMemberId = effectivePresetAgentMember.value?.status === 'available'
       ? effectivePresetAgentMember.value.id
       : undefined
-    const mentionedId = (payload.mentions ?? []).find(id => props.startableAgentMemberIds.includes(id))
-    const workspaceAgentMemberId = props.workspaceLocked ? (mentionedId ?? presetMemberId) : undefined
+    const { agentMemberIds, userIds } = splitMentions(payload.mentions)
+    const mentionedUserIds = props.workspaceLocked ? userIds : []
+    const mentionedId = agentMemberIds.find(id => props.startableAgentMemberIds.includes(id))
+    // 只 @ 同事的消息是对同事说的：不交给预选的 Agent，作为讨论发送并提醒同事（D38）。
+    const workspaceAgentMemberId = props.workspaceLocked
+      ? (mentionedId ?? (mentionedUserIds.length ? undefined : presetMemberId))
+      : undefined
     if (props.workspaceLocked && props.requiresAgentMember && !workspaceAgentMemberId) {
       // 团队空间、无 @ 也无预选：开启纯讨论会话（不产生 Run）。
       if (payload.files.length || referencedWorkspaceFileIds.value.length) {
@@ -189,7 +202,7 @@ async function submitTask(payload: { prompt: string; files: File[]; workspaceId:
         title: payload.prompt,
         workspaceId: payload.workspaceId,
       })
-      await taskStore.postSessionMessage(session.id, payload.prompt)
+      await taskStore.postSessionMessage(session.id, payload.prompt, mentionedUserIds)
       await router.push(conversationPath(payload.workspaceId, session.id))
       payload.confirm?.()
       referencedWorkspaceFileIds.value = []
@@ -204,6 +217,7 @@ async function submitTask(payload: { prompt: string; files: File[]; workspaceId:
       referencedWorkspaceFileIds.value,
       selectedSkillId.value || undefined,
       workspaceAgentMemberId,
+      mentionedUserIds,
     )
     await router.push(conversationPath(payload.workspaceId, task.id))
     payload.confirm?.()
@@ -360,7 +374,7 @@ defineExpose({ useWorkspaceFile })
           :selected-skill-name="selectedSkill?.name"
           :selected-agent-name="selectedAgent?.name"
           :blocked-reason="blockedReason"
-          :mention-options="workspaceLocked ? mentionOptions : []"
+          :mention-options="workspaceLocked ? composerMentionOptions : []"
           :files-require-mention="workspaceLocked && requiresAgentMember && effectivePresetAgentMember?.status !== 'available'"
           @submit="submitTask"
           @clear-skill="clearSelectedSkill"

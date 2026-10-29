@@ -32,6 +32,8 @@ export type WorkspaceTimelineItem =
       runRequesterName: string | null
       /** 用户发言触发 Run 时附带的输入文件名；无文件时为 null。 */
       attachments?: string[] | null
+      /** D38：该发言 @ 并登记了提醒的同事（用户 id）。 */
+      mentionedUserIds: string[]
     }
   | {
       kind: 'run'
@@ -150,6 +152,8 @@ export class PostgresWorkspaceTimelineService {
                  'senderId', coalesce(m.sender_user_id, r.requested_by), 'senderName', su.display_name,
                  'agentName', case when m.role = 'assistant' then mag.name end,
                  'runId', m.run_id, 'runRequesterName', ru.display_name,
+                 'mentionedUserIds', array(select mm.mentioned_user_id from message_mentions mm
+                    where mm.tenant_id = m.tenant_id and mm.message_id = m.id order by mm.mentioned_user_id),
                  -- 输入文件取该 Run 所有 Attempt 的去重并集（审批恢复的 Attempt 不重新登记输入文件）；
                  -- 同一会话更早的 Run 已用过的文件是跨轮延续带入的，不算本条发言发送。
                  'attachments', case when m.role = 'user' then (

@@ -112,6 +112,7 @@ export const useTaskStore = defineStore('tasks', () => {
     referencedFileIds: string[] = [],
     skillId?: string,
     workspaceAgentMemberId?: string,
+    mentionedUserIds: string[] = [],
   ) {
     void _workspaceName
     const current = generation
@@ -129,6 +130,7 @@ export const useTaskStore = defineStore('tasks', () => {
       attachments,
       referencedFileIds,
       workspaceAgentMemberId,
+      mentionedUserIds,
     })
     requireGeneration(current)
     subscribe(task.id)
@@ -141,6 +143,7 @@ export const useTaskStore = defineStore('tasks', () => {
     attachments: File[],
     workspaceAgentMemberId?: string,
     referencedFileIds: string[] = [],
+    mentionedUserIds: string[] = [],
   ) {
     const epoch = generation
     const current = getTask(id)
@@ -150,6 +153,7 @@ export const useTaskStore = defineStore('tasks', () => {
       attachments,
       referencedFileIds,
       workspaceAgentMemberId,
+      mentionedUserIds,
     })
     requireGeneration(epoch)
     subscribe(task.id)
@@ -159,9 +163,9 @@ export const useTaskStore = defineStore('tasks', () => {
   /**
    * TW-10 讨论消息：不产生 Run，仅写入共享消息流。返回后由调用方刷新线程。
    */
-  async function postSessionMessage(sessionId: string, content: string) {
+  async function postSessionMessage(sessionId: string, content: string, mentionedUserIds: string[] = []) {
     const current = generation
-    const result = await workbenchApi.postSessionMessage(sessionId, content, crypto.randomUUID())
+    const result = await workbenchApi.postSessionMessage(sessionId, content, crypto.randomUUID(), mentionedUserIds)
     requireGeneration(current)
     return result
   }
@@ -209,6 +213,8 @@ export const useTaskStore = defineStore('tasks', () => {
     attachments: File[]
     referencedFileIds?: string[]
     workspaceAgentMemberId?: string
+    /** D38：同时 @ 的同事，只登记站内提醒。 */
+    mentionedUserIds?: string[]
   }) {
     const current = generation
     let uploadedFileIds: string[] = []
@@ -220,6 +226,7 @@ export const useTaskStore = defineStore('tasks', () => {
         idempotencyKey: crypto.randomUUID(),
         fileIds: [...new Set([...(input.referencedFileIds ?? []), ...uploadedFileIds])],
         ...(input.workspaceAgentMemberId ? { workspaceAgentMemberId: input.workspaceAgentMemberId } : {}),
+        ...(input.mentionedUserIds?.length ? { mentionedUserIds: input.mentionedUserIds } : {}),
       })
       if (!task) throw new Error('Run 创建失败')
       requireGeneration(current)

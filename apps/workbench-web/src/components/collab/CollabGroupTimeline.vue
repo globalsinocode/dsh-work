@@ -14,6 +14,7 @@ import { useCollabConversationStore } from '@/stores/collab-conversations'
 import { useTaskStore } from '@/stores/tasks'
 import type { WorkspaceFile, WorkspaceTimelineItem } from '@/types/domain'
 import { notifyActionFailure } from '@/utils/feedback'
+import { mentionsUser, splitMentions, type MentionOption } from '@/utils/mentions'
 import { scheduleLabel } from '@/utils/project-task-schedule'
 import '@/styles/conversation-thread.css'
 
@@ -22,6 +23,8 @@ import '@/styles/conversation-thread.css'
  * 夹有系统记录。执行记录并入 Agent 回复：已有回复的执行只由回复（“由某人发起”“查看执行详情”）
  * 表示，还没有回复的执行以 Agent 条目显示进度或结果。发言规则与 A 的共享讨论一致（3.4）：不 @ 是讨论，@ Agent 才执行，
  * 只有一个可发起的 Agent 时预选它且可取消；发送续写最近一段讨论，没有讨论时开启第一段。
+ * @ 同事只登记站内提醒、不执行（D38），可与 @Agent 同时出现；只 @ 同事时不交给预选的 Agent；
+ * @ 本人的发言标注“@了你”。
  * 任务卡片进入群组的任务详情，执行记录进入群组内的执行详情（与 A 同一页面）。
  */
 const props = defineProps<{
@@ -31,6 +34,8 @@ const props = defineProps<{
   /** 服务端角色已确定（名册加载完成）；之前不提示“没有 Agent”。 */
   roleKnown: boolean
   mentionOptions: Array<{ id: string; name: string }>
+  /** D38：可 @ 的群内同事（不含本人），@ 只提醒。 */
+  colleagueOptions?: MentionOption[]
   hasAgentMembers: boolean
   focusSessionId?: string
   /** 文件页签“引用到对话”带来的空间文件。 */
@@ -55,6 +60,10 @@ let generation = 0
 
 /** 只有一个可发起的 Agent 成员时预选它（3.4）；用户可取消改为纯讨论。 */
 const singleAgent = computed(() => props.mentionOptions.length === 1 ? props.mentionOptions[0] : undefined)
+const composerOptions = computed<MentionOption[]>(() => [
+  ...props.mentionOptions.map(option => ({ ...option, kind: 'agent' as const })),
+  ...(props.colleagueOptions ?? []),
+])
 const preselect = ref(true)
 watch(singleAgent, () => { preselect.value = true })
 
@@ -132,6 +141,11 @@ function taskChangeText(item: Extract<WorkspaceTimelineItem, { kind: 'task' }>) 
 
 function isOwnMessage(item: Extract<WorkspaceTimelineItem, { kind: 'message' }>) {
   return item.role === 'user' && item.senderId === authStore.user.id
+}
+
+/** 身份行标签：Agent 回复标执行状态；@ 本人的发言标“@了你”（D38）。 */
+function messageTag(item: Extract<WorkspaceTimelineItem, { kind: 'message' }>) {
+  return replyTag(item) ?? (!isOwnMessage(item) && mentionsUser(item, authStore.user.id) ? '@了你' : undefined)
 }
 
 function openRun(runId: string) {
@@ -270,8 +284,10 @@ async function scrollToBottom(behavior: 'auto' | 'smooth' = 'smooth') {
 async function submit(payload: { prompt: string; files: File[]; workspaceId: string; mentions: string[]; confirm: () => void }) {
   if (!props.canWrite || !props.hasAgentMembers) return
   const allowed = new Set(props.mentionOptions.map(option => option.id))
-  const mentioned = payload.mentions.find(id => allowed.has(id))
-  const memberId = mentioned ?? (preselect.value ? singleAgent.value?.id : undefined)
+  const { agentMemberIds, userIds } = splitMentions(payload.mentions)
+  const mentioned = agentMemberIds.find(id => allowed.has(id))
+  // 只 @ 同事的消息是对同事说的：不交给预选的 Agent，作为讨论发送并提醒同事（D38）。
+  const memberId = mentioned ?? (preselect.value && !userIds.length ? singleAgent.value?.id : undefined)
   const references = props.pendingFile ? [props.pendingFile.id] : []
   if (!memberId && (payload.files.length || references.length)) {
     ElMessage.warning('带附件或引用文件的消息需要 @Agent 发起执行；纯讨论消息不支持附件。')
@@ -287,10 +303,11 @@ async function submit(payload: { prompt: string; files: File[]; workspaceId: str
         attachments: payload.files,
         referencedFileIds: references,
         workspaceAgentMemberId: memberId,
+        mentionedUserIds: userIds,
       })
       taskStore.subscribe(run.id)
     } else {
-      await taskStore.postSessionMessage(sessionId, payload.prompt)
+      await taskStore.postSessionMessage(sessionId, payload.prompt, userIds)
     }
     payload.confirm()
     if (references.length) emit('clear-file')
@@ -357,7 +374,7 @@ onBeforeUnmount(() => {
             </p>
 
             <div v-if="item.kind === 'message'" class="collab-group-timeline__message">
-              <ConversationMessageItem :message="{ ...item, createdAt: formatTime(item.at) }" :own="isOwnMessage(item)" :tag="replyTag(item)">
+              <ConversationMessageItem :message="{ ...item, createdAt: formatTime(item.at) }" :own="isOwnMessage(item)" :tag="messageTag(item)">
                 <button
                   v-if="item.runId"
                   type="button"
@@ -434,7 +451,7 @@ onBeforeUnmount(() => {
           </div>
           <p v-if="singleAgent" class="collab-group-timeline__preset">
             <template v-if="preselect">
-              发送后交给 @{{ singleAgent.name }} 执行
+              发送后交给 @{{ singleAgent.name }} 执行（只 @ 同事时作为讨论发送）
               <button type="button" class="collab-group-timeline__preset-toggle" @click="preselect = false">
                 <el-icon><Close /></el-icon>改为讨论
               </button>
@@ -444,12 +461,12 @@ onBeforeUnmount(() => {
               <button type="button" class="collab-group-timeline__preset-toggle" @click="preselect = true">交给 @{{ singleAgent.name }}</button>
             </template>
           </p>
-          <p v-else class="collab-group-timeline__preset">群聊中 @ Agent 才会执行，其他消息只是成员间讨论。</p>
+          <p v-else class="collab-group-timeline__preset">群聊中 @ Agent 才会执行，@ 同事只提醒对方，其他消息只是成员间讨论。</p>
           <TaskComposer
             compact
-            :mention-options="mentionOptions"
+            :mention-options="composerOptions"
             :files-require-mention="!(preselect && singleAgent)"
-            placeholder="发消息，@ Agent 让它执行"
+            placeholder="发消息，@ Agent 让它执行，@ 同事提醒对方"
             @submit="submit"
           />
         </template>
