@@ -89,3 +89,12 @@ E2E 证据按层级区分，不相互替代：
 - DSH 不可用时明确报告不可用，禁止自动降级为直接调用模型的 Agent 路线。测试替身仅用于测试，不得成为生产备用执行引擎。
 
 详细职责及评审要求以架构总览的“Agent 执行引擎统一”章节为准；新增方案、代码与文档必须遵守该约束。
+
+## Cursor Cloud specific instructions
+
+Cloud Agent 的 `install` 会安装 PostgreSQL 17、按锁文件安装依赖，并安装 Playwright Chromium。`start` 用 `pg_ctlcluster 17 main start` 拉起数据库（`policy-rc.d` 会拒绝 `service postgresql start`），确保角色 `dsh_work` 和库 `dsh_work` 存在，并在端口空闲时于 tmux 会话 `dsh-dev` 执行 `pnpm dev:all`。
+
+- 员工端是 `http://localhost:4174/workbench`，管理端是 `http://localhost:4180/overview`，后端健康检查是 `http://127.0.0.1:4190/health`。开发日志在 `/tmp/dsh-dev.log`。
+- 根目录 `.env` 不入库。首次启动生成的管理员写在 `/var/lib/dsh-work/local-admin.json`（权限 600）。不要把口令写入仓库、日志或对话。
+- 集成测试读取 `.env` 的 `DSH_WORK_TEST_DATABASE_URL`（维护库 `postgres`）。不要把测试指到业务库 `dsh_work`。
+- 本环境不包含 DeepSeek Harness checkout 和模型凭据。服务会报告 DSH 不可用，同时继续提供登录、员工端和管理端。不要绕过 DSH 直接调用模型。
