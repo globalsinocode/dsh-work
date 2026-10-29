@@ -27,7 +27,7 @@ before(async () => {
   service = new PostgresSkillService(db.client, undefined, new SkillArtifactStore(new LocalObjectStorage(root, { fileMode: 0o400 })))
   draftId = (await service.createSkill(configuration)).skill.id
   const router = new Router({ authenticateApi: testApiAuthenticator })
-  registerSkillRoutes(router, service)
+  registerSkillRoutes(router, service, async () => ({ skills: [], scenarios: [], disabledBuiltinSkills: [] }))
   server = createServer((request, response) => void router.handle(request, response))
   server.listen(0, '127.0.0.1'); await once(server, 'listening')
   base = `http://127.0.0.1:${(server.address() as { port: number }).port}/api/admin/v1`

@@ -1,0 +1,9 @@
+# Python packages in the execution image. After changing this list, regenerate the lock for the
+# image's platform (linux/aarch64, Python 3.12) with every wheel hash, cut off at the Debian snapshot date:
+#   uv pip compile requirements.in --output-file requirements.lock --generate-hashes \
+#     --python-version 3.12 --python-platform aarch64-manylinux_2_28 --only-binary :all: \
+#     --exclude-newer 2026-10-21T00:00:00Z --no-header --emit-index-url
+pandas
+openpyxl
+python-docx
+python-pptx

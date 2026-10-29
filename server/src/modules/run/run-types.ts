@@ -91,7 +91,8 @@ export interface CreateAttemptInput {
   }>
   inputFiles?: Array<{
     fileId: string
-    extractionId: string
+    /** Null for a binary artifact mounted only as its original file (execution isolation 2b-4). */
+    extractionId: string | null
     mountPath: string
   }>
 }

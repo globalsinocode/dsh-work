@@ -1,4 +1,4 @@
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
 
 import { workbenchApi } from '../api/client'
@@ -8,6 +8,7 @@ import type { ConversationTarget } from '../types/domain'
  * 协作模式对话列表（S5c，D24）：本人的单聊（按 AI 同事聚合）与群组，按最近活动排序、服务端
  * 分页与搜索。聊天区发送消息或执行结束后调用 `refresh` 更新预览与排序；迟到的旧请求不覆盖新结果。
  * 未读（S5e）：服务端按本人已读位置计数；打开的对话对象经 `markRead` 前进已读位置。
+ * @ 提醒（D38）：群组带 `mentioned`，打开群组时随已读一并清除；`hasMention` 供主导航显示提醒圆点。
  */
 export const useCollabConversationStore = defineStore('workbench-collab-conversations', () => {
   const targets = ref<ConversationTarget[]>([])
@@ -18,6 +19,7 @@ export const useCollabConversationStore = defineStore('workbench-collab-conversa
   const error = ref('')
   const loaded = ref(false)
   let generation = 0
+  const hasMention = computed(() => targets.value.some(item => item.mentioned))
 
   async function load(nextQuery = query.value) {
     const current = ++generation
@@ -66,8 +68,9 @@ export const useCollabConversationStore = defineStore('workbench-collab-conversa
    */
   async function markRead(type: ConversationTarget['type'], id: string) {
     const target = targets.value.find(item => item.type === type && item.id === id)
-    if (!target || target.unreadCount <= 0) return
+    if (!target || (target.unreadCount <= 0 && !target.mentioned)) return
     target.unreadCount = 0
+    target.mentioned = false
     try {
       await workbenchApi.markConversationTargetRead(type, id, target.lastMessage?.sentAt)
     } catch {
@@ -86,5 +89,5 @@ export const useCollabConversationStore = defineStore('workbench-collab-conversa
     loaded.value = false
   }
 
-  return { targets, nextCursor, query, loading, loadingMore, error, loaded, load, loadMore, refresh, markRead, reset }
+  return { targets, nextCursor, query, loading, loadingMore, error, loaded, hasMention, load, loadMore, refresh, markRead, reset }
 })

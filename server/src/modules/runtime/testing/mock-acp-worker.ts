@@ -1,5 +1,6 @@
 import { request } from 'node:http'
 import { createHash } from 'node:crypto'
+import { appendFileSync } from 'node:fs'
 import { appendFile, mkdir, rename, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { createInterface } from 'node:readline'
@@ -26,6 +27,8 @@ const permissionPrompts = new Map<number, PendingPrompt>()
 const initDelayArg = process.argv.find(arg => arg.startsWith('--delay-init='))
 const initDelayMs = initDelayArg ? Number(initDelayArg.slice('--delay-init='.length)) : 0
 
+// Lets tests read the system prompt the Adapter handed to this Worker.
+if (process.env.MOCK_SYSTEM_PROMPT_LOG) appendFileSync(process.env.MOCK_SYSTEM_PROMPT_LOG, `${process.env.DSH_AGENT_SYSTEM_PROMPT ?? ''}\n`)
 const lines = createInterface({ input: process.stdin, crlfDelay: Infinity })
 
 lines.on('line', (line) => {
@@ -281,6 +284,25 @@ lines.on('line', (line) => {
       })().catch(() => failPrompt(pending, 'Artifact write failed', 'tool'))
       return
     }
+    if (text.includes('[remote-exec]')) {
+      // Execution container mode: the policy's authorization probe, then what the remote
+      // ctx.subprocess sends for a DSH glob.
+      void (async () => {
+        const probe = await postToBridgeWithStatus('/authorize-execution', {})
+        if (probe.status !== 200) {
+          pending.answer += `\nauthorize:${probe.status}`
+          return
+        }
+        const output = await postToBridge('/subprocess/exec', {
+          argv: ['/dsh/node_modules/@vscode/ripgrep-darwin-arm64/bin/rg', '--files'],
+          cwd: process.env.DSH_WORKSPACE_ROOT,
+          maxOutputBytes: 1024,
+          timeoutMs: 5_000,
+        })
+        pending.answer += `\nremote-exec:${output}`
+      })().then(() => finishPrompt(pending, 'end_turn'), () => failPrompt(pending, 'Remote exec failed', 'tool'))
+      return
+    }
     if (text.includes('[tool-live]')) {
       // EX-01: the ACP tool lifecycle exactly as DSH 0.1.2-rc.1 sends it (packages/acp/acp/src/updates.ts):
       // tool_call (in_progress, rawInput) then tool_call_update (completed/failed, content), by toolCallId.
@@ -314,10 +336,13 @@ lines.on('line', (line) => {
       void emitPermissionRequest(requestId, sessionId).catch(() => failPrompt(pending, 'Permission log write failed', 'tool'))
       return
     }
-    if (process.env.DSH_PLATFORM_TOOL_SOCKET && JSON.parse(process.env.DSH_ALLOWED_TOOLS_JSON ?? '[]').some((name: string) => ['activate_skill', 'prepare_skill_installation', 'propose_admin_task', 'prepare_admin_action', 'propose_memory'].includes(name))) {
+    // 平台内置 Skill（dsh-work-*）出现在每个员工侧运行的目录中；替身只激活已安装 Skill，
+    // 只有内置 Skill 时照常走普通回答，不改变其他用例的行为。
+    const mockSkillName = mockActivationTarget(process.env.DSH_AGENT_SYSTEM_PROMPT ?? '')
+    if (process.env.DSH_PLATFORM_TOOL_SOCKET && JSON.parse(process.env.DSH_ALLOWED_TOOLS_JSON ?? '[]').some((name: string) => ['prepare_skill_installation', 'propose_admin_task', 'prepare_admin_action', 'propose_memory'].includes(name) || (name === 'activate_skill' && mockSkillName))) {
       const allowedTools = JSON.parse(process.env.DSH_ALLOWED_TOOLS_JSON ?? '[]') as string[]
-      const activating = allowedTools.includes('activate_skill')
-      const skillName = process.env.DSH_AGENT_SYSTEM_PROMPT?.match(/(?:必须先调用 activate_skill 激活 |^- )([^（，\n]+)/m)?.[1]?.trim() ?? ''
+      const skillName = mockSkillName
+      const activating = allowedTools.includes('activate_skill') && Boolean(skillName)
       void (async () => {
         try {
           if (allowedTools.includes('propose_memory')) {
@@ -533,10 +558,28 @@ function send(message: JsonRpcMessage): void {
 }
 
 function callPlatformTool(name: string, input: Record<string, unknown>): Promise<string> {
+  return postToBridge(name === 'prepare_skill_installation' ? '/prepare-skill' : `/tools/${name}`, input)
+}
+
+function postToBridgeWithStatus(path: string, input: Record<string, unknown>): Promise<{ status: number; body: string }> {
   const socketPath = process.env.DSH_PLATFORM_TOOL_SOCKET!
   const body = JSON.stringify(input)
   return new Promise((resolve, reject) => {
-    const path = name === 'prepare_skill_installation' ? '/prepare-skill' : `/tools/${name}`
+    const req = request({ socketPath, path, method: 'POST', headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) } }, response => {
+      let output = ''
+      response.on('data', chunk => { output += String(chunk) })
+      response.on('end', () => resolve({ status: response.statusCode ?? 0, body: output }))
+      response.on('error', reject)
+    })
+    req.on('error', reject)
+    req.end(body)
+  })
+}
+
+function postToBridge(path: string, input: Record<string, unknown>): Promise<string> {
+  const socketPath = process.env.DSH_PLATFORM_TOOL_SOCKET!
+  const body = JSON.stringify(input)
+  return new Promise((resolve, reject) => {
     const req = request({ socketPath, path, method: 'POST', headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) } }, response => {
       let output = ''
       response.on('data', chunk => { output += String(chunk) })
@@ -550,4 +593,14 @@ function callPlatformTool(name: string, input: Record<string, unknown>): Promise
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
+}
+
+/** 替身要激活的 Skill：显式“必须先调用 activate_skill 激活 X”，否则目录中第一个非内置 Skill。 */
+function mockActivationTarget(systemPrompt: string): string {
+  const explicit = systemPrompt.match(/必须先调用 activate_skill 激活 ([^（，\n]+)/)?.[1]?.trim()
+  if (explicit) return explicit
+  for (const match of systemPrompt.matchAll(/^- (.+?)（([^（）@]+)@[^（）]+）：/gm)) {
+    if (!match[2]!.startsWith('dsh-work-')) return match[1]!.trim()
+  }
+  return ''
 }

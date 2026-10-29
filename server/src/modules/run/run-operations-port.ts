@@ -7,7 +7,7 @@ import type { RunAttemptRecord, RunRecord } from './run-types.ts'
  * not depend on the admin module. Implemented by PostgresOperationsService.
  */
 export interface RunOperationsPort extends AuditTrail {
-  getRuntimePolicy(runtimeId: string): Promise<{ timeoutSeconds: number; disabledTools?: readonly string[] }>
+  getRuntimePolicy(runtimeId: string): Promise<{ timeoutSeconds: number; disabledTools?: readonly string[]; disabledBuiltinSkills?: readonly string[] }>
   recordModelUsage(input: {
     run: RunRecord
     attempt: RunAttemptRecord

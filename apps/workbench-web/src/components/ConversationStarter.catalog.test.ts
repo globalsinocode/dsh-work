@@ -51,6 +51,7 @@ describe('ConversationStarter 员工目录预选', () => {
     expect(createTask).toHaveBeenCalledWith(
       '分析本月订单交付情况', [], undefined, '', 'agent-assistant', [], undefined, undefined,
       'agent-version-assistant-120', undefined,
+      [],
     )
   })
 
@@ -82,6 +83,7 @@ describe('ConversationStarter 员工目录预选', () => {
     await flushPromises()
     expect(createTask).toHaveBeenCalledWith(
       '分析库存', [], undefined, '', 'agent-1', [], undefined, undefined, 'agent-version-v1', undefined,
+      [],
     )
   })
 })

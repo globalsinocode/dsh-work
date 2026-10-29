@@ -80,4 +80,30 @@ export function registerConversationTargetRoutes(
     }
     return envelope('workbench', await targets.markRead({ userId: identity.userId, type, id, ...(upTo ? { upTo } : {}) }), adapter)
   })
+  // D38：本人未读的 @ 提醒（按空间与讨论汇总），供工作模式项目空间列表与讨论历史标出“有人@我”。
+  router.get(`${basePath}/me/mentions`, async (_request, context) => {
+    const identity = requireRequestIdentity(context, 'workbench')
+    await authorize(identity)
+    return envelope('workbench', await targets.listMentions({ userId: identity.userId }), adapter)
+  })
+
+  // D38：打开讨论（工作模式）时把本人在该讨论的 @ 提醒标为已读；只写本人的提醒状态。
+  router.post(`${basePath}/me/mentions/read`, async (request, context) => {
+    const identity = requireRequestIdentity(context, 'workbench')
+    await authorize(identity)
+    const body = await readJsonBody<unknown>(request)
+    if (!body || typeof body !== 'object' || Array.isArray(body)) throw routeValidationFailed('请求体必须是对象')
+    const { workspaceId, sessionId } = body as { workspaceId?: unknown; sessionId?: unknown }
+    if (typeof workspaceId !== 'string' || !workspaceId.trim() || workspaceId.length > 200) {
+      throw routeValidationFailed('workspaceId 必须是项目空间标识')
+    }
+    if (sessionId !== undefined && sessionId !== null && (typeof sessionId !== 'string' || !sessionId.trim() || sessionId.length > 200)) {
+      throw routeValidationFailed('sessionId 必须是讨论标识')
+    }
+    return envelope('workbench', await targets.markMentionsRead({
+      userId: identity.userId,
+      workspaceId: workspaceId.trim(),
+      ...(typeof sessionId === 'string' ? { sessionId: sessionId.trim() } : {}),
+    }), adapter)
+  })
 }

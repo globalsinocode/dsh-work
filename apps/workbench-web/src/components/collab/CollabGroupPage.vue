@@ -82,6 +82,7 @@ function useFile(file: WorkspaceFile) {
           :archived="scope.archived"
           :role-known="scope.roleKnown"
           :mention-options="scope.mentionOptions"
+          :colleague-options="scope.colleagueOptions"
           :has-agent-members="scope.hasAgentMembers"
           :focus-session-id="focusSessionId"
           :pending-file="pendingFile"

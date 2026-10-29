@@ -1,0 +1,4 @@
+#!/bin/sh
+# LibreOffice needs a writable user profile. The execution container's uid has no passwd entry and
+# its root filesystem is read-only, so the profile lives under the per-container HOME tmpfs.
+exec /usr/lib/libreoffice/program/soffice "-env:UserInstallation=file://${HOME:-/tmp}/.lo-profile" "$@"

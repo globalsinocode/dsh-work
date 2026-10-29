@@ -136,6 +136,20 @@ describe('CollabTargetList', () => {
     wrapper.unmount()
   })
 
+  it('gives each row a stable accessible name from the object name, not the preview', async () => {
+    const wrapper = mountList({ pendingAgent: { id: 'a9', name: '新同事', description: '简介里别进名称' } })
+    await flushPromises()
+    const buttons = wrapper.findAll('ul[aria-label="对话"] button')
+    expect(buttons[0].attributes('aria-label')).toBe('新同事')
+    expect(buttons[1].attributes('aria-label')).toBe('库存助手')
+    expect(buttons[2].attributes('aria-label')).toBe('报表助手，不可用，3 条未读')
+    expect(buttons[3].attributes('aria-label')).toBe('采购群，99 条以上未读（已静音）')
+    // 预览仍可见，但不进可访问名称
+    expect(buttons[3].text()).toContain('林岚：收到')
+    expect(buttons[3].attributes('aria-label')).not.toContain('林岚')
+    wrapper.unmount()
+  })
+
   it('shows unread counts with an accessible label, capped at 99+ and muted groups dimmed', async () => {
     const wrapper = mountList()
     await flushPromises()
@@ -149,6 +163,20 @@ describe('CollabTargetList', () => {
     expect(group.get('[aria-hidden="true"]').text()).toBe('99+')
     expect(group.text()).toContain('99 条以上未读（已静音）')
     expect(group.classes()).toContain('collab-target__unread--muted')
+    wrapper.unmount()
+  })
+
+  it('marks a muted group that mentions me with “[有人@我]” (D38)', async () => {
+    vi.mocked(workbenchApi.listConversationTargets).mockResolvedValue(page([
+      { ...targets[2]!, mentioned: true },
+      targets[0]!,
+    ]))
+    const wrapper = mountList()
+    await flushPromises()
+    const buttons = wrapper.findAll('ul[aria-label="对话"] button')
+    expect(buttons[0]!.get('[data-testid="conversation-mention"]').text()).toBe('[有人@我]')
+    expect(buttons[0]!.attributes('aria-label')).toBe('采购群，有人@我，99 条以上未读（已静音）')
+    expect(buttons[1]!.find('[data-testid="conversation-mention"]').exists()).toBe(false)
     wrapper.unmount()
   })
 

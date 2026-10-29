@@ -65,6 +65,7 @@ export function apply(ctx) {
       if (!requireCurrentAuthorization) return undefined
       const result = await authorizeCurrentExecution(authorizationSocket, execution.signal, execution.name)
       if (result === 'disabled') return disabledToolReason(execution.name)
+      if (result === 'busy') return '执行容器仍在清理上一条命令，本次工具调用未执行，请稍后重试'
       return result === 'authorized' ? undefined : '当前执行授权不可用或已撤销'
     }
     const before = await currentAuthorizationDenial()
@@ -103,7 +104,7 @@ function publishRuntimeToolCatalog(ctx, path, mode) {
     try {
       const target = resolve(path)
       const temporary = `${target}.${process.pid}.tmp`
-      const tools = JSON.parse(JSON.stringify(ctx.tools.schemas(activeAgent).map(publishToolContract)))
+      const tools = JSON.parse(JSON.stringify(ctx.tools.schemas(activeAgent).map(schema => publishToolContract(schema, dshScheduling(ctx, activeAgent, schema)))))
       mkdirSync(dirname(target), { recursive: true })
       writeFileSync(temporary, `${JSON.stringify({
         formatVersion: 3,
@@ -134,11 +135,49 @@ const toolTimeoutSeconds = new Map([
   ['prepare_skill_installation', 120], ['python_execute', 300],
 ])
 
-function publishToolContract(schema) {
+/**
+ * DSH's own scheduling decision for a tool ('parallel' or 'exclusive'), as its agent loop
+ * will apply it. Execution isolation relies on bash and writes never running alongside
+ * other tools (plan 3.7); the platform verifies this from the published catalog. DSH
+ * decides per call from the arguments (`read` with no path reports exclusive, with a
+ * path parallel), so the tool is probed with empty and with schema-shaped arguments and
+ * reported parallel when any probe is: the conservative answer for that check.
+ */
+function dshScheduling(ctx, agent, schema) {
+  const modes = [{}, sampleArguments(schema?.parameters)].map(args => {
+    try {
+      return ctx.tools.executionMode({
+        callId: 'dsh-work-catalog', name: schema?.name, arguments: args, agent, signal: new globalThis.AbortController().signal,
+      })?.kind
+    } catch {
+      return undefined
+    }
+  })
+  if (modes.includes('parallel')) return 'parallel'
+  return modes.includes('exclusive') ? 'exclusive' : 'unknown'
+}
+
+function sampleArguments(parameters) {
+  const properties = parameters?.properties && typeof parameters.properties === 'object' ? parameters.properties : {}
+  const sample = {}
+  for (const [name, property] of Object.entries(properties)) {
+    const type = Array.isArray(property?.type) ? property.type[0] : property?.type
+    if (Array.isArray(property?.enum) && property.enum.length) sample[name] = property.enum[0]
+    else if (type === 'string') sample[name] = 'dsh-work-catalog-probe.txt'
+    else if (type === 'integer' || type === 'number') sample[name] = 1
+    else if (type === 'boolean') sample[name] = false
+    else if (type === 'array') sample[name] = ['dsh-work-catalog-probe']
+    else if (type === 'object') sample[name] = {}
+  }
+  return sample
+}
+
+function publishToolContract(schema, scheduling) {
   const name = typeof schema?.name === 'string' ? schema.name : ''
   return {
     ...schema,
     contract: {
+      dshScheduling: scheduling,
       effect: readTools.has(name) ? 'read' : 'write',
       retryPolicy: retrySafeTools.has(name) ? 'safe' : 'never',
       concurrencyPolicy: concurrentTools.has(name) ? 'concurrent' : 'serialized',
@@ -302,7 +341,7 @@ function validateExecution(execution, allowedTools, allowedMcpServers, approvedM
     }
     const extension = candidate.slice(candidate.lastIndexOf('.')).toLowerCase()
     if (!writableArtifactExtensions.has(extension)) {
-      return 'dsh-work 文本成果仅支持 Markdown、TXT 和 CSV 文件'
+      return 'dsh-work write/edit 只支持 Markdown、TXT 和 CSV 文件；HTML、Office、PDF 与图片成果在本次可用 bash 时于执行容器中用 bash 生成到 output/'
     }
   }
   if (execution.name === 'read_image') {
@@ -524,7 +563,7 @@ function registerPlatformTools(ctx) {
   })
   registerPlatformTool(ctx, socketPath, {
     name: 'project_task_create',
-    description: 'Create a project task in this project space on behalf of the member who asked you, within that member\'s permissions. The task is written immediately and shown in the group chat. A task assigned to an Agent gets a manual schedule and is not started automatically. dueDate is YYYY-MM-DD in the run timezone and must not be earlier than today; when a relative date such as "this Friday" has already passed, use the next one or ask the member first.',
+    description: 'Create a project task in this project space on behalf of the member who asked you, within that member\'s permissions. Call it only when the member explicitly asks you to add or create a task; never create tasks on your own initiative, to track your own work, or to turn the current conversation into a task. The task is written immediately and shown in the group chat. A task assigned to an Agent gets a manual schedule and is not started automatically. dueDate is YYYY-MM-DD in the run timezone and must not be earlier than today; when a relative date such as "this Friday" has already passed, use the next one or ask the member first.',
     parameters: {
       type: 'object',
       properties: {
@@ -568,7 +607,7 @@ function registerPlatformTools(ctx) {
   })
   registerPlatformTool(ctx, socketPath, {
     name: 'python_execute',
-    description: 'Execute a declared Python entry point from an activated Skill in the platform sandbox. Arbitrary commands, package installation and network access are not allowed.',
+    description: 'Execute a declared Python entry point from an activated Skill inside this run\'s execution container. Files it writes to DSH_OUTPUT_DIR (the workspace output/ directory) follow the artifact rules of the system prompt. Arbitrary commands, package installation and network access are not allowed.',
     parameters: {
       type: 'object',
       properties: {
@@ -662,7 +701,8 @@ function authorizeCurrentExecution(socketPath, signal, toolName) {
       response.on('end', () => {
         try {
           const parsed = JSON.parse(body)
-          if (response.statusCode !== 200 || parsed.authorized !== true) resolve('denied')
+          if (response.statusCode === 409 && parsed.retryLater === true) resolve('busy')
+          else if (response.statusCode !== 200 || parsed.authorized !== true) resolve('denied')
           else resolve(parsed.toolDisabled === true ? 'disabled' : 'authorized')
         } catch { resolve('denied') }
       })

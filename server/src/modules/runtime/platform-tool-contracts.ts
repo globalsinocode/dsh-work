@@ -95,7 +95,7 @@ export const platformToolContracts = {
           type: 'array', maxItems: 20,
           items: {
             type: 'object', additionalProperties: false,
-            properties: { name: { type: 'string', maxLength: 500 }, size: { type: 'integer', minimum: 0, maximum: 10 * 1024 * 1024 } },
+            properties: { name: { type: 'string', maxLength: 500 }, size: { type: 'integer', minimum: 0, maximum: 20 * 1024 * 1024 } },
             required: ['name', 'size'],
           },
         },

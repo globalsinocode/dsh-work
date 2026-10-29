@@ -97,6 +97,8 @@ const props = withDefaults(
     compact?: boolean
     /** 面板标题；缺省为“工作空间信息”。 */
     title?: string
+    /** 不渲染面板标题行：宿主已在面板之上给出标题与收起（协作模式任务详情的信息栏切换）。 */
+    headerless?: boolean
   }>(),
   {
     compact: false,
@@ -226,7 +228,7 @@ const usageEstimatedCount = computed(() => normalizeUsageCount(props.usageSummar
 
 <template>
   <div class="workspace-info-panel">
-    <header class="workspace-info-panel__header">
+    <header v-if="!headerless" class="workspace-info-panel__header">
       <strong>{{ title }}</strong>
       <button
         v-if="collapsible"

@@ -7,7 +7,7 @@ import { ref } from 'vue'
 import { useAuthStore } from '@/stores/auth'
 import { useContentStore } from '@/stores/content'
 import { useTaskStore } from '@/stores/tasks'
-import type { ProjectTask, ProjectTaskEvent, ProjectTaskPage, SessionThread, TaskResult, TaskRun, Workspace } from '@/types/domain'
+import type { Artifact, ProjectTask, ProjectTaskEvent, ProjectTaskPage, SessionThread, TaskResult, TaskRun, Workspace } from '@/types/domain'
 import { projectTaskDetailKey, type ProjectTaskDetailBridge } from '@/composables/project-task-detail'
 import { TaskComposer } from '@dsh-work/workbench-components'
 import ConversationView from './ConversationView.vue'
@@ -29,8 +29,9 @@ const api = vi.hoisted(() => ({
   getSessionThread: vi.fn(),
   postSessionMessage: vi.fn(),
   listWorkspaceAgentMembers: vi.fn(),
+  listWorkspaceMembers: vi.fn(),
+  markMentionsRead: vi.fn(),
   listProjectTasks: vi.fn(),
-  markSessionAsProjectTask: vi.fn(),
   startRun: vi.fn(),
   cancelRun: vi.fn(),
   retryRun: vi.fn(),
@@ -234,6 +235,8 @@ describe('ConversationView 归档只读态（design §2.7 / AC-23）', () => {
     vi.stubGlobal('EventSource', FakeEventSource)
     route.params = { id: 'run-001' }
     api.listWorkspaceAgentMembers.mockResolvedValue([])
+    api.listWorkspaceMembers.mockResolvedValue({ items: [], currentUserRole: 'member' })
+    api.markMentionsRead.mockResolvedValue({ workspaceId: 'ws-team', sessionId: 'session-001', read: 0 })
     api.listProjectTasks.mockResolvedValue(page([]))
     api.deleteSessionFile.mockResolvedValue({ id: 'file-001', removed: true })
     api.getRun.mockRejectedValue(new Error('not a run'))
@@ -310,6 +313,18 @@ describe('ConversationView 归档只读态（design §2.7 / AC-23）', () => {
     await flushPromises()
 
     expect(cancelTask).toHaveBeenCalledWith('run-001')
+  })
+
+  it('lists the steps so far and the one running now instead of a quiet-run warning (EX-PROGRESS-01)', async () => {
+    const running = { status: 'running' as const, result: result({ execution: 'running', outcome: 'pending', error: null, completedAt: null }) }
+    const startedAt = new Date(Date.now() - 40_000).toISOString()
+    const { wrapper } = await mountView({ item: task({ ...running, steps: [
+      { id: 'event-started', title: 'DSH Worker 开始执行', detail: '开始执行', status: 'running', event: 'run.started', at: startedAt },
+      { id: 'tool-call-call-read', title: '正在调用工具', detail: 'read：正在调用', status: 'running', tool: 'read', callId: 'call-read', event: 'tool.started', at: startedAt, startedAt },
+    ] }) })
+    expect(wrapper.get('[data-testid="current-step"]').text()).toBe('正在读取文件')
+    expect(wrapper.get('[data-testid="run-progress-card"]').text()).toMatch(/正在处理 · 已用 4\d 秒/)
+    expect(wrapper.text()).not.toContain('没有新的')
   })
 
   it('lets any writable member retry a shared run, not only the requester (TW-10)', async () => {
@@ -608,8 +623,50 @@ describe('ConversationView 归档只读态（design §2.7 / AC-23）', () => {
     })
     await flushPromises()
 
-    expect(api.postSessionMessage).toHaveBeenCalledWith('session-001', '收到，我下午核对', expect.any(String))
+    expect(api.postSessionMessage).toHaveBeenCalledWith('session-001', '收到，我下午核对', expect.any(String), [])
     expect(api.startRun).not.toHaveBeenCalled()
+  })
+
+  it('offers colleagues for @ in a shared discussion and only reminds them (D38)', async () => {
+    route.params = { id: 'session-001' }
+    api.getSessionThread.mockResolvedValue(sessionThread())
+    api.listWorkspaceMembers.mockResolvedValue({
+      items: [
+        { userId: 'U00001', displayName: '林岚', role: 'member', joinedAt: '' },
+        { userId: 'U00002', displayName: '周航', role: 'owner', joinedAt: '' },
+      ],
+      currentUserRole: 'member',
+    })
+    api.postSessionMessage.mockResolvedValue({ messageId: 'm4', sessionId: 'session-001' })
+    const { wrapper } = await mountView({ item: null })
+    expect(wrapper.getComponent(TaskComposer).props('mentionOptions')).toEqual([
+      { id: 'user:U00002', name: '周航', kind: 'member' },
+    ])
+
+    wrapper.getComponent(TaskComposer).vm.$emit('submit', {
+      prompt: '@周航 看下', files: [], workspaceId: 'ws-team', mentions: ['user:U00002'],
+    })
+    await flushPromises()
+    expect(api.postSessionMessage).toHaveBeenCalledWith('session-001', '@周航 看下', expect.any(String), ['U00002'])
+    expect(api.startRun).not.toHaveBeenCalled()
+  })
+
+  it('marks the discussion’s @ reminders read when a team discussion or one of its runs is opened (D38)', async () => {
+    route.params = { id: 'session-001' }
+    api.getSessionThread.mockResolvedValue(sessionThread())
+    await mountView({ item: null })
+    expect(api.markMentionsRead).toHaveBeenCalledWith('ws-team', 'session-001')
+
+    // 执行详情只载入本次执行的消息，讨论里的 @ 不在页面上，同样标为已读。
+    api.markMentionsRead.mockClear()
+    route.params = { id: 'run-001' }
+    await mountView()
+    expect(api.markMentionsRead).toHaveBeenCalledWith('ws-team', 'session-001')
+  })
+
+  it('does not mark @ reminders for a personal conversation (D38)', async () => {
+    await mountView({ item: task({ workspaceId: 'ws-personal', workspaceType: 'personal', workspaceStatus: 'active' }) })
+    expect(api.markMentionsRead).not.toHaveBeenCalled()
   })
 
   it('starts a run via the mentioned Agent member from a shared session', async () => {
@@ -873,8 +930,55 @@ describe('ConversationView 归档只读态（design §2.7 / AC-23）', () => {
     })
     await flushPromises()
 
-    expect(send).toHaveBeenCalledWith('run-001', '把第二节改成要点列表', [], undefined, ['file-artifact-1'])
+    expect(send).toHaveBeenCalledWith('run-001', '把第二节改成要点列表', [], undefined, ['file-artifact-1'], [])
     expect(wrapper.find('[data-testid="referenced-artifacts"]').exists()).toBe(false)
+  })
+
+  it('asks what a bare “继续” means after a deliverable, and attaches it on “继续修改” (EX-02)', async () => {
+    const artifact = {
+      id: 'artifact-1', name: '周报.md', type: 'markdown' as const, version: 2, size: '2 KB', fileId: 'file-artifact-1', canReference: true,
+      createdAt: '2026-10-15 10:05', runId: 'run-001', workspaceId: 'ws-personal', summary: '本轮成果',
+    }
+    const succeeded = task({
+      workspaceId: 'ws-personal', workspaceName: '我的空间', workspaceType: 'personal', status: 'succeeded',
+      result: result({ execution: 'succeeded', outcome: 'achieved', summary: '执行完成', error: null, artifacts: [artifact] }),
+    })
+    const { wrapper, taskStore } = await mountView({ item: succeeded, workspace: workspace({ id: 'ws-personal', type: 'personal' }) })
+    const send = vi.spyOn(taskStore, 'sendMessage').mockResolvedValue(task({ id: 'run-002' }))
+    const confirm = vi.spyOn(ElMessageBox, 'confirm').mockResolvedValueOnce('confirm' as never)
+      .mockRejectedValueOnce('cancel').mockRejectedValueOnce('close')
+    const submit = (prompt: string) => {
+      wrapper.getComponent(TaskComposer).vm.$emit('submit', { prompt, files: [], workspaceId: 'ws-personal', mentions: [] })
+      return flushPromises()
+    }
+
+    await submit('继续。')
+    expect(confirm.mock.calls[0]?.[2]).toMatchObject({ confirmButtonText: '继续修改《周报.md》', cancelButtonText: '作为新消息发送' })
+    expect(send).toHaveBeenLastCalledWith('run-001', '继续。', [], undefined, ['file-artifact-1'], [])
+
+    await submit('继续')
+    expect(send).toHaveBeenLastCalledWith('run-001', '继续', [], undefined, [], [])
+
+    await submit('继续')
+    expect(send).toHaveBeenCalledTimes(2)
+
+    await submit('把第二节改成要点列表')
+    expect(confirm).toHaveBeenCalledTimes(3)
+    expect(send).toHaveBeenCalledTimes(3)
+  })
+
+  it('offers to re-run a failed round when the employee only says “继续” (EX-02)', async () => {
+    const { wrapper, taskStore } = await mountView()
+    const retry = vi.spyOn(taskStore, 'retryTask').mockResolvedValue(task({ id: 'run-001', status: 'queued' }))
+    const send = vi.spyOn(taskStore, 'sendMessage').mockResolvedValue(task({ id: 'run-002' }))
+    const confirm = vi.spyOn(ElMessageBox, 'confirm').mockResolvedValue('confirm' as never)
+
+    wrapper.getComponent(TaskComposer).vm.$emit('submit', { prompt: '继续', files: [], workspaceId: 'ws-team', mentions: ['agent-member-1'] })
+    await flushPromises()
+
+    expect(confirm.mock.calls[0]?.[2]).toMatchObject({ confirmButtonText: '重新执行上一轮' })
+    expect(retry).toHaveBeenCalledWith('run-001')
+    expect(send).not.toHaveBeenCalled()
   })
 
   it('does not show an inline verification warning for an unverified result', async () => {
@@ -921,7 +1025,6 @@ describe('ConversationView 归档只读态（design §2.7 / AC-23）', () => {
     expect(api.listProjectTasks).toHaveBeenCalledWith('ws-team', { sessionId: 'session-001', limit: 1 })
     expect(wrapper.get('[data-testid="task-thread-notice"]').text()).toContain('“缺货分析助手”')
     expect(wrapper.get('[data-testid="task-thread-badge"]').text()).toContain('分析缺货原因')
-    expect(wrapper.find('[data-testid="mark-as-task"]').exists()).toBe(false)
     wrapper.getComponent(TaskComposer).vm.$emit('submit', {
       prompt: '再看看华南', files: [], workspaceId: 'ws-team', mentions: [],
     })
@@ -947,20 +1050,16 @@ describe('ConversationView 归档只读态（design §2.7 / AC-23）', () => {
     expect(api.startRun).not.toHaveBeenCalled()
   })
 
-  it('offers “设为任务” on an Agent-executed shared thread that is not yet a task', async () => {
+  it('does not offer turning an Agent-executed shared thread into a task', async () => {
     route.params = { id: 'session-001' }
     api.getSessionThread.mockResolvedValue(sessionThread({
       runs: [{ runId: 'run-9', status: 'succeeded', requestedBy: 'U00002', requesterName: '周航', createdAt: '2026-09-10T10:00:00.000Z' }],
     }))
-    api.markSessionAsProjectTask.mockResolvedValue(projectTask({ title: '供应商讨论' }))
     const { wrapper } = await mountView({ item: null })
 
-    await wrapper.get('[data-testid="mark-as-task"]').trigger('click')
-    await flushPromises()
-    expect(api.markSessionAsProjectTask).toHaveBeenCalledWith('ws-team', 'session-001')
-    expect(router.replace).toHaveBeenCalledWith(`/workspaces/ws-team/tasks/${projectTask({ title: '供应商讨论' }).id}/thread/session-001`)
-    expect(wrapper.find('[data-testid="mark-as-task"]').exists()).toBe(false)
-    expect(wrapper.find('[data-testid="task-thread-notice"]').exists()).toBe(true)
+    // 任务只在成员明确新建时产生：讨论线程不提供“设为任务”。
+    expect(wrapper.text()).not.toContain('设为任务')
+    expect(wrapper.find('[data-testid="task-thread-notice"]').exists()).toBe(false)
   })
 
   it('renders session run statuses as links in the shared discussion thread', async () => {
@@ -1110,7 +1209,7 @@ describe('ConversationView 空间内嵌套视图（TW-10 导航）', () => {
       await wrapper.get('[data-testid="task-send-comment"]').trigger('click')
       wrapper.getComponent(TaskComposer).vm.$emit('submit', { prompt: '口径要和上周一致', files: [], workspaceId: 'ws-team', mentions: [] })
       await flushPromises()
-      expect(api.postSessionMessage).toHaveBeenCalledWith('session-001', '口径要和上周一致', expect.any(String))
+      expect(api.postSessionMessage).toHaveBeenCalledWith('session-001', '口径要和上周一致', expect.any(String), [])
       expect(api.startRun).toHaveBeenCalledTimes(1)
     })
 
@@ -1147,6 +1246,48 @@ describe('ConversationView 空间内嵌套视图（TW-10 导航）', () => {
       expect(done.wrapper.find('[data-testid="task-complete-from-conversation"]').exists()).toBe(false)
     })
 
+    it('D37：协作模式的“标记完成”在任务详情菜单里，任务对话不再重复提供', async () => {
+      api.getSessionThread.mockResolvedValue(sessionThread({
+        runs: [{ runId: 'run-9', status: 'succeeded', requestedBy: 'U00002', requesterName: '周航', createdAt: '2026-09-10T09:05:00.000Z' }],
+      }))
+      const { wrapper } = await mountView({ item: null, bridge: bridge({ completeInMenu: true }) })
+      expect(wrapper.find('[data-testid="task-send-agent"]').exists()).toBe(true)
+      expect(wrapper.find('[data-testid="task-complete-from-conversation"]').exists()).toBe(false)
+    })
+
+    it('D37：回复下显示该次执行的成果与执行步骤，“继续修改”带着引用交给 Agent', async () => {
+      const artifact: Artifact = {
+        id: 'art-1', name: '缺货原因.md', type: 'markdown', version: 2, size: '2 KB', createdAt: '09:06', runId: 'run-9',
+        workspaceId: 'ws-team', fileId: 'file-art-1', canReference: true, summary: '',
+      }
+      api.getSessionThread.mockResolvedValue(sessionThread({
+        messages: [
+          { id: 'm2', role: 'user', content: '开始吧', createdAt: '09:05', sentAt: '2026-09-10T09:05:00.000Z', runId: 'run-9', senderId: 'U00002', senderName: '周航', runRequesterId: 'U00002', runRequesterName: '周航', agentName: null },
+          { id: 'm3', role: 'assistant', content: '前三个原因如下', createdAt: '09:06', sentAt: '2026-09-10T09:06:00.000Z', runId: 'run-9', senderId: null, senderName: null, runRequesterId: 'U00002', runRequesterName: '周航', agentName: '缺货分析助手' },
+        ],
+        runs: [{ runId: 'run-9', status: 'succeeded', requestedBy: 'U00002', requesterName: '周航', createdAt: '2026-09-10T09:05:00.000Z' }],
+        artifacts: [artifact, { ...artifact, id: 'art-other', name: '别的执行.md', runId: 'run-other' }],
+      }))
+      api.listProjectTasks.mockResolvedValue(page([projectTask()]))
+      api.startRun.mockResolvedValue(task({ id: 'run-new', sessionId: 'session-001' }))
+      const { wrapper, taskStore } = await mountView({ item: null, bridge: bridge() })
+      vi.spyOn(taskStore, 'subscribe').mockImplementation(() => {})
+
+      const reply = wrapper.findAll('[data-testid="task-conversation-message"]').find(node => node.text().includes('前三个原因'))!
+      expect(reply.find('[data-testid="answer-artifact-art-1"]').text()).toContain('缺货原因.md')
+      expect(reply.find('[data-testid="answer-artifact-art-other"]').exists()).toBe(false)
+      expect(reply.find('[data-testid="run-steps-disclosure"]').exists()).toBe(true)
+
+      await reply.get('[data-testid="continue-editing-art-1"]').trigger('click')
+      expect(wrapper.get('[data-testid="referenced-artifacts"]').text()).toContain('缺货原因.md · V2')
+      wrapper.getComponent(TaskComposer).vm.$emit('submit', { prompt: '加上华南', files: [], workspaceId: 'ws-team', mentions: [] })
+      await flushPromises()
+      expect(api.startRun).toHaveBeenCalledWith('session-001', expect.objectContaining({
+        workspaceAgentMemberId: 'wam-7', fileIds: ['file-art-1'],
+      }))
+      expect(wrapper.find('[data-testid="referenced-artifacts"]').exists()).toBe(false)
+    })
+
     it('执行中只能评论', async () => {
       api.getSessionThread.mockResolvedValue(sessionThread({
         runs: [{ runId: 'run-9', status: 'running', requestedBy: 'U00002', requesterName: '周航', createdAt: '2026-09-10T09:05:00.000Z' }],
@@ -1157,8 +1298,25 @@ describe('ConversationView 空间内嵌套视图（TW-10 导航）', () => {
       expect(wrapper.get('[data-testid="task-send-hint"]').text()).toContain('执行中，暂时只能评论')
       wrapper.getComponent(TaskComposer).vm.$emit('submit', { prompt: '先别发给供应商', files: [], workspaceId: 'ws-team', mentions: [] })
       await flushPromises()
-      expect(api.postSessionMessage).toHaveBeenCalledWith('session-001', '先别发给供应商', expect.any(String))
+      expect(api.postSessionMessage).toHaveBeenCalledWith('session-001', '先别发给供应商', expect.any(String), [])
       expect(api.startRun).not.toHaveBeenCalled()
+    })
+
+    it('D37：执行中的执行在执行记录下显示与会话页相同的进度卡片', async () => {
+      vi.stubGlobal('EventSource', FakeEventSource)
+      api.getSessionThread.mockResolvedValue(sessionThread({
+        runs: [{ runId: 'run-9', status: 'running', requestedBy: 'U00002', requesterName: '周航', createdAt: '2026-09-10T09:05:00.000Z' }],
+      }))
+      // 会话 id 不是 Run：只有执行中的 run-9 读得到详情。
+      api.getRun.mockImplementation(async (id: string) => {
+        if (id === 'run-9') return task({ id: 'run-9', sessionId: 'session-001', status: 'running' })
+        throw new Error('not a run')
+      })
+      const { wrapper } = await mountView({ item: null, bridge: bridge({ taskValue: projectTask({ status: 'in_progress' }) }) })
+      expect(api.getRun).toHaveBeenCalledWith('run-9')
+      expect(wrapper.find('[data-testid="run-progress-card"]').exists()).toBe(true)
+      await wrapper.get('.run-progress__details').trigger('click')
+      expect(router.push).toHaveBeenCalledWith('/workspaces/ws-team/tasks/ptask-1/thread/run-9')
     })
 
     it('未开始的 Agent 任务：“交给 Agent”经任务启动并带上补充要求', async () => {
@@ -1204,7 +1362,7 @@ describe('ConversationView 空间内嵌套视图（TW-10 导航）', () => {
 
       wrapper.getComponent(TaskComposer).vm.$emit('submit', { prompt: '明天完成剩余部分', files: [], workspaceId: 'ws-team', mentions: [] })
       await flushPromises()
-      expect(api.postSessionMessage).toHaveBeenCalledWith('session-001', '明天完成剩余部分', expect.any(String))
+      expect(api.postSessionMessage).toHaveBeenCalledWith('session-001', '明天完成剩余部分', expect.any(String), [])
       expect(api.startRun).not.toHaveBeenCalled()
 
       await wrapper.get('[data-testid="task-complete-from-conversation"]').trigger('click')

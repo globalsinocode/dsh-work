@@ -1,4 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto'
+import { resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 import {
   toolBindingDigest,
@@ -20,6 +22,7 @@ import type { McpUserGrantService, McpOAuthProbeRegistrationInput } from './mcp-
 import { probeFingerprint } from './mcp-user-grant-service.ts'
 import { RequestError, accessDenied, dependencyUnavailable, invalidRequest, notFound, stateConflict } from '../../domain/request-errors.ts'
 import { builtinTools, missingDshBuiltinTools, normalizeDisabledTools, type BuiltinToolStatus } from '../runtime/builtin-tools.ts'
+import { freeSpace } from '../runtime/workspace-usage.ts'
 import {
   mcpCapabilityDigest,
   mergeMcpCapabilities,
@@ -527,6 +530,26 @@ export class PostgresToolConnectorService {
     return (await this.getConnectors()).filter(connector => connector.protocol === 'mcp')
   }
 
+  /** 启动检查通过后 Runtime 才带有 DSH 仓库路径；未通过时 UnavailableRuntime 的路径为空。 */
+  private async executionContainerStatus(): Promise<BuiltinToolStatus['executionContainer']> {
+    let available = false
+    try {
+      const health = await this.runtime?.health()
+      available = Boolean(health?.dshRepository)
+    } catch {
+      available = false
+    }
+    if (!available) return { status: 'unavailable' }
+    try {
+      const projectRoot = fileURLToPath(new URL('../../../..', import.meta.url))
+      const dataRoot = resolve(projectRoot, process.env.DSH_WORK_DATA_ROOT ?? '.runtime')
+      const space = await freeSpace(dataRoot)
+      return space.low ? { status: 'available', diskLow: true } : { status: 'available' }
+    } catch {
+      return { status: 'available' }
+    }
+  }
+
   async getBuiltinToolStatus(): Promise<BuiltinToolStatus> {
     const [configuration] = await this.database<{ disabledTools: unknown }[]>`
       select coalesce(disabled_tools, '[]'::jsonb) as "disabledTools"
@@ -551,7 +574,7 @@ export class PostgresToolConnectorService {
         error: error instanceof Error ? error.message : '无法读取 Runtime 工具目录',
       }
     }
-    return { tools: builtinTools, disabledTools, catalog }
+    return { tools: builtinTools, disabledTools, catalog, executionContainer: await this.executionContainerStatus() }
   }
 
   async getDshRuntimeToolConnectorStatus(): Promise<DshRuntimeToolConnectorStatus> {

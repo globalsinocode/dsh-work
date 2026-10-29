@@ -525,6 +525,19 @@ export class PostgresAutomationRepository {
     }
   }
 
+  /** 每个任务按创建时间最新的一条执行记录（列表“最近一次”投影）。 */
+  async listLatestExecutions(automationIds: string[]): Promise<AutomationExecutionRecord[]> {
+    if (automationIds.length === 0) return []
+    const rows = await this.database<ExecutionRow[]>`
+      select distinct on (e.automation_id) ${this.database.unsafe(EXECUTION_COLUMNS)}, r.status as "runStatus"
+        from automation_executions e
+        left join runs r on r.tenant_id = e.tenant_id and r.id = e.run_id
+       where e.tenant_id = ${tenantId} and e.automation_id = any(${automationIds})
+       order by e.automation_id, e.created_at desc, e.id desc
+    `
+    return rows.map(mapExecution)
+  }
+
   async getExecution(automationId: string, executionId: string): Promise<AutomationExecutionRecord | null> {
     const [row] = await this.database<ExecutionRow[]>`
       select ${this.database.unsafe(EXECUTION_COLUMNS)}, r.status as "runStatus"

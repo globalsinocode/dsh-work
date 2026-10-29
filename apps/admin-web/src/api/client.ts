@@ -18,6 +18,8 @@ import type {
   AuditEvent,
   ConnectorDefinition,
   BuiltinToolStatus,
+  BuiltinSkillScenario,
+  BuiltinSkillStatus,
   McpConnectionTestResult,
   McpConnectorDeletionResult,
   McpInvocationAudit,
@@ -325,6 +327,9 @@ export const adminApi = {
   getDshRuntimeToolConnector: () => request<DshRuntimeToolConnectorStatus>('/runtimes/dsh-tool-connector'),
   checkDshRuntimeToolConnector: () => request<DshRuntimeToolConnectorStatus>('/runtimes/dsh-tool-connector/check', { method: 'POST' }),
   getBuiltinTools: () => request<BuiltinToolStatus>('/runtimes/builtin-tools'),
+  getBuiltinSkills: () => request<BuiltinSkillStatus>('/skills/builtin'),
+  setSkillBuiltinCoverage: (input: { skillId: string; scenarios: BuiltinSkillScenario[] }) =>
+    request<SkillDefinition>('/skills/builtin-coverage', { method: 'PATCH', body: JSON.stringify(input) }),
   getMcpInvocationAudits: (connectorId: string) =>
     request<McpInvocationAudit[]>(`/connectors/mcp/invocations?connector_id=${encodeURIComponent(connectorId)}`),
   testMcpConnection: (input: {

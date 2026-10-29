@@ -54,9 +54,11 @@ output_created=true
 mkdir -p \
   "${bundle}/server" \
   "${bundle}/server/config/dsh" \
+  "${bundle}/server/config/execution" \
   "${bundle}/apps/workbench-web" \
   "${bundle}/apps/admin-web" \
   "${bundle}/scripts/deploy" \
+  "${bundle}/scripts/acceptance" \
   "${bundle}/deploy/launchd" \
   "${bundle}/deploy/nginx"
 
@@ -67,6 +69,13 @@ cp "${project_root}/server/config/dsh/acp-managed-credentials.cordis.yml" "${bun
 cp "${project_root}/server/config/dsh/acp-managed-credentials.legacy.cordis.yml" "${bundle}/server/config/dsh/"
 cp "${project_root}/server/config/dsh/dsh-work-tool-policy.js" "${bundle}/server/config/dsh/"
 cp "${project_root}/server/config/dsh/runtime-lock.json" "${bundle}/server/config/dsh/"
+# Execution container mode (execution isolation): the overlay template and remote subprocess plugin
+# for DSH, and the artifact text extraction script run in a disposable container.
+cp "${project_root}/server/config/dsh/execution-container.cordis.patch.yml" "${bundle}/server/config/dsh/"
+cp "${project_root}/server/config/dsh/dsh-work-remote-subprocess.js" "${bundle}/server/config/dsh/"
+cp "${project_root}/server/config/execution/extract_artifact_text.py" "${bundle}/server/config/execution/"
+# 平台内置 Skill 随代码发布；服务启动时按 versions.lock.json 校验，缺失或不一致时不启动。
+cp -R "${project_root}/server/config/builtin-skills" "${bundle}/server/config/builtin-skills"
 cp -R "${server_stage}/node_modules" "${bundle}/server/node_modules"
 cp -R "${project_root}/apps/workbench-web/dist" "${bundle}/apps/workbench-web/dist"
 cp -R "${project_root}/apps/admin-web/dist" "${bundle}/apps/admin-web/dist"
@@ -92,6 +101,8 @@ deployment_scripts=(
 for deployment_script in "${deployment_scripts[@]}"; do
   cp "${project_root}/scripts/deploy/${deployment_script}" "${bundle}/scripts/deploy/"
 done
+# C 档 P2 验收脚本（docs/release/c-tier-p2-acceptance.md），无依赖，在 Mac mini 上直接运行。
+cp "${project_root}/scripts/acceptance/c-tier-p2.mjs" "${bundle}/scripts/acceptance/"
 
 cp "${project_root}/deploy/compose.yaml" "${bundle}/deploy/compose.yaml"
 cp "${project_root}/deploy/runtime.env.example" "${bundle}/deploy/runtime.env.example"

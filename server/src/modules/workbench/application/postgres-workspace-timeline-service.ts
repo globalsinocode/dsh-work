@@ -30,6 +30,10 @@ export type WorkspaceTimelineItem =
       agentName: string | null
       runId: string | null
       runRequesterName: string | null
+      /** 用户发言触发 Run 时附带的输入文件名；无文件时为 null。 */
+      attachments?: string[] | null
+      /** D38：该发言 @ 并登记了提醒的同事（用户 id）。 */
+      mentionedUserIds: string[]
     }
   | {
       kind: 'run'
@@ -147,7 +151,27 @@ export class PostgresWorkspaceTimelineService {
                  'sessionId', d.id, 'sessionTitle', d.title, 'role', m.role, 'content', m.content,
                  'senderId', coalesce(m.sender_user_id, r.requested_by), 'senderName', su.display_name,
                  'agentName', case when m.role = 'assistant' then mag.name end,
-                 'runId', m.run_id, 'runRequesterName', ru.display_name) as payload
+                 'runId', m.run_id, 'runRequesterName', ru.display_name,
+                 'mentionedUserIds', array(select mm.mentioned_user_id from message_mentions mm
+                    where mm.tenant_id = m.tenant_id and mm.message_id = m.id order by mm.mentioned_user_id),
+                 -- 输入文件取该 Run 所有 Attempt 的去重并集（审批恢复的 Attempt 不重新登记输入文件）；
+                 -- 同一会话更早的 Run 已用过的文件是跨轮延续带入的，不算本条发言发送。
+                 'attachments', case when m.role = 'user' then (
+                   select jsonb_agg(input.name order by input.at, input.name)
+                     from (
+                       select f.original_name as name, min(rif.created_at) as at
+                         from run_input_files rif
+                         join file_objects f on f.tenant_id = rif.tenant_id and f.id = rif.file_id
+                        where rif.tenant_id = r.tenant_id and rif.run_id = r.id
+                          and not exists (
+                            select 1 from run_input_files earlier
+                              join runs er on er.tenant_id = earlier.tenant_id and er.id = earlier.run_id
+                             where earlier.tenant_id = rif.tenant_id and earlier.file_id = rif.file_id
+                               and er.session_id = r.session_id and er.created_at < r.created_at
+                          )
+                        group by rif.file_id, f.original_name
+                     ) input
+                 ) end) as payload
           from messages m
           join discussions d on d.id = m.session_id
           left join runs r on r.tenant_id = m.tenant_id and r.id = m.run_id

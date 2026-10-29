@@ -3,7 +3,7 @@ import { computed, provide, ref, watch } from 'vue'
 import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router'
 import { spaceView, useSpaceRoutes } from '@/composables/space-routes'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Cpu, DataLine, Plus } from '@element-plus/icons-vue'
+import { Cpu, MoreFilled, Plus } from '@element-plus/icons-vue'
 
 import { WorkbenchApiError, workbenchApi } from '@/api/client'
 import { projectTaskDetailKey } from '@/composables/project-task-detail'
@@ -53,11 +53,20 @@ const props = defineProps<{
   files: WorkspaceFile[]
   /** 任务详情模式：当前查看的任务；为空时展示任务表格。 */
   detailTaskId?: string | null
-  /** 任务信息卡片的传送目标（右栏中的元素选择器）；为空时卡片在主区就地显示。 */
-  taskInfoTarget?: string | null
+  /** 任务信息卡片的传送目标（右栏中已挂载的元素）；为空时卡片在主区就地显示。 */
+  taskInfoTarget?: HTMLElement | null
+  /**
+   * 协作模式（D37）：编辑、标记完成、移除收进标题行的操作菜单；没有右栏时显示一行任务摘要，
+   * 任务信息另含任务说明。
+   */
+  collab?: boolean
+  /** 协作模式：宿主能打开信息栏（宽屏）时，摘要的“显示任务信息”请宿主打开，否则就地展开。 */
+  canOpenInfo?: boolean
 }>()
 
 const emit = defineEmits<{
+  /** 协作模式：请宿主打开信息栏并切到任务信息。 */
+  'open-info': []
   count: [value: number]
   /** 任务详情的标题（面包屑使用）；离开详情或读取失败时为空。 */
   'detail-title': [value: string]
@@ -208,11 +217,35 @@ watch(() => props.detailTaskId, (taskId) => {
 const detailRunning = computed(() =>
   detailTask.value?.assignee.type === 'agent' && isActiveRunStatus(detailTask.value.latestRunStatus))
 
-/** 执行详情：最近一次执行的步骤、工具调用与成果核验。 */
-function openRunDetail() {
+/** “最近执行”进入该次执行详情：步骤、工具调用与成果核验。 */
+function latestRunPath(task: ProjectTask) {
+  return spaceRoutes.taskThread(props.workspaceId, task.id, task.latestRunId ?? '')
+}
+
+/** 协作模式没有右栏时，摘要下就地展开的完整任务信息；换任务时收起。 */
+const inlineInfoOpen = ref(false)
+watch(() => props.detailTaskId, () => { inlineInfoOpen.value = false })
+
+type DetailCommand = 'edit' | 'complete' | 'reopen' | 'remove'
+/** 协作模式的操作菜单：按权限列出，与工作模式卡片按钮和对话中的“标记完成”同一套写动作。 */
+const detailMenuItems = computed(() => {
   const task = detailTask.value
-  if (!task?.latestRunId) return
-  void router.push(spaceRoutes.taskThread(props.workspaceId, task.id, task.latestRunId))
+  if (!task) return []
+  const items: Array<{ command: DetailCommand; label: string }> = []
+  if (can(task, 'edit')) items.push({ command: 'edit', label: '编辑任务' })
+  if (can(task, 'complete') && task.status !== 'done') items.push({ command: 'complete', label: '标记完成' })
+  if (can(task, 'set_status') && task.status === 'done') items.push({ command: 'reopen', label: '重新打开' })
+  if (can(task, 'remove')) items.push({ command: 'remove', label: '移除任务' })
+  return items
+})
+
+function onDetailCommand(command: DetailCommand) {
+  const task = detailTask.value
+  if (!task) return
+  if (command === 'edit') openEdit(task)
+  else if (command === 'complete') openComplete(task)
+  else if (command === 'reopen') void setStatus(task, 'in_progress')
+  else void removeTask(task)
 }
 
 async function stopRun() {
@@ -243,6 +276,7 @@ provide(projectTaskDetailKey, {
     if (detailTask.value) openComplete(detailTask.value)
   },
   refresh: () => refresh(),
+  completeInMenu: Boolean(props.collab),
 })
 
 // 任务线程里续接、重试会切换到新的 Run：任务状态随之变化，重新读取。
@@ -663,10 +697,9 @@ defineExpose({ reload: load })
       </div>
 
       <template v-else-if="detailTask">
-        <header class="project-task-detail" data-testid="project-task-detail">
+        <header class="project-task-detail" :class="{ 'project-task-detail--collab': collab }" data-testid="project-task-detail">
           <h1 class="project-task-detail__title">{{ detailTask.title }}</h1>
           <div class="project-task-detail__header-actions">
-            <el-button v-if="detailTask.latestRunId" data-testid="project-task-run-detail" :icon="DataLine" @click="openRunDetail">执行详情</el-button>
             <el-button
               v-if="can(detailTask, 'start') && !detailRunning"
               data-testid="project-task-run-now"
@@ -686,12 +719,65 @@ defineExpose({ reload: load })
             >
               停止
             </el-button>
+            <!-- 协作模式（D37）：编辑、标记完成 / 重新打开、移除收进一个菜单，任务信息只做展示。 -->
+            <el-dropdown v-if="collab && detailMenuItems.length" trigger="click" @command="onDetailCommand">
+              <el-button data-testid="project-task-more" aria-label="更多任务操作" :icon="MoreFilled" />
+              <template #dropdown>
+                <el-dropdown-menu>
+                  <el-dropdown-item
+                    v-for="item in detailMenuItems"
+                    :key="item.command"
+                    :command="item.command"
+                    :class="{ 'project-task-menu__danger': item.command === 'remove' }"
+                  >
+                    {{ item.label }}
+                  </el-dropdown-item>
+                </el-dropdown-menu>
+              </template>
+            </el-dropdown>
           </div>
         </header>
 
-        <!-- 任务信息卡片：右栏可见时传送到右栏顶部，否则就地显示在标题下方。 -->
+        <!-- 协作模式没有右栏（收起或窄屏）时：一行任务摘要，可展开完整任务信息或请宿主打开信息栏。 -->
+        <div v-if="collab && !taskInfoTarget" class="project-task-summary" data-testid="project-task-summary">
+          <span class="project-task__status" :class="`project-task__status--${detailTask.status}`">{{ statusLabels[detailTask.status] }}</span>
+          <span>{{ assigneeLabel(detailTask) }}</span>
+          <template v-if="detailTask.assignee.type === 'agent'">
+            <span class="project-task-summary__sep" aria-hidden="true">|</span>
+            <span>{{ scheduleLabel(detailTask.schedule) }}</span>
+            <template v-if="detailTask.latestRunStatus && detailTask.latestRunId">
+              <span class="project-task-summary__sep" aria-hidden="true">|</span>
+              <RouterLink class="project-task-summary__run" :to="latestRunPath(detailTask)" title="查看这次执行的详情">
+                <span class="project-task__run-dot" :class="`project-task__run-dot--${runOutcomeTone(detailTask.latestRunStatus)}`" aria-hidden="true"></span>
+                最近{{ runOutcomeLabel(detailTask.latestRunStatus) }} · {{ formatRunMoment(detailTask.latestRunAt) }}
+              </RouterLink>
+            </template>
+          </template>
+          <template v-else-if="detailTask.dueDate">
+            <span class="project-task-summary__sep" aria-hidden="true">|</span>
+            <span>截止 {{ detailTask.dueDate }}</span>
+          </template>
+          <el-button
+            class="project-task-summary__toggle"
+            link
+            type="primary"
+            data-testid="project-task-summary-toggle"
+            :aria-expanded="canOpenInfo ? undefined : inlineInfoOpen"
+            @click="canOpenInfo ? emit('open-info') : (inlineInfoOpen = !inlineInfoOpen)"
+          >
+            {{ canOpenInfo ? '显示任务信息' : inlineInfoOpen ? '收起任务信息' : '全部任务信息' }}
+          </el-button>
+        </div>
+
+        <!-- 任务信息卡片：右栏可见时传送到右栏顶部，否则就地显示在标题下方（协作模式就地时按摘要展开）。 -->
         <Teleport defer :to="taskInfoTarget || 'body'" :disabled="!taskInfoTarget">
-          <section class="project-task-info" :class="{ 'project-task-info--inline': !taskInfoTarget }" aria-label="任务属性" data-testid="project-task-info">
+          <section
+            v-if="taskInfoTarget || !collab || inlineInfoOpen"
+            class="project-task-info"
+            :class="{ 'project-task-info--inline': !taskInfoTarget }"
+            aria-label="任务属性"
+            data-testid="project-task-info"
+          >
             <dl class="project-task-info__facts">
               <dt>状态</dt>
               <dd>
@@ -731,7 +817,18 @@ defineExpose({ reload: load })
                 </template>
                 <dt>最近执行</dt>
                 <dd :class="{ 'project-task-info__empty': !detailTask.latestRunStatus }" data-testid="project-task-latest-run">
-                  <template v-if="detailTask.latestRunStatus">
+                  <!-- “最近执行”进入该次执行详情（取代标题栏的“执行详情”按钮，D37）。 -->
+                  <RouterLink
+                    v-if="detailTask.latestRunStatus && detailTask.latestRunId"
+                    class="project-task-info__run-link"
+                    data-testid="project-task-latest-run-link"
+                    :to="latestRunPath(detailTask)"
+                    title="查看这次执行的详情"
+                  >
+                    <span class="project-task__run-dot" :class="`project-task__run-dot--${runOutcomeTone(detailTask.latestRunStatus)}`" aria-hidden="true"></span>
+                    {{ runOutcomeLabel(detailTask.latestRunStatus) }} · {{ formatRunMoment(detailTask.latestRunAt) }}
+                  </RouterLink>
+                  <template v-else-if="detailTask.latestRunStatus">
                     <span class="project-task__run-dot" :class="`project-task__run-dot--${runOutcomeTone(detailTask.latestRunStatus)}`" aria-hidden="true"></span>
                     {{ runOutcomeLabel(detailTask.latestRunStatus) }} · {{ formatRunMoment(detailTask.latestRunAt) }}
                   </template>
@@ -755,7 +852,14 @@ defineExpose({ reload: load })
                 </dd>
               </template>
             </dl>
-            <div v-if="can(detailTask, 'edit') || can(detailTask, 'remove') || (can(detailTask, 'set_status') && detailTask.status === 'done')" class="project-task-info__actions">
+            <div v-if="collab && detailTask.description" class="project-task-info__description" data-testid="project-task-description">
+              <h2>任务说明</h2>
+              <p>{{ detailTask.description }}</p>
+            </div>
+            <div
+              v-if="!collab && (can(detailTask, 'edit') || can(detailTask, 'remove') || (can(detailTask, 'set_status') && detailTask.status === 'done'))"
+              class="project-task-info__actions"
+            >
               <el-button v-if="can(detailTask, 'set_status') && detailTask.status === 'done'" :loading="busyTaskId === detailTask.id" @click="setStatus(detailTask, 'in_progress')">重新打开</el-button>
               <el-button v-if="can(detailTask, 'edit')" @click="openEdit(detailTask)">编辑</el-button>
               <el-button v-if="can(detailTask, 'remove')" class="project-task-info__remove" @click="removeTask(detailTask)">移除</el-button>
@@ -1083,6 +1187,86 @@ defineExpose({ reload: load })
 
 .project-task-info--inline {
   margin: 0 32px 12px;
+}
+
+/* 协作模式（D37）：标题行在群组页签之下，与任务对话之间以细线分隔。 */
+.project-task-detail--collab {
+  padding: 12px 20px;
+  border-bottom: 1px solid #f0f1f3;
+}
+
+.project-task-detail--collab .project-task-detail__title {
+  font-size: var(--dsh-font-size-section);
+}
+
+.project-task-summary {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+  margin: 12px 20px 0;
+  padding: 8px 14px;
+  border: 1px solid #ebecee;
+  border-radius: 12px;
+  background: #fafbfc;
+  color: #3d403e;
+  font-size: var(--dsh-font-size-caption);
+}
+
+.project-task-summary__sep {
+  color: #d0d5dd;
+}
+
+.project-task-summary__run,
+.project-task-info__run-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: inherit;
+  text-decoration: underline;
+  text-decoration-color: #d0d5dd;
+  text-underline-offset: 3px;
+}
+
+.project-task-summary__run:hover,
+.project-task-info__run-link:hover {
+  color: var(--dsh-color-brand);
+  text-decoration-color: currentColor;
+}
+
+.project-task-summary__toggle {
+  margin-left: auto;
+}
+
+.project-task-info__description {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid #f0f1f3;
+}
+
+.project-task-info__description h2 {
+  margin: 0 0 6px;
+  color: var(--dsh-color-ink);
+  font-size: var(--dsh-font-size-caption);
+  font-weight: 650;
+}
+
+.project-task-info__description p {
+  margin: 0;
+  color: #5f6461;
+  font-size: var(--dsh-font-size-caption);
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+:global(.project-task-menu__danger) {
+  color: var(--dsh-color-danger) !important;
+}
+
+.project-task-summary + .project-task-info--inline {
+  margin: 8px 20px 0;
 }
 
 .project-task-info__facts {

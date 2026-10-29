@@ -34,8 +34,8 @@ function downloadGuide() {
       <ul class="guide-list">
         <li>移动端使用独立工程开发，通过浏览器访问 dsh-work 服务端 API，不引入第二套执行链路。</li>
         <li>移动端入口（独立端口或二级域名）必须由自身网关/nginx 反代 <code>/api</code> 与 <code>/auth</code> 到 dsh-work 服务端，浏览器视角保持同源；服务端不提供 CORS，禁止跨源直连 API。</li>
-        <li>移动端 origin 需要登记到服务端 <code>DSH_WORK_WORKBENCH_ORIGINS</code> 白名单与 AI Hub 应用回调地址，回调路径固定为 <code>/auth/workbench/callback</code>。</li>
-        <li>二级域名与桌面端天然隔离会话；同 IP 不同端口会共享 <code>dsh_work_session</code> Cookie（Cookie 按 host 隔离、不认端口）。</li>
+        <li>移动端 origin 登记到服务端 <code>DSH_WORK_WORKBENCH_ORIGINS</code>；优先独立账号登录，<strong>不</strong>配置 AI Hub 回调、不集成 AI Hub。</li>
+        <li>二级域名与桌面端天然隔离会话；同 IP 不同端口会共享 <code>dsh_work_local_session</code> Cookie（Cookie 按 host 隔离、不认端口）。</li>
       </ul>
     </section>
 
@@ -45,9 +45,9 @@ function downloadGuide() {
         <h2>认证与会话</h2>
       </header>
       <ul class="guide-list">
-        <li>浏览器跳转 <code>GET /auth/workbench/login</code> 发起 AI Hub OIDC 登录，回调成功后服务端签发 HttpOnly Session Cookie（<code>dsh_work_session</code>，SameSite=Lax）。</li>
-        <li>移动端不持有 token，后续请求自动携带 Cookie；会话失效返回 <code>401 authentication_required</code>，应引导用户重新登录。</li>
-        <li>登出：<code>POST /auth/workbench/logout</code>（或 GET）；切换账号走 <code>/auth/workbench/switch-account</code>，不要自行调用 OIDC end-session。</li>
+        <li>优先独立登录：跳转 <code>GET /auth/workbench/login</code> 到本地登录页，或 <code>POST /auth/workbench/login</code>（账号密码 + 同源 <code>Origin</code>）；成功后签发 HttpOnly Cookie <code>dsh_work_local_session</code>（SameSite=Lax）。</li>
+        <li>移动端不持有 token，不调用 OIDC 登录；会话失效返回 <code>401 authentication_required</code>，应引导用户重新走独立登录。</li>
+        <li>登出：<code>POST /auth/workbench/logout</code>（或 GET）；切换账号走 <code>/auth/workbench/switch-account</code>。</li>
         <li>会话角色、权限和数据范围由 dsh-work 本地配置，客户端传入的任何权限字段都会被忽略。</li>
       </ul>
     </section>
@@ -96,7 +96,7 @@ function downloadGuide() {
       <ul class="guide-list">
         <li><code>v1</code> 内只增不删，向后兼容；破坏性变更发布 <code>v2</code> 并预留迁移窗口。契约以 <code>docs/development/openapi-mobile-h5.json</code> 为唯一事实来源。</li>
         <li>所有 Agent 交互必须经 Run/Attempt API 发起，禁止绕过 dsh-work 直连模型 API。</li>
-        <li>服务端始终使用 PostgreSQL 与正式登录；验收必须使用完整环境。</li>
+        <li>服务端始终使用 PostgreSQL 与独立账号正式登录；验收使用完整环境，不要求 AI Hub / OIDC。</li>
       </ul>
     </section>
   </div>

@@ -7,6 +7,7 @@ import type {
   AgentCandidatePage,
   AgentMemberPatchAction,
   Artifact,
+  ArtifactTextPreview,
   Automation,
   AgentRoutineResult,
   AutomationExecution,
@@ -22,6 +23,7 @@ import type {
   AgentConversation,
   ConversationLocation,
   ConversationTarget,
+  MentionSummary,
   WorkspaceTimelineItem,
   UserPreferences,
   WorkbenchAgent,
@@ -256,6 +258,14 @@ export const workbenchApi = {
       `/me/conversation-targets/${type}/${encodeURIComponent(id)}/read`,
       { method: 'POST', body: JSON.stringify(upTo ? { upTo } : {}) },
     ),
+  /** D38：本人未读的 @ 提醒（按项目空间与讨论汇总）。 */
+  getMentions: () => request<{ items: MentionSummary[] }>('/me/mentions'),
+  /** D38：把本人在该空间（或其中一个讨论）的 @ 提醒标为已读。 */
+  markMentionsRead: (workspaceId: string, sessionId?: string) =>
+    request<{ workspaceId: string; sessionId: string | null; read: number }>('/me/mentions/read', {
+      method: 'POST',
+      body: JSON.stringify({ workspaceId, ...(sessionId ? { sessionId } : {}) }),
+    }),
   resolveConversation: (conversationId: string) =>
     request<ConversationLocation>(`/me/conversation-targets/resolve?conversation=${encodeURIComponent(conversationId)}`),
   getTasks: () => request<TaskRun[]>('/tasks'),
@@ -316,16 +326,23 @@ export const workbenchApi = {
   getSessionThread: (sessionId: string, before?: string) =>
     request<SessionThread>(`/sessions/${encodeURIComponent(sessionId)}${before ? `?before=${encodeURIComponent(before)}` : ''}`),
   /** TW-10：不产生 Run 的讨论消息（仅团队空间会话）。幂等键由调用方提供。 */
-  postSessionMessage: (sessionId: string, content: string, idempotencyKey: string) =>
+  postSessionMessage: (sessionId: string, content: string, idempotencyKey: string, mentionedUserIds: string[] = []) =>
     request<{ messageId: string; sessionId: string }>(`/sessions/${encodeURIComponent(sessionId)}/messages`, {
       method: 'POST',
-      body: JSON.stringify({ content, idempotencyKey }),
+      body: JSON.stringify({ content, idempotencyKey, ...(mentionedUserIds.length ? { mentionedUserIds } : {}) }),
     }),
   /**
    * 在会话中发起一次执行。团队会话按消息绑定 Agent 成员（@ 触发），传
    * `workspaceAgentMemberId`；个人会话沿用会话绑定版本，忽略该字段。
    */
-  startRun: (sessionId: string, input: { prompt: string; idempotencyKey: string; fileIds?: string[]; workspaceAgentMemberId?: string }) =>
+  startRun: (sessionId: string, input: {
+    prompt: string
+    idempotencyKey: string
+    fileIds?: string[]
+    workspaceAgentMemberId?: string
+    /** D38：同一条消息同时 @ 的同事，只登记站内提醒。 */
+    mentionedUserIds?: string[]
+  }) =>
     request<TaskRun>(`/sessions/${encodeURIComponent(sessionId)}/runs`, {
       method: 'POST',
       body: JSON.stringify(input),
@@ -456,6 +473,10 @@ export const workbenchApi = {
   getArtifacts: () => request<Artifact[]>('/artifacts'),
   downloadArtifact: (artifactId: string, version: number) => requestBlob(
     `/artifacts/${encodeURIComponent(artifactId)}/versions/${version}/download`,
+  ),
+  /** 执行隔离 2b-5：Office/PDF 成果版本的解析文本预览；权限与下载相同。 */
+  getArtifactText: (artifactId: string, version: number) => request<ArtifactTextPreview>(
+    `/artifacts/${encodeURIComponent(artifactId)}/versions/${version}/text`,
   ),
   artifactDownloadUrl: (artifactId: string, version: number) =>
     `${baseUrl}/artifacts/${encodeURIComponent(artifactId)}/versions/${version}/download`,
@@ -601,11 +622,6 @@ export const workbenchApi = {
     request<ProjectTask>(`/workspaces/${encodeURIComponent(workspaceId)}/project-tasks/${encodeURIComponent(taskId)}/schedule/resume`, {
       method: 'POST',
     }),
-  markSessionAsProjectTask: (workspaceId: string, sessionId: string, title?: string) =>
-    request<ProjectTask>(`/workspaces/${encodeURIComponent(workspaceId)}/sessions/${encodeURIComponent(sessionId)}/project-task`, {
-      method: 'POST',
-      body: JSON.stringify(title ? { title } : {}),
-    }),
   previewMemberDisclosureImpact: (workspaceId: string, userId: string) =>
     request<MemberDisclosureImpact[]>(
       `/workspaces/${encodeURIComponent(workspaceId)}/agent-members/disclosure-impact?userId=${encodeURIComponent(userId)}`,
@@ -717,6 +733,12 @@ export const workbenchApi = {
     schedule: AutomationSchedule
     inputTemplate: AutomationInputTemplate
   }) => request<Automation>('/automations', { method: 'POST', body: JSON.stringify(input) }),
+  /** 规则预览：服务端与调度共用日历计算，返回接下来的若干槽位（UTC）。 */
+  previewAutomationSchedule: (schedule: AutomationSchedule) =>
+    request<{ nextSlotsUtc: string[] }>('/automations/schedule-preview', {
+      method: 'POST',
+      body: JSON.stringify({ schedule }),
+    }),
   getAutomation: (id: string) => request<Automation>(`/automations/${encodeURIComponent(id)}`),
   updateAutomation: (id: string, input: {
     name?: string

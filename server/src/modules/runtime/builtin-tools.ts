@@ -21,6 +21,11 @@ export type BuiltinToolAssembly =
   | 'purpose'
   /** 项目空间运行：Agent 版本开启“项目任务管理”且由团队空间的人发起时装配（S6）。 */
   | 'workspace'
+  /**
+   * 执行容器（执行隔离阶段 2，C 档）：员工侧 Agent 运行（对话、定时任务、发布试运行）在本次启动的
+   * 执行容器可用时由平台装配；系统与管理运行不装配，Skill 不能声明。
+   */
+  | 'execution-container'
 
 export interface BuiltinTool {
   name: string
@@ -45,6 +50,7 @@ export const builtinTools: readonly BuiltinTool[] = [
   { name: 'write', label: '生成文本文件', source: 'dsh', effect: 'write', risk: 'low', assembly: 'always', constraints: [workspace, outputOnly] },
   { name: 'edit', label: '编辑文本文件', source: 'dsh', effect: 'write', risk: 'low', assembly: 'always', constraints: [workspace, outputOnly] },
   { name: 'str_replace_editor', label: '查看与编辑文本文件', source: 'dsh', effect: 'write', risk: 'low', assembly: 'always', constraints: [workspace, outputOnly] },
+  { name: 'bash', label: '运行命令', source: 'dsh', effect: 'write', risk: 'medium', assembly: 'execution-container', constraints: ['只在本次运行的执行容器中执行（断网、限时、限额）', '每次一条前台命令，不支持后台运行', workspace, '工作区合计不超过 2 GB，超出时终止命令'] },
   { name: 'todo_write', label: '任务进度清单', source: 'dsh', effect: 'write', risk: 'low', assembly: 'always', constraints: ['只记录本次会话的进度清单'] },
   { name: 'web_search', label: '联网搜索', source: 'dsh', effect: 'read', risk: 'medium', assembly: 'agent-opt-in', constraints: ['每次 1～4 个非空查询', '查询内容会发送到外部搜索服务'] },
   { name: 'activate_skill', label: '激活 Skill', source: 'platform', effect: 'read', risk: 'low', assembly: 'runtime', constraints: ['只读取本次固定版本的 Skill 资源'] },
@@ -52,7 +58,7 @@ export const builtinTools: readonly BuiltinTool[] = [
   { name: 'propose_memory', label: '提出经验申请', source: 'platform', effect: 'write', risk: 'low', assembly: 'runtime', constraints: ['只生成待管理员审核的申请'] },
   { name: 'project_tasks_list', label: '查看项目任务', source: 'platform', effect: 'read', risk: 'low', assembly: 'workspace', constraints: [projectOnly, '不返回任务对话内容'] },
   { name: 'project_task_get', label: '查看任务详情', source: 'platform', effect: 'read', risk: 'low', assembly: 'workspace', constraints: [projectOnly, '不返回任务对话内容'] },
-  { name: 'project_task_create', label: '新建项目任务', source: 'platform', effect: 'write', risk: 'medium', assembly: 'workspace', constraints: [projectOnly, actorLimited, 'Agent 任务执行规则为手动，不自动执行'] },
+  { name: 'project_task_create', label: '新建项目任务', source: 'platform', effect: 'write', risk: 'medium', assembly: 'workspace', constraints: [projectOnly, actorLimited, '仅在成员明确要求新建任务时调用', 'Agent 任务执行规则为手动，不自动执行'] },
   { name: 'project_task_update', label: '修改项目任务', source: 'platform', effect: 'write', risk: 'medium', assembly: 'workspace', constraints: [projectOnly, actorLimited, '不能移除任务'] },
   { name: 'prepare_skill_installation', label: '准备 Skill 安装', source: 'platform', effect: 'read', risk: 'low', assembly: 'purpose', constraints: ['仅管理端安装助手'] },
   { name: 'inspect_admin_state', label: '查看平台状态', source: 'platform', effect: 'read', risk: 'low', assembly: 'purpose', constraints: ['仅管理助手'] },
@@ -83,6 +89,11 @@ export function parseBuiltinToolReference(reference: string): BuiltinTool | unde
   return version === BUILTIN_TOOL_VERSION ? byName.get(name) : undefined
 }
 
+/** 员工侧 Agent 运行装配的执行容器工具（执行隔离阶段 2；阶段 3 起执行容器为必需，方案 4.9）。 */
+export function executionToolNames(): string[] {
+  return builtinTools.filter(tool => tool.assembly === 'execution-container').map(tool => tool.name)
+}
+
 /** 项目任务工具（S6）：读取与写入分开，定时执行只装配读取。 */
 export const projectTaskReadTools = ['project_tasks_list', 'project_task_get'] as const
 export const projectTaskWriteTools = ['project_task_create', 'project_task_update'] as const
@@ -96,7 +107,10 @@ export function projectTaskToolNames(input: { enabled: boolean; mode: 'none' | '
   return input.mode === 'read' ? [...projectTaskReadTools] : [...projectTaskReadTools, ...projectTaskWriteTools]
 }
 
-/** Agent 运行装配的 DSH 工具名称：默认工具，加上 Agent 开启的联网搜索；去掉 Runtime 停用的工具。 */
+/**
+ * Agent 运行装配的 DSH 工具名称：默认工具，加上 Agent 开启的联网搜索；去掉 Runtime 停用的工具。
+ * `bash` 不在其中：它取决于本次启动的执行容器是否可用，由派发时装配（executionToolNames）。
+ */
 export function agentBuiltinToolNames(input: {
   webSearchEnabled: boolean
   disabledTools?: readonly string[]
@@ -114,7 +128,7 @@ export function agentBuiltinToolNames(input: {
  */
 export function skillToolName(value: string): string | undefined {
   const key = value.trim().toLowerCase().replace(/[_\s-]/g, '')
-  return builtinTools.find(tool => tool.source === 'dsh' && tool.assembly !== 'purpose'
+  return builtinTools.find(tool => tool.source === 'dsh' && tool.assembly !== 'purpose' && tool.assembly !== 'execution-container'
     && tool.name.replace(/_/g, '') === key)?.name
 }
 
@@ -126,7 +140,7 @@ export function unavailableSkillTools(references: readonly string[], agent: { we
   const problems: string[] = []
   for (const reference of new Set(references)) {
     const tool = parseBuiltinToolReference(reference)
-    if (!tool || tool.assembly === 'purpose' || tool.assembly === 'workspace') problems.push(`${reference}（平台不提供该工具）`)
+    if (!tool || tool.assembly === 'purpose' || tool.assembly === 'workspace' || tool.assembly === 'execution-container') problems.push(`${reference}（平台不提供该工具）`)
     else if (tool.assembly === 'agent-opt-in' && !agent.webSearchEnabled) problems.push(`${reference}（Agent 未开启联网搜索）`)
   }
   return problems
@@ -136,7 +150,7 @@ export function unavailableSkillTools(references: readonly string[], agent: { we
 export function invalidSkillToolReferences(references: readonly string[]): string[] {
   return [...new Set(references)].filter(reference => {
     const tool = parseBuiltinToolReference(reference)
-    return !tool || tool.assembly === 'purpose' || tool.assembly === 'workspace' || tool.name === 'propose_memory'
+    return !tool || tool.assembly === 'purpose' || tool.assembly === 'workspace' || tool.assembly === 'execution-container' || tool.name === 'propose_memory'
   })
 }
 
@@ -155,6 +169,12 @@ export interface BuiltinToolStatus {
   tools: readonly BuiltinTool[]
   disabledTools: string[]
   catalog: { checkedAt: string; missingTools: string[] } | { checkedAt: string; error: string } | null
+  /** 本次启动的执行容器状态：不可用时所有 Agent 运行被拒绝（执行隔离方案 4.9）。原因细节只进服务日志。 */
+  executionContainer: {
+    status: 'available' | 'unavailable'
+    /** 执行容器可用而数据卷剩余空间低于阈值：暂不运行命令（方案 4.7）。 */
+    diskLow?: boolean
+  }
 }
 
 /** 启动时比对 DSH 当前工具目录：注册表中的 DSH 工具在目录里缺失时报告。 */

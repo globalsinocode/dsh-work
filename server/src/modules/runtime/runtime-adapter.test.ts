@@ -1,13 +1,13 @@
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
+import { cp, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import process from 'node:process'
 import { fileURLToPath } from 'node:url'
 import { afterEach, describe, it } from 'node:test'
-import { buildAcpChildEnvironment } from './acp-json-rpc-client.ts'
+import { AcpJsonRpcClient, buildAcpChildEnvironment } from './acp-json-rpc-client.ts'
 import {
   diagnoseMcpAuthenticationFailure,
   DshAcpRuntimeAdapter,
@@ -341,7 +341,7 @@ describe('Runtime Manifest compiler', () => {
     const rendered = renderSystemPrompt(compileRuntimeManifest(input).manifest)
     assert.match(rendered, /# 当前 Run 输入文件/)
     assert.match(rendered, /inventory\.csv/)
-    assert.match(rendered, /读取路径：input\/01-inventory-uat\.txt/)
+    assert.match(rendered, /读取路径（解析文本）：input\/01-inventory-uat\.txt/)
     assert.match(rendered, /不得猜测文件名/)
   })
 
@@ -388,6 +388,29 @@ describe('Runtime Manifest compiler', () => {
 
     input.input.file_mounts = [fileMount('/workspace/input/01-inventory-uat.txt', '物料,库存\nA-01,120')]
     assert.doesNotMatch(renderSystemPrompt(compileRuntimeManifest(input).manifest), /此前生成的成果/)
+
+    // 2b-3: a binary artifact with extracted text but no bash can only be read, not revised.
+    const workbook = {
+      ...fileMount('/workspace/input/01-revenue.txt', '# XLSX 文件摘要\n工作表：1'),
+      source_name: '营收.xlsx', media_type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      artifact_revision: { artifact_id: 'artifact-revenue', version: 1 },
+    }
+    input.input.file_mounts = [workbook]
+    const textOnly = renderSystemPrompt(compileRuntimeManifest(input).manifest)
+    assert.match(textOnly, /读取路径（解析文本）：input\/01-revenue\.txt/)
+    assert.match(textOnly, /只能参考其解析文本，无法直接修改该文件/)
+    assert.doesNotMatch(textOnly, /output\/营收\.xlsx/, 'never told to write text into an xlsx')
+    // With bash both paths are listed and the revision works from the original file.
+    input.tools = [...input.tools, { id: 'bash', version: '1.0.0' }]
+    input.input.original_mounts = [{
+      file_id: workbook.file_id, mount_path: '/workspace/input/original/01-revenue.xlsx', access: 'read_only',
+      source_name: '营收.xlsx', media_type: workbook.media_type, sha256: 'a'.repeat(64), size_bytes: 10,
+      artifact_revision: workbook.artifact_revision,
+    }]
+    const withOriginal = renderSystemPrompt(compileRuntimeManifest(input).manifest)
+    assert.match(withOriginal, /读取路径（解析文本）：input\/01-revenue\.txt/)
+    assert.match(withOriginal, /原始文件（只读.*input\/original\/01-revenue\.xlsx/)
+    assert.match(withOriginal, /基于原始文件处理，把修改后的完整文件写入 output\/营收\.xlsx，平台会登记为第 2 版/)
   })
 
   it('resolves Skill references by name, id or id@version without fuzzy fallback', () => {
@@ -454,6 +477,134 @@ describe('DSH ACP Runtime Adapter', () => {
     }
     assert.deepEqual(await readdir(root), [])
     await adapter.assertAvailable(manifest('run-standard', 'attempt-standard'))
+  })
+  it('refuses a Manifest carrying bash when there is no execution container, before starting anything', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'dsh-work-bash-admission-'))
+    const adapter = new DshAcpRuntimeAdapter({
+      runtimeId: 'runtime-bash-test', runtimeRoot: root, dshRepository: process.cwd(),
+      process: { command: 'must-not-start', args: [], cwd: process.cwd() },
+    })
+    adapters.push(adapter)
+    const base = manifest('run-bash-check', 'attempt-bash-check')
+    const input = { ...base, tools: [...base.tools, { id: 'bash', version: '1.0.0' }] }
+    // Without the overlay DSH would run bash on the host: refused, never downgraded.
+    await assert.rejects(adapter.assertAvailable(input), { code: 'EXECUTION_CONTAINER_UNAVAILABLE' })
+    await assert.rejects(adapter.execute(input), { code: 'EXECUTION_CONTAINER_UNAVAILABLE' })
+    assert.deepEqual(await readdir(root), [])
+  })
+  it('explains the execution container and the output rules only when bash is assembled', () => {
+    const base = manifest('run-bash-prompt', 'attempt-bash-prompt')
+    const withBash = renderSystemPrompt(compileRuntimeManifest({ ...base, tools: [...base.tools, { id: 'bash', version: '1.0.0' }] }).manifest)
+    assert.match(withBash, /# 运行命令/)
+    assert.match(withBash, /不能联网/)
+    assert.match(withBash, /不支持后台运行/)
+    assert.match(withBash, /不能超过 2 GB，超出时命令会被终止/)
+
+    // 1b② (plan 4.8): with the execution container, python_execute runs there and needs absolute file arguments.
+    const withPython = compileRuntimeManifest({ ...base, tools: [...base.tools, { id: 'python_execute', version: '1.0.0' }] }).manifest
+    const containerPython = renderSystemPrompt(withPython, { executionWorkspace: '/data/dsh-attempts/t/run/attempt/workspace' })
+    assert.match(containerPython, /# Python 脚本/)
+    assert.match(containerPython, /DSH_SKILL_DIR、DSH_INPUT_DIR、DSH_OUTPUT_DIR/)
+    assert.match(containerPython, /工作区位于 \/data\/dsh-attempts\/t\/run\/attempt\/workspace/)
+    assert.match(containerPython, /这些路径只用于脚本参数，不要写进给用户的回答/)
+    assert.doesNotMatch(renderSystemPrompt(withPython), /# Python 脚本/, 'no workspace path, no Python section')
+    assert.match(withBash, /中间文件放在工作区其他目录/)
+    assert.match(withBash, /xlsx、docx、pptx、pdf、png、jpg/)
+    assert.doesNotMatch(withBash, /执行镜像中已安装的程序/, 'no list without a startup check result')
+    assert.doesNotMatch(renderSystemPrompt(compileRuntimeManifest(base).manifest), /# 运行命令/)
+
+    // 2b-1: the toolchain the startup check found is listed, with platform text and probed versions.
+    const executionToolchain = [
+      { id: 'bash', version: '5.2.37' }, { id: 'rg', version: '15.0.0' }, { id: 'soffice', version: '25.2.3.2' },
+      { id: 'pdftoppm', version: '25.03.0' }, { id: 'python3', version: '3.12.15' }, { id: 'pandas', version: '3.0.6' },
+      { id: 'noto-cjk-sc', version: null },
+    ] as const
+    const listed = renderSystemPrompt(compileRuntimeManifest({ ...base, tools: [...base.tools, { id: 'bash', version: '1.0.0' }] }).manifest, { executionToolchain })
+    assert.match(listed, /执行镜像中已安装的程序/)
+    assert.match(listed, /- LibreOffice（soffice） 25\.2\.3\.2：Office 文件转换/)
+    assert.match(listed, /- python3 3\.12\.15：.*已安装 pandas 3\.0\.6$/m)
+    assert.match(listed, /Noto CJK，默认简体字形/)
+    assert.doesNotMatch(listed, /pandoc/, 'only what the check found')
+    assert.doesNotMatch(renderSystemPrompt(compileRuntimeManifest(base).manifest, { executionToolchain }), /执行镜像中已安装的程序/)
+  })
+  it('tells the model how artifacts reach the user whenever a tool can write output/', () => {
+    const base = manifest('run-artifact-prompt', 'attempt-artifact-prompt')
+    const render = (tools: string[], purpose?: RuntimeManifest['purpose']) => renderSystemPrompt({
+      ...base, ...(purpose ? { purpose } : {}), tools: tools.map(id => ({ id, version: '1.0.0' })),
+    })
+
+    const writeOnly = render(['write'])
+    assert.match(writeOnly, /# 成果文件/)
+    assert.match(writeOnly, /write 工具只能写 Markdown、纯文本和 CSV/)
+    assert.doesNotMatch(writeOnly, /\.html/, 'write cannot produce HTML (tool policy accepts md, txt and csv)')
+    // The user downloads from the artifact card; workspace paths mean nothing to them.
+    assert.match(writeOnly, /临时工作区目录，不是用户电脑或共享盘上的文件夹/)
+    assert.match(writeOnly, /已生成成果《销售汇总\.md》，可在下方成果卡片中查看或下载/, 'the example is a format this run can produce')
+    assert.match(writeOnly, /不要在回答中写 output\/、input\/、\/workspace\/ 或其他工作区路径/)
+    assert.match(writeOnly, /此前轮次 output 中的文件不在本次工作区/)
+
+    // Collected when only bash writes output/ (write disabled at the Runtime), so the rules apply too.
+    const bashOnly = render(['read', 'bash'])
+    assert.match(bashOnly, /# 成果文件/)
+    assert.match(bashOnly, /HTML 以及 xlsx、docx、pptx、pdf、png、jpg 用 bash 中的程序生成/)
+    assert.doesNotMatch(bashOnly, /write 工具只能写/)
+    assert.match(bashOnly, /已生成成果《销售汇总\.xlsx》/)
+
+    assert.match(render(['write'], 'agent-release-trial'), /# 成果文件/, 'release trials see the production text (F-02)')
+    assert.doesNotMatch(render(['read']), /# 成果文件/)
+    assert.doesNotMatch(render(['write'], 'admin-skill-test'), /# 成果文件/)
+  })
+  it('asks for everyday wording when telling employees what the Agent can do', () => {
+    const base = manifest('run-plain-capabilities', 'attempt-plain-capabilities')
+    const plain = /用日常工作中的说法讲能帮他做成什么事[\s\S]*不要列出工具名、Skill 标识与版本号/
+    assert.match(renderSystemPrompt(base), plain)
+    assert.match(renderSystemPrompt({ ...base, purpose: 'automation' }), plain)
+    assert.match(renderSystemPrompt({ ...base, purpose: 'agent-release-trial' }), plain, 'release trials see the production text (F-02)')
+    assert.doesNotMatch(renderSystemPrompt({ ...base, purpose: 'admin-assistant' }), plain, 'administrators keep the technical wording')
+  })
+  it('passes the execution container toolchain into the Worker system prompt (2b-1)', async () => {
+    const log = join(await mkdtemp(join(tmpdir(), 'dsh-work-prompt-log-')), 'prompt.log')
+    const remoteExecution = {
+      exec: async () => { throw new Error('unused') },
+      waitUntilIdle: async () => 'idle' as const,
+      release: async () => undefined,
+      toolchain: [{ id: 'soffice', version: '25.2.3.2' }, { id: 'pdftoppm', version: '25.03.0' }] as const,
+    }
+    const adapter = await createAdapter(500, undefined, async () => ({ published: [], skipped: [], skippedTotal: 0 }), {
+      remoteExecution,
+      process: {
+        command: process.execPath, args: ['--experimental-strip-types', mockWorker], cwd: process.cwd(),
+        env: { MOCK_SYSTEM_PROMPT_LOG: log },
+      },
+    })
+    const input = manifest('run-toolchain-prompt', 'attempt-toolchain-prompt')
+    input.tools = [...input.tools, { id: 'bash', version: '1.0.0' }]
+    const result = await (await adapter.execute(input)).done
+    assert.equal(result.status, 'completed', result.errorMessage ?? undefined)
+    const prompt = await readFile(log, 'utf8')
+    assert.match(prompt, /- LibreOffice（soffice） 25\.2\.3\.2：/)
+    assert.match(prompt, /- pdftoppm 25\.03\.0：/)
+  })
+  it('rejects activating an emergency-disabled built-in Skill once, without failing the Attempt', async () => {
+    const run = async (disabled: string[]) => {
+      const activations: string[] = []
+      const adapter = await createAdapter(500, undefined, undefined, {
+        disabledBuiltinSkills: async () => disabled,
+        recordSkillActivation: async (_manifest, skill) => { activations.push(skill.id) },
+      })
+      const input = manifest(`run-builtin-${disabled.length}`, 'attempt-builtin')
+      input.agent_configuration.system_prompt = '必须先调用 activate_skill 激活 html-page-builtin，然后按说明完成任务。'
+      input.skills = [{ id: 'dsh-work-html-page', version: '1.0.0' }]
+      input.agent_configuration.skill_instructions = [{
+        id: 'dsh-work-html-page', name: 'html-page-builtin', description: '平台内置的 HTML 页面方法', version: '1.0.0',
+        instructions: '生成单个离线可用的 HTML 文件，不引用任何外部地址。',
+      }]
+      input.tools = [...input.tools, { id: 'activate_skill', version: '1.0.0' }]
+      const result = await (await adapter.execute(input)).done
+      return { status: result.status, activations }
+    }
+    assert.deepEqual(await run([]), { status: 'completed', activations: ['dsh-work-html-page'] })
+    assert.deepEqual(await run(['dsh-work-html-page']), { status: 'completed', activations: [] })
   })
   it('discovers the session-scoped tool schemas from an isolated active DSH Profile', async () => {
     const root = await mkdtemp(join(tmpdir(), 'dsh-work-runtime-catalog-test-'))
@@ -535,6 +686,48 @@ describe('DSH ACP Runtime Adapter', () => {
     } finally {
       if (originalDatabaseUrl === undefined) delete process.env.DSH_WORK_DATABASE_URL
       else process.env.DSH_WORK_DATABASE_URL = originalDatabaseUrl
+    }
+  })
+
+  it('forces DSH session telemetry off and refuses telemetry overrides', () => {
+    const originalMode = process.env.DSH_TELEMETRY_MODE
+    process.env.DSH_TELEMETRY_MODE = 'FULL'
+    try {
+      const environment = buildAcpChildEnvironment({ DSH_AGENT_SYSTEM_PROMPT: '安全提示词' })
+      assert.equal(environment['DSH_TELEMETRY_DISABLED'], '1')
+      assert.equal(environment['DSH_TELEMETRY_MODE'], 'DISABLED')
+      for (const key of ['DSH_TELEMETRY_DISABLED', 'DSH_TELEMETRY_MODE', 'DSH_TELEMETRY_OTLP_URL']) {
+        assert.throws(() => buildAcpChildEnvironment({ [key]: '' }), /遥测由平台强制关闭/)
+      }
+    } finally {
+      if (originalMode === undefined) delete process.env.DSH_TELEMETRY_MODE
+      else process.env.DSH_TELEMETRY_MODE = originalMode
+    }
+  })
+
+  it('launches every ACP worker with telemetry disabled', async () => {
+    // Echoes its telemetry environment in the initialize result, so this checks the spawned process itself.
+    const echoWorker = [
+      "const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => k.startsWith('DSH_TELEMETRY')))",
+      "process.stdin.once('data', chunk => {",
+      "  const { id } = JSON.parse(String(chunk).split('\\n')[0])",
+      "  process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id, result: { protocolVersion: 1, env } }) + '\\n')",
+      '})',
+    ].join('\n')
+    const client = AcpJsonRpcClient.launch({
+      command: process.execPath,
+      args: ['-e', echoWorker],
+      cwd: moduleDirectory,
+      env: { DSH_SNAPSHOT: 'record' },
+    }, {
+      onSessionUpdate: () => undefined,
+      onPermissionRequest: async () => ({ outcome: { outcome: 'cancelled' } }),
+    })
+    try {
+      const response = await client.initialize()
+      assert.deepEqual(response['env'], { DSH_TELEMETRY_DISABLED: '1', DSH_TELEMETRY_MODE: 'DISABLED' })
+    } finally {
+      await client.close()
     }
   })
 
@@ -801,9 +994,237 @@ describe('DSH ACP Runtime Adapter', () => {
     assert.equal((await adapter.health()).acceptingRuns, false)
   })
 
+  it('execution container mode routes DSH subprocesses into the Attempt container, audits them and releases it', async () => {
+    const events: string[] = []
+    const execs: Array<{ attemptId: string; workspace: string; argv: string[]; cwd: string }> = []
+    const audits: Array<{ runId: string; executable: string; exitCode: number | null }> = []
+    const adapter = await createAdapter(500, undefined, undefined, {
+      remoteExecution: {
+        exec: async (attemptId, workspace, command) => {
+          events.push('exec')
+          execs.push({ attemptId, workspace, argv: command.argv, cwd: command.cwd })
+          return { exitCode: 0, stdout: 'a.txt\n', stderr: '', truncated: false, timedOut: false }
+        },
+        waitUntilIdle: async () => { events.push('idle-check'); return 'idle' as const },
+        release: async () => { events.push('release') },
+      },
+      recordContainerCommand: async (manifest, audit) => {
+        audits.push({ runId: manifest.run_id, executable: audit.executable, exitCode: audit.exitCode })
+      },
+    })
+    const handle = await adapter.execute(manifest('run-execution-container', 'attempt-exec-1', '[remote-exec]'))
+    const result = await handle.done
+    assert.equal(result.status, 'completed')
+    await waitForCondition(() => events.includes('release'))
+    assert.deepEqual(events.filter(event => event !== 'idle-check'), ['exec', 'release'], 'released only after the bridge stopped taking commands')
+    assert.ok(events.indexOf('idle-check') > -1 && events.indexOf('idle-check') < events.indexOf('exec'), 'the authorization probe waited for the container to be idle first')
+    assert.equal(execs.length, 1)
+    assert.equal(execs[0]!.attemptId, 'attempt-exec-1')
+    assert.deepEqual(execs[0]!.argv, ['rg', '--files'], 'DSH-bundled ripgrep is mapped to the image rg')
+    assert.equal(execs[0]!.cwd, execs[0]!.workspace)
+    assert.equal(execs[0]!.workspace, join(result.attemptDirectory, 'workspace'), 'the Adapter passes its own Attempt workspace')
+    assert.deepEqual(audits, [{ runId: 'run-execution-container', executable: 'rg', exitCode: 0 }])
+  })
+
+  it('execution container mode fails the Attempt when the container cannot be made quiescent', async () => {
+    let execs = 0
+    const adapter = await createAdapter(500, undefined, undefined, {
+      remoteExecution: {
+        exec: async () => { execs += 1; throw new Error('must not run') },
+        waitUntilIdle: async () => 'failed' as const,
+        release: async () => {},
+      },
+    })
+    const result = await (await adapter.execute(manifest('run-execution-unrecoverable', 'attempt-exec-2', '[remote-exec]'))).done
+    assert.equal(result.status, 'failed')
+    assert.equal(result.errorCode, 'EXECUTION_CONTAINER_UNRECOVERABLE')
+    assert.equal(execs, 0, 'no tool ran once quiescence could not be restored')
+  })
+
+  it('execution container mode reports a workspace far over its cap with its own reason (4.7)', async () => {
+    const adapter = await createAdapter(500, undefined, undefined, {
+      remoteExecution: {
+        exec: async () => { throw new Error('must not run') },
+        waitUntilIdle: async () => 'failed' as const,
+        release: async () => {},
+        failureReason: () => 'workspace_limit' as const,
+      },
+    })
+    const result = await (await adapter.execute(manifest('run-execution-workspace-limit', 'attempt-exec-wl', '[remote-exec]'))).done
+    assert.equal(result.status, 'failed')
+    assert.equal(result.errorCode, 'EXECUTION_WORKSPACE_LIMIT')
+    assert.match(result.errorMessage ?? '', /工作区超出 4 GB/)
+  })
+
+  it('execution container mode refuses a tool call while the container is still cleaning up', async () => {
+    let execs = 0
+    let probes = 0
+    const adapter = await createAdapter(500, undefined, undefined, {
+      remoteExecution: {
+        exec: async () => { execs += 1; throw new Error('must not run') },
+        // Still cleaning up at the tool's probe; finished by the end of the Attempt.
+        waitUntilIdle: async () => (probes++ === 0 ? 'busy' as const : 'idle' as const),
+        release: async () => {},
+      },
+    })
+    const input = manifest('run-execution-busy', 'attempt-exec-3', '[remote-exec]')
+    const handle = await adapter.execute(input)
+    const events: RuntimeEvent[] = []
+    adapter.subscribe(input.run_id, event => { events.push(event) })
+    const result = await handle.done
+    assert.equal(result.status, 'completed', 'only the tool call is refused; the Attempt continues')
+    assert.equal(execs, 0)
+    const answer = events.filter(event => event.event_type === 'assistant.delta').map(event => event.display_message ?? '').join('')
+    assert.match(answer, /authorize:409/)
+  })
+
+  it('execution container mode releases the container before reading output/ for artifacts', async () => {
+    const order: string[] = []
+    const adapter = await createAdapter(500, undefined, async () => { order.push('collect'); return { published: [], skipped: [], skippedTotal: 0 } }, {
+      remoteExecution: {
+        exec: async () => { throw new Error('unused') },
+        waitUntilIdle: async () => { order.push('idle'); return 'idle' as const },
+        release: async () => { order.push('release') },
+      },
+    })
+    const input = manifest('run-execution-settle', 'attempt-exec-4')
+    input.tools = [...input.tools, { id: 'write', version: '1.0.0' }]
+    const result = await (await adapter.execute(input)).done
+    assert.equal(result.status, 'completed', result.errorMessage ?? undefined)
+    assert.deepEqual(order.slice(-3), ['idle', 'release', 'collect'], 'idle, then released, then read')
+  })
+
+  it('collects output/ when only bash is assembled and reports skipped files without failing the Attempt', async () => {
+    let collected = 0
+    const skipped = [{ name: '宏.xlsx', reason: 'active_content' }]
+    const adapter = await createAdapter(500, undefined, async () => {
+      collected += 1
+      return { published: [{ name: '数据.xlsx', size: 10 }], skipped, skippedTotal: 2 }
+    }, {
+      remoteExecution: {
+        exec: async () => { throw new Error('unused') },
+        waitUntilIdle: async () => 'idle' as const,
+        release: async () => undefined,
+      },
+    })
+    const input = manifest('run-bash-only-collect', 'attempt-exec-bash')
+    input.tools = [...input.tools.filter(tool => tool.id !== 'write'), { id: 'bash', version: '1.0.0' }]
+    const events: RuntimeEvent[] = []
+    const handle = await adapter.execute(input)
+    adapter.subscribe(input.run_id, event => events.push(event))
+    const result = await handle.done
+    assert.equal(result.status, 'completed', result.errorMessage ?? undefined)
+    assert.equal(collected, 1, 'write is not assembled, bash may still have written artifacts')
+    const completed = events.find(event => event.event_type === 'run.completed')
+    assert.equal(completed?.safe_metadata['artifact_count'], 1)
+    assert.deepEqual(completed?.safe_metadata['artifacts_skipped'], skipped)
+    assert.equal(completed?.safe_metadata['artifacts_skipped_total'], 2)
+  })
+
+  it('mounts original files read-only after the authorization check, verified against the Manifest (2b-4)', async () => {
+    const bytes = Buffer.from('PK original workbook bytes')
+    const order: string[] = []
+    const remoteExecution = {
+      exec: async () => { throw new Error('unused') },
+      waitUntilIdle: async () => 'idle' as const,
+      release: async () => undefined,
+    }
+    const withOriginal = (runId: string, digest = createHash('sha256').update(bytes).digest('hex')) => {
+      const input = manifest(runId, `attempt-${runId}`)
+      input.tools = [...input.tools, { id: 'bash', version: '1.0.0' }]
+      input.input.original_mounts = [{
+        file_id: 'file-artifact-1', mount_path: '/workspace/input/original/01-data.xlsx', access: 'read_only',
+        source_name: '数据.xlsx', media_type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        sha256: digest, size_bytes: bytes.length, artifact_revision: { artifact_id: 'artifact-abc123', version: 1 },
+      }]
+      return input
+    }
+    const capture = await workspaceCapture()
+    const collect = capture.collect
+    const adapter = await createAdapter(500, undefined, collect, {
+      remoteExecution,
+      authorizeExecution: async () => { order.push('authorize') },
+      loadRuntimeOriginal: async (_manifest, fileId) => { order.push(`load:${fileId}`); return bytes },
+    })
+    const ok = await (await adapter.execute(withOriginal('run-original-ok'))).done
+    assert.equal(ok.status, 'completed', ok.errorMessage ?? undefined)
+    assert.deepEqual(order.slice(0, 2), ['authorize', 'load:file-artifact-1'], 'read only after the authorization check')
+    const mounted = join(capture.directory, 'input', 'original', '01-data.xlsx')
+    assert.ok((await readFile(mounted)).equals(bytes))
+    assert.equal((await stat(mounted)).mode & 0o777, 0o400)
+
+    const tampered = await (await adapter.execute(withOriginal('run-original-tampered', 'b'.repeat(64)))).done
+    assert.equal(tampered.status, 'failed')
+    assert.match(tampered.errorMessage ?? '', /校验失败|输入原始文件/)
+
+    // 4.7: once the Attempt has ended its workspace is removed; a failed one keeps it for diagnosis.
+    const ended = async (attemptDirectory: string) => {
+      const marker = join(attemptDirectory, 'attempt-end.json')
+      const deadline = Date.now() + 5_000
+      while (Date.now() < deadline) {
+        const text = await readFile(marker, 'utf8').catch(() => null)
+        if (text) return JSON.parse(text) as { status: string }
+        await new Promise(resolve => setTimeout(resolve, 20))
+      }
+      throw new Error(`no end record in ${attemptDirectory}`)
+    }
+    const present = (path: string) => stat(path).then(() => true, () => false)
+    assert.equal((await ended(ok.attemptDirectory)).status, 'completed')
+    assert.equal(await present(join(ok.attemptDirectory, 'workspace')), false)
+    assert.equal(await present(join(ok.attemptDirectory, 'manifest.json')), true, 'metadata stays')
+    assert.equal((await ended(tampered.attemptDirectory)).status, 'failed')
+    assert.equal(await present(join(tampered.attemptDirectory, 'workspace')), true)
+
+    const noLoader = await createAdapter(500, undefined, collect, { remoteExecution })
+    const refused = await (await noLoader.execute(withOriginal('run-original-no-loader'))).done
+    assert.equal(refused.status, 'failed', 'fails closed without a loader')
+
+    const prompt = renderSystemPrompt(compileRuntimeManifest(withOriginal('run-original-prompt')).manifest)
+    assert.match(prompt, /原始文件（只读，供 bash 中的程序处理[^）]*）：input\/original\/01-data\.xlsx/)
+    assert.match(prompt, /基于原始文件处理，把修改后的完整文件写入 output\/数据\.xlsx，平台会登记为第 2 版/)
+    assert.doesNotMatch(prompt, /读取路径（解析文本）/, 'no text path when the file has none')
+  })
+
+  it('execution container mode never reads output/ when the container could not be released', async () => {
+    let collected = false
+    const adapter = await createAdapter(500, undefined, async () => { collected = true; return { published: [], skipped: [], skippedTotal: 0 } }, {
+      remoteExecution: {
+        exec: async () => { throw new Error('unused') },
+        waitUntilIdle: async () => 'idle' as const,
+        release: async () => { throw new Error('沙箱容器清理失败，容器可能仍在运行') },
+      },
+    })
+    const input = manifest('run-execution-unreleased', 'attempt-exec-5')
+    input.tools = [...input.tools, { id: 'write', version: '1.0.0' }]
+    const result = await (await adapter.execute(input)).done
+    assert.equal(result.status, 'failed')
+    assert.equal(result.errorCode, 'EXECUTION_CONTAINER_UNRECOVERABLE')
+    assert.equal(collected, false)
+  })
+
+  it('execution container mode refuses a persistent-wait checkpoint while the container is still busy', async () => {
+    let decisionRequested = false
+    const adapter = await createAdapter(500, undefined, undefined, {
+      remoteExecution: {
+        exec: async () => { throw new Error('unused') },
+        waitUntilIdle: async () => 'busy' as const,
+        release: async () => {},
+      },
+      permissionDecision: async () => {
+        decisionRequested = true
+        return { decision: 'wait', approvalId: 'approval-x', checkpointId: 'checkpoint-x', checkpointDigest: 'd'.repeat(64), expiresAt: '2026-09-23T00:00:00.000Z' }
+      },
+    })
+    const result = await (await adapter.execute(manifest('run-execution-checkpoint', 'attempt-exec-6', '[permission] read inventory'))).done
+    assert.notEqual(result.status, 'waiting', 'no checkpoint was created from a workspace that may still change')
+    assert.equal(decisionRequested, false)
+  })
+
   it('creates an isolated Attempt and emits ordered safe completion events', async () => {
-    const adapter = await createAdapter()
+    const capture = await workspaceCapture()
+    const adapter = await createAdapter(500, undefined, capture.collect)
     const input = manifest('run-complete', 'attempt-1')
+    input.tools = [...input.tools, { id: 'write', version: '1.0.0' }]
     input.input.file_mounts = [fileMount('/workspace/input/inventory.csv.txt', '物料,库存\nA-01,120')]
     input.memory_context = [{
       memoryVersionId: 'memory-version-approved-1', title: '展示偏好', version: 1,
@@ -841,18 +1262,18 @@ describe('DSH ACP Runtime Adapter', () => {
     const stored = JSON.parse(await readFile(join(result.attemptDirectory, 'manifest.json'), 'utf8')) as RuntimeManifest
     assert.equal(stored.run_id, input.run_id)
     assert.equal(result.manifestSha256, compileRuntimeManifest(input).sha256)
-    const mountedPath = join(result.attemptDirectory, 'workspace/input/inventory.csv.txt')
+    const mountedPath = join(capture.directory, 'input/inventory.csv.txt')
     assert.equal(await readFile(mountedPath, 'utf8'), '物料,库存\nA-01,120')
     await assertReadOnlyFile(mountedPath)
-    const memoryPath = join(result.attemptDirectory, 'workspace/memory.md')
+    const memoryPath = join(capture.directory, 'memory.md')
     assert.match(await readFile(memoryPath, 'utf8'), /memory-version-approved-1/)
     await assertReadOnlyFile(memoryPath)
     const systemPrompt = renderSystemPrompt(stored)
     assert.match(systemPrompt, /已启用 Skill（兼容模式）/)
     assert.match(systemPrompt, /Read references\/value\.txt/)
-    const [resourceDirectory] = await readdir(join(result.attemptDirectory, 'workspace/skills'))
+    const [resourceDirectory] = await readdir(join(capture.directory, 'skills'))
     assert.ok(resourceDirectory)
-    const resourcePath = join(result.attemptDirectory, 'workspace/skills', resourceDirectory, 'references/value.txt')
+    const resourcePath = join(capture.directory, 'skills', resourceDirectory, 'references/value.txt')
     assert.equal(await readFile(resourcePath, 'utf8'), resource)
     await assertReadOnlyFile(resourcePath)
   })
@@ -1008,7 +1429,7 @@ describe('DSH ACP Runtime Adapter', () => {
         name,
         content: await readFile(join(workspaceDirectory, 'output', name), 'utf8'),
       })
-      return [{ name, size: Buffer.byteLength(collected[0]!.content) }]
+      return { published: [{ name, size: Buffer.byteLength(collected[0]!.content) }], skipped: [], skippedTotal: 0 }
     })
     const input = manifest('run-artifact', 'attempt-1', '[artifact] create report')
     input.tools = [{ id: 'write', version: '1.0.0' }]
@@ -1093,8 +1514,10 @@ describe('DSH ACP Runtime Adapter', () => {
       { path: 'SKILL.md', content: skillMarkdown, sha256: createHash('sha256').update(skillMarkdown).digest('hex'), size: Buffer.byteLength(skillMarkdown) },
       { path: 'references/value.txt', content: resource, sha256: createHash('sha256').update(resource).digest('hex'), size: Buffer.byteLength(resource) },
     ]
-    const adapter = await createAdapter(500, async () => ({ instructions, files }))
+    const capture = await workspaceCapture()
+    const adapter = await createAdapter(500, async () => ({ instructions, files }), capture.collect)
     const input = manifest('run-externalized-skill', 'attempt-1')
+    input.tools = [...input.tools, { id: 'write', version: '1.0.0' }]
     input.skills = [{ id: 'skill-externalized', version: '1.0.0' }]
     input.agent_configuration.skill_instructions = [{
       id: 'skill-externalized', name: 'externalized-skill', description: 'Verify filesystem-backed Skill loading.', version: '1.0.0',
@@ -1107,9 +1530,9 @@ describe('DSH ACP Runtime Adapter', () => {
     const persisted = await readFile(join(result.attemptDirectory, 'manifest.json'), 'utf8')
     assert.equal(persisted.includes(resource), false)
     assert.equal(persisted.includes(instructions), false)
-    const [skillDirectory] = await readdir(join(result.attemptDirectory, 'workspace/skills'))
+    const [skillDirectory] = await readdir(join(capture.directory, 'skills'))
     assert.ok(skillDirectory)
-    assert.equal(await readFile(join(result.attemptDirectory, 'workspace/skills', skillDirectory, 'references/value.txt'), 'utf8'), resource)
+    assert.equal(await readFile(join(capture.directory, 'skills', skillDirectory, 'references/value.txt'), 'utf8'), resource)
   })
 
   it('routes permission requests through a fail-closed decision and audit events', async () => {
@@ -1200,8 +1623,10 @@ describe('DSH ACP Runtime Adapter', () => {
   })
 
   it('restores bounded checkpoint files and renders pending action and prior tool results', async () => {
-    const adapter = await createAdapter()
+    const capture = await workspaceCapture()
+    const adapter = await createAdapter(500, undefined, capture.collect)
     const input = manifest('run-resume-context', 'attempt-2', 'Continue the approved operation.')
+    input.tools = [...input.tools, { id: 'write', version: '1.0.0' }]
     const actionArguments = { orderId: '42', expectedVersion: 'etag-v1' }
     const context = {
       pending_action: { arguments: actionArguments },
@@ -1228,7 +1653,7 @@ describe('DSH ACP Runtime Adapter', () => {
 
     const result = await (await adapter.execute(input)).done
     assert.equal(result.status, 'completed', result.errorMessage ?? undefined)
-    assert.equal(await readFile(join(result.attemptDirectory, 'workspace/output/库存报告.md'), 'utf8'), '# Existing draft\n')
+    assert.equal(await readFile(join(capture.directory, 'output/库存报告.md'), 'utf8'), '# Existing draft\n')
     const systemPrompt = renderSystemPrompt(input)
     assert.match(systemPrompt, /expectedVersion/)
     assert.match(systemPrompt, /call-read-1/)
@@ -1484,6 +1909,19 @@ async function readAttemptText(directory: string): Promise<string> {
     }
   }
   return chunks.join('\n')
+}
+
+/**
+ * Copies the Attempt workspace while the run is still going: artifact collection runs before the
+ * Attempt ends, and the workspace is removed once it has ended (execution isolation 4.7).
+ */
+async function workspaceCapture() {
+  const directory = await mkdtemp(join(tmpdir(), 'dsh-work-workspace-capture-'))
+  const collect = async (_manifest: RuntimeManifest, workspace: string) => {
+    await cp(workspace, directory, { recursive: true })
+    return { published: [], skipped: [], skippedTotal: 0 }
+  }
+  return { directory, collect }
 }
 
 async function createAdapter(
@@ -1744,7 +2182,7 @@ describe('current execution authorization', () => {
   it('does not commit a completed response if permission was revoked during artifact collection', async () => {
     let revoked = false
     const events: RuntimeEvent[] = []
-    const adapter = await createAdapter(200, undefined, async () => { revoked = true; return [] }, {
+    const adapter = await createAdapter(200, undefined, async () => { revoked = true; return { published: [], skipped: [], skippedTotal: 0 } }, {
       authorizeExecution: async () => { if (revoked) throw Object.assign(new Error('revoked'), { code: 'permission_denied' }) },
     })
     const input = manifest('run-revoke-at-output', 'attempt-1', '[artifact]')
@@ -1760,7 +2198,7 @@ describe('current execution authorization', () => {
   it('does not commit a completed response when authorization is unavailable during artifact collection', async () => {
     let unavailable = false
     const events: RuntimeEvent[] = []
-    const adapter = await createAdapter(200, undefined, async () => { unavailable = true; return [] }, {
+    const adapter = await createAdapter(200, undefined, async () => { unavailable = true; return { published: [], skipped: [], skippedTotal: 0 } }, {
       authorizeExecution: async () => { if (unavailable) throw new Error('authorization database unavailable') },
     })
     const input = manifest('run-authorization-outage-at-output', 'attempt-1', '[artifact]')
@@ -1894,3 +2332,11 @@ describe('26-10-24 二期：会话更新转发（reasoning / 工具生命周期�
     assert.equal(started.length, 1)
   })
 })
+
+async function waitForCondition(predicate: () => boolean, timeoutMs = 5_000) {
+  const deadline = Date.now() + timeoutMs
+  while (!predicate()) {
+    if (Date.now() > deadline) throw new Error('condition was not reached')
+    await new Promise(resolve => setTimeout(resolve, 10))
+  }
+}

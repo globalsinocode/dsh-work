@@ -28,7 +28,7 @@ export function buildSkillInstallationPlan(
   options: { pythonSandboxAvailable: boolean; pythonPackages?: string[]; unavailableTools?: string[]; deferRuntimeRequirements?: boolean },
 ): PreparedSkillInstallationPlan {
   const unavailableTools = new Set(options.unavailableTools ?? [])
-  const pythonPackages = new Set((options.pythonPackages ?? []).map(value => value.toLowerCase()))
+  const pythonPackages = new Set((options.pythonPackages ?? []).map(normalizePythonPackageName))
   const packages = bundle.packages.map(pkg => {
     const requirements = pkg.requirements.map(requirement => {
       if (requirement.type === 'python') {
@@ -36,7 +36,7 @@ export function buildSkillInstallationPlan(
       }
       if (requirement.type === 'external' && requirement.name.startsWith('python-package:')) {
         const packageName = requirement.name.slice('python-package:'.length)
-        return { ...requirement, status: options.pythonSandboxAvailable && pythonPackages.has(packageName) ? 'resolved' as const : options.deferRuntimeRequirements ? 'needs_review' as const : 'unsupported' as const }
+        return { ...requirement, status: options.pythonSandboxAvailable && pythonPackages.has(normalizePythonPackageName(packageName)) ? 'resolved' as const : options.deferRuntimeRequirements ? 'needs_review' as const : 'unsupported' as const }
       }
       if (requirement.type === 'external' && requirement.name === 'pyproject-dependencies') return { ...requirement, status: 'unsupported' as const }
       if (requirement.type === 'tool' && unavailableTools.has(requirement.name)) {
@@ -48,6 +48,16 @@ export function buildSkillInstallationPlan(
   })
   const issues = packages.flatMap(pkg => pkg.compatibility.issues.map(issue => ({ ...issue, message: `${pkg.name}：${issue.message}` })))
   if (hasDependencyCycle(bundle.edges)) issues.push({ code: 'skill_dependency_cycle', severity: 'error', message: 'Skill 依赖图存在循环，无法生成稳定激活顺序' })
+  // 执行隔离 1b②、阶段 3（方案 4.8、4.9）：python_execute 只在执行容器内运行，没有 /skill、/input、/output，脚本应改用 DSH_SKILL_DIR 等环境变量。
+  for (const pkg of packages) {
+    const fixed = pkg.files.filter(file => file.path.endsWith('.py') && FIXED_SANDBOX_PATH.test(file.content)).map(file => file.path)
+    if (fixed.length) {
+      issues.push({
+        code: 'python_fixed_sandbox_paths', severity: 'warning',
+        message: `${pkg.name}：脚本写死了 /skill、/input 或 /output（${fixed.slice(0, 3).join('、')}${fixed.length > 3 ? ' 等' : ''}），平台不提供这些路径；请改用环境变量 DSH_SKILL_DIR、DSH_INPUT_DIR、DSH_OUTPUT_DIR 或相对路径`,
+      })
+    }
+  }
   const unsigned = {
     planVersion: '1.0' as const,
     rootName: bundle.root.name,
@@ -63,6 +73,14 @@ export function buildSkillInstallationPlan(
   }
   return { ...unsigned, sha256: hash(canonicalJson(unsigned)) }
 }
+
+/** PEP 503 name normalization, so `Python_Docx` and `python-docx` match. */
+export function normalizePythonPackageName(name: string) {
+  return name.trim().toLowerCase().replace(/[-_.]+/g, '-')
+}
+
+/** A string literal starting with one of the per-call sandbox mounts, e.g. '/input/data.csv' or "/output". */
+const FIXED_SANDBOX_PATH = /["'](?:\/skill|\/input|\/output)(?:\/|["'])/
 
 export function externalizeSkillInstallationPlan(
   prepared: PreparedSkillInstallationPlan,

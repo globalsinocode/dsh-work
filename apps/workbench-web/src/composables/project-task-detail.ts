@@ -22,6 +22,8 @@ export interface ProjectTaskDetailBridge {
   openComplete: () => void
   /** 对话中发生了可能改变任务状态的动作（发言、执行）后刷新任务与事件。 */
   refresh: () => Promise<void>
+  /** “标记完成”已在任务详情的操作菜单中（协作模式，D37）：任务对话不再重复提供。 */
+  completeInMenu?: boolean
 }
 
 export const projectTaskDetailKey: InjectionKey<ProjectTaskDetailBridge> = Symbol('projectTaskDetail')

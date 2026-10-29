@@ -3,6 +3,7 @@ import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessageBox } from 'element-plus'
 import { workbenchApi } from '@/api/client'
+import PageHeader from '@/components/PageHeader.vue'
 import { useAuthStore } from '@/stores/auth'
 import { useTaskStore } from '@/stores/tasks'
 import { usePagedQuery } from '@/composables/usePagedQuery'
@@ -31,8 +32,10 @@ async function remove(item: UserSessionSummary) {
 }
 </script>
 <template>
-  <section class="history-page panel">
-    <header><div><h1>历史对话</h1><p>查找和继续自己的工作；团队对话按当前访问权限显示。</p></div><el-button type="primary" @click="router.push('/workbench')">新对话</el-button></header>
+  <PageHeader title="历史对话">
+    <template #actions><el-button type="primary" @click="router.push('/workbench')">新对话</el-button></template>
+  </PageHeader>
+  <section class="history-page page-container">
     <form class="history-filters" @submit.prevent="search">
       <label>搜索对话标题<input v-model="keyword" type="search" maxlength="200" placeholder="输入标题关键词" /></label>
       <label>对话范围<select :value="scope" @change="changeScope"><option value="all">全部对话</option><option value="personal">我的对话</option><option value="team">团队对话</option></select></label>
@@ -51,16 +54,15 @@ async function remove(item: UserSessionSummary) {
   </section>
 </template>
 <style scoped>
-.history-page { padding: 24px; min-width: 0; }
-header, .history-filters, li { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
-h1 { margin: 0; font-size: var(--dsh-font-size-page-title); }
-header p, small { color: var(--dsh-color-muted); }
-.history-filters { justify-content: flex-start; flex-wrap: wrap; margin: 24px 0; }
+.history-page { min-width: 0; }
+.history-filters, li { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+small { color: var(--dsh-color-muted); }
+.history-filters { justify-content: flex-start; flex-wrap: wrap; margin: 0 0 20px; }
 label { display: flex; flex-direction: column; gap: 4px; }
 input, select { max-width: 100%; padding: 8px; border: 1px solid var(--dsh-color-border); border-radius: var(--dsh-radius-sm); background: var(--dsh-color-panel); color: inherit; }
 ul { padding: 0; list-style: none; }
 li { padding: 16px 0; border-bottom: 1px solid var(--dsh-color-border); }
 .history-open { text-align: left; display: flex; flex-direction: column; gap: 4px; flex: 1; min-width: 0; background: none; border: 0; cursor: pointer; color: inherit; }
 strong { overflow-wrap: anywhere; }
-@media(max-width: 700px) { header { align-items: flex-start; flex-wrap: wrap; } .history-filters, .file-filters { gap: 12px; } }
+@media(max-width: 700px) { .history-filters, .file-filters { gap: 12px; } }
 </style>

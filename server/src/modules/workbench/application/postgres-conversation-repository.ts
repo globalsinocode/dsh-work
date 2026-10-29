@@ -8,6 +8,7 @@ import type { JsonObject, RunState } from '../../../domain/run-state.ts'
 import { PostgresWorkspaceService, readableWorkspacePredicate } from './postgres-workspace-service.ts'
 import { permissionDenied, requestInvalid } from '../../../domain/authorization-errors.ts'
 import { workspaceStateConflict } from './workspace-state-conflict-error.ts'
+import { artifactTextPreviewColumns, withTextPreview, type ArtifactTextPreviewState } from './artifact-text-preview.ts'
 import { stateConflict } from '../../../domain/request-errors.ts'
 import { writeNotifiableEvent } from './workspace-activity-writer.ts'
 import { getWebPushDispatch } from './web-push-dispatch.ts'
@@ -123,6 +124,8 @@ interface MessageRow {
   runRequesterId: string | null
   runRequesterName: string | null
   agentName: string | null
+  /** D38：该消息登记了提醒的同事。 */
+  mentionedUserIds: string[]
 }
 
 export interface ConversationHistoryMessage {
@@ -150,13 +153,15 @@ interface ArtifactRow {
   id: string
   artifactVersionId: string
   name: string
-  artifactType: 'xlsx' | 'docx' | 'pdf' | 'markdown' | 'csv' | 'text' | 'html'
+  artifactType: 'xlsx' | 'docx' | 'pptx' | 'pdf' | 'png' | 'jpg' | 'markdown' | 'csv' | 'text' | 'html'
   version: number
   sizeBytes: string | number
   createdAt: Date
   workspaceId: string
   fileId: string
   canReference: boolean
+  textPreview: ArtifactTextPreviewState | null
+  textPreviewError: string | null
 }
 
 interface SourceRow {
@@ -171,6 +176,7 @@ interface SourceRow {
 
 interface AttachmentRow {
   id: string
+  runId: string
   name: string
 }
 
@@ -181,6 +187,23 @@ export class PostgresConversationRepository {
   constructor(database: DatabaseClient, workspaces = new PostgresWorkspaceService(database)) {
     this.database = database
     this.workspaces = workspaces
+  }
+
+  /**
+   * Whether an artifact version (`a`, file `f`) can be attached to a later message: clean, not removed,
+   * and either with extracted text, or a binary artifact whose original the execution container mounts
+   * (execution isolation 2b-4; the container is always required, plan 4.9). Mirrors the content service's
+   * runtime file readiness.
+   */
+  private canReferenceSql() {
+    return this.database`(f.scan_status = 'clean' and f.removed_at is null and (
+      exists (
+        select 1 from file_extractions fe
+         where fe.tenant_id = f.tenant_id and fe.file_id = f.id
+           and fe.status = 'succeeded' and fe.extractor_version = 'm4-basic-v1'
+      )
+      or a.artifact_type in ('xlsx', 'docx', 'pptx', 'pdf', 'png', 'jpg')
+    ))`
   }
 
   async resolveWorkspaceId(workspaceId: string | null | undefined, userId: string) {
@@ -478,19 +501,27 @@ export class PostgresConversationRepository {
     /** 用户消息作者；Agent 回复为空（归因经 runId → Run 关联）。 */
     senderUserId?: string | null
     messageId?: string
+    /** D38：@ 的同事；只为现任成员登记提醒，与消息同一事务写入。 */
+    mentionedUserIds?: string[]
   }) {
     const id = input.messageId ?? `message-${randomUUID()}`
-    const [inserted] = await this.database<{ id: string }[]>`
-      insert into messages (id, tenant_id, session_id, run_id, role, content, sender_user_id)
-      values (${id}, ${tenantId}, ${input.sessionId}, ${input.runId ?? null}, ${input.role}, ${input.content},
-              ${input.senderUserId ?? null})
-      on conflict (id) do nothing
-      returning id
-    `
-    await this.database`
-      update sessions set last_active_at = now()
-       where tenant_id = ${tenantId} and id = ${input.sessionId}
-    `
+    const [inserted] = await this.database.begin(async (transaction) => {
+      const [row] = await transaction<{ id: string }[]>`
+        insert into messages (id, tenant_id, session_id, run_id, role, content, sender_user_id)
+        values (${id}, ${tenantId}, ${input.sessionId}, ${input.runId ?? null}, ${input.role}, ${input.content},
+                ${input.senderUserId ?? null})
+        on conflict (id) do nothing
+        returning id
+      `
+      await transaction`
+        update sessions set last_active_at = now()
+         where tenant_id = ${tenantId} and id = ${input.sessionId}
+      `
+      if (row?.id && input.senderUserId && input.mentionedUserIds?.length) {
+        await recordMentions(transaction, id, input.sessionId, input.senderUserId, input.mentionedUserIds)
+      }
+      return row ? [row] : []
+    })
     if (inserted?.id) getWebPushDispatch()?.enqueueMessagePush(inserted.id)
     return id
   }
@@ -509,6 +540,7 @@ export class PostgresConversationRepository {
     userId: string
     content: string
     messageId: string
+    /** D38：@ 的同事；只为现任成员登记提醒。 */
     mentionedUserIds?: string[]
   }): Promise<{ messageId: string; created: boolean }> {
     const result = await this.database.begin(async (transaction) => {
@@ -588,6 +620,9 @@ export class PostgresConversationRepository {
             actorUserId: input.userId,
             mentionedUserId,
           }, transaction)
+        }
+        if (mentionTargets.length) {
+          await recordMentions(transaction, input.messageId, input.sessionId, input.userId, mentionTargets)
         }
         return { messageId: input.messageId, created: true }
       }
@@ -1177,11 +1212,7 @@ export class PostgresConversationRepository {
       select a.id, av.id as "artifactVersionId", a.name, a.artifact_type as "artifactType", av.version_no as version,
              f.size_bytes as "sizeBytes", av.created_at as "createdAt", a.workspace_id as "workspaceId",
              f.id as "fileId",
-             (f.scan_status = 'clean' and f.removed_at is null and exists (
-               select 1 from file_extractions fe
-                where fe.tenant_id = f.tenant_id and fe.file_id = f.id
-                  and fe.status = 'succeeded' and fe.extractor_version = 'm4-basic-v1'
-             )) as "canReference",
+             ${this.canReferenceSql()} as "canReference", ${artifactTextPreviewColumns(this.database)},
              av.source_run_id as "sourceRunId", av.source_attempt_id as "sourceAttemptId"
         from artifact_versions av
         join artifacts a on a.tenant_id = av.tenant_id and a.id = av.artifact_id
@@ -1340,7 +1371,10 @@ export class PostgresConversationRepository {
              coalesce(m.sender_user_id, r.requested_by) as "senderId",
              su.display_name as "senderName",
              r.requested_by as "runRequesterId", ru.display_name as "runRequesterName",
-             ag.name as "agentName"
+             ag.name as "agentName",
+             array(select mm.mentioned_user_id from message_mentions mm
+                    where mm.tenant_id = m.tenant_id and mm.message_id = m.id
+                    order by mm.mentioned_user_id) as "mentionedUserIds"
         from messages m
         left join runs r on r.tenant_id = m.tenant_id and r.id = m.run_id
         left join users su on su.tenant_id = m.tenant_id
@@ -1509,6 +1543,12 @@ export class PostgresConversationRepository {
     })
     const hasMoreMessages = loaded.length > sessionThreadMessageLimit
     const messages = hasMoreMessages ? loaded.slice(1) : loaded
+    const pageRunIds = [...new Set(messages.map(message => message.runId).filter((id): id is string => Boolean(id)))]
+    const attachmentsByRun = await this.loadRunAttachments(pageRunIds)
+    // 本页各 Run 当前 Attempt 登记的成果（带 runId），供任务对话把成果卡挂在对应回复下；
+    // 与 Run 详情的成果同源，读取权限由调用方对会话的校验覆盖。
+    const artifacts = (await this.loadThreadArtifactsForRuns(pageRunIds))
+      .map(artifact => mapArtifactRow(artifact, artifact.sourceRunId))
     const runs = await this.database<{
       id: string
       status: RunState
@@ -1537,7 +1577,7 @@ export class PostgresConversationRepository {
       creatorName: row.creatorName,
       createdAt: row.createdAt.toISOString(),
       lastActiveAt: row.lastActiveAt.toISOString(),
-      messages: messages.map(message => ({
+      messages: withRunAttachments(messages.map(message => ({
         ...mapMessage(message),
         runId: message.runId,
         senderId: message.senderId,
@@ -1545,7 +1585,7 @@ export class PostgresConversationRepository {
         runRequesterId: message.runRequesterId,
         runRequesterName: message.runRequesterName,
         agentName: message.agentName,
-      })),
+      })), attachmentsByRun),
       runs: runs.map(run => ({
         runId: run.id,
         status: run.status,
@@ -1557,6 +1597,7 @@ export class PostgresConversationRepository {
       latestRun: runs.length > 0
         ? { id: runs[runs.length - 1]!.id, status: runs[runs.length - 1]!.status }
         : null,
+      artifacts,
       // 「加载更早」契约（评审中3）：hasMoreMessages 为 true 时，用
       // messagesCursor（本页最旧一条消息的 id）作 before 参数再取上一页。
       hasMoreMessages,
@@ -1590,11 +1631,7 @@ export class PostgresConversationRepository {
           select a.id, av.id as "artifactVersionId", a.name, a.artifact_type as "artifactType", av.version_no as version,
                  f.size_bytes as "sizeBytes", av.created_at as "createdAt", a.workspace_id as "workspaceId",
                  f.id as "fileId",
-                 (f.scan_status = 'clean' and f.removed_at is null and exists (
-                   select 1 from file_extractions fe
-                    where fe.tenant_id = f.tenant_id and fe.file_id = f.id
-                      and fe.status = 'succeeded' and fe.extractor_version = 'm4-basic-v1'
-                 )) as "canReference"
+                 ${this.canReferenceSql()} as "canReference", ${artifactTextPreviewColumns(this.database)}
             from artifact_versions av
             join artifacts a on a.tenant_id = av.tenant_id and a.id = av.artifact_id
             join file_objects f on f.tenant_id = av.tenant_id and f.id = av.file_object_id
@@ -1674,6 +1711,58 @@ export class PostgresConversationRepository {
     }
   }
 
+
+  /**
+   * 个人会话详情展示整段多轮消息时，按消息所属 Run 装载各自当前 Attempt 的成果，
+   * 让历史轮次的成果卡仍能挂在对应回复下（不只最新 Run 的 result.artifacts）。
+   */
+  private async loadThreadArtifactsForRuns(runIds: string[]): Promise<Array<ArtifactRow & { sourceRunId: string }>> {
+    if (!runIds.length) return []
+    return this.database<Array<ArtifactRow & { sourceRunId: string }>>`
+      select a.id, av.id as "artifactVersionId", a.name, a.artifact_type as "artifactType", av.version_no as version,
+             f.size_bytes as "sizeBytes", av.created_at as "createdAt", a.workspace_id as "workspaceId",
+             f.id as "fileId",
+             ${this.canReferenceSql()} as "canReference", ${artifactTextPreviewColumns(this.database)},
+             av.source_run_id as "sourceRunId"
+        from artifact_versions av
+        join artifacts a on a.tenant_id = av.tenant_id and a.id = av.artifact_id
+        join file_objects f on f.tenant_id = av.tenant_id and f.id = av.file_object_id
+        join runs r on r.tenant_id = av.tenant_id and r.id = av.source_run_id
+       where av.tenant_id = ${tenantId}
+         and av.source_run_id = any(${runIds})
+         and av.source_attempt_id is not null
+         and av.source_attempt_id = r.current_attempt_id
+       order by av.created_at asc, av.version_no asc
+    `
+  }
+
+  /**
+   * 各 Run 随消息发送的输入文件名（上传附件与引用文件），按 runId 分组。取该 Run 所有 Attempt
+   * 的去重并集：审批恢复新建的 Attempt 不重新登记输入文件，只看当前 Attempt 会让已发送的文件
+   * 从消息下消失。同一会话更早的 Run 已用过的文件是跨轮延续带入的，不算本轮发送。
+   */
+  private async loadRunAttachments(runIds: string[]): Promise<Map<string, string[]>> {
+    const byRun = new Map<string, string[]>()
+    if (!runIds.length) return byRun
+    const rows = await this.database<AttachmentRow[]>`
+      select rif.run_id as "runId", f.original_name as name
+        from run_input_files rif
+        join runs r on r.tenant_id = rif.tenant_id and r.id = rif.run_id
+        join file_objects f on f.tenant_id = rif.tenant_id and f.id = rif.file_id
+       where rif.tenant_id = ${tenantId} and rif.run_id = any(${runIds})
+         and not exists (
+           select 1 from run_input_files earlier
+             join runs er on er.tenant_id = earlier.tenant_id and er.id = earlier.run_id
+            where earlier.tenant_id = rif.tenant_id and earlier.file_id = rif.file_id
+              and er.session_id = r.session_id and er.created_at < r.created_at
+         )
+       group by rif.run_id, rif.file_id, f.original_name
+       order by min(rif.created_at), f.original_name
+    `
+    for (const row of rows) byRun.set(row.runId, [...(byRun.get(row.runId) ?? []), row.name])
+    return byRun
+  }
+
   private async mapTask(row: TaskRow): Promise<TaskRun> {
     // 团队 Run 详情只取该 Run 的消息（评审 M8）：共享会话里全会话加载会把
     // 几百条无关讨论一并载入。个人 Run 详情保持 AC-23 原契约——返回会话的
@@ -1688,13 +1777,22 @@ export class PostgresConversationRepository {
     const evidence = await this.loadTaskResultEvidence(row, committedMessageIds)
     const attachments = row.currentAttemptId
       ? await this.database<AttachmentRow[]>`
-          select f.id as id, f.original_name as name from run_input_files rif
+          select f.id as id, '' as "runId", f.original_name as name from run_input_files rif
           join file_objects f on f.tenant_id = rif.tenant_id and f.id = rif.file_id
            where rif.tenant_id = ${tenantId} and rif.run_id = ${row.id}
              and rif.attempt_id = ${row.currentAttemptId}
            order by rif.created_at
         `
       : []
+    const threadRunIds = [...new Set(
+      messages.map(message => message.runId).filter((id): id is string => Boolean(id)),
+    )]
+    // 个人会话详情含整段多轮消息：装载各 Run 当前 Attempt 的成果，供前端按 runId 挂卡。
+    // 本轮核验仍只用 evidence → result.artifacts。团队详情消息已按 Run 收窄，与本轮一致。
+    const threadArtifacts = row.workspaceType === 'personal' && threadRunIds.length > 1
+      ? (await this.loadThreadArtifactsForRuns(threadRunIds)).map(artifact => mapArtifactRow(artifact, artifact.sourceRunId))
+      : evidence.artifacts.map(item => item.artifact)
+    const attachmentsByRun = await this.loadRunAttachments([...new Set([row.id, ...threadRunIds])])
     const prompt = runMessages.find((message) => message.role === 'user')?.content ?? row.title
     const result = deriveTaskResult(evidence)
     // 顶层 artifacts 是「展示视图」：该 Run 全部 Attempt 产出的成果、每成果取最新
@@ -1733,13 +1831,16 @@ export class PostgresConversationRepository {
       owner: row.owner,
       requestedBy: row.requestedBy,
       stoppedBy: row.status === 'cancelled' ? row.stoppedBy : null,
-      messages: messages.map(mapMessage),
+      messages: withRunAttachments(messages.map(mapMessage), attachmentsByRun),
       steps: mapSteps(row.id, evidence.events, row.status),
+      threadArtifacts,
       result,
       artifacts: runArtifacts.map(artifact => mapArtifactRow(artifact, row.id)),
       // Run 详情里的 attachments 是文件名列表（既有契约：客户端按扩展名渲染芯片，
       // m4-file-analysis 直接断言字符串数组）。需要 file_objects.id 的调用方读 inputFiles。
-      attachments: attachments.map(attachment => attachment.name),
+      attachments: attachmentsByRun.get(row.id)?.length
+        ? attachmentsByRun.get(row.id)!
+        : attachments.map(attachment => attachment.name),
       inputFiles: attachments.map(attachment => ({ id: attachment.id, name: attachment.name })),
       skill: row.selectedSkillId && row.selectedSkillName && row.selectedSkillVersion
         ? { id: row.selectedSkillId, name: row.selectedSkillName, version: row.selectedSkillVersion }
@@ -1749,7 +1850,7 @@ export class PostgresConversationRepository {
 }
 
 function mapArtifactRow(artifact: ArtifactRow, runId: string) {
-  return {
+  return withTextPreview({
     id: artifact.id,
     name: artifact.name,
     type: artifact.artifactType,
@@ -1761,7 +1862,7 @@ function mapArtifactRow(artifact: ArtifactRow, runId: string) {
     fileId: artifact.fileId,
     canReference: artifact.canReference,
     summary: '由 DSH Runtime 本轮回答发布，保留来源 Run 与不可覆盖版本。',
-  }
+  }, artifact)
 }
 
 function mapArtifactEvidenceRow(artifact: ArtifactRow, runId: string) {
@@ -1869,6 +1970,20 @@ export interface ExportableSessionMessage {
   createdAt: Date
 }
 
+/** 输入文件挂到各 Run 的第一条用户消息上，消息流里随发送的那句话一起展示。 */
+function withRunAttachments<T extends Pick<ChatMessage, 'role' | 'runId'>>(
+  messages: T[],
+  attachmentsByRun: Map<string, string[]>,
+): Array<T & { attachments?: string[] }> {
+  const attached = new Set<string>()
+  return messages.map((message) => {
+    if (message.role !== 'user' || !message.runId || attached.has(message.runId)) return message
+    attached.add(message.runId)
+    const attachments = attachmentsByRun.get(message.runId)
+    return attachments?.length ? { ...message, attachments } : message
+  })
+}
+
 function mapMessage(row: MessageRow): ChatMessage {
   return {
     id: row.id,
@@ -1881,6 +1996,7 @@ function mapMessage(row: MessageRow): ChatMessage {
     runRequesterId: row.runRequesterId ?? undefined,
     runRequesterName: row.runRequesterName ?? undefined,
     agentName: row.agentName ?? undefined,
+    ...(row.mentionedUserIds?.length ? { mentionedUserIds: row.mentionedUserIds } : {}),
   }
 }
 
@@ -1888,30 +2004,50 @@ function mapSteps(runId: string, events: EventRow[], status: RunState): RunStep[
   if (events.length === 0) {
     return [{ id: `${runId}-queued`, title: '等待执行调度', detail: '任务已进入执行队列。', status: 'pending' }]
   }
-  const completedCallIds = new Set(events
-    .filter(event => event.eventType === 'tool.completed')
-    .map(event => event.safeMetadata['call_id'])
-    .filter((value): value is string => typeof value === 'string'))
+  // EX-01：同一调用的“正在调用”在其结果到达后由结果替代，执行步骤里每个调用只占一行。
+  const completedCalls = new Set(events
+    .filter(event => event.eventType === 'tool.completed' && typeof event.safeMetadata['call_id'] === 'string')
+    .map(event => event.safeMetadata['call_id'] as string))
+  // EX-PROGRESS-01：调用结果步骤带上同一调用的开始时间，员工端据此计算每步耗时。
+  const callStartedAt = new Map(events
+    .filter(event => event.eventType === 'tool.started' && typeof event.safeMetadata['call_id'] === 'string')
+    .map(event => [event.safeMetadata['call_id'] as string, event.occurredAt.toISOString()]))
   return events
     .filter((event) => !['assistant.delta', 'assistant.completed'].includes(event.eventType))
-    .filter(event => event.eventType !== 'tool.started'
-      || typeof event.safeMetadata['call_id'] !== 'string'
-      || !completedCallIds.has(event.safeMetadata['call_id']))
-    .map((event, index, visibleEvents) => event.eventType === 'tool.completed'
-      ? toolStep(event)
-      : event.eventType === 'tool.started'
-        ? pendingToolStep(event)
-        : ({
+    .filter(event => event.eventType !== 'tool.started' || !completedCalls.has(event.safeMetadata['call_id'] as string))
+    .map((event, index, visibleEvents) => event.eventType === 'tool.started' ? toolStartedStep(event, status) : event.eventType === 'tool.completed' ? toolStep(event, callStartedAt) : ({
       id: event.id,
       title: eventTitle(event.eventType),
       detail: event.displayMessage ?? '执行状态已更新。',
       status: eventStepStatus(event.eventType, status, index === visibleEvents.length - 1),
-        }))
+      event: event.eventType,
+      at: event.occurredAt.toISOString(),
+    }))
+}
+
+/** EX-01：执行中正在进行的工具调用；本轮已结束仍无结果时显示为未收到结果。 */
+function toolStartedStep(event: EventRow, status: RunState): RunStep {
+  const toolName = typeof event.safeMetadata['tool_name'] === 'string' ? event.safeMetadata['tool_name'] : undefined
+  const callId = typeof event.safeMetadata['call_id'] === 'string' ? event.safeMetadata['call_id'] : undefined
+  const ended = ['succeeded', 'failed', 'cancelled'].includes(status)
+  return {
+    id: event.id,
+    title: ended ? '工具结果未返回' : '正在调用工具',
+    detail: ended ? `${toolName ?? '工具'}：未收到调用结果` : event.displayMessage ?? '工具调用进行中。',
+    status: ended ? 'pending' : 'running',
+    ...(toolName ? { tool: toolName } : {}),
+    ...(callId ? { callId } : {}),
+    event: event.eventType,
+    at: event.occurredAt.toISOString(),
+    startedAt: event.occurredAt.toISOString(),
+  }
 }
 
 /** EX-01：一次工具调用的结果（成功、失败原因或未收到结果）。 */
-function toolStep(event: EventRow): RunStep {
+function toolStep(event: EventRow, callStartedAt: Map<string, string>): RunStep {
   const toolName = typeof event.safeMetadata['tool_name'] === 'string' ? event.safeMetadata['tool_name'] : undefined
+  const callId = typeof event.safeMetadata['call_id'] === 'string' ? event.safeMetadata['call_id'] : undefined
+  const startedAt = callId ? callStartedAt.get(callId) : undefined
   const outcome = event.safeMetadata['status']
   return {
     id: event.id,
@@ -1919,17 +2055,10 @@ function toolStep(event: EventRow): RunStep {
     detail: event.displayMessage ?? '工具调用已结束。',
     status: outcome === 'failed' ? 'failed' : outcome === 'unknown' ? 'pending' : 'succeeded',
     ...(toolName ? { tool: toolName } : {}),
-  }
-}
-
-function pendingToolStep(event: EventRow): RunStep {
-  const toolName = typeof event.safeMetadata['tool_name'] === 'string' ? event.safeMetadata['tool_name'] : undefined
-  return {
-    id: event.id,
-    title: '工具结果未返回',
-    detail: toolName ? `${toolName}：未收到调用结果` : '未收到工具调用结果。',
-    status: 'pending',
-    ...(toolName ? { tool: toolName } : {}),
+    ...(callId ? { callId } : {}),
+    event: event.eventType,
+    at: event.occurredAt.toISOString(),
+    ...(startedAt ? { startedAt } : {}),
   }
 }
 
@@ -2009,4 +2138,30 @@ function decodeSessionCursor(cursor: string): { lastActiveAt: string; id: string
   } catch {
     throw requestInvalid('无效的分页游标')
   }
+}
+
+/**
+ * D38：为一条消息登记 @ 提醒。接收人只取消息所在团队空间的现任成员（账号有效），
+ * 发送者本人与非成员被忽略；按“消息 + 接收人”去重，幂等重放不重复登记。
+ */
+async function recordMentions(
+  sql: DatabaseTransaction,
+  messageId: string,
+  sessionId: string,
+  senderUserId: string,
+  mentionedUserIds: string[],
+) {
+  const candidates = [...new Set(mentionedUserIds)].filter(userId => userId !== senderUserId)
+  if (!candidates.length) return
+  await sql`
+    insert into message_mentions (tenant_id, message_id, mentioned_user_id, workspace_id, session_id, sender_user_id)
+    select ${tenantId}, ${messageId}, wm.user_id, s.workspace_id, s.id, ${senderUserId}
+      from sessions s
+      join workspaces w on w.tenant_id = s.tenant_id and w.id = s.workspace_id and w.workspace_type = 'team'
+      join workspace_members wm on wm.tenant_id = s.tenant_id and wm.workspace_id = s.workspace_id
+      join users u on u.tenant_id = wm.tenant_id and u.id = wm.user_id and u.status = 'active'
+     where s.tenant_id = ${tenantId} and s.id = ${sessionId}
+       and wm.user_id in ${sql(candidates)}
+    on conflict do nothing
+  `
 }

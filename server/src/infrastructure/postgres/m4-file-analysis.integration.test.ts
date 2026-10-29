@@ -104,6 +104,79 @@ test('uploaded Session file is extracted, snapshotted and injected as an immutab
   assert.equal(snapshot?.count, 1)
   assert.match(snapshot?.textSha256 ?? '', /^[a-f0-9]{64}$/)
   assert.equal(snapshot?.mountPath, '/workspace/input/01-inventory.txt')
+
+  // 附件随发送它的那条用户消息展示；多轮对话里上一轮的附件不随新一轮消失。
+  const followUpFile = await content.storeSessionFile(
+    session.id, 'orders.csv', 'text/csv', Buffer.from('订单,物料\nSO-1,A-01\n'), 'U00001',
+  )
+  const followUp = await orchestration.startRun({
+    userId: 'U00001',
+    sessionId: session.id,
+    prompt: '再结合订单看看',
+    idempotencyKey: randomUUID(),
+    fileIds: [followUpFile.id],
+  })
+  assert.ok(followUp)
+  const followUpTask = await waitForTask(followUp.id)
+  assert.deepEqual(followUpTask.attachments, ['orders.csv'])
+  assert.deepEqual(
+    followUpTask.messages.filter(message => message.role === 'user').map(message => [message.content, message.attachments]),
+    [['分析库存风险', ['inventory.csv']], ['再结合订单看看', ['orders.csv']]],
+  )
+  assert.ok(followUpTask.messages.filter(message => message.role === 'assistant').every(message => !message.attachments))
+
+  // 审批恢复新建的 Attempt 不重新登记输入文件：已发送的文件仍显示在原消息下。
+  const resumedAttemptId = `attempt-resumed-${randomUUID()}`
+  await database.begin(async (transaction) => {
+    await transaction`
+      insert into run_attempts (id, tenant_id, run_id, attempt_no, runtime_id, manifest, manifest_sha256, model_route_snapshot, status)
+      select ${resumedAttemptId}, a.tenant_id, a.run_id, a.attempt_no + 1, a.runtime_id, a.manifest, a.manifest_sha256,
+             a.model_route_snapshot, 'succeeded'
+        from runs r join run_attempts a on a.tenant_id = r.tenant_id and a.id = r.current_attempt_id
+       where r.tenant_id = 'tenant-dsh-work' and r.id = ${followUp.id}
+    `
+    await transaction`update runs set current_attempt_id = ${resumedAttemptId} where tenant_id = 'tenant-dsh-work' and id = ${followUp.id}`
+  })
+  const resumed = await conversations.getTask(followUp.id, 'U00001')
+  assert.deepEqual(resumed?.messages.find(message => message.content === '再结合订单看看')?.attachments, ['orders.csv'])
+  assert.deepEqual(resumed?.attachments, ['orders.csv'])
+
+  // 附件跨轮延续：本轮选择了文件时只用本轮文件；不选文件的追问沿用上一轮的附件，消息下只列本轮发送的文件。
+  const mountedNames = (runId: string) => runtime.manifest(runId)?.input.file_mounts.map(mount => mount.source_name)
+  assert.deepEqual(mountedNames(followUp.id), ['orders.csv'])
+  const third = await orchestration.startRun({
+    userId: 'U00001', sessionId: session.id, prompt: '第三轮不带文件', idempotencyKey: randomUUID(),
+  })
+  assert.ok(third)
+  const thirdTask = await waitForTask(third.id)
+  assert.deepEqual(mountedNames(third.id), ['orders.csv'])
+  assert.deepEqual(thirdTask.attachments, [])
+  assert.equal(thirdTask.messages.find(message => message.content === '第三轮不带文件')?.attachments, undefined)
+  assert.deepEqual(
+    thirdTask.messages.filter(message => message.attachments).map(message => message.attachments),
+    [['inventory.csv'], ['orders.csv']],
+  )
+
+  // 已移除的附件不再带入，本轮照常执行；更早轮次的附件（inventory.csv）也不会补上。
+  await database`update file_objects set removed_at = now() where tenant_id = 'tenant-dsh-work' and id = ${followUpFile.id}`
+  const fourth = await orchestration.startRun({
+    userId: 'U00001', sessionId: session.id, prompt: '第四轮', idempotencyKey: randomUUID(),
+  })
+  assert.ok(fourth)
+  await waitForTask(fourth.id)
+  assert.deepEqual(mountedNames(fourth.id), [])
+
+  // 本轮选择了文件：只挂载本轮文件。
+  const fresh = await Promise.all([1, 2, 3, 4, 5].map(n => content.storeSessionFile(
+    session.id, `batch-${n}.csv`, 'text/csv', Buffer.from(`编号\n${n}\n`), 'U00001',
+  )))
+  const fifth = await orchestration.startRun({
+    userId: 'U00001', sessionId: session.id, prompt: '第五轮', idempotencyKey: randomUUID(),
+    fileIds: fresh.map(file => file.id),
+  })
+  assert.ok(fifth)
+  await waitForTask(fifth.id)
+  assert.deepEqual(mountedNames(fifth.id), ['batch-1.csv', 'batch-2.csv', 'batch-3.csv', 'batch-4.csv', 'batch-5.csv'])
 })
 
 test('workbook pictures travel from extraction to the Runtime manifest as attachments', async () => {
