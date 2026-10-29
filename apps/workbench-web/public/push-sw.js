@@ -1,4 +1,3 @@
-/* eslint-disable no-restricted-globals */
 /** Web Push 与通知栏点击；由 Workbox generateSW 通过 importScripts 加载。 */
 
 const MAX_EVENT_IDS = 200

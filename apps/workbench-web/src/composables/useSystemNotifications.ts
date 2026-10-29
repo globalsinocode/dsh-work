@@ -31,7 +31,7 @@ export function useSystemNotifications() {
   const shownEventIds = new Set<string>()
   const runStatusSnapshot = new Map<string, string>()
   let pollTimer: ReturnType<typeof setInterval> | undefined
-  let lastUnreadSnapshot = new Map<string, number>()
+  const lastUnreadSnapshot = new Map<string, number>()
 
   function showBanner(payload: WorkbenchPushPayload) {
     if (shownEventIds.has(payload.eventId)) return
@@ -202,7 +202,8 @@ export function useSystemNotifications() {
 export async function unregisterPushBeforeLogout() {
   if (!isWorkbenchNotificationSupported() || !('serviceWorker' in navigator)) return
   try {
-    const registration = await navigator.serviceWorker.ready
+    const registration = await navigator.serviceWorker.getRegistration()
+    if (!registration) return
     const subscription = await registration.pushManager.getSubscription()
     if (subscription) {
       await workbenchApi.deletePushSubscription({ endpoint: subscription.endpoint })
