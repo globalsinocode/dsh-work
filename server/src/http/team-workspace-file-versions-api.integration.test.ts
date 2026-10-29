@@ -369,28 +369,35 @@ test('并发上传新版本：版本号互不覆盖，全部成功且各自字�
 
   const fulfilled = results.filter((result): result is PromiseFulfilledResult<UploadedWorkspaceFileVersion> => result.status === 'fulfilled')
   assert.equal(fulfilled.length, 3, `三个并发上传都应在行锁内串行分配到不同版本号：${JSON.stringify(results.map(result => result.status === 'fulfilled' ? 'ok' : String(result.reason)))}`)
-  assert.deepEqual(
-    fulfilled.map(result => result.value.versionNo).sort((left, right) => left - right),
-    [2, 3, 4],
-    '版本号必须互不重复（无覆盖、无丢失更新）',
-  )
-
+  // 返回的是「读取时刻的文件投影」，`versionNo`/`id` 指向当时的最新版本；并发上传时
+  // 先提交的那次可能在投影读取前看到后者刚提交的版本，用返回值比较版本号会把正常的
+  // 串行分配误判成丢失更新（2026-10-29 CI 两次 [3,4,4]/[2,4,4] 即此原因）。版本互不
+  // 覆盖只能以库内版本行为准：唯一性、连续性、latest_version_no 与逐版本字节各自独立。
   const rows = await database<{ versionNo: number; fileObjectId: string }[]>`
     select version_no as "versionNo", file_object_id as "fileObjectId"
       from workspace_file_versions
      where tenant_id = ${tenantId} and logical_file_id = ${v1.logicalFileId}
      order by version_no
   `
-  assert.equal(rows.length, 4, '每个并发上传都保留独立版本行')
+  assert.deepEqual(
+    rows.map(row => row.versionNo),
+    [1, 2, 3, 4],
+    '版本号必须互不重复、无缺口（无覆盖、无丢失更新）',
+  )
   const [logical] = await database<{ latestVersionNo: number }[]>`
     select latest_version_no as "latestVersionNo" from workspace_files
      where tenant_id = ${tenantId} and id = ${v1.logicalFileId}
   `
   assert.equal(logical?.latestVersionNo, 4)
-  for (const result of fulfilled) {
-    const bytes = (await content.readFile(result.value.id, ownerId)).bytes.toString('utf8')
-    assert.match(bytes, /^并发正文-[234]$/, `版本 ${result.value.versionNo} 的字节不得被其它上传覆盖`)
+  // 版本号按行锁获取顺序分配，与 Promise 数组下标不一定一致（并发 3/4 先拿到锁时
+  // 版本 2 可以承载「并发正文-3」）；独立性的判据是三个版本各承载一份不同正文。
+  const versionBytes: string[] = []
+  for (const row of rows.filter(row => row.versionNo >= 2)) {
+    const bytes = (await content.readFile(row.fileObjectId, ownerId)).bytes.toString('utf8')
+    assert.match(bytes, /^并发正文-[234]$/, `版本 ${row.versionNo} 的字节不得被其它上传覆盖`)
+    versionBytes.push(bytes)
   }
+  assert.deepEqual(versionBytes.sort(), ['并发正文-2', '并发正文-3', '并发正文-4'], '三个版本必须各自保留一份独立正文')
 })
 
 test('版本号分配串行在逻辑文件行锁上：外部持有行锁时上传不得完成（判别性）', async () => {
