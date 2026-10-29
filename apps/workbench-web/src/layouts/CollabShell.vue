@@ -294,6 +294,8 @@ onMounted(() => {
   .collab-nav-item--active:hover { color: var(--collab-nav-active-text); background: var(--collab-nav-active); }
 
   .collab-main {
+    /* 统一页头吸在固定顶栏之下。 */
+    --dsh-page-topbar-offset: 52px;
     margin-left: 0;
     padding-top: 52px;
     padding-bottom: var(--collab-tabbar-height);

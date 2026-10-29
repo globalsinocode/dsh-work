@@ -594,6 +594,12 @@ export const workbenchApi = {
     schedule: AutomationSchedule
     inputTemplate: AutomationInputTemplate
   }) => request<Automation>('/automations', { method: 'POST', body: JSON.stringify(input) }),
+  /** 规则预览：服务端与调度共用日历计算，返回接下来的若干槽位（UTC）。 */
+  previewAutomationSchedule: (schedule: AutomationSchedule) =>
+    request<{ nextSlotsUtc: string[] }>('/automations/schedule-preview', {
+      method: 'POST',
+      body: JSON.stringify({ schedule }),
+    }),
   getAutomation: (id: string) => request<Automation>(`/automations/${encodeURIComponent(id)}`),
   updateAutomation: (id: string, input: {
     name?: string

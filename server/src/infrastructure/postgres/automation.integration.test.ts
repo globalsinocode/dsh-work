@@ -191,6 +191,7 @@ test('创建为草稿并携带 Agent 展示字段；启用后算出下一槽位'
   const list = await service.listMine(userId)
   assert.equal(list.length, 1)
   assert.equal(list[0]!.name, '每日摘要')
+  assert.equal(list[0]!.lastExecution, null)
 })
 
 test('团队空间自动任务创建/更新时要求 Agent 已加入该空间', async () => {
@@ -279,6 +280,13 @@ test('runNow 原子受理：Session/Run/执行记录齐备；同幂等键重放�
   // 可以仍在 queued，也可以已经 running；两种状态的核验结果都必须是 pending。
   assert.ok(['queued', 'running'].includes(executions[0]!.runStatus ?? ''))
   assert.equal(executions[0]!.resultOutcome, 'pending')
+
+  // 列表“最近一次”与执行记录同源投影，只带摘要不带冻结配置。
+  const [listed] = await service.listMine(userId)
+  assert.equal(listed!.lastExecution?.id, first.id)
+  assert.equal(listed!.lastExecution?.admissionStatus, 'accepted')
+  assert.equal(listed!.lastExecution?.resultOutcome, 'pending')
+  assert.equal('executionConfig' in (listed!.lastExecution ?? {}), false)
 })
 
 test('重叠触发被跳过并记录 overlap 原因', async () => {

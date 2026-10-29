@@ -2,6 +2,7 @@ import type { IncomingMessage } from 'node:http'
 
 import type { AutomationService } from '../../modules/automation/automation-service.ts'
 import type { AutomationSchedule, AutomationInputTemplate } from '../../modules/automation/automation-types.ts'
+import { previewSlots } from '../../domain/execution-schedule.ts'
 import {
   envelope,
   readJsonBody,
@@ -48,6 +49,8 @@ async function readObjectBody<T extends object>(request: IncomingMessage): Promi
  * 试运行与执行记录各自独立端点。
  */
 export function registerAutomationRoutes(router: Router, service: AutomationService) {
+  registerSchedulePreviewRoute(router)
+
   router.get(`${basePath}/automations`, async (_request, context) => {
     const identity = requireRequestIdentity(context, 'workbench')
     return envelope('workbench', await service.listMine(identity.userId), 'postgres')
@@ -110,5 +113,19 @@ export function registerAutomationRoutes(router: Router, service: AutomationServ
   router.delete(`${basePath}/automations/:automationId`, async (_request, context) => {
     const identity = requireRequestIdentity(context, 'workbench')
     return envelope('workbench', await service.disable(identity.userId, context.params['automationId'] ?? ''), 'postgres')
+  })
+}
+
+/**
+ * 规则预览：无状态，只依赖领域日历，原型模式也可注册。必须先于
+ * `/automations/:automationId` 系列路由匹配（POST 下无同形路由）。
+ */
+export function registerSchedulePreviewRoute(router: Router) {
+  router.post(`${basePath}/automations/schedule-preview`, async (request, context) => {
+    requireRequestIdentity(context, 'workbench')
+    const body = await readObjectBody<{ schedule?: AutomationSchedule }>(request)
+    if (!body.schedule) throw routeValidationFailed('schedule 为必填')
+    const slots = previewSlots(body.schedule, new Date())
+    return envelope('workbench', { nextSlotsUtc: slots.map(slot => slot.toISOString()) })
   })
 }

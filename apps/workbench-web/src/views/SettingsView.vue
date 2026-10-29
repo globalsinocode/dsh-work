@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
 import { workbenchApi } from '@/api/client'
+import PageHeader from '@/components/PageHeader.vue'
 import { User } from '@element-plus/icons-vue'
 
 import { roleLabels, useAuthStore } from '@/stores/auth'
@@ -16,13 +17,8 @@ onMounted(() => { void loadPolicy() })
 </script>
 
 <template>
+  <PageHeader title="用户中心" />
   <div class="page-container settings-page">
-    <header class="page-header">
-      <div>
-        <h1 class="page-title">用户中心</h1>
-        <p class="page-description">查看企业身份和当前账号的数据使用范围。</p>
-      </div>
-    </header>
 
     <div class="settings-layout">
       <section class="panel settings-section">

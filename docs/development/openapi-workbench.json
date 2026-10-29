@@ -2694,7 +2694,7 @@
     "/automations": {
       "get": {
         "operationId": "listAutomations",
-        "summary": "列出当前员工的自动任务（不含已停用）",
+        "summary": "列出当前员工的自动任务（不含已停用），每项附带最近一次执行摘要 lastExecution",
         "responses": {
           "200": {
             "$ref": "#/components/responses/Ok"
@@ -2756,6 +2756,42 @@
             "$ref": "#/components/responses/Error"
           },
           "403": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/automations/schedule-preview": {
+      "post": {
+        "operationId": "previewAutomationSchedule",
+        "summary": "规则预览：按与调度相同的日历计算接下来最多 3 个运行时间（UTC）；无状态，不保存任何内容",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "schedule"
+                ],
+                "properties": {
+                  "schedule": {
+                    "$ref": "#/components/schemas/AutomationSchedule"
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
             "$ref": "#/components/responses/Error"
           }
         }

@@ -127,3 +127,11 @@ export function nextSlotUtc(schedule: ExecutionSchedule, afterUtc: Date): Date |
   const [slot] = slotsBetween(schedule, afterUtc, new Date('2100-01-01T00:00:00Z'), 1)
   return slot ?? null
 }
+
+/**
+ * 规则预览：规范化后返回严格晚于 afterUtc 的前 count 个槽位，与调度共用
+ * slotsBetween，前端不另算日历；manual 返回空数组。
+ */
+export function previewSlots(input: ExecutionSchedule, afterUtc: Date, count = 3): Date[] {
+  return slotsBetween(normalizeSchedule(input), afterUtc, new Date('2100-01-01T00:00:00Z'), count)
+}

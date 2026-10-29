@@ -25,6 +25,7 @@ import {
   frozenConfigToJson,
   type AutomationExecutionRecord,
   type AutomationInputTemplate,
+  type AutomationListItem,
   type AutomationModuleConfig,
   type AutomationRecord,
   type AutomationSchedule,
@@ -189,8 +190,32 @@ export class AutomationService {
     return updated
   }
 
-  async listMine(ownerUserId: string): Promise<AutomationRecord[]> {
-    return this.automations.listByOwner(ownerUserId)
+  async listMine(ownerUserId: string): Promise<AutomationListItem[]> {
+    const automations = await this.automations.listByOwner(ownerUserId)
+    const latest = await this.automations.listLatestExecutions(automations.map(automation => automation.id))
+    const runIds = latest.map(execution => execution.runId).filter((id): id is string => id !== null)
+    const outcomes = await this.conversations.getTaskResultOutcomes(runIds)
+    const byAutomation = new Map(latest.map(execution => [execution.automationId, execution]))
+    return automations.map((automation) => {
+      const execution = byAutomation.get(automation.id)
+      return {
+        ...automation,
+        lastExecution: execution
+          ? {
+              id: execution.id,
+              kind: execution.kind,
+              plannedSlotUtc: execution.plannedSlotUtc,
+              missedFromUtc: execution.missedFromUtc,
+              missedToUtc: execution.missedToUtc,
+              admissionStatus: execution.admissionStatus,
+              reasonCode: execution.reasonCode,
+              runStatus: execution.runStatus ?? null,
+              resultOutcome: execution.runId ? outcomes.get(execution.runId) ?? null : null,
+              createdAt: execution.createdAt,
+            }
+          : null,
+      }
+    })
   }
 
   async getMine(ownerUserId: string, id: string): Promise<AutomationRecord> {

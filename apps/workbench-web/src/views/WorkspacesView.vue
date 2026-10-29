@@ -7,6 +7,7 @@ import { ArrowRight, Plus, Search, UserFilled } from '@element-plus/icons-vue'
 import { StatusTag } from '@dsh-work/ui-core'
 import { workbenchApi } from '@/api/client'
 import CreateProjectSpaceDialog from '@/components/CreateProjectSpaceDialog.vue'
+import PageHeader from '@/components/PageHeader.vue'
 import { useContentStore } from '@/stores/content'
 import type { Workspace, WorkspaceStatusFilter } from '@/types/domain'
 
@@ -173,14 +174,12 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="page-container page-container--wide workspace-page">
-    <header class="page-header">
-      <div>
-        <h1 class="page-title">项目空间</h1>
-        <p class="page-description">进入已加入的项目空间，与同事和 Agent 一起推进项目。个人对话和文件请使用左侧入口。</p>
-      </div>
+  <PageHeader title="项目空间">
+    <template #actions>
       <el-button type="primary" :icon="Plus" @click="createDialogOpen = true">创建项目空间</el-button>
-    </header>
+    </template>
+  </PageHeader>
+  <div class="page-container page-container--wide workspace-page">
 
     <div class="workspace-toolbar">
       <el-input v-model="query" :prefix-icon="Search" clearable placeholder="搜索工作空间名称或负责人" />

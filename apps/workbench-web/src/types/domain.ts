@@ -971,6 +971,20 @@ export interface AutomationInputTemplate {
 
 export type AutomationStatus = 'draft' | 'enabled' | 'paused' | 'disabled'
 
+/** 列表投影：最近一次执行摘要，状态口径与执行记录一致。 */
+export interface AutomationLastExecution {
+  id: string
+  kind: AutomationExecutionKind
+  plannedSlotUtc: string | null
+  missedFromUtc: string | null
+  missedToUtc: string | null
+  admissionStatus: AutomationAdmissionStatus
+  reasonCode: string | null
+  runStatus: string | null
+  resultOutcome: TaskResultOutcome | null
+  createdAt: string
+}
+
 export interface Automation {
   id: string
   name: string
@@ -990,6 +1004,8 @@ export interface Automation {
   status: AutomationStatus
   createdAt: string
   updatedAt: string
+  /** 仅列表接口返回；从未执行为 null。 */
+  lastExecution?: AutomationLastExecution | null
 }
 
 export type AutomationExecutionKind = 'scheduled' | 'manual' | 'missed'

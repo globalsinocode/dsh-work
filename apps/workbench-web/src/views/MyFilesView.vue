@@ -3,6 +3,7 @@ import { computed, ref, watch, onBeforeUnmount } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessageBox } from 'element-plus'
 import { workbenchApi } from '@/api/client'
+import PageHeader from '@/components/PageHeader.vue'
 import { useAuthStore } from '@/stores/auth'
 import { usePagedQuery } from '@/composables/usePagedQuery'
 import ArtifactContentDialog from '@/components/ArtifactContentDialog.vue'
@@ -59,8 +60,10 @@ async function remove(file: PersonalFile) {
 }
 </script>
 <template>
-  <section class="my-files-page panel">
-    <header><div><h1>我的文件</h1><p>个人材料、对话附件和生成成果集中查找；团队资料请进入相应团队。</p></div><el-button type="primary" :loading="uploading" @click="fileInput?.click()">上传材料</el-button></header>
+  <PageHeader title="我的文件">
+    <template #actions><el-button type="primary" :loading="uploading" @click="fileInput?.click()">上传材料</el-button></template>
+  </PageHeader>
+  <section class="my-files-page page-container">
     <input ref="fileInput" class="visually-hidden" type="file" aria-label="上传个人材料" accept=".pdf,.docx,.xlsx,.csv,.txt,.md" @change="upload" />
     <form class="file-filters" @submit.prevent="search">
       <label>搜索文件名称<input v-model="keyword" type="search" maxlength="200" placeholder="输入文件名" /></label>
@@ -84,11 +87,11 @@ async function remove(file: PersonalFile) {
   </section>
 </template>
 <style scoped>
-.my-files-page { padding: 24px; min-width: 0; }
-header, .file-filters, li { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
-h1 { margin: 0; font-size: var(--dsh-font-size-page-title); }
-header p, small, .file-copy>span { color: var(--dsh-color-muted); }
-.file-filters { justify-content: flex-start; flex-wrap: wrap; margin: 24px 0; }
+.my-files-page { min-width: 0; }
+.visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.file-filters, li { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+small, .file-copy>span { color: var(--dsh-color-muted); }
+.file-filters { justify-content: flex-start; flex-wrap: wrap; margin: 0 0 20px; }
 label, .file-copy { display: flex; flex-direction: column; gap: 4px; }
 input, select { max-width: 100%; padding: 8px; border: 1px solid var(--dsh-color-border); border-radius: var(--dsh-radius-sm); background: var(--dsh-color-panel); color: inherit; }
 ul { padding: 0; list-style: none; }
@@ -96,5 +99,5 @@ li { padding: 16px 0; border-bottom: 1px solid var(--dsh-color-border); }
 .file-copy { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .file-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 @media(max-width: 700px) { li { align-items: flex-start; flex-direction: column; } }
-@media(max-width: 700px) { header { align-items: flex-start; flex-wrap: wrap; } .history-filters, .file-filters { gap: 12px; } }
+@media(max-width: 700px) { .history-filters, .file-filters { gap: 12px; } }
 </style>

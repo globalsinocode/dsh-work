@@ -5,6 +5,7 @@ import {
   isValidTimezone,
   nextSlotUtc,
   normalizeSchedule,
+  previewSlots,
   slotsBetween,
 } from './execution-schedule.ts'
 
@@ -104,4 +105,16 @@ test('isValidTimezone 区分合法 IANA 与非法输入', () => {
   assert.equal(isValidTimezone('UTC'), true)
   assert.equal(isValidTimezone('GMT+8'), false)
   assert.equal(isValidTimezone(''), false)
+})
+
+test('previewSlots 规范化后返回前 N 个槽位，manual 为空，非法规则拒绝', () => {
+  const after = new Date('2026-03-02T00:00:00Z') // 周一
+  const weekly = { kind: 'weekly' as const, timezone: SHANGHAI, timeOfDay: '09:00', weekdays: [5, 1, 1] }
+  assert.deepEqual(previewSlots(weekly, after).map(s => s.toISOString()), [
+    '2026-03-02T01:00:00.000Z',
+    '2026-03-06T01:00:00.000Z',
+    '2026-03-09T01:00:00.000Z',
+  ])
+  assert.deepEqual(previewSlots({ kind: 'manual', timezone: SHANGHAI }, after), [])
+  assert.throws(() => previewSlots({ kind: 'daily', timezone: 'Mars/Base', timeOfDay: '09:00' }, after))
 })
