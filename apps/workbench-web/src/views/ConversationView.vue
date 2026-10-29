@@ -42,6 +42,7 @@ import ArtifactPreviewPanel from '@/components/conversation/ArtifactPreviewPanel
 import ConversationMessageItem from '@/components/conversation/ConversationMessageItem.vue'
 import RunArtifactCards from '@/components/conversation/RunArtifactCards.vue'
 import RunProgressCard from '@/components/conversation/RunProgressCard.vue'
+import RunProgressSummary from '@/components/conversation/RunProgressSummary.vue'
 import RunStepsDisclosure from '@/components/conversation/RunStepsDisclosure.vue'
 import { useMediaQuery } from '@/composables/useMediaQuery'
 import '@/styles/conversation-thread.css'
@@ -398,6 +399,11 @@ const conversationMessages = computed<ChatMessage[]>(() => {
     ...runMessages.filter(message => !known.has(message.id)),
   ]
 })
+
+/** EX-PROGRESS-01：本轮结束后，步骤摘要放在本轮第一条回复上方。 */
+const firstCurrentRunAssistantMessageId = computed(() =>
+  conversationMessages.value.find(message => message.role === 'assistant' && message.runId === task.value?.id)?.id,
+)
 
 /** 各 Run 在消息流里最后一条 assistant 回复的 id，成果卡片挂在这条消息下。 */
 const terminalAssistantMessageIdByRun = computed(() => {
@@ -1876,6 +1882,10 @@ watch(
             </template>
 
             <template v-else>
+              <RunProgressSummary
+                v-if="isTerminalRun && task && message.id === firstCurrentRunAssistantMessageId"
+                :task="task"
+              />
               <div class="assistant-identity">
                 <span class="assistant-avatar">{{ (message.agentName ?? 'dsh-work').slice(0, 1) }}</span>
                 <div>

@@ -592,17 +592,22 @@ export class PostgresConversationRepository {
       }
       if (inserted) {
         await activateDraftIfNeeded()
+        // D38：发送者本人与非成员不登记、不发提醒，其余人仍随这条讨论消息写入。
         const mentionTargets = dedupeUserIds(input.mentionedUserIds ?? [])
+        const notifiableMentions: string[] = []
         for (const mentionedUserId of mentionTargets) {
+          if (mentionedUserId === input.userId) continue
           const [member] = await transaction<{ exists: boolean }[]>`
             select exists (
-              select 1 from workspace_members wm
+              select 1
+                from workspace_members wm
+                join users u on u.tenant_id = wm.tenant_id and u.id = wm.user_id and u.status = 'active'
                where wm.tenant_id = ${tenantId}
                  and wm.workspace_id = ${locked.workspaceId}
                  and wm.user_id = ${mentionedUserId}
             ) as exists
           `
-          if (!member?.exists) throw requestInvalid('mentionedUserIds 包含非当前空间成员')
+          if (member?.exists) notifiableMentions.push(mentionedUserId)
         }
         await writeNotifiableEvent({
           kind: 'discussion_posted',
@@ -611,7 +616,7 @@ export class PostgresConversationRepository {
           messageId: input.messageId,
           actorUserId: input.userId,
         }, transaction)
-        for (const mentionedUserId of mentionTargets) {
+        for (const mentionedUserId of notifiableMentions) {
           await writeNotifiableEvent({
             kind: 'member_mentioned',
             workspaceId: locked.workspaceId,
@@ -621,8 +626,8 @@ export class PostgresConversationRepository {
             mentionedUserId,
           }, transaction)
         }
-        if (mentionTargets.length) {
-          await recordMentions(transaction, input.messageId, input.sessionId, input.userId, mentionTargets)
+        if (notifiableMentions.length) {
+          await recordMentions(transaction, input.messageId, input.sessionId, input.userId, notifiableMentions)
         }
         return { messageId: input.messageId, created: true }
       }
@@ -1836,11 +1841,9 @@ export class PostgresConversationRepository {
       threadArtifacts,
       result,
       artifacts: runArtifacts.map(artifact => mapArtifactRow(artifact, row.id)),
-      // Run 详情里的 attachments 是文件名列表（既有契约：客户端按扩展名渲染芯片，
-      // m4-file-analysis 直接断言字符串数组）。需要 file_objects.id 的调用方读 inputFiles。
-      attachments: attachmentsByRun.get(row.id)?.length
-        ? attachmentsByRun.get(row.id)!
-        : attachments.map(attachment => attachment.name),
+      // 顶层 attachments 只列本轮随消息发送的文件名。更早轮次已用过、本轮只是延续挂载的文件
+      // 不出现在这里（消息下同样不列）。需要 file_objects.id 的调用方读 inputFiles。
+      attachments: attachmentsByRun.get(row.id) ?? [],
       inputFiles: attachments.map(attachment => ({ id: attachment.id, name: attachment.name })),
       skill: row.selectedSkillId && row.selectedSkillName && row.selectedSkillVersion
         ? { id: row.selectedSkillId, name: row.selectedSkillName, version: row.selectedSkillVersion }

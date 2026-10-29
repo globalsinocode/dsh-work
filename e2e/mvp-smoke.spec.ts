@@ -69,8 +69,7 @@ test('employee can preview an HTML artifact inside a sandboxed frame', async ({ 
 
   const htmlCard = page.locator('.artifact-card', { hasText: '华东区交付风险看板.html' })
   await expect(htmlCard).toBeVisible()
-  await expect(htmlCard.getByRole('button', { name: '预览' })).toHaveCount(0)
-  await htmlCard.getByRole('button', { name: '华东区交付风险看板.html' }).click()
+  await htmlCard.getByRole('button', { name: '预览 华东区交付风险看板.html' }).click()
 
   const dialog = page.getByRole('dialog', { name: /成果预览/ })
   await expect(dialog).toBeVisible()
@@ -88,8 +87,10 @@ test('employee can preview an HTML artifact inside a sandboxed frame', async ({ 
   await expect(dialog).toBeHidden()
 
   const xlsxCard = page.locator('.artifact-card', { hasText: '华东区订单交付风险清单.xlsx' })
+  await expect(xlsxCard.getByRole('button', { name: /^预览/ })).toHaveCount(0)
+  await expect(xlsxCard.getByText('正文暂未生成')).toBeVisible()
   await xlsxCard.getByRole('button', { name: '华东区订单交付风险清单.xlsx' }).click()
-  await expect(dialog.getByText('暂不支持在线预览')).toBeVisible()
+  await expect(dialog.getByText('正文暂未生成，请稍后再看或下载查看')).toBeVisible()
   await expect(dialog.locator('iframe')).toHaveCount(0)
 })
 

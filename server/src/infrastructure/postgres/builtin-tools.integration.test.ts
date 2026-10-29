@@ -155,6 +155,7 @@ test('员工对话只在执行容器可用时装配 bash，Runtime 停用清单�
     welcomeMessage: '', examplePrompts: ['整理数据'], systemPrompt: '你是数据处理助手，只处理当前工作区中已经授权的数据文件。',
     maxOutputBytes: 65536, maxToolCalls: 20, timeoutSeconds: 300, skills: [],
     changeSummary: '验证 bash 装配', actor: ADMIN,
+    dataScopes: ['workspace:authorized'],
     executionRoleIds: ['role-employee'], executionDataScopes: ['workspace:authorized'],
   })
   const runtime: AgentRuntimePort = {

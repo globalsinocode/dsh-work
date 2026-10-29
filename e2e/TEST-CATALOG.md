@@ -73,12 +73,12 @@
 **前置数据：** `ws-supply` 团队空间包含一个 `html` 类型成果（`华东区交付风险看板.html`）及既有 xlsx/pdf 成果
 **spec：** `e2e/mvp-smoke.spec.ts`
 
-1. 进入 `/workspaces/ws-supply?tab=artifacts`，验证 HTML 成果与 xlsx 成果卡片均可见。
-2. 点击 HTML 成果的文件名，对话框在 `sandbox="allow-scripts"` 的 iframe（opaque origin，无 `allow-same-origin`）中渲染 HTML 内容。
+1. 进入 `/workspaces/ws-supply?tab=artifacts`，验证 HTML 成果卡片可见且提供「预览」入口，xlsx 卡片不提供「预览」。
+2. 点击 HTML 成果的「预览」，对话框在 `sandbox="allow-scripts"` 的 iframe（opaque origin，无 `allow-same-origin`）中渲染 HTML 内容。
 3. 切换「源代码」视图查看原始标记，关闭对话框。
-4. 点击 xlsx 成果的文件名，对话框说明暂不支持在线预览，且不渲染 iframe。
+4. 点击尚未解析的 xlsx 成果文件名，对话框说明正文暂未生成，且不渲染 iframe。
 
-**验收：** 预览内容与成果文件一致；卡片上无名为「预览」的独立按钮，下载仍为独立操作；iframe 不带 `allow-same-origin`，页面脚本不能访问工作台 Cookie/DOM；加载失败就地报错可重试；下载仍走鉴权附件通道。本层只证明页面与沙箱隔离，不证明 PostgreSQL 成果发布。
+**验收：** 预览内容与成果文件一致；iframe 不带 `allow-same-origin`，页面脚本不能访问工作台 Cookie/DOM；加载失败就地报错可重试；下载仍走鉴权附件通道。本层只证明页面与沙箱隔离，不证明 PostgreSQL 成果发布。
 
 ### TW-E2E-02 管理端冒烟（现有基线）
 

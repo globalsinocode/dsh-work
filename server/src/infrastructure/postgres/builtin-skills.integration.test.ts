@@ -75,6 +75,7 @@ async function createAgent(agentSkills: string[] = []) {
     welcomeMessage: '', examplePrompts: ['整理资料'], systemPrompt: '你是资料整理助手，只处理当前工作区中已经授权的资料。',
     maxOutputBytes: 65536, maxToolCalls: 20, timeoutSeconds: 300, skills: agentSkills,
     changeSummary: '验证平台内置 Skill 装配', actor: ADMIN,
+    dataScopes: ['workspace:authorized'],
     executionRoleIds: ['role-employee'], executionDataScopes: ['workspace:authorized'],
   })
 }

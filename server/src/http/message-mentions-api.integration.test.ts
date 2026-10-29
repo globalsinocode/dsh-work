@@ -35,6 +35,7 @@ import { registerConversationTargetRoutes } from './workbench/conversation-targe
 import { registerWorkspaceAgentMemberRoutes } from './workbench/workspace-agent-member-routes.ts'
 import { registerWorkspaceTimelineRoutes } from './workbench/workspace-timeline-routes.ts'
 import { LocalObjectStorage } from '../infrastructure/storage/local-object-storage.ts'
+import { bindTestWorkspaceNotificationRecipients } from '../infrastructure/postgres/workspace-notification-recipient-test-fixture.ts'
 
 // MODE-API-04（e2e/TEST-CATALOG.md，项目空间方案 D38）：群聊与共享讨论中 @ 同事的站内提醒——
 // 只为现任成员登记、按“消息 + 接收人”去重；读取时重查成员身份；打开群组或讨论即已读。
@@ -44,6 +45,7 @@ const base = '/api/workbench/v1'
 
 let database: DatabaseClient
 let throwaway: ThrowawayDatabase
+let unbindNotificationRecipients: (() => void) | undefined
 let storageRoot: string
 let server: Server
 let baseUrl = ''
@@ -432,6 +434,7 @@ class CompletingTestRuntime implements AgentRuntimePort {
 before(async () => {
   throwaway = await createThrowawayDatabase({ namePrefix: 'dsh_work_d38_mentions_test', maxConnections: 8 })
   database = throwaway.client
+  unbindNotificationRecipients = bindTestWorkspaceNotificationRecipients(database)
   storageRoot = await mkdtemp(join(tmpdir(), 'dsh-work-d38-'))
 
   authorization = new PostgresAuthorizationService(database)
@@ -469,6 +472,8 @@ before(async () => {
 })
 
 after(async () => {
+  unbindNotificationRecipients?.()
+  unbindNotificationRecipients = undefined
   if (server?.listening) await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()))
   await throwaway.dispose()
   await rm(storageRoot, { recursive: true, force: true })
