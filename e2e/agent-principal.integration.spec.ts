@@ -151,7 +151,7 @@ test('AE-02 the draft flow requires visible and job roles chosen by hand and sav
   await section.getByText('选择可以使用该 Agent 的员工角色').click()
   await page.getByRole('option', { name: '普通员工' }).click()
   await closeDropdown()
-  await section.getByRole('combobox', { name: '岗位角色' }).click()
+  await section.getByText('选择它持有的岗位角色，决定它能使用哪些能力').click()
   // 只做标记、不预选：含管理权限的角色标出风险；选择业务角色不提示改选。
   await expect(page.getByRole('option', { name: /平台管理员/ })).toContainText('含管理权限')
   await page.getByRole('option', { name: /普通员工/ }).click()
