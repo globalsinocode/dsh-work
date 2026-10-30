@@ -5,6 +5,7 @@ import { Files, Search } from '@element-plus/icons-vue'
 import { ArtifactCard } from '@dsh-work/ui-core'
 import { useContentStore } from '@/stores/content'
 import ArtifactPreviewDialog from '@/components/ArtifactPreviewDialog.vue'
+import PageHeader from '@/components/PageHeader.vue'
 import type { Artifact } from '@/types/domain'
 import { downloadArtifactFile } from '@/utils/feedback'
 
@@ -36,13 +37,8 @@ onMounted(() => contentStore.refresh())
 </script>
 
 <template>
+  <PageHeader title="我的成果" />
   <div class="page-container artifacts-page">
-    <header class="page-header">
-      <div>
-        <h1 class="page-title">我的成果</h1>
-        <p class="page-description">集中查看对话生成的报告、表格与分析文件。每次更新形成新版本，并保留来源运行的追溯关系。</p>
-      </div>
-    </header>
 
     <section class="artifact-overview panel">
       <div class="artifact-overview__icon"><el-icon><Files /></el-icon></div>
@@ -57,6 +53,9 @@ onMounted(() => contentStore.refresh())
         <el-option label="Excel" value="xlsx" />
         <el-option label="PDF" value="pdf" />
         <el-option label="Word" value="docx" />
+        <el-option label="PowerPoint" value="pptx" />
+        <el-option label="PNG 图片" value="png" />
+        <el-option label="JPG 图片" value="jpg" />
         <el-option label="Markdown" value="markdown" />
         <el-option label="HTML" value="html" />
         <el-option label="CSV" value="csv" />

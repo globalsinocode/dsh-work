@@ -85,6 +85,7 @@ Task 创建时由触发器写入发起 Principal：员工请求为本人，系�
 | `workspace_notification_account_states` | 账号级通知汇总状态 | 与空间级已读位置配合 |
 | `workspace_object_gc_candidates` | 待回收的空间对象候选 | 逻辑移除后的延迟清理队列 |
 | `conversation_read_states` | 协作模式对话列表按对话对象（单聊的 AI 同事 / 群组）的已读位置（迁移 0096） | 按账号 + 对话对象唯一；已读时间只前进不回拨；与 `workspace_notification_states` 分开保存；迁移时已有对话对象记为已读 |
+| `message_mentions` | 群聊与共享讨论中 @ 同事的站内提醒（项目空间方案 D38，迁移 0114） | 按消息 + 接收人唯一，与消息同一事务写入；只登记发送时的现任成员且不含发送者；读取时重查成员身份；`read_at` 为本人已读时间，与对话对象已读位置和按空间静音分开 |
 
 ## 4. 会话、Task 与运行
 
@@ -144,7 +145,7 @@ flowchart LR
 
 | 表 | 作用 | 关键不变量 |
 | --- | --- | --- |
-| `skills`、`skill_versions` | Skill 与其版本 | 已发布版本不可修改（触发器）；文件夹正文经存储端口按内容寻址保存，数据库只存引用与文件索引 |
+| `skills`、`skill_versions` | Skill 与其版本 | 已发布版本不可修改（触发器）；文件夹正文经存储端口按内容寻址保存，数据库只存引用与文件索引；`skills.covered_builtin_scenarios` 是管理员设置的“覆盖内置场景”（Skill 级，不随版本固定）。平台内置 Skill 随代码发布，不在这两张表中 |
 | `skill_version_dependencies` | Skill 依赖 | 依赖精确版本，不能依赖自身；Skill 声明的内置工具（`tool_refs`）须在注册表中且引用它的 Agent 可装配 |
 | `skill_installations` | 管理端安装计划 | 每次安装 Run 一条；完成时必须指向已保存的版本 |
 | `skill_test_bindings` | 严格试运行与精确 Attempt 的绑定 | 不可修改（触发器）；绑定配置与 Runtime 指纹 |
@@ -175,14 +176,14 @@ flowchart LR
 | 表 | 作用 | 关键不变量 |
 | --- | --- | --- |
 | `model_providers`、`provider_models`、`model_routes` | Provider、模型与平台路由 | 只存凭据引用；路由只写入 Attempt 快照，实际模型由 DSH Profile 固定（仅记录）；没有可用路由时新运行被拒绝 |
-| `runtimes`、`runtime_configurations` | Runtime 与其配置 | 健康与调度状态分离；配置追加版本，包含内置工具紧急停用清单 `disabled_tools`（只接受 DSH 工具）；Runtime 不等于每次执行的 Worker |
+| `runtimes`、`runtime_configurations` | Runtime 与其配置 | 健康与调度状态分离；配置追加版本，包含内置工具紧急停用清单 `disabled_tools`（只接受 DSH 工具）与内置 Skill 紧急停用清单 `disabled_builtin_skills`；Runtime 不等于每次执行的 Worker |
 
 ## 9. 文件与成果
 
 | 表 | 作用 | 关键不变量 |
 | --- | --- | --- |
-| `file_objects`、`file_extractions` | 不可变文件对象与解析结果 | 存储键不用用户文件名；字节经存储端口保存 |
-| `run_input_files` | Attempt 的输入文件 | 每次 Attempt 固定原文件与解析版本，只读，执行前重新鉴权 |
+| `file_objects`、`file_extractions` | 不可变文件对象与解析结果 | 存储键不用用户文件名；字节经存储端口保存。`extractor_version`：上传与文本类成果为 `m4-basic-v1`（服务进程内解析），PDF/DOCX/XLSX/PPTX 成果为 `exec-office-v1`（一次性容器内解析，执行隔离 2b-3）；`detected_type` 含 `pptx`（迁移 0113） |
+| `run_input_files` | Attempt 的输入文件 | 每次 Attempt 固定原文件与解析版本，只读，执行前重新鉴权；只挂原始文件的二进制成果没有解析版本（`extraction_id` 为空，执行隔离 2b-4） |
 | `workspace_files`、`workspace_file_versions` | 团队共享文件的逻辑文件与版本 | 新版本不覆盖不可变对象；逻辑移除保留历史；历史 Run 仍指向实际使用的对象 |
 | `artifacts`、`artifact_versions` | 运行成果 | 新增版本，不覆盖旧文件；关联 Session 或 Task；下载检查空间、会话共享规则或 Task 所有人 |
 

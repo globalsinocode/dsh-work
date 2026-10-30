@@ -350,6 +350,15 @@ export function registerContentRoutes(
     const file = await content.readFile(fileId, userId)
     writeDownload(response, file.name, file.mimeType, file.bytes)
   })
+
+  // 执行隔离 2b-5：Office/PDF 成果的解析文本预览，读取权限与下载相同。
+  router.get(`${basePath}/artifacts/:artifactId/versions/:versionId/text`, async (_request, context) => {
+    const identity = requireRequestIdentity(context, 'workbench')
+    await authorization.authorizeWorkbench({ userId: identity.userId, ...sessionAuthorizationContext(identity) })
+    const version = Number(context.params['versionId'])
+    if (!Number.isInteger(version) || version < 1) throw invalidRequest('Artifact 版本号无效')
+    return envelope('workbench', await content.readArtifactText(context.params['artifactId'] ?? '', version, identity.userId), 'postgres')
+  })
 }
 
 /**

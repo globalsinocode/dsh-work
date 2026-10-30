@@ -7,6 +7,7 @@ import { ArrowRight, Plus, Search, UserFilled } from '@element-plus/icons-vue'
 import { StatusTag } from '@dsh-work/ui-core'
 import { workbenchApi } from '@/api/client'
 import CreateProjectSpaceDialog from '@/components/CreateProjectSpaceDialog.vue'
+import PageHeader from '@/components/PageHeader.vue'
 import { useContentStore } from '@/stores/content'
 import type { Workspace, WorkspaceStatusFilter } from '@/types/domain'
 
@@ -155,18 +156,30 @@ function onCreated(workspace: Workspace) {
   void router.push(`/workspaces/${workspace.id}`)
 }
 
-onMounted(() => contentStore.refresh())
+/** D38：有 @ 本人未读提醒的项目空间；读取失败时不标记。 */
+const mentionedWorkspaceIds = ref<Set<string>>(new Set())
+async function loadMentions() {
+  try {
+    const { items } = await workbenchApi.getMentions()
+    mentionedWorkspaceIds.value = new Set(items.map(item => item.workspaceId))
+  } catch {
+    mentionedWorkspaceIds.value = new Set()
+  }
+}
+
+onMounted(() => {
+  void contentStore.refresh()
+  void loadMentions()
+})
 </script>
 
 <template>
-  <div class="page-container page-container--wide workspace-page">
-    <header class="page-header">
-      <div>
-        <h1 class="page-title">项目空间</h1>
-        <p class="page-description">进入已加入的项目空间，与同事和 Agent 一起推进项目。个人对话和文件请使用左侧入口。</p>
-      </div>
+  <PageHeader title="项目空间">
+    <template #actions>
       <el-button type="primary" :icon="Plus" @click="createDialogOpen = true">创建项目空间</el-button>
-    </header>
+    </template>
+  </PageHeader>
+  <div class="page-container page-container--wide workspace-page">
 
     <div class="workspace-toolbar">
       <el-input v-model="query" :prefix-icon="Search" clearable placeholder="搜索工作空间名称或负责人" />
@@ -217,6 +230,11 @@ onMounted(() => contentStore.refresh())
               status="warning"
               label="已归档"
             />
+            <span
+              v-if="mentionedWorkspaceIds.has(workspace.id)"
+              class="workspace-card__mention"
+              data-testid="workspace-card-mention"
+            >有人@我</span>
           </span>
         </div>
         <h2>{{ workspace.name }}</h2>
@@ -252,6 +270,12 @@ onMounted(() => contentStore.refresh())
 </template>
 
 <style scoped>
+.workspace-card__mention {
+  color: var(--el-color-danger);
+  font-size: var(--dsh-font-size-caption);
+  font-weight: 600;
+}
+
 .workspace-toolbar {
   display: flex;
   align-items: center;

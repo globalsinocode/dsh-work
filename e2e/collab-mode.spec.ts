@@ -267,7 +267,17 @@ test('MODE-E2E-09/10: a group shows its chat timeline, the shared tabs and the g
   // 冒烟夹具的空间没有 Agent 成员：按 12.8 提示先添加 Agent。
   await expect(page.getByTestId('group-no-agent-notice')).toBeVisible()
 
-  await chat.getByTestId('group-run-record').first().click()
+  // D36：执行记录并入 Agent 回复——有回复的执行不再单独占一行；执行中的执行以 Agent 条目显示进度。
+  const answered = chat.locator('.conversation-message--assistant', { hasText: '本月华东区共有 126 张在制订单' })
+  await expect(answered).toContainText('由 林岚 发起')
+  await expect(answered.getByRole('button', { name: '查看执行详情' })).toBeVisible()
+  const running = chat.getByTestId('group-run-entry')
+  await expect(running).toHaveCount(1)
+  await expect(running).toContainText('由 林岚 发起')
+  await expect(running).toContainText(/执行中 · 已用/)
+  await expect(running.getByRole('list', { name: '执行步骤' })).toBeVisible()
+  await expect(running.getByRole('button', { name: '停止' })).toBeVisible()
+  await running.getByRole('button', { name: '查看执行详情' }).click()
   await expect(page).toHaveURL(/\/c\/chats\/group\/ws-supply\/conversations\/run-/)
 
   await page.getByRole('tab', { name: /^文件/ }).click()
@@ -320,11 +330,75 @@ test('MODE-E2E-10: task details open inside the group and map to work mode', asy
   await page.goto('/c/chats/group/ws-supply?tab=tasks')
   await page.getByTestId('project-task-open').filter({ hasText: 'MODE-10 冒烟任务' }).click()
   await expect(page).toHaveURL(new RegExp(`/c/chats/group/ws-supply/tasks/${taskId}$`))
-  await expect(page.getByTestId('workspace-crumb-task')).toHaveText('MODE-10 冒烟任务')
-  await page.getByTestId('workspace-crumb-tasks').click()
+  await expect(page.getByTestId('project-task-detail')).toContainText('MODE-10 冒烟任务')
+  // D37：群组任务详情不显示面包屑，经“任务”页签返回列表。
+  await expect(page.getByTestId('workspace-crumb-tasks')).toHaveCount(0)
+  await page.getByRole('tablist', { name: '群组内容' }).getByRole('tab', { name: /^任务/ }).click()
   await expect(page).toHaveURL(/\/c\/chats\/group\/ws-supply\?tab=tasks$/)
   await page.goto(`/workspaces/ws-supply/tasks/${taskId}`)
   await expect(page).toHaveURL(new RegExp(`/c/chats/group/ws-supply/tasks/${taskId}$`))
+})
+
+test('MODE-E2E-16: group task details show the task info beside the task conversation', async ({ page }) => {
+  const created = await page.request.post('/api/workbench/v1/workspaces/ws-supply/project-tasks', {
+    data: { title: 'MODE-16 冒烟任务', description: 'MODE-16 任务说明', assignee: { type: 'employee', id: 'U00001' } },
+  })
+  expect(created.ok()).toBeTruthy()
+  const taskId = (await created.json()).data.id as string
+  await switchToCollab(page)
+  await page.goto(`/c/chats/group/ws-supply/tasks/${taskId}`)
+
+  // 宽屏：右栏默认显示任务信息（含任务说明），与任务对话并列；标题行没有“执行详情”。
+  const taskTab = page.getByRole('tab', { name: '任务信息' })
+  const info = page.getByTestId('task-info-pane').getByTestId('project-task-info')
+  await expect(taskTab).toHaveAttribute('aria-selected', 'true')
+  await expect(info).toBeVisible()
+  await expect(info.getByTestId('project-task-description')).toHaveText(/MODE-16 任务说明/)
+  await expect(info.getByRole('button', { name: '编辑' })).toHaveCount(0)
+  await expect(page.getByTestId('project-task-run-detail')).toHaveCount(0)
+
+  // 写操作在“更多任务操作”菜单里；“标记完成”打开完成弹窗。
+  await page.getByRole('button', { name: '更多任务操作' }).click()
+  await expect(page.getByRole('menuitem', { name: '编辑任务' })).toBeVisible()
+  await expect(page.getByRole('menuitem', { name: '移除任务' })).toBeVisible()
+  await page.getByRole('menuitem', { name: '标记完成' }).click()
+  const complete = page.getByRole('dialog', { name: /完成任务/ })
+  await expect(complete).toBeVisible()
+  await complete.getByRole('button', { name: '取消' }).click()
+  await expect(complete).toBeHidden()
+
+  // 群信息：右栏切到群信息，再点回到任务信息。
+  await page.getByRole('button', { name: '群信息', exact: true }).click()
+  await expect(page.getByRole('tab', { name: '群信息' })).toHaveAttribute('aria-selected', 'true')
+  await expect(info).toBeHidden()
+  await page.getByRole('button', { name: '群信息', exact: true }).click()
+  await expect(taskTab).toHaveAttribute('aria-selected', 'true')
+  await expect(info).toBeVisible()
+
+  // 收起右栏：任务对话上方出现一行摘要，“显示任务信息”重新展开。
+  await page.getByRole('button', { name: '收起信息栏' }).click()
+  const summary = page.getByTestId('project-task-summary')
+  await expect(summary).toContainText('待办')
+  await summary.getByRole('button', { name: '显示任务信息' }).click()
+  await expect(info).toBeVisible()
+  await expect(summary).toHaveCount(0)
+})
+
+test('MODE-E2E-16: on narrow screens the task summary expands in place', async ({ page }) => {
+  const created = await page.request.post('/api/workbench/v1/workspaces/ws-supply/project-tasks', {
+    data: { title: 'MODE-16 窄屏任务', assignee: { type: 'employee', id: 'U00001' } },
+  })
+  const taskId = (await created.json()).data.id as string
+  await switchToCollab(page)
+  await page.setViewportSize({ width: 1000, height: 760 })
+  await page.goto(`/c/chats/group/ws-supply/tasks/${taskId}`)
+  const summary = page.getByTestId('project-task-summary')
+  await expect(summary).toContainText('待办')
+  await expect(page.getByTestId('project-task-info')).toHaveCount(0)
+  await summary.getByRole('button', { name: '全部任务信息' }).click()
+  await expect(page.getByTestId('project-task-info')).toContainText('交付文件')
+  await summary.getByRole('button', { name: '收起任务信息' }).click()
+  await expect(page.getByTestId('project-task-info')).toHaveCount(0)
 })
 
 test('MODE-E2E-11: AI colleague and group directories open the matching chats', async ({ page }) => {
@@ -430,4 +504,29 @@ test('MODE-E2E-13: unread counts show in the chat list and clear when the conver
   await page.reload()
   await expect(list.getByRole('button', { name: /^dsh-work Assistant/ })).toHaveAccessibleName(/\d+ 条未读/)
   await expect(list.getByRole('button', { name: /供应链经营分析/ }).first().getByTestId('conversation-unread')).toHaveCount(0)
+})
+
+test('MODE-E2E-17: an @ mention shows in both modes and clears when the group is opened', async ({ page }) => {
+  // 冒烟夹具预置一条 @ 测试身份的未读提醒（ws-supply）；登记与成员校验由 MODE-API-04 集成测试覆盖。
+  await page.goto('/workspaces')
+  await expect(page.getByRole('button', { name: /供应链经营分析/ }).getByTestId('workspace-card-mention')).toHaveText('有人@我')
+  await expect(page.getByRole('button', { name: /月度经营复盘/ }).getByTestId('workspace-card-mention')).toHaveCount(0)
+
+  await switchToCollab(page)
+  const navigation = page.getByRole('navigation', { name: '协作模式主导航' })
+  await expect(navigation.getByRole('button', { name: '对话，有人@我' })).toBeVisible()
+  const list = page.getByRole('list', { name: '对话' })
+  const group = list.getByRole('button', { name: /^供应链经营分析，有人@我/ })
+  await expect(group.getByTestId('conversation-mention')).toHaveText('[有人@我]')
+
+  await group.click()
+  await expect(page).toHaveURL(/\/c\/chats\/group\/ws-supply$/)
+  await expect(list.getByTestId('conversation-mention')).toHaveCount(0)
+  await expect(navigation.getByTestId('nav-mention-dot')).toHaveCount(0)
+
+  // 已读保存在服务端：重新加载后不再提醒。
+  await page.reload()
+  await expect(list.getByRole('button', { name: /供应链经营分析/ }).first()).toBeVisible()
+  await expect(list.getByTestId('conversation-mention')).toHaveCount(0)
+  await expect(navigation.getByRole('button', { name: '对话', exact: true })).toBeVisible()
 })

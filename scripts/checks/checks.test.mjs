@@ -12,10 +12,11 @@ function fixture(t) {
   const root = mkdtempSync(join(tmpdir(), 'dsh-work-checks-'))
   t.after(() => rmSync(root, { recursive: true, force: true }))
   for (const path of [
-    'AGENTS.md', 'README.md', 'package.json', '.env.example', '.github/workflows/ci.yml', 'docs', 'e2e/TEST-CATALOG.md',
+    'AGENTS.md', 'README.md', 'package.json', '.env.example', '.github/workflows/ci.yml', 'docs',
     'config/target-environment/2026-10-17.json',
     'server/package.json', 'server/config', 'server/src', 'server/migrations', 'server/scripts/convert-agency-agents.mjs', 'server/scripts/package-agency-agent-fixtures.mjs',
-    'deploy/runtime.env.example', 'scripts/deploy/preflight.sh', 'scripts/runtime/probe.ts', 'scripts/runtime/run-timings.ts',
+    'deploy/runtime.env.example', 'deploy/execution-image', '.github/workflows/execution-image.yml', 'scripts/deploy/preflight.sh',
+    'scripts/release/build-release.sh', 'scripts/acceptance/c-tier-p2.mjs', 'scripts/runtime/probe.ts', 'scripts/runtime/run-timings.ts',
     'scripts/checks/contracts.mjs', 'scripts/testing/p0-smoke-server.ts',
     'apps/workbench-web/vitest.config.ts', 'apps/admin-web/vitest.config.ts', 'playwright.config.ts',
     'e2e/mvp-smoke.spec.ts', 'e2e/TEST-CATALOG.md', 'e2e/catalog', 'e2e/automation-smoke.spec.ts',
@@ -70,6 +71,34 @@ test('runtime checks reject version drift and production compatibility', t => {
   assert.match(failures(root, 'runtime'), /完整 Commit SHA/)
   assert.match(failures(root, 'runtime'), /生产 DSH Commit 与 Lock 不一致/)
   assert.match(failures(root, 'runtime'), /生产模板不得启用开发兼容模式/)
+})
+
+test('runtime checks reject unpinned execution image inputs', t => {
+  const root = fixture(t)
+  const dockerfile = join(root, 'deploy/execution-image/Dockerfile')
+  writeFileSync(dockerfile, readFileSync(dockerfile, 'utf8')
+    .replace(/^FROM (\S+)@sha256:\S+/m, 'FROM $1')
+    .replace(/^ARG DEBIAN_SNAPSHOT=.*$/m, 'ARG DEBIAN_SNAPSHOT=latest')
+    .replace('--require-hashes ', ''))
+  appendFileSync(join(root, 'deploy/execution-image/requirements.lock'), '\nrequests>=2\n')
+  appendFileSync(join(root, 'deploy/execution-image/requirements.in'), 'matplotlib\n')
+  const workflow = join(root, '.github/workflows/execution-image.yml')
+  writeFileSync(workflow, readFileSync(workflow, 'utf8').replace(/actions\/attest@\S+/, 'actions/attest@v4'))
+  const result = failures(root, 'runtime')
+  assert.match(result, /基础镜像必须按摘要锁定/)
+  assert.match(result, /固定 Debian 快照时间/)
+  assert.match(result, /校验哈希且只用 wheel/)
+  assert.match(result, /依赖必须固定版本：requests>=2/)
+  assert.match(result, /未包含 matplotlib/)
+  assert.match(result, /Action 必须固定带版本注释的 Commit SHA：actions\/attest@v4/)
+})
+
+test('runtime checks reject a release bundle that leaves out runtime config', t => {
+  const root = fixture(t)
+  const build = join(root, 'scripts/release/build-release.sh')
+  writeFileSync(build, readFileSync(build, 'utf8').split('\n').filter(line => !line.includes('dsh-work-remote-subprocess.js')).join('\n'))
+  assert.match(failures(root, 'runtime'), /发布包未复制运行时配置 server\/config\/dsh\/dsh-work-remote-subprocess\.js/)
+  assert.doesNotMatch(failures(root, 'runtime'), /dsh-work-remote-subprocess\.test\.js/, 'tests do not ship')
 })
 
 test('project checks reject dangling docs and tests disconnected from CI', t => {

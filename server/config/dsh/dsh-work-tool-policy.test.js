@@ -99,10 +99,10 @@ test('DSH tool policy confines write and edit to supported files in the Run outp
   assert.equal(guard({ name: 'write', arguments: { file_path: 'output/data.csv', content: 'id,value' } }), undefined)
   assert.match(guard({ name: 'write', arguments: { file_path: 'input/source.txt', content: 'changed' } }), /只允许.*output/)
   assert.match(guard({ name: 'write', arguments: { file_path: 'report.md', content: '# 报告' } }), /只允许.*output/)
-  assert.match(guard({ name: 'write', arguments: { file_path: 'output/report.html', content: '<h1>报告</h1>' } }), /仅支持/)
+  assert.match(guard({ name: 'write', arguments: { file_path: 'output/report.html', content: '<h1>报告</h1>' } }), /只支持 Markdown、TXT 和 CSV 文件；HTML、Office、PDF 与图片成果.*bash/)
   assert.equal(guard({ name: 'edit', arguments: { file_path: 'output/report.md', old_string: '旧', new_string: '新' } }), undefined)
   assert.match(guard({ name: 'edit', arguments: { file_path: 'input/source.txt', old_string: '旧', new_string: '新' } }), /只允许.*output/)
-  assert.match(guard({ name: 'edit', arguments: { file_path: 'output/report.html', old_string: '旧', new_string: '新' } }), /仅支持/)
+  assert.match(guard({ name: 'edit', arguments: { file_path: 'output/report.html', old_string: '旧', new_string: '新' } }), /只支持 Markdown、TXT 和 CSV/)
   assert.equal(guard({ name: 'str_replace_editor', arguments: { command: 'view', path: 'input/source.txt' } }), undefined)
   assert.equal(guard({ name: 'str_replace_editor', arguments: { command: 'create', path: 'output/report.md', file_text: '# 报告' } }), undefined)
   assert.match(guard({ name: 'str_replace_editor', arguments: { command: 'insert', path: 'input/source.txt', insert_line: 1, new_str: '新增' } }), /只允许.*output/)
@@ -252,10 +252,11 @@ test('DSH publishes the session-scoped tools loaded by the active Profile only f
   process.env.DSH_TOOL_CATALOG_PATH = path
   process.env.DSH_WORK_TOOL_CATALOG_MODE = 'management'
   const schemas = [
-    { name: 'read', description: 'Read a file.', parameters: { type: 'object' } },
+    { name: 'read', description: 'Read a file.', parameters: { type: 'object', properties: { file_path: { type: 'string' } } } },
     { name: 'todo_write', description: 'Update todos.', parameters: { type: 'object' } },
   ]
-  const policy = capturePolicy(schemas)
+  // Like DSH 0.1.2-rc.1: read is parallel only once it has a path; everything else is exclusive.
+  const policy = capturePolicy(schemas, exec => ({ kind: exec.name === 'read' && exec.arguments?.file_path ? 'parallel' : 'exclusive' }))
   await assert.rejects(readFile(path, 'utf8'), error => error.code === 'ENOENT')
   const agent = { id: 'catalog-session-1' }
   policy.sessionStarted({ agent })
@@ -267,10 +268,12 @@ test('DSH publishes the session-scoped tools loaded by the active Profile only f
   assert.equal(policy.schemaScopes.at(-1), agent)
   assert.deepEqual(catalog.tools.map(tool => ({ name: tool.name, contract: tool.contract })), [
     { name: 'read', contract: {
+      dshScheduling: 'parallel',
       effect: 'read', retryPolicy: 'safe', concurrencyPolicy: 'concurrent', completionSemantics: 'completed',
       timeoutSeconds: 30, outputValidation: 'unavailable', outputSchema: { 'x-dsh-work-output-validation': 'unavailable' },
     } },
     { name: 'todo_write', contract: {
+      dshScheduling: 'exclusive',
       effect: 'write', retryPolicy: 'never', concurrencyPolicy: 'serialized', completionSemantics: 'completed',
       timeoutSeconds: 10, outputValidation: 'unavailable', outputSchema: { 'x-dsh-work-output-validation': 'unavailable' },
     } },
@@ -287,7 +290,7 @@ test('DSH does not publish a tool catalog for ordinary Attempts', async () => {
   await assert.rejects(readFile(path, 'utf8'), error => error.code === 'ENOENT')
 })
 
-function capturePolicy(schemas = []) {
+function capturePolicy(schemas = [], executionMode = undefined) {
   let guard
   let preExecute
   const changeListeners = []
@@ -311,6 +314,7 @@ function capturePolicy(schemas = []) {
         schemaScopes.push(scope)
         return schemas
       },
+      ...(executionMode ? { executionMode } : {}),
     },
   })
   assert.ok(guard)
@@ -480,5 +484,25 @@ test('a tool disabled by the Runtime denies only that call with a readable reaso
     assert.equal((await preExecute({ name: 'todo_write', arguments: {} }, next)).kind, 'allow')
     revoked = true
     assert.deepEqual(await preExecute({ name: 'todo_write', arguments: {} }, next), { kind: 'deny', reason: '当前执行授权不可用或已撤销' })
+  } finally { await bridge.close() }
+})
+
+test('while the execution container is still cleaning up, a tool call is refused with a retry hint', async () => {
+  let cleaning = true
+  const bridge = await createPlatformToolBridge({}, 0, async () => {
+    if (cleaning) throw Object.assign(new Error('busy'), { code: 'execution_container_busy' })
+  })
+  try {
+    process.env.DSH_PLATFORM_TOOL_SOCKET = bridge.socket
+    process.env.DSH_REQUIRE_CURRENT_AUTHORIZATION = 'true'
+    process.env.DSH_ALLOWED_TOOLS_JSON = '["todo_write"]'
+    process.env.DSH_TOOL_APPROVAL_MODE = 'never'
+    const { preExecute } = capturePolicy()
+    const next = async () => ({ kind: 'allow' })
+    assert.deepEqual(await preExecute({ name: 'todo_write', arguments: {} }, next), {
+      kind: 'deny', reason: '执行容器仍在清理上一条命令，本次工具调用未执行，请稍后重试',
+    })
+    cleaning = false
+    assert.equal((await preExecute({ name: 'todo_write', arguments: {} }, next)).kind, 'allow')
   } finally { await bridge.close() }
 })

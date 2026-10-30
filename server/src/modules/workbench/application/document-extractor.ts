@@ -58,7 +58,7 @@ export function extractDocument(name: string, bytes: Buffer): DocumentExtraction
   else if (extension === '.txt' || extension === '.md') result = extractText(bytes)
   else throw extractionError('FILE_TYPE_UNSUPPORTED', '当前仅支持 PDF、DOCX、XLSX、XLS、CSV、TXT 和 Markdown')
 
-  const text = normalizeText(result.text)
+  const text = normalizeExtractedText(result.text)
   if (!text) throw extractionError('FILE_NO_EXTRACTABLE_TEXT', '文件中没有可提取的文本内容')
   if (text.length > maxExtractedCharacters) {
     throw extractionError('FILE_EXTRACTED_TEXT_TOO_LARGE', '文件解析后的文本超过 512000 字符，请拆分后重试')
@@ -210,7 +210,11 @@ function decodePdfHex(bytes: Buffer) {
   return bytes.toString('latin1')
 }
 
-function readZip(bytes: Buffer) {
+/**
+ * Bounded ZIP reader for OOXML: entry count, per-entry and total inflated size are capped.
+ * Duplicate names and encrypted entries are refused (a duplicate would silently shadow a part).
+ */
+export function readZip(bytes: Buffer) {
   const signature = 0x06054b50
   let eocdOffset = -1
   for (let index = bytes.length - 22; index >= Math.max(0, bytes.length - 65_557); index -= 1) {
@@ -227,6 +231,7 @@ function readZip(bytes: Buffer) {
   for (let entry = 0; entry < entryCount; entry += 1) {
     assertBufferRange(bytes, offset, 46, 'ZIP_DIRECTORY_INVALID', 'Office 文件目录结构无效')
     if (bytes.readUInt32LE(offset) !== 0x02014b50) throw extractionError('ZIP_DIRECTORY_INVALID', 'Office 文件目录结构无效')
+    const flags = bytes.readUInt16LE(offset + 8)
     const method = bytes.readUInt16LE(offset + 10)
     const compressedSize = bytes.readUInt32LE(offset + 20)
     const uncompressedSize = bytes.readUInt32LE(offset + 24)
@@ -243,6 +248,8 @@ function readZip(bytes: Buffer) {
     }
     assertBufferRange(bytes, offset + 46, nameLength + extraLength + commentLength, 'ZIP_DIRECTORY_INVALID', 'Office 文件目录结构无效')
     const name = bytes.subarray(offset + 46, offset + 46 + nameLength).toString('utf8')
+    if (flags & 0x1) throw extractionError('ZIP_ENTRY_ENCRYPTED', `Office 文件条目已加密：${name}`)
+    if (entries.has(name)) throw extractionError('ZIP_DUPLICATE_ENTRY', `Office 文件条目重复：${name}`)
     assertBufferRange(bytes, localOffset, 30, 'ZIP_ENTRY_INVALID', `Office 文件条目无效：${name}`)
     if (bytes.readUInt32LE(localOffset) !== 0x04034b50) throw extractionError('ZIP_ENTRY_INVALID', `Office 文件条目无效：${name}`)
     const localNameLength = bytes.readUInt16LE(localOffset + 26)
@@ -336,7 +343,8 @@ function decodeXmlEntities(value: string) {
     .replaceAll(/&#x([A-Fa-f0-9]+);/g, (_match, code: string) => String.fromCodePoint(Number.parseInt(code, 16)))
 }
 
-function normalizeText(value: string) {
+/** Line endings, trailing blanks and runs of blank lines, as every stored extraction is normalized. */
+export function normalizeExtractedText(value: string) {
   return value.replaceAll('\r\n', '\n').replaceAll('\r', '\n').replaceAll(/[ \t]+\n/g, '\n').replaceAll(/\n{4,}/g, '\n\n\n').trim()
 }
 

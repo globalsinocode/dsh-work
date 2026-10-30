@@ -13,6 +13,9 @@ const router = vi.hoisted(() => ({ push: vi.fn() }))
 const api = vi.hoisted(() => ({
   getWorkspaceTimeline: vi.fn(),
   createSession: vi.fn(),
+  getRun: vi.fn(),
+  cancelRun: vi.fn(),
+  runEventsUrl: vi.fn((id: string) => `/runs/${id}/events`),
   listConversationTargets: vi.fn(),
   workspaceSessionEventsUrl: vi.fn((id: string) => `/events/${id}`),
 }))
@@ -43,6 +46,7 @@ const props = {
   archived: false,
   roleKnown: true,
   mentionOptions: [{ id: 'wam-1', name: '库存助手' }],
+  colleagueOptions: [] as Array<{ id: string; name: string; kind: 'member' }>,
   hasAgentMembers: true,
   pendingFile: null as WorkspaceFile | null,
 }
@@ -68,6 +72,7 @@ describe('CollabGroupTimeline (S5d 群聊)', () => {
     api.getWorkspaceTimeline.mockResolvedValue({ workspaceId: 'ws-1', items, nextCursor: null })
     api.listConversationTargets.mockResolvedValue({ items: [], nextCursor: null })
     api.workspaceSessionEventsUrl.mockImplementation((id: string) => `/events/${id}`)
+    api.runEventsUrl.mockImplementation((id: string) => `/runs/${id}/events`)
     router.push.mockReset()
     vi.spyOn(useAuthStore(), 'user', 'get').mockReturnValue({ id: 'U1', name: '林岚', title: '', department: '', avatarText: '林', role: 'employee', dataScopes: [] })
     Element.prototype.scrollTo = vi.fn()
@@ -79,7 +84,11 @@ describe('CollabGroupTimeline (S5d 群聊)', () => {
     expect(dividers[0]).toContain('第一段 ·')
     expect(dividers[1]).toContain('第二段 ·')
     expect(wrapper.get('[data-testid="group-system-record"]').text()).toContain('林岚 创建了群组')
-    expect(wrapper.get('[data-testid="group-run-record"]').text()).toContain('周航 让 库存助手 执行')
+    // 没有回复的已结束执行以 Agent 条目出现，不再是问题与回复之间的执行记录。
+    const entry = wrapper.get('[data-testid="group-run-entry"]')
+    expect(entry.text()).toContain('库存助手')
+    expect(entry.text()).toContain('由 周航 发起')
+    expect(entry.text()).toContain('执行已结束，没有生成回复')
     const cards = wrapper.findAll('[data-testid="group-task-card"]')
     expect(cards).toHaveLength(3)
     expect(cards[0]!.text()).toContain('定时执行无变化（展开）')
@@ -114,7 +123,7 @@ describe('CollabGroupTimeline (S5d 群聊)', () => {
     const wrapper = await mountTimeline()
     await wrapper.get('[aria-label="打开任务：库存周报"]').trigger('click')
     expect(router.push).toHaveBeenLastCalledWith('/c/chats/group/ws-1/tasks/t1')
-    await wrapper.get('[data-testid="group-run-record"]').trigger('click')
+    await wrapper.get('[data-testid="group-run-entry"]').get('button').trigger('click')
     expect(router.push).toHaveBeenLastCalledWith('/c/chats/group/ws-1/conversations/r1')
   })
 
@@ -125,7 +134,7 @@ describe('CollabGroupTimeline (S5d 群聊)', () => {
     const start = vi.spyOn(store, 'startRunWithSessionFiles')
     await wrapper.get('.collab-group-timeline__preset-toggle').trigger('click')
     const confirm = await submit(wrapper, '大家怎么看')
-    expect(post).toHaveBeenCalledWith('s-new', '大家怎么看')
+    expect(post).toHaveBeenCalledWith('s-new', '大家怎么看', [])
     expect(start).not.toHaveBeenCalled()
     expect(confirm).toHaveBeenCalled()
   })
@@ -136,11 +145,62 @@ describe('CollabGroupTimeline (S5d 群聊)', () => {
     const start = vi.spyOn(store, 'startRunWithSessionFiles').mockResolvedValue({ id: 'run-x' } as TaskRun)
     vi.spyOn(store, 'subscribe').mockImplementation(() => undefined)
     await submit(wrapper, '分析一下')
-    expect(start).toHaveBeenCalledWith('s-new', { prompt: '分析一下', attachments: [], referencedFileIds: [], workspaceAgentMemberId: 'wam-1' })
+    expect(start).toHaveBeenCalledWith('s-new', { prompt: '分析一下', attachments: [], referencedFileIds: [], workspaceAgentMemberId: 'wam-1', mentionedUserIds: [] })
 
     const multi = await mountTimeline({ mentionOptions: [{ id: 'wam-1', name: '库存助手' }, { id: 'wam-2', name: '排产助手' }] })
     await submit(multi, '@排产助手 排一下', ['wam-2'])
     expect(start).toHaveBeenLastCalledWith('s-new', expect.objectContaining({ workspaceAgentMemberId: 'wam-2' }))
+  })
+
+  it('lists colleagues for @ and only reminds them; @Agent with a colleague still runs (D38)', async () => {
+    const colleagueOptions = [{ id: 'user:U2', name: '周航', kind: 'member' as const }]
+    const wrapper = await mountTimeline({ mentionOptions: [{ id: 'wam-1', name: '库存助手' }, { id: 'wam-2', name: '排产助手' }], colleagueOptions })
+    expect(wrapper.findComponent(TaskComposer).props('mentionOptions')).toEqual([
+      { id: 'wam-1', name: '库存助手', kind: 'agent' },
+      { id: 'wam-2', name: '排产助手', kind: 'agent' },
+      ...colleagueOptions,
+    ])
+    expect(wrapper.text()).toContain('@ 同事只提醒对方')
+    const store = useTaskStore()
+    const post = vi.spyOn(store, 'postSessionMessage').mockResolvedValue(undefined as never)
+    const start = vi.spyOn(store, 'startRunWithSessionFiles').mockResolvedValue({ id: 'run-z' } as TaskRun)
+    vi.spyOn(store, 'subscribe').mockImplementation(() => undefined)
+
+    await submit(wrapper, '@周航 看下排期', ['user:U2'])
+    expect(post).toHaveBeenLastCalledWith('s-new', '@周航 看下排期', ['U2'])
+    expect(start).not.toHaveBeenCalled()
+
+    await submit(wrapper, '@排产助手 @周航 排一下', ['wam-2', 'user:U2'])
+    expect(start).toHaveBeenLastCalledWith('s-new', expect.objectContaining({ workspaceAgentMemberId: 'wam-2', mentionedUserIds: ['U2'] }))
+  })
+
+  it('sends a colleague-only mention as discussion instead of handing it to the preselected Agent (D38)', async () => {
+    const wrapper = await mountTimeline({ colleagueOptions: [{ id: 'user:U2', name: '周航', kind: 'member' }] })
+    const store = useTaskStore()
+    const post = vi.spyOn(store, 'postSessionMessage').mockResolvedValue(undefined as never)
+    const start = vi.spyOn(store, 'startRunWithSessionFiles').mockResolvedValue({ id: 'run-z' } as TaskRun)
+    vi.spyOn(store, 'subscribe').mockImplementation(() => undefined)
+    await submit(wrapper, '@周航 一起看看', ['user:U2'])
+    expect(post).toHaveBeenCalledWith('s-new', '@周航 一起看看', ['U2'])
+    expect(start).not.toHaveBeenCalled()
+
+    // 没有 @ 任何人时仍交给预选的 Agent。
+    await submit(wrapper, '分析一下')
+    expect(start).toHaveBeenCalledWith('s-new', expect.objectContaining({ workspaceAgentMemberId: 'wam-1', mentionedUserIds: [] }))
+  })
+
+  it('tags messages from others that mention me with “@了你” (D38)', async () => {
+    api.getWorkspaceTimeline.mockResolvedValue({
+      workspaceId: 'ws-1',
+      nextCursor: null,
+      items: [
+        { kind: 'message', id: 'm:3', at: '2026-10-09T00:00:00Z', sessionId: 's-new', sessionTitle: '第二段', role: 'user', content: '@林岚 请确认', senderId: 'U2', senderName: '周航', agentName: null, runId: null, runRequesterName: null, mentionedUserIds: ['U1'] },
+        { kind: 'message', id: 'm:4', at: '2026-10-08T00:00:00Z', sessionId: 's-new', sessionTitle: '第二段', role: 'user', content: '@赵宁 看下', senderId: 'U2', senderName: '周航', agentName: null, runId: null, runRequesterName: null, mentionedUserIds: ['U3'] },
+      ],
+    })
+    const wrapper = await mountTimeline()
+    const tags = wrapper.findAll('[data-testid="task-conversation-tag"]')
+    expect(tags.map(tag => tag.text())).toEqual(['@了你'])
   })
 
   it('starts the first topic when the group has no discussion yet', async () => {
@@ -151,7 +211,7 @@ describe('CollabGroupTimeline (S5d 群聊)', () => {
     const post = vi.spyOn(store, 'postSessionMessage').mockResolvedValue(undefined as never)
     await submit(wrapper, '开个头')
     expect(api.createSession).toHaveBeenCalledWith({ title: '开个头', workspaceId: 'ws-1' })
-    expect(post).toHaveBeenCalledWith('s-first', '开个头')
+    expect(post).toHaveBeenCalledWith('s-first', '开个头', [])
   })
 
   it('requires @Agent for a referenced workspace file', async () => {
@@ -179,5 +239,78 @@ describe('CollabGroupTimeline (S5d 群聊)', () => {
     expect(noAgent.findComponent(TaskComposer).exists()).toBe(false)
     await noAgent.get('[data-testid="group-no-agent-notice"] .el-button').trigger('click')
     expect(noAgent.emitted('open-info')).toHaveLength(1)
+  })
+  describe('执行并入 Agent 回复（D36）', () => {
+    const at = (seconds: number) => new Date(Date.UTC(2026, 9, 28, 12, 2, seconds)).toISOString()
+    const ask = { kind: 'message', id: 'm:ask', at: at(0), sessionId: 's-plan', sessionTitle: '排产计划', role: 'user', content: '@计划排产 目前有什么排产计划吗？', senderId: 'U9', senderName: '管理员', agentName: null, runId: 'run-p', runRequesterName: null } as const
+    const run = (status: string, stoppedByName: string | null = null) =>
+      ({ kind: 'run', id: 'r:run-p', at: at(1), sessionId: 's-plan', sessionTitle: '排产计划', runId: 'run-p', status, requesterName: '管理员', agentName: '计划排产', stoppedByName }) as const
+    const reply = { kind: 'message', id: 'm:reply', at: at(40), sessionId: 's-plan', sessionTitle: '排产计划', role: 'assistant', content: '目前没有可用的排产计划。', senderId: 'U9', senderName: '管理员', agentName: '计划排产', runId: 'run-p', runRequesterName: '管理员' } as const
+    const timeline = (...entries: WorkspaceTimelineItem[]) =>
+      api.getWorkspaceTimeline.mockResolvedValue({ workspaceId: 'ws-1', items: [...entries].reverse(), nextCursor: null })
+
+    it('lets a finished reply stand for its run: no separate run record, details from the reply', async () => {
+      timeline(ask, run('succeeded'), reply)
+      const wrapper = await mountTimeline()
+      expect(wrapper.find('[data-testid="group-run-entry"]').exists()).toBe(false)
+      const answer = wrapper.findAll('.conversation-message--assistant')
+      expect(answer).toHaveLength(1)
+      expect(answer[0]!.text()).toContain('由 管理员 发起')
+      expect(answer[0]!.text()).not.toContain('已完成')
+      await answer[0]!.get('.collab-group-timeline__run-link').trigger('click')
+      expect(router.push).toHaveBeenLastCalledWith('/c/chats/group/ws-1/conversations/run-p')
+    })
+
+    it('shows a running run in the reply slot with its live steps and lets a member stop it', async () => {
+      timeline(ask, run('running'))
+      api.getRun.mockResolvedValue({
+        id: 'run-p', sessionId: 's-plan', status: 'running', title: '排产计划', messages: [], attachments: [],
+        steps: [
+          { id: 'e1', title: '执行服务开始运行', detail: '', status: 'succeeded', event: 'run.started', at: at(1) },
+          { id: 'c1', title: '正在调用工具', detail: '', status: 'running', tool: 'project_tasks_list', callId: 'c1', event: 'tool.started', at: at(5), startedAt: at(5) },
+        ],
+      } as unknown as TaskRun)
+      api.cancelRun.mockResolvedValue({ id: 'run-p', sessionId: 's-plan', status: 'cancelled', messages: [], steps: [], attachments: [] } as unknown as TaskRun)
+      const wrapper = await mountTimeline()
+      await flushPromises()
+
+      expect(api.getRun).toHaveBeenCalledWith('run-p')
+      const entry = wrapper.get('[data-testid="group-run-entry"]')
+      expect(entry.attributes('data-status')).toBe('running')
+      expect(entry.text()).toContain('由 管理员 发起')
+      expect(entry.text()).toMatch(/执行中 · 已用/)
+      expect(entry.findAll('[data-testid="run-progress-step"]').length).toBeGreaterThan(0)
+
+      timeline(ask, run('cancelled', '管理员'))
+      await entry.findAll('button').find(button => button.text() === '停止')!.trigger('click')
+      await flushPromises()
+      expect(api.cancelRun).toHaveBeenCalledWith('run-p')
+      const stopped = wrapper.get('[data-testid="group-run-entry"]')
+      expect(stopped.text()).toContain('管理员 停止')
+      expect(stopped.text()).toContain('执行已被 管理员 停止，没有生成回复')
+      expect(stopped.findAll('button').map(button => button.text())).toEqual(['查看执行详情'])
+    })
+
+    it('explains a failed run without a reply and offers no stop to read-only members', async () => {
+      timeline(ask, run('failed'))
+      const failed = await mountTimeline()
+      const entry = failed.get('[data-testid="group-run-entry"]')
+      expect(entry.text()).toContain('失败')
+      expect(entry.text()).toContain('这次执行没有完成，可在执行详情中查看原因')
+
+      timeline(ask, run('running'))
+      api.getRun.mockRejectedValue(new Error('读取失败'))
+      const viewer = await mountTimeline({ canWrite: false })
+      const running = viewer.get('[data-testid="group-run-entry"]')
+      expect(running.text()).toContain('正在执行…')
+      expect(running.findAll('button').map(button => button.text())).toEqual(['查看执行详情'])
+    })
+
+    it('marks a partial reply whose run was stopped', async () => {
+      timeline(ask, run('cancelled', '周航'), reply)
+      const wrapper = await mountTimeline()
+      expect(wrapper.find('[data-testid="group-run-entry"]').exists()).toBe(false)
+      expect(wrapper.get('.conversation-message--assistant [data-testid="task-conversation-tag"]').text()).toBe('周航 停止')
+    })
   })
 })

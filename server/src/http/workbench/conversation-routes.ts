@@ -361,7 +361,7 @@ export function registerConversationRoutes(
       sessionId: context.params['sessionId'] ?? '',
       content: body.content,
       idempotencyKey,
-      mentionedUserIds: body.mentionedUserIds as string[] | undefined,
+      mentionedUserIds: body.mentionedUserIds,
     })
     return httpResult(201, envelope('workbench', result, 'postgres'))
   })
@@ -376,6 +376,8 @@ export function registerConversationRoutes(
       /** TW-10：团队会话 @ 触发的 Agent 成员关联；个人会话忽略。 */
       workspaceAgentMemberId?: unknown
       cumulativeBudget?: unknown
+      /** D38：同时 @ 的同事；只登记站内提醒。 */
+      mentionedUserIds?: unknown
     } | null>(request)
     if (body === null || typeof body !== 'object' || Array.isArray(body)) {
       throw routeValidationFailed('请求体必须是 JSON 对象')
@@ -406,6 +408,7 @@ export function registerConversationRoutes(
       workspaceAgentMemberId: body.workspaceAgentMemberId,
       cumulativeBudget: parseTaskBudget(body.cumulativeBudget),
       authorizationContext: sessionAuthorizationContext(identity),
+      mentionedUserIds: body.mentionedUserIds,
     })
     if (!run) throw new Error('Run 创建失败')
     const task = await attachCurrentUserRole(authorization, await conversations.getTask(run.id, userId), userId)

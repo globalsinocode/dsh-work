@@ -91,7 +91,7 @@ test('same personal workspace supports explicit cross-conversation reuse', async
   const file = await content.storeSessionFile(source.id, 'notes.txt', 'text/plain', Buffer.from('synthetic personal notes'), 'U00001')
   const prepared = await content.prepareRuntimeFiles({ sessionId: target.id, fileIds: [file.id], userId: 'U00001' })
   assert.equal(prepared.length, 1)
-  assert.match(prepared[0].mount.content, /synthetic personal notes/)
+  assert.match(prepared[0].mount!.content, /synthetic personal notes/)
   await assert.rejects(content.prepareRuntimeFiles({ sessionId: target.id, fileIds: [file.id], userId: 'U00008' }), { code: 'permission_denied' })
 })
 test('current team members can use shared inputs; author identity does not allow cross-workspace transfer', async () => {

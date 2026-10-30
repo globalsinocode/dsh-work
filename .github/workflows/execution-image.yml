@@ -1,0 +1,100 @@
+name: Execution image
+
+# Builds the execution-container image (deploy/execution-image, plan 4.6 2b-1) on a native arm64
+# runner and checks it under the real container posture. Pull requests only build and check; main
+# and manual runs on main also push to GHCR and attest provenance. The pushed digest is what
+# DSH_WORK_EXECUTION_IMAGE pins; deployments pull it once by digest and then run with --pull never.
+
+"on":
+  push:
+    branches:
+      - main
+    paths:
+      - deploy/execution-image/**
+      - .github/workflows/execution-image.yml
+  pull_request:
+    paths:
+      - deploy/execution-image/**
+      - .github/workflows/execution-image.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: execution-image-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  image:
+    name: Build, check and publish execution image
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    env:
+      CANDIDATE: dsh-work-execution:candidate
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Build image
+        run: |
+          docker build \
+            --label "org.opencontainers.image.source=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}" \
+            --label "org.opencontainers.image.revision=${GITHUB_SHA}" \
+            --tag "${CANDIDATE}" \
+            deploy/execution-image
+          docker image inspect "${CANDIDATE}" --format '{{.Architecture}} {{.Size}}'
+
+      - name: Check image under the execution-container posture
+        run: bash deploy/execution-image/smoke-test.sh "${CANDIDATE}"
+
+      - name: Push image to GHCR
+        id: push
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          name="ghcr.io/${GITHUB_REPOSITORY,,}/execution"
+          printf '%s' "${GH_TOKEN}" | docker login ghcr.io --username "${GITHUB_ACTOR}" --password-stdin
+          docker tag "${CANDIDATE}" "${name}:${GITHUB_SHA}"
+          docker push "${name}:${GITHUB_SHA}" | tee "${RUNNER_TEMP}/push.log"
+          digest=$(grep -oE 'digest: sha256:[0-9a-f]{64}' "${RUNNER_TEMP}/push.log" | tail -n 1 | cut -d ' ' -f 2)
+          [[ "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "Could not read the pushed digest" >&2; exit 1; }
+          echo "name=${name}" >> "${GITHUB_OUTPUT}"
+          echo "digest=${digest}" >> "${GITHUB_OUTPUT}"
+
+      - name: Attest build provenance
+        if: steps.push.outcome == 'success'
+        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4.2.1
+        with:
+          subject-name: ${{ steps.push.outputs.name }}
+          subject-digest: ${{ steps.push.outputs.digest }}
+          push-to-registry: true
+
+      - name: Report the image reference
+        if: steps.push.outcome == 'success'
+        env:
+          IMAGE_NAME: ${{ steps.push.outputs.name }}
+          IMAGE_DIGEST: ${{ steps.push.outputs.digest }}
+        run: |
+          {
+            echo '### Execution image'
+            echo
+            echo 'Pin this reference in `DSH_WORK_EXECUTION_IMAGE`:'
+            echo
+            echo '```'
+            echo "${IMAGE_NAME}@${IMAGE_DIGEST}"
+            echo '```'
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Log out of GHCR
+        if: always()
+        run: docker logout ghcr.io || true

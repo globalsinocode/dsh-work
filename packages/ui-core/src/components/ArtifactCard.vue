@@ -1,21 +1,26 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { Download, Document } from '@element-plus/icons-vue'
+import { Download, Document, View } from '@element-plus/icons-vue'
 
 interface ArtifactCardItem {
   name: string
-  type: 'xlsx' | 'docx' | 'pdf' | 'markdown' | 'csv' | 'text' | 'html'
+  type: 'xlsx' | 'docx' | 'pptx' | 'pdf' | 'png' | 'jpg' | 'markdown' | 'csv' | 'text' | 'html'
   version: number
   size: string
   createdAt: string
   summary: string
 }
 
-const props = defineProps<{
+// previewable 未传时保持 undefined（不做布尔转换为 false），从而回落到“只有 HTML 提供预览”。
+const props = withDefaults(defineProps<{
   artifact: ArtifactCardItem
   /** 来源说明（如项目空间的所属任务、承接 Agent 与发起人）；由宿主拼好后传入。 */
   origin?: string
-}>()
+  /** 是否提供“预览”；未传时只有 HTML 成果提供（宿主处理 preview 事件后再传）。 */
+  previewable?: boolean
+  /** 不能预览时代替按钮的说明，如解析失败的原因。 */
+  previewNote?: string
+}>(), { origin: undefined, previewable: undefined, previewNote: undefined })
 
 const emit = defineEmits<{
   download: []
@@ -27,13 +32,17 @@ const ARTIFACT_TYPE_ABBREV: Record<ArtifactCardItem['type'], string> = {
   markdown: 'MD',
   xlsx: 'XLS',
   docx: 'DOC',
+  pptx: 'PPT',
   pdf: 'PDF',
+  png: 'PNG',
+  jpg: 'JPG',
   csv: 'CSV',
   text: 'TXT',
   html: 'HTML',
 }
 
-const typeLabel = computed(() => ARTIFACT_TYPE_ABBREV[props.artifact.type])
+const typeLabel = computed(() => ARTIFACT_TYPE_ABBREV[props.artifact.type] ?? props.artifact.type.toUpperCase())
+const canPreview = computed(() => props.previewable ?? props.artifact.type === 'html')
 </script>
 
 <template>
@@ -61,6 +70,15 @@ const typeLabel = computed(() => ARTIFACT_TYPE_ABBREV[props.artifact.type])
       </div>
     </button>
     <div class="artifact-card__actions">
+      <el-button
+        v-if="canPreview"
+        text
+        :icon="View"
+        data-testid="artifact-preview-open"
+        :aria-label="`预览 ${artifact.name}`"
+        @click.stop="emit('preview')"
+      >预览</el-button>
+      <span v-else-if="previewNote" class="artifact-card__preview-note" data-testid="artifact-preview-note">{{ previewNote }}</span>
       <el-button
         text
         :icon="Download"
@@ -205,6 +223,13 @@ const typeLabel = computed(() => ARTIFACT_TYPE_ABBREV[props.artifact.type])
 .artifact-card__actions {
   display: flex;
   align-items: center;
+  gap: 4px;
+}
+
+.artifact-card__preview-note {
+  max-width: 180px;
+  color: #667085;
+  font-size: var(--dsh-font-size-badge);
 }
 
 @media (max-width: 640px) {

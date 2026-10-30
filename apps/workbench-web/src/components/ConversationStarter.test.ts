@@ -158,6 +158,7 @@ describe('ConversationStarter', () => {
       undefined,
       undefined,
       undefined,
+      [],
     )
   })
 
@@ -200,6 +201,7 @@ describe('ConversationStarter', () => {
       'wam-001',
       undefined,
       undefined,
+      [],
     )
   })
 
@@ -228,7 +230,44 @@ describe('ConversationStarter', () => {
 
     expect(createTask).toHaveBeenCalledWith(
       '分析订单波动', [], 'ws-team', '供应链团队', undefined, [], undefined, 'wam-1', undefined, undefined,
+      [],
     )
+  })
+
+  it('starts a discussion instead of using the preselected Agent when only colleagues are mentioned (D38)', async () => {
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    const wrapper = mount(ConversationStarter, {
+      props: {
+        workspaceId: 'ws-team',
+        workspaceName: '供应链团队',
+        workspaceLocked: true,
+        requiresAgentMember: true,
+        startableAgentMemberIds: ['wam-1'],
+        mentionOptions: [{ id: 'wam-1', name: '订单分析助手' }],
+        colleagueOptions: [{ id: 'user:U2', name: '周航', kind: 'member' }],
+      },
+      global: { plugins: [pinia, ElementPlus] },
+    })
+    const taskStore = useTaskStore(pinia)
+    const createTask = vi.spyOn(taskStore, 'createTask')
+    // 讨论发送由 store.startTeamDiscussion 内部走 API（带幂等键），断言 API 层。
+    apiMocks.postSessionMessage.mockResolvedValue({ messageId: 'msg-1', sessionId: 'session-new' })
+    apiMocks.createSession.mockResolvedValue({
+      id: 'session-new', workspaceId: 'ws-team', agentVersionId: null, title: '@周航 看下', createdAt: '2026-09-18T00:00:00.000Z',
+    })
+
+    wrapper.findComponent(TaskComposer).vm.$emit('submit', {
+      prompt: '@周航 看下', files: [], workspaceId: 'ws-team', mentions: ['user:U2'],
+    })
+    await flushPromises()
+
+    expect(apiMocks.createSession).toHaveBeenCalledWith(expect.objectContaining({
+      title: '@周航 看下',
+      workspaceId: 'ws-team',
+    }))
+    expect(apiMocks.postSessionMessage).toHaveBeenCalledWith('session-new', '@周航 看下', expect.any(String), ['U2'])
+    expect(createTask).not.toHaveBeenCalled()
   })
 
   it('does not auto-select when multiple startable Agent members are available', async () => {
@@ -286,6 +325,7 @@ describe('ConversationStarter', () => {
       undefined,
       undefined,
       undefined,
+      [],
     )
   })
 
@@ -326,7 +366,7 @@ describe('ConversationStarter', () => {
       mentions: [],
     })
     await flushPromises()
-    // 合并后创建会话带上幂等意图 id；只断言业务字段。
+    // 讨论会话带幂等意图 id，并登记 @ 同事。
     expect(apiMocks.createSession).toHaveBeenCalledWith(expect.objectContaining({
       title: '帮我看看库存',
       workspaceId: 'ws-team',
@@ -335,6 +375,7 @@ describe('ConversationStarter', () => {
       'session-new',
       '帮我看看库存',
       expect.any(String),
+      [],
     )
     expect(createTask).not.toHaveBeenCalled()
     expect(router.push).toHaveBeenCalledWith('/workspaces/ws-team/conversations/session-new')
@@ -379,6 +420,7 @@ describe('ConversationStarter', () => {
       'wam-9',
       undefined,
       undefined,
+      [],
     )
   })
 
@@ -474,6 +516,7 @@ describe('ConversationStarter', () => {
       'wam-1',
       undefined,
       undefined,
+      [],
     )
   })
 

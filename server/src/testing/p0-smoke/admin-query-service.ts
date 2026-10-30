@@ -34,6 +34,8 @@ import type {
 } from '../../domain/types.ts'
 import { DSH_RUNTIME_CONNECTOR_ID } from '../../domain/tool-category.ts'
 import { builtinTools, invalidSkillToolReferences, normalizeDisabledTools, type BuiltinToolStatus } from '../../modules/runtime/builtin-tools.ts'
+import { fileURLToPath } from 'node:url'
+import { loadBuiltinSkillCatalog, normalizeBuiltinSkillScenarios, type BuiltinSkillStatus } from '../../modules/skill/builtin-skills.ts'
 import { invalidRequest, notFound, stateConflict } from '../../domain/request-errors.ts'
 
 export interface PlatformStatus {
@@ -47,6 +49,9 @@ export interface PlatformStatus {
 
 export class AdminQueryService {
   private readonly repository: SmokeRepository
+
+  /** 冒烟服务直接加载仓库中的内置 Skill，与正式服务同一份内容。 */
+  private readonly builtinSkills = loadBuiltinSkillCatalog(fileURLToPath(new URL('../../../config/builtin-skills', import.meta.url)))
 
   constructor(repository: SmokeRepository) {
     this.repository = repository
@@ -102,6 +107,9 @@ export class AdminQueryService {
     let disabledTools: string[] | undefined
     try { disabledTools = input.disabledTools === undefined ? undefined : normalizeDisabledTools(input.disabledTools) }
     catch (error) { throw invalidRequest(error instanceof Error ? error.message : '停用工具清单无效') }
+    let disabledBuiltinSkills: string[] | undefined
+    try { disabledBuiltinSkills = input.disabledBuiltinSkills === undefined ? undefined : this.builtinSkills.normalizeDisabled(input.disabledBuiltinSkills) }
+    catch (error) { throw invalidRequest(error instanceof Error ? error.message : '停用内置 Skill 清单无效') }
 
     const runtimes = await this.repository.read('runtimes')
     const runtime = runtimes.find((item) => item.id === input.runtimeId)
@@ -115,6 +123,7 @@ export class AdminQueryService {
       attemptTimeoutMinutes: input.attemptTimeoutMinutes,
       schedulingStatus: input.schedulingStatus,
       ...(disabledTools ? { disabledTools } : {}),
+      ...(disabledBuiltinSkills ? { disabledBuiltinSkills } : {}),
     })
   }
 
@@ -375,6 +384,7 @@ export class AdminQueryService {
       instructions: input.instructions.trim(),
       toolIds: unique(input.toolIds),
       testPrompt: input.testPrompt.trim(),
+      coveredBuiltinScenarios: [],
       owner: actor,
       status: 'draft',
       version: '0.1.0',
@@ -474,12 +484,26 @@ export class AdminQueryService {
     return this.getDshRuntimeToolConnectorStatus()
   }
 
+  async getBuiltinSkillStatus(): Promise<BuiltinSkillStatus> {
+    const [runtime] = await this.repository.read('runtimes')
+    return this.builtinSkills.status(runtime?.disabledBuiltinSkills ?? [])
+  }
+
+  async setCoveredBuiltinScenarios(input: { skillId: string; scenarios: unknown; actor: string }) {
+    if (!input.actor.trim()) throw stateConflict('操作人不能为空')
+    let scenarios: string[]
+    try { scenarios = normalizeBuiltinSkillScenarios(input.scenarios) }
+    catch (error) { throw invalidRequest(error instanceof Error ? error.message : '覆盖内置场景无效') }
+    return this.repository.updateSkill(input.skillId, { coveredBuiltinScenarios: scenarios })
+  }
+
   async getBuiltinToolStatus(): Promise<BuiltinToolStatus> {
     const [runtime] = await this.repository.read('runtimes')
     return {
       tools: builtinTools,
       disabledTools: runtime?.disabledTools ?? [],
       catalog: { checkedAt: new Date().toISOString(), missingTools: [] },
+      executionContainer: { status: 'available' },
     }
   }
 

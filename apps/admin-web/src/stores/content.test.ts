@@ -11,6 +11,7 @@ const api = vi.hoisted(() => ({
   getTools: vi.fn(),
   getMcpConnectors: vi.fn(),
   getBuiltinTools: vi.fn(),
+  getBuiltinSkills: vi.fn(),
   getDshRuntimeToolConnector: vi.fn(),
   getGrantSourceReconciliation: vi.fn(),
   getHealth: vi.fn(),
@@ -39,6 +40,7 @@ describe('admin content store Skill version state', () => {
     api.getTools.mockResolvedValue([])
     api.getMcpConnectors.mockResolvedValue([])
     api.getBuiltinTools.mockResolvedValue({ tools: [], disabledTools: [], catalog: { checkedAt: '', missingTools: [] } })
+    api.getBuiltinSkills.mockResolvedValue({ skills: [], scenarios: [], disabledBuiltinSkills: [] })
     api.getDshRuntimeToolConnector.mockResolvedValue({
       connectorId: 'connector-dsh-workspace',
       name: 'DSH 内置工具',

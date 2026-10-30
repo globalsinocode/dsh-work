@@ -2,17 +2,26 @@
 import { StatusTag } from '@dsh-work/ui-core'
 
 import ConversationMessageItem from './ConversationMessageItem.vue'
+import { useAuthStore } from '@/stores/auth'
 import type { SessionThread, SessionThreadMessage } from '@/types/domain'
+import { mentionsUser } from '@/utils/mentions'
 import '@/styles/conversation-thread.css'
 
 /**
  * 共享讨论线程（S5b 从 ConversationView 拆出）：讨论消息与本讨论的执行记录入口。
  * A 的空间内讨论与 B 的群聊共用；点击执行记录只发事件，由调用方导航到执行详情。
  */
-defineProps<{
+const props = defineProps<{
   thread: SessionThread
   isOwn: (message: SessionThreadMessage) => boolean
 }>()
+
+const authStore = useAuthStore()
+
+/** D38：他人 @ 本人的发言在身份行标“@了你”。 */
+function mentionTag(message: SessionThreadMessage) {
+  return !props.isOwn(message) && mentionsUser(message, authStore.user.id) ? '@了你' : undefined
+}
 
 const emit = defineEmits<{ 'open-run': [runId: string] }>()
 
@@ -31,6 +40,7 @@ function formatSessionRunTime(value: string) {
     :key="message.id"
     :message="message"
     :own="isOwn(message)"
+    :tag="mentionTag(message)"
   />
   <section
     v-if="thread.runs.length"

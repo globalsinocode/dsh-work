@@ -100,7 +100,7 @@ DWP_OFFHOST='/Volumes/dsh-work-backups'
 
 此步骤在开发/运维端和 GitHub 完成，不在生产服务器构建：
 
-1. 确认部署改动已合并到 dsh-work 的 `main`，目标 Commit 的 **M6 quality gate** 成功。
+1. 确认部署改动已合并到 dsh-work 的 `main`，目标 Commit 的 CI 四个 Job（Static checks and build、Unit tests、PostgreSQL integration tests、Browser tests）全部成功；发布工作流会再次核对。
 2. 在仓库 `Settings → General → Releases` 启用 **Enable release immutability**。
    旧 Release 不会因此自动变为不可变 Release；不能用旧可变包充当新发布包。
 3. 确认 `server/package.json` 中的 `releaseVersion` 与准备发布的日期版本一致。
@@ -357,6 +357,8 @@ openssl x509 -in "${DWP_ROOT}/certs/server.crt" -noout -checkend 2592000
 | `DSH_HOME/settings.yaml` 的模型声明 | 模型能接受**图片输入**必须在这里声明：`llm-pi-ai.providers.<route>.models[].input: [text, image]`（或路由级 `defaultInput: [text, image]`）。未声明时 DSH 按「文本」处理，`read_image` 会在附加图片前就拒绝（“model ... does not declare image input”），工作台上传的图片附件虽已挂到 `/workspace/input/attachments/`，模型仍看不到。声明前先用同一模型实跑一次 `read_image` 确认网关真的接受图片——错报会在请求中途被网关拒绝。2026-10-20 实测：站点网关 `globalsino-deepseek`/`deepseek-flash` 接受图片 |
 | `DSH_WORK_ALLOWED_TOOL_CONNECTOR_IDS` | 可选；只列需要放行到**运行时解析**的业务连接器 id，逗号分隔。未设置时只含 `connector-dsh-workspace`。它只放宽“Agent 显式引用的工具能否解析”，准入状态、已发布版本、连接器健康、角色与数据范围门禁都不变，普通工具管理列表也只认 DSH Runtime 连接器。**必须覆盖所有已发布 Agent 版本 `tool_refs` 引用过的连接器**（与它们当时是否健康无关）：漏一个，该 Agent 建会话就会 403「工具不存在、未发布、不可用或不符合受控运行策略：<工具>@<版本>」（2026-10-09 实测）；列上仍不放宽其余门禁 |
 | `DSH_WORK_NGINX_UPSTREAM_HOST`、`DSH_WORK_NGINX_DNS_RESOLVER` | 可选；默认 `host.docker.internal` 与 `127.0.0.11`（Docker 内置 DNS），通常无需设置。两者都不要填 `127.0.0.1`，也不要复用 `DSH_WORK_SERVER_HOST`（那是服务自身的绑定地址） |
+| `DSH_WORK_EXECUTION_IMAGE` | **必填**（执行隔离方案 4.9：执行容器为必需）。所有 DSH 子进程、员工侧运行的 `bash` 与 `python_execute` 都在每 Attempt 的执行容器内运行，所有已发布 Agent 的员工侧运行都具备运行命令的能力。镜像须按摘要锁定并通过启动时的工具链检查（必需 `bash`、`rg`、LibreOffice `soffice` 与 `pdftoppm`，`python_execute` 另需 `python3`；服务日志 `execution container toolchain:` 一行列出检查到的工具与版本），服务须以非 root 账号运行，需要 Docker 26 及以上。当前镜像为 `ghcr.io/tonycc/dsh-work/execution@sha256:a59f988be919b4332a79d5a4ad92fff3af542e56cbffbb58dc47bf6be195f42c`（2026-10-27 构建，GHCR 包为公开，无需登录即可拉取）。正式执行镜像由 [执行镜像工作流](../../.github/workflows/execution-image.yml) 从 [deploy/execution-image](../../deploy/execution-image/Dockerfile) 构建、检查并推送 GHCR（附来源证明），运行摘要见该次运行的 Summary；在 Mac mini 上按摘要拉取一次（`docker pull ghcr.io/<owner>/<repo>/execution@sha256:…`，可先用 `gh attestation verify oci://<同一引用> --repo <owner>/<repo>` 核对来源），再把同一引用填入本项。服务以 `--pull never` 运行，不联网拉取；部署预检在镜像未设置、未按摘要锁定或本机不存在时拒绝部署。更换镜像时先拉取新镜像，再部署改了引用的配置。启动检查（含 DSH 工具调度的独占性核对）失败时服务照常启动，但不在宿主执行 DSH：所有 Agent 运行在创建前以“执行容器不可用”失败，`/health` 的 `executionCapabilities.executionContainer` 与管理端 Runtime 页面显示不可用，原因见服务日志；修复后重启服务。Office/PDF 成果的解析文本另由同一镜像的一次性容器（`dsh-py-*`，最多 2 个）生成，失败只记日志；镜像须以 `名称@sha256:` 引用（本地镜像 ID 不能用于解析容器）。运行中的执行容器以 `dsh-exec-*` 命名，启动时与 `dsh-py-*` 一并清扫。每个 Attempt 工作区上限 2 GB；数据卷剩余空间低于 10 GB 或 10% 时不运行命令（`/health` 的 `executionCapabilities.executionContainer.diskLow` 与管理端 Runtime 页面告警）。`<数据根>/dsh-attempts/` 下的 Attempt 工作区在 Attempt 结束后删除（失败的保留 3 天），服务启动后与每 6 小时按同一规则清扫历史目录，`manifest.json` 等元数据文件保留。验收按 [C 档 P2 验收清单](c-tier-p2-acceptance.md) |
+| `DSH_WORK_EXECUTION_CONTAINER`、`DSH_WORK_PYTHON_IMAGE`、`DSH_WORK_PYTHON_PACKAGES`、`DSH_WORK_PYTHON_USER`、`DSH_WORK_EXECUTION_MAX_CONTAINERS` | 已删除（执行隔离方案 4.9），从 `runtime.env` 中移除。仍设置时服务只在启动日志提示被忽略；把开关改为 `off` 不会回到宿主执行，需要回退时部署上一个 Release |
 | `DSH_WORK_TLS_CERT_FILE`、`DSH_WORK_TLS_KEY_FILE` | `<dsh-work 根目录>/certs/server.crt`、`<dsh-work 根目录>/certs/server.key` |
 | `DSH_WORK_CA_CERT_FILE`、`NODE_EXTRA_CA_CERTS` | 两者均为 `<dsh-work 根目录>/certs/root-ca.crt` |
 | `DSH_WORK_AUTH_MODE`、`DSH_WORK_COOKIE_SECURE` | 不设置认证模式（禁止 `prototype`）、`true`；AI Hub 按接入配置自动可用 |

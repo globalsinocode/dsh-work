@@ -197,6 +197,14 @@ if [[ -n "$(git -C "${runtime_home}" status --porcelain --untracked-files=no)" ]
   fail "DSH tracked files are modified; production requires the locked clean checkout"
 fi
 
+# Execution isolation plan 4.9: the execution container is required and the service
+# starts it with --pull never, so the pinned image must already be on this host.
+execution_image=${DSH_WORK_EXECUTION_IMAGE:-}
+[[ "${execution_image}" =~ ^([A-Za-z0-9./:_-]+@)?sha256:[a-f0-9]{64}$ ]] \
+  || fail "DSH_WORK_EXECUTION_IMAGE must be set and pinned by sha256 digest"
+docker image inspect "${execution_image}" >/dev/null 2>&1 \
+  || fail "execution image is not present locally; docker pull ${execution_image} before deploying"
+
 dsh_preflight_root=$(mktemp -d "${TMPDIR:-/tmp}/dsh-work-deploy-preflight.XXXXXX")
 if ! (
   cd "${release_dir}"

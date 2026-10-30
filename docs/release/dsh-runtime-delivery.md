@@ -140,6 +140,24 @@ dsh-work 的环境文件、数据库、日志或 Release。
 本地旧版使用独立的 `acp-managed-credentials.legacy.cordis.yml`，避免把两代配置结构混在
 同一个文件中。两个 Overlay 都不保存模型密钥。
 
+### 3.1 会话遥测强制关闭
+
+DSH `0.1.2-rc.1` 的 base bundle 默认挂载 `session-telemetry-otel`，模式为
+`FEEDBACK_ONLY`，导出地址为 DeepSeek 公网端点 `harness-telemetry.deepseeksvc.com`；
+会话出现 `feedback/record` 事件时上传原始会话记录，`FULL` 实时上传。企业数据未经批准不得出内网，
+因此平台在 `buildAcpChildEnvironment`（所有 DSH 子进程的唯一出口：Attempt、工具目录与 MCP
+探测、启动及部署预检、`probe`）中，于调用方覆盖项之后固定写入：
+
+- `DSH_TELEMETRY_DISABLED=1`：DSH 启动器的退出开关，在所有 patch 层之后把该行置为 disabled，
+  `$DSH_HOME/cordis.patch.yml`、Profile 用户层和 `--patch` 都无法改回；
+- `DSH_TELEMETRY_MODE=DISABLED`：兜底不经该启动器组合的 Runtime。
+
+调用方传入任何 `DSH_TELEMETRY_*` 覆盖项都会直接报错。不只设置 `DSH_TELEMETRY_MODE`，是因为
+任一 patch 层写死 `mode` 就会整体替换该行配置；不在 dsh-work Overlay 中停用该行，是因为
+`$DSH_HOME` 是宿主共享配置，Overlay 也可能被探针替换，而旧版 Adapter 使用另一份 Overlay。
+`--dump-config` 不应用该开关，仍会显示原始行配置，验证以实际启动为准。上游如更名开关或该行 id，
+升级验收必须重新确认（见第 5 节）。
+
 ## 4. 启动和部署预检
 
 `scripts/deploy/preflight.sh` 在切换应用版本前验证：
@@ -175,8 +193,13 @@ DSH_RUNTIME_HOME=/Users/deploy/services/deepseek-harness pnpm probe:cancel
 DSH_RUNTIME_HOME=/Users/deploy/services/deepseek-harness pnpm probe:concurrency
 ```
 
+升级还须在新版源码中确认 `session-telemetry-otel` 行 id 与 `DSH_TELEMETRY_DISABLED`
+开关（`apps/cli/src/profile-boot.ts`）仍然有效，或新增的遥测、反馈插件已被同样关闭（见 3.1 节）。
+
 以上命令统一调用 `scripts/runtime/probe.ts`；`pnpm probe --help` 可查看入口。`handshake` 只做握手、建会话与取消，不调用模型；其余模式会调用模型，应在受控测试数据和预算下执行。每次探针退出时关闭 Worker 并清理临时工作区与 Session Log，JSON 输出保留验证摘要。通过后还要按
 [Mac mini 部署流程](mac-mini-deployment-runbook.md)完成登录、实际任务、备份与重启验收。
+
+执行容器（[执行隔离方案](../design/execution-isolation-plan.md) 3.7、4.9，为必需）还依赖 DSH 的工具调度：升级后先在开发机配置执行镜像启动一次，确认 `/health` 的 `executionContainer` 为 `available`（启动检查会核对工具目录中的 `dshScheduling`）；并在新版本源码中确认 `bash`、`write`、`edit`、`str_replace_editor` 与会启动容器代码的平台工具仍未定义 `isConcurrencySafe`。启动检查只按样例参数探测，不能替代这项源码核对。
 
 应用 Release 的回滚不会自动降级 DSH。生产环境不能把本地兼容模式当成回滚开关；若要恢复
 旧生产 DSH，必须选择生产主 Lock 与其匹配的旧 dsh-work Release，并在维护窗口恢复对应

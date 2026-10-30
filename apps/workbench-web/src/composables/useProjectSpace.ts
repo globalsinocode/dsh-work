@@ -1,9 +1,11 @@
 import { computed, ref, type Ref } from 'vue'
 
 import { workbenchApi } from '@/api/client'
+import { useAuthStore } from '@/stores/auth'
 import { useContentStore } from '@/stores/content'
 import type { TeamMemberRole, WorkspaceAgentMember, WorkspaceMember } from '@/types/domain'
 import { notifyActionFailure } from '@/utils/feedback'
+import { colleagueMentionOptions } from '@/utils/mentions'
 
 /**
  * 项目空间页面的共享状态（项目空间方案 12.4）：空间对象、员工与 Agent 成员、服务端判定的
@@ -20,6 +22,7 @@ export function useProjectSpace(options: {
   roleOverride?: () => TeamMemberRole | null | undefined
 }) {
   const contentStore = useContentStore()
+  const authStore = useAuthStore()
 
   const workspace = computed(() => contentStore.workspaces.find((item) => item.id === options.workspaceId.value))
   const isPersonal = computed(() => workspace.value?.type === 'personal')
@@ -48,6 +51,8 @@ export function useProjectSpace(options: {
   /** TW-10：输入框可 @ 的 Agent 成员（id + 名称），与 startableAgentMemberIds 同一过滤口径。 */
   const startableMentionOptions = computed(() =>
     startableAgentMembers.value.map(member => ({ id: member.id, name: member.name })))
+  /** D38：输入框可 @ 的群内同事（现任成员，不含本人）；@ 同事只提醒，不执行。 */
+  const colleagueOptions = computed(() => colleagueMentionOptions(workspaceMembers.value, authStore.user.id))
 
   /** 已加载的空间文件（文件页签、动态文件名解析共用）。 */
   const workspaceFiles = computed(() => workspace.value?.files ?? [])
@@ -138,6 +143,7 @@ export function useProjectSpace(options: {
     isOwner,
     startableAgentMemberIds,
     startableMentionOptions,
+    colleagueOptions,
     workspaceFiles,
     workspaceArtifacts,
     canWriteTeamContent,

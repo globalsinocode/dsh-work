@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { Close, Download } from '@element-plus/icons-vue'
 
 import { workbenchApi } from '@/api/client'
+import ArtifactPreviewBody from '@/components/ArtifactPreviewBody.vue'
 import type { Artifact } from '@/types/domain'
 import { parseCsvPreview, renderMarkdownPreview } from '@/utils/artifact-preview'
 import { downloadArtifactFile, notifyActionFailure } from '@/utils/feedback'
@@ -30,6 +31,11 @@ function withPreviewCsp(markup: string) {
 
 function isOfficeUnsupported(type: Artifact['type'] | undefined) {
   return type === 'xlsx' || type === 'docx'
+}
+
+/** 图片与幻灯片走共享正文（解析文本 / 原图）；表格与文档仍按对话框既有规则。 */
+function usesSharedBody(type: Artifact['type'] | undefined) {
+  return type === 'pptx' || type === 'png' || type === 'jpg'
 }
 
 const props = defineProps<{
@@ -62,7 +68,7 @@ function revokePdfUrl() {
 
 async function loadContent() {
   const artifact = props.artifact
-  if (!artifact || isOfficeUnsupported(artifact.type)) return
+  if (!artifact || isOfficeUnsupported(artifact.type) || usesSharedBody(artifact.type)) return
   const seq = ++requestSeq
   loading.value = true
   try {
@@ -101,7 +107,7 @@ watch(
   ([open]) => {
     resetPreviewState()
     if (!open || !props.artifact) return
-    if (isOfficeUnsupported(props.artifact.type)) return
+    if (isOfficeUnsupported(props.artifact.type) || usesSharedBody(props.artifact.type)) return
     void loadContent()
   },
   { immediate: true },
@@ -236,6 +242,12 @@ function download() {
         referrerpolicy="no-referrer"
         :src="pdfObjectUrl"
         :title="`成果预览：${artifact?.name ?? ''}`"
+      />
+      <ArtifactPreviewBody
+        v-else-if="usesSharedBody(artifactType)"
+        v-model:html-view="viewMode"
+        :artifact="artifact"
+        :active="open"
       />
     </div>
   </el-dialog>

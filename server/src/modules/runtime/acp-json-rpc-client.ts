@@ -63,6 +63,18 @@ const inheritedEnvironmentKeys = [
   'NODE_EXTRA_CA_CERTS', 'SSL_CERT_FILE', 'SSL_CERT_DIR',
 ] as const
 
+/**
+ * DSH 的 base bundle 默认挂载 session-telemetry-otel（FEEDBACK_ONLY，导出到
+ * DeepSeek 公网端点）。`DSH_TELEMETRY_DISABLED` 是 DSH 启动器的退出开关：任何非空值
+ * 都会在所有 patch 层（含 `$DSH_HOME/cordis.patch.yml` 与 `--patch`）之后把该行置为
+ * disabled；`DSH_TELEMETRY_MODE=DISABLED` 兜底不经该启动器组合的 Runtime。两者在覆盖项
+ * 之后写入，调用方无法改回。
+ */
+const forcedTelemetryEnvironment = {
+  DSH_TELEMETRY_DISABLED: '1',
+  DSH_TELEMETRY_MODE: 'DISABLED',
+} as const
+
 export function buildAcpChildEnvironment(overrides: Record<string, string> = {}) {
   const environment: NodeJS.ProcessEnv = {}
   for (const key of inheritedEnvironmentKeys) {
@@ -73,9 +85,12 @@ export function buildAcpChildEnvironment(overrides: Record<string, string> = {})
     if (isSensitiveEnvironmentKey(key)) {
       throw new Error(`ACP 子进程环境禁止直接注入敏感变量：${key}`)
     }
+    if (key.startsWith('DSH_TELEMETRY_')) {
+      throw new Error(`ACP 子进程遥测由平台强制关闭，禁止覆盖：${key}`)
+    }
     environment[key] = value
   }
-  return environment
+  return Object.assign(environment, forcedTelemetryEnvironment)
 }
 
 function isSensitiveEnvironmentKey(key: string) {

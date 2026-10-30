@@ -1,6 +1,6 @@
 # 文档导航
 
-`docs/` 只保留对后续开发和上线仍有约束或参考价值的文档，分四类：`index`、`development`（架构、规范、契约与开发测试）、`design`（数据模型和进行中的方案）、`release`（身份接入、Runtime 与部署）。已完成的批次记录、交接快照、评审证据和一次性核查不在工作树中保留，需要时从 Git 历史查阅。
+`docs/` 只保留对后续开发和上线仍有约束或参考价值的文档，分四类：`index`、`development`（架构、规范、契约与开发测试）、`design`（数据模型和进行中的方案）、`release`（身份接入、Runtime 与部署）。已完成的批次记录、交接快照、评审证据、一次性人工验收清单和已并入规范的实施方案不在工作树中保留，需要时从 Git 历史查阅。
 
 | 阅读目的 | 文档 |
 | --- | --- |
@@ -11,18 +11,22 @@
 | 理解业务、权限、系统边界和未完成事项 | [架构总览](../development/overview.md) |
 | 修改模块接口与事件 | [内部端口与契约](../development/internal-ports.md) |
 | 理解数据关系与迁移约束 | [数据模型](../design/data-model.md) |
-| 项目空间（团队空间）、个人内容、管理助手、Skill 安装与 Python 执行、自动任务的产品与安全规则 | [功能规则](../development/feature-rules.md) |
+| 项目空间、个人内容、管理助手、Skill、定时任务、验证发布等产品与安全规则 | [功能规则](../development/feature-rules.md) |
 | 设计和评审 Agent，区分现行规则与扩展门槛 | [Agent 设计规范](../development/agent-design-standard.md) |
 | 按统一阶段定义、发布、运行和退役 Agent | [通用 Agent 全生命周期模板](../development/agent-lifecycle-template.md) |
 | 移动端 H5 接入 | [移动端接入规范](../development/mobile-integration-guide.md) |
+| 待评审：钉钉工作通知、工作台免登与机器人对话 | [钉钉接入方案](../design/dingtalk-integration-plan.md) |
+| 平台内置 Skill（文件分析、HTML、Office 基线方法；代码级已实施，P2 待验收） | [平台内置 Skill 方案](../design/builtin-skills-plan.md) |
 | 平台基线真实验收（PF-07） | [PF-07 验收手册](../development/pf07-platform-acceptance.md) |
 | 进行中：执行观测、上下文延续与性能 | [Runtime 执行架构渐进优化方案](../design/runtime-execution-optimization-plan.md) |
-| 团队空间改造为项目空间（S0～S2 已实现，P1 旅程待补） | [项目空间方案](../design/project-space-plan.md) |
+| 项目空间产品决策与切片背景（S0～S6 已实现；现行规则以功能规则为准，P2/OIDC 与部分 P1 旅程仍开放） | [项目空间方案](../design/project-space-plan.md) |
 | 独立账号登录 | [独立登录](../release/local-authentication.md) |
 | 配置 AI Hub 登录、员工目录和首位管理员 | [AI Hub 身份接入](../release/ai-hub-sso-integration.md) |
 | 安装、验证与升级执行内核 | [DSH Runtime](../release/dsh-runtime-delivery.md) |
 | 发布、首次安装、升级、备份、恢复及地址变更 | [Mac mini 部署手册](../release/mac-mini-deployment-runbook.md) |
 | 核对部署环境相对上游源码的运行期偏差与重放要求 | [部署本地偏差登记](../release/deployment-local-deviations.md) |
+
+浏览器验收目录见 [e2e/TEST-CATALOG.md](../../e2e/TEST-CATALOG.md)。某次跑测结果放 PR/发布说明或仓库外证据，见 [verification-log 约定](../../e2e/catalog/verification-log.md)。
 
 机器可读契约与测试夹具放在 `development/`：
 

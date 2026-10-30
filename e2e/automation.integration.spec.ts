@@ -70,8 +70,9 @@ test('AU-01 archive removes the task and its history from employee reads', async
   const name = `P1-归档-${randomUUID().slice(0, 8)}`
   const task = await createAutomation(page.request, name, 'P1-普通完成')
   await enableFromPage(page, name)
-  await taskCard(page, name).getByRole('button', { name: '归档', exact: true }).click()
-  await page.getByRole('button', { name: '归档', exact: true }).last().click()
+  await taskCard(page, name).getByRole('button', { name: `${name} 的更多操作` }).click()
+  await page.getByRole('menuitem', { name: '归档…' }).click()
+  await page.getByRole('button', { name: '归档', exact: true }).click()
   await expect(taskCard(page, name)).toHaveCount(0)
   expect((await page.request.get(`/api/workbench/v1/automations/${task.id}`)).status()).toBe(404)
   expect((await page.request.get(`/api/workbench/v1/automations/${task.id}/executions`)).status()).toBe(404)

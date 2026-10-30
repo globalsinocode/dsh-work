@@ -69,8 +69,7 @@ test('employee can preview an HTML artifact inside a sandboxed frame', async ({ 
 
   const htmlCard = page.locator('.artifact-card', { hasText: '华东区交付风险看板.html' })
   await expect(htmlCard).toBeVisible()
-  await expect(htmlCard.getByRole('button', { name: '预览' })).toHaveCount(0)
-  await htmlCard.getByRole('button', { name: '华东区交付风险看板.html' }).click()
+  await htmlCard.getByRole('button', { name: '预览 华东区交付风险看板.html' }).click()
 
   const dialog = page.getByRole('dialog', { name: /成果预览/ })
   await expect(dialog).toBeVisible()
@@ -88,8 +87,10 @@ test('employee can preview an HTML artifact inside a sandboxed frame', async ({ 
   await expect(dialog).toBeHidden()
 
   const xlsxCard = page.locator('.artifact-card', { hasText: '华东区订单交付风险清单.xlsx' })
+  await expect(xlsxCard.getByRole('button', { name: /^预览/ })).toHaveCount(0)
+  await expect(xlsxCard.getByText('正文暂未生成')).toBeVisible()
   await xlsxCard.getByRole('button', { name: '华东区订单交付风险清单.xlsx' }).click()
-  await expect(dialog.getByText('暂不支持在线预览')).toBeVisible()
+  await expect(dialog.getByText('正文暂未生成，请稍后再看或下载查看')).toBeVisible()
   await expect(dialog.locator('iframe')).toHaveCount(0)
 })
 
@@ -120,6 +121,47 @@ test('administrator can navigate governance modules and switch Skill tabs', asyn
   await expect(builtinTools.getByText('任务进度清单', { exact: true })).toBeVisible()
   await expect(builtinTools.getByText('联网搜索', { exact: true })).toBeVisible()
   await expect(builtinTools.getByText('随平台代码发布', { exact: false })).toBeVisible()
+})
+
+test('administrator views built-in Skills read-only, sets a covered scenario and disables one in the Runtime (BSK-01)', async ({ page }) => {
+  await page.goto(`${adminUrl}/skills`)
+  const builtin = page.getByRole('region', { name: '平台内置 Skill' })
+  await expect(builtin.getByText('文件分析（平台内置）', { exact: true })).toBeVisible()
+  await expect(builtin.getByText('HTML 页面（平台内置）', { exact: true })).toBeVisible()
+  await expect(builtin.getByText('Office 文档（平台内置）', { exact: true })).toBeVisible()
+
+  await builtin.getByRole('row', { name: /HTML 页面（平台内置）/ }).getByRole('button', { name: '查看' }).click()
+  const builtinDetail = page.getByRole('dialog', { name: 'HTML 页面（平台内置）' })
+  await expect(builtinDetail.getByText('不能编辑、发布、回滚或停用', { exact: false })).toBeVisible()
+  await expect(builtinDetail.getByRole('button', { name: /发布|停用|回滚/ })).toHaveCount(0)
+  await builtinDetail.getByRole('button', { name: /关闭|Close/ }).click()
+
+  await page.getByRole('row', { name: /订单分析/ }).getByRole('button', { name: '查看' }).click()
+  const skillDetail = page.getByRole('dialog', { name: '订单分析' })
+  const coverage = skillDetail.getByRole('region', { name: '覆盖内置场景' })
+  // Element Plus 隐藏原生复选框，按用户可见的选项文字点击。
+  await coverage.getByText('HTML 页面', { exact: true }).click()
+  await expect(coverage.getByRole('checkbox', { name: 'HTML 页面' })).toBeChecked()
+  await coverage.getByRole('button', { name: '保存覆盖场景' }).click()
+  await expect(page.getByText('覆盖内置场景已保存，对新运行立即生效')).toBeVisible()
+  await expect(coverage.getByRole('button', { name: '保存覆盖场景' })).toBeDisabled()
+  await skillDetail.getByRole('button', { name: /关闭|Close/ }).click()
+
+  await page.goto(`${adminUrl}/runtimes`)
+  await page.getByRole('row', { name: /本地 Runtime/ }).getByRole('button', { name: '配置' }).click()
+  const configuration = page.getByRole('dialog', { name: /配置 Runtime/ })
+  await configuration.getByText('不停用任何内置 Skill', { exact: true }).click()
+  await page.getByRole('option', { name: /文件分析（平台内置）/ }).click()
+  await page.keyboard.press('Escape')
+  await expect(configuration.getByText('文件分析（平台内置） v1.0.0', { exact: false })).toBeVisible()
+  await configuration.getByRole('button', { name: '保存配置' }).click()
+  await page.getByRole('dialog', { name: '确认停用平台内置 Skill' }).getByRole('button', { name: '确认停用' }).click()
+  await expect(page.getByText('配置已保存', { exact: false })).toBeVisible()
+
+  await page.getByRole('row', { name: /本地 Runtime/ }).getByRole('button', { name: '查看' }).click()
+  const runtimeSkills = page.getByRole('region', { name: '平台内置 Skill' })
+  await expect(runtimeSkills.getByRole('row', { name: /文件分析（平台内置）/ })).toContainText('已停用')
+  await expect(runtimeSkills.getByRole('row', { name: /HTML 页面（平台内置）/ })).toContainText('可用')
 })
 
 test('platform administrator can inspect and resolve an action-bound approval', async ({ page }) => {
@@ -230,6 +272,35 @@ test('employee conversations do not expose controlled-memory submission', async 
   await page.goto('/settings')
   await expect(page.getByRole('heading', { name: '用户中心' })).toBeVisible()
   await expect(page.getByRole('heading', { name: '受控记忆授权' })).toHaveCount(0)
+})
+
+test('employee sees each step and a running timer while a run is in progress (EX-PROGRESS-01)', async ({ page }) => {
+  // P0 冒烟服务不提供单个 Run 详情，这里与受控记忆用例一样按夹具返回，并把发起人设为当前员工。
+  for (const run of mockTasks.filter(item => ['run-260828-002', 'run-260828-001'].includes(item.id))) {
+    await page.route(`**/api/workbench/v1/runs/${run.id}`, async route => {
+      await route.fulfill({ contentType: 'application/json', body: JSON.stringify({
+        data: { ...run, requestedBy: 'U00001' }, meta: { api: 'workbench', adapter: 'prototype', timestamp: new Date().toISOString() },
+      }) })
+    })
+  }
+
+  await page.goto('/conversations/run-260828-002')
+  const steps = page.getByRole('list', { name: '执行步骤' })
+  await expect(steps.getByRole('listitem')).toHaveCount(4)
+  await expect(steps.getByRole('listitem').first()).toContainText('理解问题')
+  const current = steps.getByRole('listitem').last()
+  await expect(current).toContainText('正在调用 mes.get_work_order_progress')
+  const before = await current.textContent()
+  await expect.poll(() => current.textContent()).not.toBe(before)
+  await expect(page.getByText(/正在处理 · 已用/)).toBeVisible()
+  await expect(page.getByText(/没有新的输出/)).toHaveCount(0)
+
+  await page.goto('/conversations/run-260828-001')
+  await expect(page.getByRole('list', { name: '执行步骤' })).toHaveCount(0)
+  await page.getByText('已完成 5 个步骤（调用工具 2 次）').click()
+  const finished = page.getByRole('list', { name: '执行步骤' })
+  await expect(finished.getByRole('listitem')).toHaveCount(5)
+  await expect(finished.getByRole('listitem').last()).toContainText('整理回答')
 })
 
 test('administrator can open system information from the user menu', async ({ page }) => {

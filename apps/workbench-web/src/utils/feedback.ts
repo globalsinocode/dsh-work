@@ -28,7 +28,7 @@ export function notifyActionFailure(
   })
 }
 
-export function downloadArtifactFile(artifact: Artifact) {
+export function downloadArtifactFile(artifact: Pick<Artifact, 'id' | 'version' | 'name'>) {
   const key = `artifact:${artifact.id}:v${artifact.version}`
   return runGuardedAction(key, async () => {
     try {

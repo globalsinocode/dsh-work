@@ -14,6 +14,7 @@ interface RuntimeConfigurationForm {
   attemptTimeoutMinutes: number
   schedulingStatus: RuntimeDefinition['schedulingStatus']
   disabledTools: string[]
+  disabledBuiltinSkills: string[]
 }
 
 const authStore = useAuthStore()
@@ -34,6 +35,7 @@ const configurationForm = reactive<RuntimeConfigurationForm>({
   attemptTimeoutMinutes: 30,
   schedulingStatus: 'accepting',
   disabledTools: [],
+  disabledBuiltinSkills: [],
 })
 const configurationRules: FormRules<RuntimeConfigurationForm> = {
   maxConcurrentWorkers: [
@@ -69,6 +71,9 @@ const queuedRuns = computed(() => contentStore.runtimes.reduce((sum, runtime) =>
 const builtinTools = computed(() => contentStore.builtinTools?.tools ?? [])
 /** 只有 DSH 原生工具可以紧急停用；平台工具由各自流程控制。 */
 const disableableTools = computed(() => builtinTools.value.filter(tool => tool.source === 'dsh'))
+const builtinSkills = computed(() => contentStore.builtinSkills?.skills ?? [])
+const builtinSkillName = (id: string) => builtinSkills.value.find(skill => skill.id === id)?.name ?? id
+const builtinScenarioLabel = (scenario: string) => contentStore.builtinSkills?.scenarios.find(item => item.id === scenario)?.label ?? scenario
 const catalogAlert = computed(() => {
   const catalog = contentStore.builtinTools?.catalog
   if (!catalog) return null
@@ -77,12 +82,34 @@ const catalogAlert = computed(() => {
   return { type: 'success' as const, title: '启动时已核对 DSH 工具目录，内置工具齐全' }
 })
 
+/** 执行容器是所有 Agent 运行的前提（执行隔离方案 4.9）；不可用的原因只写服务日志，这里说明影响与处理入口。 */
+const executionContainerAlert = computed(() => {
+  const status = contentStore.builtinTools?.executionContainer?.status
+  if (status === 'available' && contentStore.builtinTools?.executionContainer?.diskLow) {
+    return { type: 'warning' as const, title: '服务器磁盘剩余空间不足（低于 10 GB 或 10%）：执行容器暂不运行命令，已在运行的命令会被终止；请清理磁盘' }
+  }
+  if (status === 'available') return { type: 'success' as const, title: '执行容器已启用：员工侧 Agent 运行装配 bash，命令在每次运行专用的断网容器中执行' }
+  if (status === 'unavailable') return { type: 'error' as const, title: '执行容器启动检查未通过：所有 Agent 运行暂不能执行，原因见服务日志；检查执行镜像与 Docker 后重启服务' }
+  return null
+})
+
 function assemblyLabel(tool: BuiltinTool) {
-  return { always: '默认装配', 'agent-opt-in': 'Agent 开启后装配', runtime: '按运行内容装配', purpose: '管理运行专用' }[tool.assembly]
+  return {
+    always: '默认装配',
+    'agent-opt-in': 'Agent 开启后装配',
+    runtime: '按运行内容装配',
+    purpose: '管理运行专用',
+    workspace: '项目空间运行装配',
+    'execution-container': '执行容器可用时装配',
+  }[tool.assembly]
 }
 
 function toolDisabled(tool: BuiltinTool, runtime: RuntimeDefinition) {
   return runtime.disabledTools.includes(tool.name)
+}
+
+function builtinSkillDisabled(skillId: string, runtime: RuntimeDefinition) {
+  return (runtime.disabledBuiltinSkills ?? []).includes(skillId)
 }
 
 function schedulingLabel(status: RuntimeDefinition['schedulingStatus']) {
@@ -112,6 +139,7 @@ function openConfiguration(runtime: RuntimeDefinition) {
   configurationForm.attemptTimeoutMinutes = runtime.attemptTimeoutMinutes
   configurationForm.schedulingStatus = runtime.schedulingStatus
   configurationForm.disabledTools = [...runtime.disabledTools]
+  configurationForm.disabledBuiltinSkills = [...(runtime.disabledBuiltinSkills ?? [])]
   configurationDialogOpen.value = true
 }
 
@@ -165,6 +193,19 @@ async function saveConfiguration() {
     }
   }
 
+  const newlyDisabledSkills = configurationForm.disabledBuiltinSkills.filter(id => !configuringRuntime.value?.disabledBuiltinSkills?.includes(id))
+  if (newlyDisabledSkills.length) {
+    try {
+      await ElMessageBox.confirm(
+        `新运行将不再提供 ${newlyDisabledSkills.map(builtinSkillName).join('、')}；正在执行的运行再激活时会被拒绝。确认继续吗？`,
+        '确认停用平台内置 Skill',
+        { confirmButtonText: '确认停用', cancelButtonText: '取消', type: 'warning' },
+      )
+    } catch {
+      return
+    }
+  }
+
   savingConfiguration.value = true
   try {
     const result = await contentStore.updateRuntimeConfiguration({
@@ -173,6 +214,7 @@ async function saveConfiguration() {
       attemptTimeoutMinutes: configurationForm.attemptTimeoutMinutes,
       schedulingStatus: configurationForm.schedulingStatus,
       disabledTools: [...configurationForm.disabledTools],
+      disabledBuiltinSkills: [...configurationForm.disabledBuiltinSkills],
     })
     configuringRuntime.value = result
     if (selectedRuntime.value?.id === result.id) selectedRuntime.value = result
@@ -272,11 +314,22 @@ onMounted(() => contentStore.load())
           <h3>内置工具</h3>
           <p class="field-help">内置工具随平台代码发布，管理员不能新增或修改；需要时可在“配置 Runtime”中紧急停用 DSH 工具。</p>
           <el-alert v-if="catalogAlert" class="runtime-builtin-tools__catalog" :type="catalogAlert.type" :closable="false" show-icon :title="catalogAlert.title" />
+          <el-alert v-if="executionContainerAlert" class="runtime-builtin-tools__catalog" :type="executionContainerAlert.type" :closable="false" show-icon :title="executionContainerAlert.title" data-testid="execution-container-status" />
           <el-table class="data-table" :data="builtinTools" size="small" empty-text="内置工具清单加载失败">
             <el-table-column label="工具" min-width="170"><template #default="scope"><div class="builtin-tool-cell"><strong>{{ scope.row.label }}</strong><code>{{ scope.row.name }}</code></div></template></el-table-column>
             <el-table-column label="来源" width="88"><template #default="scope">{{ scope.row.source === 'dsh' ? 'DSH' : '平台' }}</template></el-table-column>
             <el-table-column label="装配" min-width="128"><template #default="scope">{{ assemblyLabel(scope.row) }}</template></el-table-column>
             <el-table-column label="状态" width="92"><template #default="scope"><StatusTag :status="toolDisabled(scope.row, selectedRuntime) ? 'disabled' : 'available'" :label="toolDisabled(scope.row, selectedRuntime) ? '已停用' : '可用'" dot /></template></el-table-column>
+          </el-table>
+        </section>
+        <section class="runtime-detail__section runtime-builtin-tools" aria-label="平台内置 Skill">
+          <h3>平台内置 Skill</h3>
+          <p class="field-help">随平台代码发布，自动提供给员工侧 Agent；需要时可在“配置 Runtime”中紧急停用。</p>
+          <el-table class="data-table" :data="builtinSkills" size="small" empty-text="平台内置 Skill 加载失败">
+            <el-table-column label="内置 Skill" min-width="170"><template #default="scope"><div class="builtin-tool-cell"><strong>{{ scope.row.name }}</strong><code>{{ scope.row.id }}</code></div></template></el-table-column>
+            <el-table-column label="场景" width="110"><template #default="scope">{{ builtinScenarioLabel(scope.row.scenario) }}</template></el-table-column>
+            <el-table-column label="版本" width="80"><template #default="scope"><span class="mono">v{{ scope.row.version }}</span></template></el-table-column>
+            <el-table-column label="状态" width="92"><template #default="scope"><StatusTag :status="builtinSkillDisabled(scope.row.id, selectedRuntime) ? 'disabled' : 'available'" :label="builtinSkillDisabled(scope.row.id, selectedRuntime) ? '已停用' : '可用'" dot /></template></el-table-column>
           </el-table>
         </section>
         <div class="runtime-detail__actions">
@@ -287,7 +340,7 @@ onMounted(() => contentStore.load())
     </el-drawer>
 
     <el-dialog v-model="configurationDialogOpen" :title="`配置 Runtime：${configuringRuntime?.name ?? ''}`" width="620px" destroy-on-close>
-      <el-alert type="info" :closable="false" show-icon title="这里配置 Runtime 的执行资源、调度行为和内置工具紧急停用；Agent、Skill 与数据权限仍在各自模块中管理。" />
+      <el-alert type="info" :closable="false" show-icon title="这里配置 Runtime 的执行资源、调度行为，以及内置工具与内置 Skill 的紧急停用；Agent、Skill 与数据权限仍在各自模块中管理。" />
       <el-form ref="configurationFormRef" class="runtime-configuration-form" :model="configurationForm" :rules="configurationRules" label-position="top">
         <el-form-item label="最大并发 Worker 数" prop="maxConcurrentWorkers">
           <el-input-number v-model="configurationForm.maxConcurrentWorkers" class="configuration-number" :min="1" :max="128" :step="1" controls-position="right" aria-label="最大并发 Worker 数" />
@@ -315,6 +368,12 @@ onMounted(() => contentStore.load())
             <el-option v-for="tool in disableableTools" :key="tool.name" :label="`${tool.label}（${tool.name}）`" :value="tool.name" />
           </el-select>
           <p class="field-help">用于 DSH 工具出现问题时临时止损：新运行不装配；执行中的运行再调用该工具时会被拒绝，Agent 会被告知该工具已停用并基于已有结果继续作答。</p>
+        </el-form-item>
+        <el-form-item label="紧急停用平台内置 Skill">
+          <el-select v-model="configurationForm.disabledBuiltinSkills" multiple clearable placeholder="不停用任何内置 Skill" aria-label="紧急停用平台内置 Skill" data-testid="disabled-builtin-skills-select">
+            <el-option v-for="skill in builtinSkills" :key="skill.id" :label="`${skill.name} v${skill.version}`" :value="skill.id" />
+          </el-select>
+          <p class="field-help">内置 Skill 的方法出现问题时临时止损：新运行不再提供；执行中的运行再激活时会被拒绝，Agent 不依赖它继续作答。</p>
         </el-form-item>
       </el-form>
       <template #footer>

@@ -1,5 +1,6 @@
 import type { PostgresAuthorizationService } from '../authorization/postgres-authorization-service.ts'
 import { authorizationDenied, isAuthorizationDenial } from '../../domain/authorization-errors.ts'
+import { installedSkillReferences } from '../../domain/builtin-skill-ref.ts'
 import { isAdminRunPurpose } from '../runtime/runtime-types.ts'
 import type { McpConnectionSnapshot, RuntimeManifest } from '../runtime/runtime-types.ts'
 import type { PostgresToolConnectorService } from '../tool/postgres-tool-connector-service.ts'
@@ -103,7 +104,7 @@ export async function assertCurrentExecutionAuthorization(
       userId: manifest.user_context.user_id,
       workspaceId: manifest.workspace_id,
       agentVersionId: manifest.agent_version_id,
-      additionalSkillReferences: (manifest.skills ?? []).map(skill => `${skill.id}@${skill.version}`),
+      additionalSkillReferences: installedSkillReferences(manifest.skills),
       ...(delegationCeiling ? { scopeCeiling: delegationCeiling } : {}),
     }
     const current = type === 'team'

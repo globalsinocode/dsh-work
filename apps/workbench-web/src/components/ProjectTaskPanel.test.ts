@@ -272,7 +272,7 @@ describe('ProjectTaskPanel（项目空间 S1）', () => {
     expect(wrapper.get('[data-testid="project-task-info"]').text()).toContain('交付文件')
   })
 
-  it('任务详情：执行中的 Agent 任务可查看执行详情与停止', async () => {
+  it('任务详情：“最近执行”进入该次执行详情，执行中的 Agent 任务可停止（D37 去掉“执行详情”按钮）', async () => {
     route.name = 'workspace-task-thread'
     route.params = { id: 'ws-team', taskId: 'ptask-1', conversationId: 'session-9' }
     vi.spyOn(workbenchApi, 'getProjectTask')
@@ -282,11 +282,46 @@ describe('ProjectTaskPanel（项目空间 S1）', () => {
     await flushPromises()
     expect(wrapper.find('[data-testid="router-view-stub"]').exists()).toBe(true)
     expect(router.replace).not.toHaveBeenCalled()
-    await wrapper.get('[data-testid="project-task-run-detail"]').trigger('click')
-    expect(router.push).toHaveBeenCalledWith('/workspaces/ws-team/tasks/ptask-1/thread/run-9')
+    expect(wrapper.find('[data-testid="project-task-run-detail"]').exists()).toBe(false)
+    expect(wrapper.get('[data-testid="project-task-latest-run-link"]').attributes('href'))
+      .toBe('/workspaces/ws-team/tasks/ptask-1/thread/run-9')
     await wrapper.get('[data-testid="project-task-stop"]').trigger('click')
     await flushPromises()
     expect(cancel).toHaveBeenCalledWith('run-9')
+  })
+
+  it('协作模式任务详情（D37）：没有右栏时显示一行摘要，可就地展开；写操作收进菜单，卡片不再有按钮', async () => {
+    route.name = 'workspace-task-thread'
+    route.params = { id: 'ws-team', taskId: 'ptask-1', conversationId: 'session-9' }
+    vi.spyOn(workbenchApi, 'getProjectTask').mockResolvedValue(task({
+      status: 'in_progress', sessionId: 'session-9', latestRunId: 'run-9', latestRunStatus: 'succeeded',
+      latestRunAt: '2026-09-12T11:16:00.000Z', allowedActions: ['edit', 'remove', 'start', 'complete'],
+    }))
+    const wrapper = mountPanel({ detailTaskId: 'ptask-1', collab: true })
+    await flushPromises()
+    const summary = wrapper.get('[data-testid="project-task-summary"]')
+    expect(summary.text()).toContain('进行中')
+    expect(summary.text()).toContain('缺货分析助手')
+    expect(summary.text()).toContain('每天 09:00')
+    expect(summary.get('a').attributes('href')).toBe('/workspaces/ws-team/tasks/ptask-1/thread/run-9')
+    expect(wrapper.find('[data-testid="project-task-info"]').exists()).toBe(false)
+
+    await wrapper.get('[data-testid="project-task-summary-toggle"]').trigger('click')
+    const info = wrapper.get('[data-testid="project-task-info"]')
+    expect(info.get('[data-testid="project-task-description"]').text()).toContain('列出前三个原因')
+    expect(info.find('.project-task-info__actions').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="project-task-more"]').exists()).toBe(true)
+  })
+
+  it('协作模式任务详情（D37）：宿主能打开信息栏时，摘要请宿主打开而不是就地展开', async () => {
+    route.name = 'workspace-task-thread'
+    route.params = { id: 'ws-team', taskId: 'ptask-1', conversationId: 'session-9' }
+    vi.spyOn(workbenchApi, 'getProjectTask').mockResolvedValue(task({ status: 'in_progress', sessionId: 'session-9' }))
+    const wrapper = mountPanel({ detailTaskId: 'ptask-1', collab: true, canOpenInfo: true })
+    await flushPromises()
+    await wrapper.get('[data-testid="project-task-summary-toggle"]').trigger('click')
+    expect(wrapper.emitted('open-info')).toHaveLength(1)
+    expect(wrapper.find('[data-testid="project-task-info"]').exists()).toBe(false)
   })
 
   it('任务详情：没有任务对话的旧任务给出说明', async () => {

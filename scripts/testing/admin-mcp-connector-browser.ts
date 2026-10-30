@@ -123,6 +123,7 @@ router.get(`${base}/identity/roles`, async () => envelope('admin', await databas
 router.get(`${base}/skills`, () => envelope('admin', [], 'postgres'))
 router.get(`${base}/skill-versions`, () => envelope('admin', [], 'postgres'))
 router.get(`${base}/skill-release-records`, () => envelope('admin', [], 'postgres'))
+router.get(`${base}/skills/builtin`, () => envelope('admin', { skills: [], scenarios: [], disabledBuiltinSkills: [] }, 'postgres'))
 router.get(`${base}/health`, () => envelope('admin', [], 'postgres'))
 router.get(`${base}/usage`, () => envelope('admin', [], 'postgres'))
 router.get(`${base}/platform-status`, () => envelope('admin', {

@@ -36,7 +36,15 @@ export interface RunStep {
   detail: string
   status: StepStatus
   tool?: string
+  /** EX-01：工具调用步骤所属的调用；快照与实时事件按它合并为同一行。 */
+  callId?: string
   duration?: string
+  /** EX-PROGRESS-01：步骤来源的运行事件类型（如 `run.started`、`tool.completed`）。 */
+  event?: string
+  /** 来源事件的服务端发生时间（ISO）；工具调用结果步骤为调用结束时间。 */
+  at?: string
+  /** 工具调用开始时间（ISO，取同一调用的 `tool.started`）；未收到开始事件时缺省。 */
+  startedAt?: string
 }
 
 export interface TaskSource {
@@ -60,7 +68,7 @@ export interface ArtifactOrigin {
 export interface Artifact {
   id: string
   name: string
-  type: 'xlsx' | 'docx' | 'pdf' | 'markdown' | 'csv' | 'text' | 'html'
+  type: 'xlsx' | 'docx' | 'pptx' | 'pdf' | 'png' | 'jpg' | 'markdown' | 'csv' | 'text' | 'html'
   version: number
   size: string
   createdAt: string
@@ -69,6 +77,12 @@ export interface Artifact {
   /** The artifact version's file; with canReference it can be attached to the next message. */
   fileId?: string
   canReference?: boolean
+  /**
+   * Office/PDF artifacts only (execution isolation 2b-5): whether the version's extracted text can be
+   * previewed (`pending` while it has not been extracted); `textPreviewError` says why it failed.
+   */
+  textPreview?: 'available' | 'failed' | 'pending'
+  textPreviewError?: string
   summary: string
   /** 项目空间等场景下的成果来源归因。 */
   origin?: ArtifactOrigin | null
@@ -87,6 +101,10 @@ export interface ChatMessage {
   runRequesterId?: string
   runRequesterName?: string
   agentName?: string
+  /** D38：该消息 @ 并登记了提醒的同事（用户 id）；没有时缺省。 */
+  mentionedUserIds?: string[]
+  /** 用户消息随发送附带的输入文件名（上传附件与引用文件）；无文件时缺省。 */
+  attachments?: string[]
 }
 
 /** Run 失败的结构化错误（错误目录投影；I-06 起收敛进 TaskResult.error）。 */
@@ -125,6 +143,12 @@ export interface TaskRun {
   currentUserRole?: 'owner' | 'admin' | 'member' | 'viewer' | null
   messages: ChatMessage[]
   steps: RunStep[]
+  /**
+   * 个人会话详情会带回整段多轮消息：threadArtifacts 是这些消息所属各 Run
+   * 的成果合集（按各自 current attempt 登记），供气泡按 runId 挂到对应回复下。
+   * 本轮核验仍只用 result.artifacts（当前 Run）。团队 Run 详情与本轮一致时可省略。
+   */
+  threadArtifacts?: Artifact[]
   attachments: string[]
   /** 本轮 Run 输入文件（含 file_objects.id），供客户端预览/下载；attachments 仍为文件名列表契约。 */
   inputFiles?: Array<{ id: string; name: string }>
@@ -167,12 +191,14 @@ export interface RuntimeDefinition {
   activeWorkers: number
   queuedRuns: number
   attemptTimeoutMinutes: number
+  /** Runtime 配置紧急停用的内置工具（代码注册表工具名）。 */
+  disabledTools: string[]
+  /** Runtime 配置紧急停用的平台内置 Skill。 */
+  disabledBuiltinSkills: string[]
   lastHeartbeat: string
   checkedAt: string
   healthMessage: string
   capabilities: string[]
-  /** 紧急停用的内置工具 id 列表（代码注册表工具名）。 */
-  disabledTools: string[]
 }
 
 export interface DshRuntimeToolConnectorStatus {
@@ -195,6 +221,8 @@ export interface UpdateRuntimeConfigurationInput {
   attemptTimeoutMinutes: number
   schedulingStatus: RuntimeDefinition['schedulingStatus']
   disabledTools?: string[]
+  /** 省略时保留当前内置 Skill 停用清单。 */
+  disabledBuiltinSkills?: string[]
   actor: string
 }
 
@@ -431,6 +459,8 @@ export interface SkillDefinition {
   instructions: string
   toolIds: string[]
   testPrompt: string
+  /** 管理员设置的“覆盖内置场景”：运行中有该 Skill 时去掉对应场景的平台内置 Skill。 */
+  coveredBuiltinScenarios: string[]
   updatedAt: string
 }
 

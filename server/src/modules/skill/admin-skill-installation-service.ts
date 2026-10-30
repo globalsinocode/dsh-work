@@ -12,6 +12,7 @@ import type { RuntimeManifest } from '../runtime/runtime-types.ts'
 import type { PostgresAuthorizationService } from '../authorization/postgres-authorization-service.ts'
 import { invalidSkillToolReferences } from '../runtime/builtin-tools.ts'
 import { parseSkillBundle, type SkillPackage, type SkillPackageArtifact } from './skill-package.ts'
+import { BUILTIN_SKILL_NAME_SUFFIX, isReservedBuiltinSkillName } from './builtin-skills.ts'
 import { buildSkillInstallationPlan, externalizeSkillInstallationPlan, installationPlanDigest, type SkillInstallationPlan } from './skill-installation-plan.ts'
 import { acquireSkillSource, continueSkillSource, parseSkillSource, parseSkillLink, type SkillSource } from './skill-source.ts'
 import type { SkillArtifactStore } from './skill-artifact-store.ts'
@@ -448,6 +449,8 @@ export class AdminSkillInstallationService {
 
   private async prepareBundle(bytes: Uint8Array, selected?: string, directory?: string, deferRuntimeRequirements = false) {
     const bundle = parseSkillBundle(bytes, selected, directory)
+    const reserved = bundle.packages.filter(pkg => isReservedBuiltinSkillName(pkg.name)).map(pkg => pkg.name)
+    if (reserved.length) throw invalidRequest(`Skill 名称不能以“${BUILTIN_SKILL_NAME_SUFFIX}”结尾，该后缀保留给平台内置 Skill：${reserved.join('、')}`)
     const unavailableTools = invalidSkillToolReferences(bundle.packages.flatMap(pkg => pkg.toolIds))
       .map(reference => reference.split('@')[0]!)
     const preparedPlan = buildSkillInstallationPlan(bundle, { pythonSandboxAvailable: this.pythonSandboxAvailable, pythonPackages: this.pythonPackages, unavailableTools, deferRuntimeRequirements })
