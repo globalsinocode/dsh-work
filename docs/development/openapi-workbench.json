@@ -2086,7 +2086,7 @@
       ],
       "get": {
         "operationId": "getRun",
-        "description": "团队空间历史运行读取走读取轨（3-T1）：空间归档后现任成员仍可读取历史运行；非成员与不存在的空间一律按不可枚举的“不可访问”处理。响应内嵌 task-result/v1 结果投影（result 字段）：业务核验状态 outcome 独立于执行状态 status，模型自述或执行完成不直接构成业务达成；完整字段语义见 TaskResult schema 与 /runs/{runId}/result。已停止的 Run 返回 stoppedBy（请求停止的员工姓名，系统撤权取消为 null）。",
+        "description": "团队空间历史运行读取走读取轨（3-T1）：空间归档后现任成员仍可读取历史运行；非成员与不存在的空间一律按不可枚举的“不可访问”处理。响应内嵌 task-result/v1 结果投影（result 字段）：业务核验状态 outcome 独立于执行状态 status，模型自述或执行完成不直接构成业务达成；完整字段语义见 TaskResult schema 与 /runs/{runId}/result。已停止的 Run 返回 stoppedBy（请求停止的员工姓名，系统撤权取消为 null）。个人对话详情可含 recommendations：各 Run 当前 Attempt 的推荐 AI 同事卡片（id、runId、agentId、name、description、reason、available），名称与说明取同事当前启用版本，available 为查看时该同事是否仍对本人可用。",
         "summary": "获取 Run 当前状态",
         "responses": {
           "200": {

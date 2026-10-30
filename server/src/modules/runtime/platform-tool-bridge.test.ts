@@ -108,6 +108,11 @@ test('dsh-work platform tools are rejected outside their approved run purpose', 
   assert.throws(() => assertPlatformToolPurpose({
     tools: [{ id: 'inspect_admin_state', version: '1.0.0' }],
   }), /employee/)
+  // 推荐工具只用于员工个人对话：无 purpose 放行，任何运行用途都拒绝。
+  assert.doesNotThrow(() => assertPlatformToolPurpose({ tools: [{ id: 'recommend_agents', version: '1.0.0' }] }))
+  for (const purpose of ['agent-release-trial', 'automation', 'admin-assistant'] as const) {
+    assert.throws(() => assertPlatformToolPurpose({ purpose, tools: [{ id: 'list_colleague_agents', version: '1.0.0' }] }), /不允许用于当前运行用途/)
+  }
 })
 
 test('python output budget accepts the runner maximum after JSON serialization', () => {

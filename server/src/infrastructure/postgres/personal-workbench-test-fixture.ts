@@ -14,6 +14,7 @@ import { PostgresRunRepository } from '../../modules/run/postgres-run-repository
 import { RunOrchestrationService } from '../../modules/run/run-orchestration-service.ts'
 import { ModelGovernanceService } from '../../modules/model/model-governance-service.ts'
 import { PostgresModelGovernanceRepository } from '../../modules/model/postgres-model-governance-repository.ts'
+import { AgentRecommendationService } from '../../modules/agent/agent-recommendation-service.ts'
 import { PostgresAgentService } from '../../modules/agent/postgres-agent-service.ts'
 import { UnavailableRuntime } from '../../modules/runtime/execution-capabilities.ts'
 import { testApiAuthenticator } from '../../testing/test-identity.ts'
@@ -71,6 +72,8 @@ export async function personalWorkbenchFixture(prefix: string, options: {
   let unbindNotificationRecipients = bindTestWorkspaceNotificationRecipients(db.client)
   const runs = new PostgresRunRepository(db.client)
   const agents = new PostgresAgentService(db.client)
+  const recommendations = new AgentRecommendationService(db.client, agents, auth)
+  conversations.setRecommendationReader(recommendations)
   const projectArchive = options.projectSpace ? new PostgresProjectArchiveService(db.client) : undefined
   const agentMembers = options.teamCollaboration || options.projectSpace
     ? new PostgresWorkspaceAgentMemberService(db.client, auth, agents)
@@ -150,7 +153,7 @@ export async function personalWorkbenchFixture(prefix: string, options: {
   assert.ok(address && typeof address !== 'string')
   const origin = `http://127.0.0.1:${address.port}/api/workbench/v1`
   return {
-    db, root, auth, content, conversations, runs, orchestration, agents, automationRepository,
+    db, root, auth, content, conversations, runs, orchestration, agents, recommendations, automationRepository,
     automationService, origin, router, projects, projectArchive, lifecycle,
     workspaceAgentMembers: agentMembers,
     async api(path: string, init?: RequestInit) {

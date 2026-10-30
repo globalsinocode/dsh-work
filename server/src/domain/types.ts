@@ -149,6 +149,8 @@ export interface TaskRun {
    * 本轮核验仍只用 result.artifacts（当前 Run）。团队 Run 详情与本轮一致时可省略。
    */
   threadArtifacts?: Artifact[]
+  /** 推荐方案 4.2：个人会话中各 Run 当前 Attempt 的推荐卡片，前端按 runId 挂到该 Run 的回复下。 */
+  recommendations?: AgentRecommendationView[]
   attachments: string[]
   /** 本轮 Run 输入文件（含 file_objects.id），供客户端预览/下载；attachments 仍为文件名列表契约。 */
   inputFiles?: Array<{ id: string; name: string }>
@@ -348,6 +350,8 @@ export interface AgentDefinition {
   tools: string[]
   webSearchEnabled: boolean
   projectTasksEnabled: boolean
+  /** 是否可推荐其他 AI 同事；仅个人对话的员工交互运行装配（推荐方案 R1/R3）。 */
+  agentRecommendationEnabled: boolean
   mcpScope?: AgentMcpScope
   delegationPolicy?: AgentDelegationPolicy
   updatedAt: string
@@ -375,6 +379,8 @@ export interface AgentDraftConfiguration {
   tools?: string[]
   webSearchEnabled?: boolean
   projectTasksEnabled?: boolean
+  /** 是否可推荐其他 AI 同事；编辑时省略则保留当前设置，新建时默认关闭。 */
+  agentRecommendationEnabled?: boolean
   mcpScope?: AgentMcpScope
   /** Optional definition request; collection publication and grants remain platform-owned. */
   data?: { state: boolean; collections: Array<{
@@ -430,6 +436,8 @@ export interface AgentVersionRecord {
   tools: string[]
   webSearchEnabled: boolean
   projectTasksEnabled: boolean
+  /** 是否可推荐其他 AI 同事。 */
+  agentRecommendationEnabled: boolean
   mcpScope?: AgentMcpScope
   delegationPolicy?: AgentDelegationPolicy
 }
@@ -462,6 +470,18 @@ export interface SkillDefinition {
   /** 管理员设置的“覆盖内置场景”：运行中有该 Skill 时去掉对应场景的平台内置 Skill。 */
   coveredBuiltinScenarios: string[]
   updatedAt: string
+}
+
+/** 会话详情中的一张推荐卡片：名称与说明取同事当前启用版本，理由来自推荐时的模型输出。 */
+export interface AgentRecommendationView {
+  id: string
+  runId: string
+  agentId: string
+  name: string
+  description: string
+  reason: string
+  /** 查看时该同事是否仍对查看者可用。 */
+  available: boolean
 }
 
 export interface SkillDependencySummary {

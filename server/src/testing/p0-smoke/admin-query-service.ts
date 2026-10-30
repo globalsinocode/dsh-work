@@ -225,6 +225,7 @@ export class AdminQueryService {
       mcpScope: normalizeAgentMcpScope(input.mcpScope),
       webSearchEnabled: input.webSearchEnabled === true,
       projectTasksEnabled: input.projectTasksEnabled === true,
+      agentRecommendationEnabled: input.agentRecommendationEnabled === true,
     }
     assertDraftConfiguration(normalizedInput)
 
@@ -237,6 +238,7 @@ export class AdminQueryService {
       ...configuration,
       webSearchEnabled: configuration.webSearchEnabled === true,
       projectTasksEnabled: configuration.projectTasksEnabled === true,
+      agentRecommendationEnabled: configuration.agentRecommendationEnabled === true,
       roleIds: visibleRoleIds ?? configuration.roleIds ?? [],
       dataScopes: configuration.dataScopes ?? [],
       tools: configuration.tools ?? [],
@@ -798,5 +800,6 @@ function agentVersionSnapshot(agent: AgentDefinition) {
     tools: [...agent.tools],
     webSearchEnabled: agent.webSearchEnabled,
     projectTasksEnabled: agent.projectTasksEnabled,
+    agentRecommendationEnabled: agent.agentRecommendationEnabled === true,
   }
 }

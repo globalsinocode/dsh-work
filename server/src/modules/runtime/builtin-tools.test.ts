@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import {
-  agentBuiltinToolNames, builtinTool, executionToolNames, invalidSkillToolReferences, isDshBuiltinTool,
+  agentBuiltinToolNames, agentRecommendationToolNames, builtinTool, executionToolNames, invalidSkillToolReferences, isDshBuiltinTool,
   normalizeDisabledTools, skillToolName, unavailableSkillTools,
 } from './builtin-tools.ts'
 
@@ -24,4 +24,17 @@ test('Skills cannot declare bash: allowed-tools Bash stays an unsupported requir
   assert.equal(skillToolName('Read'), 'read')
   assert.deepEqual(invalidSkillToolReferences(['bash@1.0.0', 'read@1.0.0']), ['bash@1.0.0'])
   assert.deepEqual(unavailableSkillTools(['bash@1.0.0'], { webSearchEnabled: true }), ['bash@1.0.0（平台不提供该工具）'])
+})
+
+// 推荐方案 4.1：推荐工具只在开启开关的个人对话中装配，Skill 不能声明。
+test('agent recommendation tools assemble only for enabled personal conversations', () => {
+  assert.deepEqual(agentRecommendationToolNames({ enabled: true, personalConversation: true }), ['list_colleague_agents', 'recommend_agents'])
+  assert.deepEqual(agentRecommendationToolNames({ enabled: true, personalConversation: false }), [])
+  assert.deepEqual(agentRecommendationToolNames({ enabled: false, personalConversation: true }), [])
+  for (const name of ['list_colleague_agents', 'recommend_agents']) {
+    assert.equal(builtinTool(name)?.assembly, 'personal-conversation')
+    assert.equal(isDshBuiltinTool(name), false, 'platform tools are not emergency-disabled as DSH tools')
+    assert.deepEqual(invalidSkillToolReferences([`${name}@1.0.0`]), [`${name}@1.0.0`])
+  }
+  assert.equal(agentBuiltinToolNames({ webSearchEnabled: true }).includes('list_colleague_agents'), false)
 })

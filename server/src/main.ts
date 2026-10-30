@@ -55,6 +55,7 @@ import { freeSpace } from './modules/runtime/workspace-usage.ts'
 import { ExecutionContainerPythonRunner } from './modules/runtime/execution-container-python.ts'
 import { normalizePythonPackageName } from './modules/skill/skill-installation-plan.ts'
 import { loadBuiltinSkillCatalog } from './modules/skill/builtin-skills.ts'
+import { AgentRecommendationService } from './modules/agent/agent-recommendation-service.ts'
 import { missingDshBuiltinTools } from './modules/runtime/builtin-tools.ts'
 import { redactSensitiveText } from './security/safe-observability.ts'
 import {
@@ -267,6 +268,7 @@ async function start() {
   const controlledMemoryRef: { current?: PostgresControlledMemoryService } = {}
   const agentDataRef: { current?: PostgresAgentDataService } = {}
   const projectTaskToolsRef: { current?: ProjectTaskTools } = {}
+  const agentRecommendationsRef: { current?: AgentRecommendationService } = {}
   const operationsRef: { current?: PostgresOperationsService } = {}
   const dshAdapter: AgentRuntimePort = dshInstallation ? new DshAcpRuntimeAdapter({
     runtimeId: 'runtime-local-01',
@@ -334,6 +336,12 @@ async function start() {
     invokeAgentData: (name, input, manifest) => {
       if (!agentDataRef.current) throw new Error('Agent 数据平面尚未就绪')
       return agentDataRef.current.invokeFromAttempt(name, input, manifest)
+    },
+    agentRecommendationTool: async (name, input, manifest) => {
+      if (!agentRecommendationsRef.current) throw new Error('推荐服务尚未就绪')
+      return name === 'list_colleague_agents'
+        ? agentRecommendationsRef.current.listColleagues(manifest)
+        : agentRecommendationsRef.current.recommend(manifest, input)
     },
     prepareSkillInstallation: (manifest, signal) => installationService.prepare(manifest, signal),
     inspectAdminState: (input, manifest, signal) => assistantService.inspectState(input, manifest, signal),
@@ -499,6 +507,8 @@ async function start() {
   const projectArchive = new PostgresProjectArchiveService(database)
   const projects = new PostgresProjectService(database, workspaceAgentMembers, projectArchive)
   projectTaskToolsRef.current = new ProjectTaskTools(projects, database)
+  agentRecommendationsRef.current = new AgentRecommendationService(database, agents, authorization)
+  conversations.setRecommendationReader(agentRecommendationsRef.current)
   // AG-03：仓库先建，orchestration 的执行前复核用它反查任务状态（暂停/停用兜底）。
   const automationRepository = new PostgresAutomationRepository(database)
   orchestration = new RunOrchestrationService(

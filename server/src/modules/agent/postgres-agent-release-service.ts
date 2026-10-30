@@ -175,6 +175,7 @@ interface DraftVersionShape {
   maxOutputBytes: number
   maxToolCalls: number
   timeoutSeconds: number
+  agentRecommendationEnabled?: boolean
   skills: string[]
   tools: string[]
   mcpScope?: AgentMcpScope
@@ -382,6 +383,7 @@ function draftFingerprint(draft: DraftVersionShape) {
     maxOutputBytes: draft.maxOutputBytes,
     maxToolCalls: draft.maxToolCalls,
     timeoutSeconds: draft.timeoutSeconds,
+    agentRecommendationEnabled: draft.agentRecommendationEnabled === true,
     delegationPolicy: draft.delegationPolicy ?? {
       allowedAgentVersionIds: [], maxDepth: 1, maxParallel: 1, timeoutSeconds: 120,
     },
@@ -1807,6 +1809,7 @@ export class PostgresAgentReleaseService {
       draftMaxOutputBytes: number | null
       draftMaxToolCalls: number | null
       draftTimeoutSeconds: number | null
+      draftAgentRecommendationEnabled: boolean | null
       draftSkills: string[] | null
       draftTools: string[] | null
       draftMcpScope: AgentMcpScope | null
@@ -1821,6 +1824,7 @@ export class PostgresAgentReleaseService {
              draft.data_scopes as "draftDataScopes", draft.example_prompts as "draftExamplePrompts",
              draft.max_output_bytes as "draftMaxOutputBytes", draft.max_tool_calls as "draftMaxToolCalls",
              draft.timeout_seconds as "draftTimeoutSeconds",
+             draft.agent_recommendation_enabled as "draftAgentRecommendationEnabled",
              draft.skill_refs as "draftSkills", draft.tool_refs as "draftTools",
              draft.mcp_scope as "draftMcpScope",
              draft.delegation_policy as "draftDelegationPolicy", draft.agent_spec as "draftAgentSpec"
@@ -1848,6 +1852,7 @@ export class PostgresAgentReleaseService {
           maxOutputBytes: row.draftMaxOutputBytes ?? 65536,
           maxToolCalls: row.draftMaxToolCalls ?? 20,
           timeoutSeconds: row.draftTimeoutSeconds ?? 300,
+          agentRecommendationEnabled: row.draftAgentRecommendationEnabled === true,
           skills: row.draftSkills ?? [],
           tools: row.draftTools ?? [],
           mcpScope: row.draftMcpScope ?? { mode: 'all', connectorIds: [] },

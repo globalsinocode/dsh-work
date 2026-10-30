@@ -26,6 +26,11 @@ export type BuiltinToolAssembly =
    * 执行容器可用时由平台装配；系统与管理运行不装配，Skill 不能声明。
    */
   | 'execution-container'
+  /**
+   * 个人对话（推荐方案 R1/R3）：Agent 版本开启“可推荐其他 AI 同事”，且是个人空间中由员工发起的交互运行时装配；
+   * 团队空间、定时与主动任务、发布试运行与管理运行不装配，Skill 不能声明。
+   */
+  | 'personal-conversation'
 
 export interface BuiltinTool {
   name: string
@@ -41,6 +46,7 @@ const workspace = '只访问当前 Run 工作区'
 const outputOnly = '创建和修改限于 output 目录中的 Markdown、TXT 与 CSV 成果'
 const projectOnly = '只访问本次运行所在项目空间的任务'
 const actorLimited = '按发起成员的任务权限执行，定时执行不装配'
+const colleaguesOnly = '只涉及发起员工本人当前可用的 AI 同事，不含本 Agent'
 
 export const builtinTools: readonly BuiltinTool[] = [
   { name: 'read', label: '读取文本文件', source: 'dsh', effect: 'read', risk: 'low', assembly: 'always', constraints: [workspace] },
@@ -64,6 +70,8 @@ export const builtinTools: readonly BuiltinTool[] = [
   { name: 'inspect_admin_state', label: '查看平台状态', source: 'platform', effect: 'read', risk: 'low', assembly: 'purpose', constraints: ['仅管理助手'] },
   { name: 'propose_admin_task', label: '提出管理任务', source: 'platform', effect: 'write', risk: 'low', assembly: 'purpose', constraints: ['仅管理助手', '只生成待确认任务'] },
   { name: 'prepare_admin_action', label: '准备管理动作', source: 'platform', effect: 'write', risk: 'low', assembly: 'purpose', constraints: ['仅管理助手', '只生成待确认动作'] },
+  { name: 'list_colleague_agents', label: '查看可推荐的 AI 同事', source: 'platform', effect: 'read', risk: 'low', assembly: 'personal-conversation', constraints: [colleaguesOnly, '仅个人对话'] },
+  { name: 'recommend_agents', label: '推荐 AI 同事', source: 'platform', effect: 'write', risk: 'low', assembly: 'personal-conversation', constraints: [colleaguesOnly, '每次 1～3 位，只记录推荐，不转交对话'] },
 ]
 
 const byName = new Map(builtinTools.map(tool => [tool.name, tool]))
@@ -107,6 +115,13 @@ export function projectTaskToolNames(input: { enabled: boolean; mode: 'none' | '
   return input.mode === 'read' ? [...projectTaskReadTools] : [...projectTaskReadTools, ...projectTaskWriteTools]
 }
 
+/** 推荐工具（推荐方案 4.1）：Agent 版本开启且是个人对话中员工发起的交互运行时装配。 */
+export const agentRecommendationToolNamesList = ['list_colleague_agents', 'recommend_agents'] as const
+
+export function agentRecommendationToolNames(input: { enabled: boolean; personalConversation: boolean }): string[] {
+  return input.enabled && input.personalConversation ? [...agentRecommendationToolNamesList] : []
+}
+
 /**
  * Agent 运行装配的 DSH 工具名称：默认工具，加上 Agent 开启的联网搜索；去掉 Runtime 停用的工具。
  * `bash` 不在其中：它取决于本次启动的执行容器是否可用，由派发时装配（executionToolNames）。
@@ -140,7 +155,7 @@ export function unavailableSkillTools(references: readonly string[], agent: { we
   const problems: string[] = []
   for (const reference of new Set(references)) {
     const tool = parseBuiltinToolReference(reference)
-    if (!tool || tool.assembly === 'purpose' || tool.assembly === 'workspace' || tool.assembly === 'execution-container') problems.push(`${reference}（平台不提供该工具）`)
+    if (!tool || tool.assembly === 'purpose' || tool.assembly === 'workspace' || tool.assembly === 'execution-container' || tool.assembly === 'personal-conversation') problems.push(`${reference}（平台不提供该工具）`)
     else if (tool.assembly === 'agent-opt-in' && !agent.webSearchEnabled) problems.push(`${reference}（Agent 未开启联网搜索）`)
   }
   return problems
@@ -150,7 +165,8 @@ export function unavailableSkillTools(references: readonly string[], agent: { we
 export function invalidSkillToolReferences(references: readonly string[]): string[] {
   return [...new Set(references)].filter(reference => {
     const tool = parseBuiltinToolReference(reference)
-    return !tool || tool.assembly === 'purpose' || tool.assembly === 'workspace' || tool.assembly === 'execution-container' || tool.name === 'propose_memory'
+    return !tool || tool.assembly === 'purpose' || tool.assembly === 'workspace' || tool.assembly === 'execution-container'
+      || tool.assembly === 'personal-conversation' || tool.name === 'propose_memory'
   })
 }
 
