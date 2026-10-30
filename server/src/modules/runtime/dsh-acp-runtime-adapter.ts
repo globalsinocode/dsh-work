@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
 import { promisify } from 'node:util'
-import { access, chmod, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { access, appendFile, chmod, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { dirname, join, relative, resolve } from 'node:path'
 import {
   AcpJsonRpcClient,
@@ -72,6 +72,10 @@ const ARTIFACT_WRITING_TOOLS = new Set(['write', 'bash', 'python_execute'])
 
 /** 26-10-24 二期：思考过程转发上限（字符），防止失控流占用事件通道 */
 const MAX_REASONING_CHARS = 65536
+/** 26-10-30：单次 Attempt 写入 ACP 诊断日志的字节上限，避免失控 stderr 撑爆磁盘。 */
+const MAX_DIAGNOSTIC_BYTES = 256 * 1024
+/** 26-10-30：JSON-RPC 错误明细并入失败原因时的字符上限。 */
+const MAX_FAILURE_DETAIL_CHARS = 500
 
 interface ExecutionRecord {
   manifest: RuntimeManifest
@@ -105,6 +109,8 @@ interface ExecutionRecord {
   liveToolCalls: Map<string, { toolName: string; completed: boolean }>
   /** `tool.completed` events emitted so far (live and end-of-run), bounded per Attempt. */
   toolEventsEmitted: number
+  /** 26-10-30：已写入 ACP 诊断日志的字节数（上限见 MAX_DIAGNOSTIC_BYTES）。 */
+  diagnosticBytes: number
 }
 
 export interface DurablePermissionContext {
@@ -376,6 +382,7 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
       auditedMcpCallIds: new Set(),
       liveToolCalls: new Map(),
       toolEventsEmitted: 0,
+      diagnosticBytes: 0,
       materializedSkills,
       reasoningText: '',
       reasoningTruncated: false,
@@ -1391,8 +1398,19 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
 
   private emitDiagnostic(record: ExecutionRecord, message: string): void {
     if (message.length === 0 || record.terminal) return
-    // Diagnostics are intentionally not exposed as a Run Event. They may contain
-    // filesystem paths or provider details and belong in a redacted operator log.
+    // Diagnostics are intentionally not exposed as a Run Event: they may contain
+    // filesystem paths or provider details. They are appended to a per-Attempt,
+    // redacted, size-capped operator log so a failed Attempt stays diagnosable
+    // (a bare "Internal error" is otherwise all an operator ever sees).
+    const redacted = redactSensitiveText(message)
+    const bytes = Buffer.byteLength(redacted)
+    if (bytes === 0 || record.diagnosticBytes + bytes > MAX_DIAGNOSTIC_BYTES) return
+    record.diagnosticBytes += bytes
+    void appendFile(
+      join(record.snapshot.attemptDirectory, 'runtime-diagnostics.log'),
+      `${this.now()} ${redacted}\n`,
+      { mode: 0o600 },
+    ).catch(() => undefined)
   }
 
   private setStatus(record: ExecutionRecord, status: RuntimeRunStatus): void {
@@ -1955,24 +1973,42 @@ function safeErrorMessage(error: unknown): string {
   return redactSensitiveText(message).slice(0, 1000)
 }
 
+/**
+ * 26-10-30：ACP 把子进程抛出的非协议错误统一改写成 `Internal error`，真实原因
+ * 只留在 `error.data.details` 里。失败原因必须带上它，否则线上只能看到一个代号，
+ * 既无法定位也无法对员工解释。
+ */
+function acpFailureDetail(error: unknown): string | undefined {
+  if (!(error instanceof AcpProtocolError) || !isRecord(error.data)) return undefined
+  const details = error.data['details']
+  if (details === undefined || details === null) return undefined
+  const text = typeof details === 'string' ? details : canonicalJson(details)
+  const redacted = redactSensitiveText(text).trim()
+  return redacted.length === 0 ? undefined : redacted.slice(0, MAX_FAILURE_DETAIL_CHARS)
+}
+
 export function classifyRuntimeFailure(error: unknown): { code: string; message: string } {
   const message = safeErrorMessage(error)
+  const detail = acpFailureDetail(error)
+  const reason = detail !== undefined && !message.includes(detail)
+    ? `${message.length === 0 ? 'Internal error' : message}：${detail}`
+    : message
   const category = error instanceof AcpProtocolError && isRecord(error.data)
     ? error.data['category']
     : undefined
   if (category === 'model' || /model (?:invocation|request|provider).*(?:failed|unavailable)/i.test(message)) {
-    return { code: 'MODEL_INVOCATION_FAILED', message }
+    return { code: 'MODEL_INVOCATION_FAILED', message: reason }
   }
   if (category === 'tool_timeout' || /tool .*(?:timed out|timeout)/i.test(message)) {
-    return { code: 'TOOL_TIMEOUT', message }
+    return { code: 'TOOL_TIMEOUT', message: reason }
   }
   if (category === 'network' || /network .*(?:unavailable|disconnected|failed)/i.test(message)) {
-    return { code: 'NETWORK_UNAVAILABLE', message }
+    return { code: 'NETWORK_UNAVAILABLE', message: reason }
   }
   if (/ACP process exited unexpectedly/i.test(message)) {
-    return { code: 'RUNTIME_WORKER_CRASH', message }
+    return { code: 'RUNTIME_WORKER_CRASH', message: reason }
   }
-  return { code: 'RUNTIME_EXECUTION_FAILED', message }
+  return { code: 'RUNTIME_EXECUTION_FAILED', message: reason }
 }
 
 interface SessionEvidence {

@@ -7,8 +7,9 @@ import { dirname, join, resolve } from 'node:path'
 import process from 'node:process'
 import { fileURLToPath } from 'node:url'
 import { afterEach, describe, it } from 'node:test'
-import { AcpJsonRpcClient, buildAcpChildEnvironment } from './acp-json-rpc-client.ts'
+import { AcpJsonRpcClient, AcpProtocolError, buildAcpChildEnvironment } from './acp-json-rpc-client.ts'
 import {
+  classifyRuntimeFailure,
   diagnoseMcpAuthenticationFailure,
   DshAcpRuntimeAdapter,
   matchSkillInstruction,
@@ -2330,6 +2331,38 @@ describe('26-10-24 二期：会话更新转发（reasoning / 工具生命周期�
     assert.equal(result.status, 'completed', result.errorMessage ?? undefined)
     const started = events.filter(event => event.event_type === 'tool.started')
     assert.equal(started.length, 1)
+  })
+})
+
+describe('classifyRuntimeFailure', () => {
+  it('surfaces the ACP error details hidden behind an opaque Internal error', () => {
+    const failure = classifyRuntimeFailure(new AcpProtocolError('Internal error', {
+      details: 'turn failed: prompt was not queued: admission failed',
+    }))
+    assert.equal(failure.code, 'RUNTIME_EXECUTION_FAILED')
+    assert.equal(failure.message, 'Internal error：turn failed: prompt was not queued: admission failed')
+  })
+
+  it('keeps a message that already carries the detail exactly once', () => {
+    const failure = classifyRuntimeFailure(new AcpProtocolError(
+      'Internal error：turn failed: boom',
+      { details: 'turn failed: boom' },
+    ))
+    assert.equal(failure.message, 'Internal error：turn failed: boom')
+  })
+
+  it('redacts credentials inside the surfaced detail', () => {
+    const failure = classifyRuntimeFailure(new AcpProtocolError('Internal error', {
+      details: 'upstream rejected api_key=plain-secret for sk-abcdefghijklmnop',
+    }))
+    assert.ok(!failure.message.includes('plain-secret'))
+    assert.ok(!failure.message.includes('sk-abcdefghijklmnop'))
+  })
+
+  it('keeps the plain message when the error carries no details', () => {
+    const failure = classifyRuntimeFailure(new AcpProtocolError('Network unavailable'))
+    assert.equal(failure.code, 'NETWORK_UNAVAILABLE')
+    assert.equal(failure.message, 'Network unavailable')
   })
 })
 
