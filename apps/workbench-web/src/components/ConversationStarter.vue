@@ -539,7 +539,7 @@ defineExpose({ useWorkspaceFile, focusComposer, submitWorkspaceTask: submitTask 
           推荐的 AI 同事暂不可用：你已没有使用权限，或它已停用。
         </p>
         <TaskComposer
-          v-else-if="composerReady"
+          v-if="composerReady && !useTeamSpaceComposer"
           ref="personalComposerRef"
           class="workbench-composer"
           :initial-prompt="presetPrompt"
@@ -559,7 +559,7 @@ defineExpose({ useWorkspaceFile, focusComposer, submitWorkspaceTask: submitTask 
           @clear-agent="clearSelectedAgent"
           @open-files="router.push('/files')"
         />
-        <el-skeleton v-else class="workbench-composer" :rows="3" animated />
+        <el-skeleton v-else-if="!composerReady" class="workbench-composer" :rows="3" animated />
 
         <footer v-if="!useTeamSpaceComposer" class="workbench-trust">
           <span>支持 PDF、DOCX、XLSX、XLS、CSV，单文件不超过 20 MB</span>
