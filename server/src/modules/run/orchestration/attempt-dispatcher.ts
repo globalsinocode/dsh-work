@@ -4,7 +4,7 @@ import { assertRuntimeModelRequirements } from '../../runtime/execution-capabili
 import type { RuntimeManifest } from '../../runtime/runtime-types.ts'
 import { compileRuntimeManifest } from '../../runtime/manifest-compiler.ts'
 import { toManifestToolBinding } from '../../../domain/tool-binding.ts'
-import { builtinToolReference, executionToolNames, projectTaskToolNames } from '../../runtime/builtin-tools.ts'
+import { agentRecommendationToolNames, builtinToolReference, executionToolNames, projectTaskToolNames } from '../../runtime/builtin-tools.ts'
 import type { RuntimeAuthorizationDecision } from '../../authorization/postgres-authorization-service.ts'
 import type { PreparedRuntimeFile } from '../../runtime/runtime-types.ts'
 import { authorizationDenied } from '../../../domain/authorization-errors.ts'
@@ -69,6 +69,11 @@ export class AttemptDispatcher {
     delegation?: NonNullable<RuntimeManifest['delegation_context']>
     /** 项目空间 S6：任务工具读/写模式（定时触发等场景）。 */
     projectTaskToolMode?: 'none' | 'read' | 'read-write'
+    /**
+     * 推荐方案 R3：个人空间中由员工发起的交互运行。仍须 Agent 版本开启“可推荐其他 AI 同事”；
+     * 有 purpose 的运行（发布试运行、定时与主动任务、系统与管理运行）不装配。
+     */
+    personalConversation?: boolean
     /** 项目任务受理时固定的简报/档案版本，不在调度后重新读取。 */
     projectContext?: RuntimeManifest['project_context'] | null
     /** 员工时区：用于 Manifest 相对日期说明（定时任务等）。 */
@@ -94,6 +99,8 @@ export class AttemptDispatcher {
           maxOutputBytes: 65536,
           maxToolCalls: 20,
           timeoutSeconds: 300,
+          projectTasksEnabled: false,
+          agentRecommendationEnabled: false,
           delegationPolicy: { allowedAgentVersionIds: [], maxDepth: 1, maxParallel: 1, timeoutSeconds: 120 },
         }
     const delegationPolicy = agent.delegationPolicy ?? {
@@ -170,6 +177,12 @@ export class AttemptDispatcher {
         ? projectTaskToolNames({
             enabled: Boolean(this.deps.projectTasks) && agent.projectTasksEnabled === true,
             mode: input.projectTaskToolMode ?? 'none',
+          })
+        : []),
+      ...(!input.purpose
+        ? agentRecommendationToolNames({
+            enabled: agent.agentRecommendationEnabled === true,
+            personalConversation: input.personalConversation === true,
           })
         : []),
       ...agentDataToolRefs(agent).map(tool => tool.id),

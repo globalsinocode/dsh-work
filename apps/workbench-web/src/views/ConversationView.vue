@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, inject, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { useOpenRecommendedAgent } from '@/composables/useOpenRecommendedAgent'
 import { projectTaskDetailKey } from '@/composables/project-task-detail'
 import { spaceView, useSpaceRoutes } from '@/composables/space-routes'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -22,7 +23,7 @@ import { workbenchApi } from '@/api/client'
 import { useAuthStore } from '@/stores/auth'
 import { useContentStore } from '@/stores/content'
 import { useTaskStore } from '@/stores/tasks'
-import type { Artifact, ChatMessage, ProjectTask, ProjectTaskEvent, SessionThread, SessionThreadMessage, TaskResultOutcome, TaskRun, TaskSource, TeamMemberRole, WorkspaceAgentMember } from '@/types/domain'
+import type { AgentRecommendation, Artifact, ChatMessage, ProjectTask, ProjectTaskEvent, SessionThread, SessionThreadMessage, TaskResultOutcome, TaskRun, TaskSource, TeamMemberRole, WorkspaceAgentMember } from '@/types/domain'
 import { TaskComposer } from '@dsh-work/workbench-components'
 import ArtifactPreviewDialog from '@/components/ArtifactPreviewDialog.vue'
 import { runGuardedAction } from '@/utils/action-guard'
@@ -40,6 +41,7 @@ import {
 } from '@/components/team-space-composer/team-composer-bridge'
 import ArtifactPreviewPanel from '@/components/conversation/ArtifactPreviewPanel.vue'
 import ConversationMessageItem from '@/components/conversation/ConversationMessageItem.vue'
+import AgentRecommendationCards from '@/components/conversation/AgentRecommendationCards.vue'
 import RunArtifactCards from '@/components/conversation/RunArtifactCards.vue'
 import RunProgressCard from '@/components/conversation/RunProgressCard.vue'
 import RunProgressSummary from '@/components/conversation/RunProgressSummary.vue'
@@ -49,6 +51,7 @@ import '@/styles/conversation-thread.css'
 
 const route = useRoute()
 const router = useRouter()
+const openRecommendedAgent = useOpenRecommendedAgent()
 const taskStore = useTaskStore()
 const authStore = useAuthStore()
 const contentStore = useContentStore()
@@ -434,6 +437,20 @@ function messageArtifacts(message: ChatMessage): Artifact[] {
 }
 
 type ThreadMessageLike = Pick<ChatMessage, 'id' | 'role' | 'runId'>
+
+/** 推荐卡片与成果卡同一规则：挂在该 Run 最后一条助手回复下（个人对话多轮按 runId）。 */
+function recommendationsForMessage(message: ChatMessage) {
+  if (!task.value || message.role !== 'assistant' || !message.runId) return []
+  if (terminalAssistantMessageIdByRun.value.get(message.runId) !== message.id) return []
+  return (task.value.recommendations ?? []).filter(item => item.runId === message.runId)
+}
+
+function openRecommendedFromCard(recommendation: AgentRecommendation) {
+  if (!task.value) return
+  const prompt = task.value.messages.find(message => message.role === 'user' && message.runId === recommendation.runId)?.content
+    ?? (recommendation.runId === task.value.id ? task.value.prompt : '')
+  openRecommendedAgent(recommendation, prompt)
+}
 
 function firstUserMessageIdByRunIn(messages: ThreadMessageLike[]) {
   const map = new Map<string, string>()
@@ -1889,6 +1906,11 @@ watch(
                   @preview="openPreview"
                   @download="download"
                   @continue-editing="continueEditing"
+                />
+
+                <AgentRecommendationCards
+                  :recommendations="recommendationsForMessage(message)"
+                  @open="openRecommendedFromCard"
                 />
 
                 <div class="assistant-actions">

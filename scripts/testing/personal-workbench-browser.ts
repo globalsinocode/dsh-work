@@ -92,6 +92,29 @@ fixture.router.post('/api/workbench/v1/test/collab/agents/:agentId/stale-latest-
   await fixture.db.client`update sessions set agent_version_id = ${staleVersionId} where tenant_id = ${testTenant} and id = ${latest.sessionId}`
   return envelope('workbench', { sessionId: latest.sessionId })
 })
+// REC-01：两位已发布的 AI 同事，一位员工可用、一位只对管理员可见；`P1-推荐同事` 经推荐服务登记推荐。
+async function publishColleague(id: string, name: string, visibleRoleIds: string[]) {
+  const created = await fixture.agents.createAgent({
+    id, name, description: `${name}：P1 合成 AI 同事，负责一类专门工作。`, owner: '平台治理', department: '平台治理',
+    welcomeMessage: `你好，我是${name}（P1 合成）。`, examplePrompts: [`请${name}处理一件事`],
+    systemPrompt: `你是${name}，只处理与本职相关、当前员工已经授权的工作。`,
+    maxOutputBytes: 65536, maxToolCalls: 20, timeoutSeconds: 300, skills: [], changeSummary: 'P1 推荐夹具', actor: 'U00008',
+    dataScopes: ['workspace:authorized'],
+    executionRoleIds: ['role-employee'], executionDataScopes: ['workspace:authorized'],
+  })
+  await fixture.db.client`update agent_versions set status = 'published' where tenant_id = ${testTenant} and id = ${created.version.id}`
+  await fixture.db.client`update agents set status = 'published', active_version_id = ${created.version.id}, draft_version_id = null,
+    visible_role_ids = ${fixture.db.client.json(visibleRoleIds)} where tenant_id = ${testTenant} and id = ${id}`
+}
+await publishColleague('agent-p1-contract', '合同审查（P1）', ['role-employee'])
+await publishColleague('agent-p1-finance', '财务内控（P1）', ['role-platform-admin'])
+runtime.hooks.recommendAgents = async manifest => {
+  await fixture.recommendations.recommend(manifest, { recommendations: [{ agentId: 'agent-p1-contract', reason: '掌握公司的合同审查规则，可以逐条审查合同。' }] })
+}
+fixture.router.post('/api/workbench/v1/test/agents/:agentId/disable', async (_request, context) => {
+  await fixture.db.client`update agents set status = 'disabled' where tenant_id = ${testTenant} and id = ${context.params['agentId'] ?? ''}`
+  return envelope('workbench', { disabled: true })
+})
 console.log('P1 personal workbench ready; throwaway PostgreSQL, synthetic Runtime, no OIDC/model.')
 let closing = false
 async function close() { if (closing) return; closing = true; await fixture.close(); process.exit(0) }

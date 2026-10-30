@@ -303,3 +303,47 @@ P1/P2 的执行结果须单独记录数据库、身份、Runtime/DSH 版本和�
 **验收：** 上述测试通过；P2 另需用真实 DSH 跑一段超过 48000 字符的会话，确认摘要生成，并在第 20 轮之后首条消息与中间轮次给出的约束仍被遵守，留证 Run/Attempt、摘要内容与 DSH 版本。
 
 **本地 P2（2026-10-16）：** 已通过。基于 `8d63f23`，真实 DSH `0.1.2-rc.1` / `76fda729799fe9b3848dbe2c211d4b231032b81e` 完成 22 轮、72,108 字符合成会话。原文达到 49,152 字符后后台生成摘要，最终保存两次增量摘要（872/899 字符，覆盖 14/27 条消息）；摘要 Run 无 Session、工具、文件或聊天消息。后续 Manifest 保留首条原文且历史与摘要合计不超过 64000 字符；第 21 轮的中间配置仅在摘要中，第 21、22 轮均正确遵守首条与中间约束。完整 Run/Attempt、摘要原文、哈希和截图见验收记录（Git 历史：提交 `e05baa4` 的 `docs/development/runtime-context-baseline-local-p2-2026-10-16.json`）。本次没有注入摘要失败或复跑团队、多账号权限与生产环境。
+
+## 推荐 AI 同事
+
+设计见 [dsh-work 助手推荐 AI 同事方案](../../docs/design/agent-recommendation-plan.md)，规则见[功能规则 2.4](../../docs/development/feature-rules.md#24-推荐-ai-同事)。
+
+### REC-01 推荐卡片“去聊天”进入该 AI 同事的新对话，问题预填不发送
+
+**优先级：** P1 · **角色：** 员工 · **运行层级：** 一次性 PostgreSQL、合成 Runtime（不调用模型）、真实 HTTP 接口与浏览器<br>
+**前置数据：** `personalWorkbenchFixture` 一次性库，另有一位员工可用、一位员工不可用（可见角色不含该员工）的已发布 AI 同事；合成 Runtime 对含 `P1-推荐同事` 的 prompt 经推荐服务登记推荐<br>
+**spec：** `e2e/personal-integration/agent-recommendation.spec.ts`、`apps/workbench-web/src/components/conversation/conversation-components.test.ts`
+
+1. 员工在个人空间与 dsh-work 助手对话，发送含推荐标记的问题；回复下方出现“推荐的 AI 同事”卡片，显示同事名称、说明、推荐理由与“去聊天”。员工不可用的同事不出现。
+2. 点“去聊天”：进入该 AI 同事的新对话，输入框已预填刚才的问题、尚未发送，并提示原对话记录与附件不会带入。地址栏不含问题文本；刷新后输入框不再预填。
+3. 回到原对话（最近对话），卡片仍在原回复下；刷新后仍在。
+4. 管理员停用该同事后，员工再点“去聊天”：卡片提示“该 AI 同事暂不可用”，不跳转。
+5. 协作模式（B）的单聊使用同一卡片，“去聊天”进入 B 的与该同事单聊页，同样预填。
+
+**验收：** 卡片只列员工可用的同事；跳转按当前模式直达、预填一次且不发送；不可用时提示不跳转。P0 冒烟不覆盖本条（冒烟服务不执行对话）。
+
+### REC-02 推荐工具只在个人对话中装配，按员工本人可见范围记录
+
+**优先级：** P1 · **角色：** 员工、平台管理员 · **运行层级：** 专用可丢弃 PostgreSQL、受控测试身份<br>
+**前置数据：** 开启与未开启“可推荐其他 AI 同事”的 Agent 各一；员工可用与不可用的 AI 同事各一；一个团队空间<br>
+**spec：** `server/src/infrastructure/postgres/agent-recommendation.integration.test.ts`、`server/src/modules/runtime/builtin-tools.test.ts`、`server/src/modules/runtime/runtime-adapter.test.ts`
+
+1. 开启开关的 Agent 在个人空间员工对话中：Manifest 装配 `list_colleague_agents` 与 `recommend_agents`；未开启、团队空间、定时任务、发布试运行与管理运行不装配。
+2. `list_colleague_agents` 只返回发起员工本人可用的同事，不含本 Agent；可见性按员工当前角色计算，不受当前 Agent 授权限制。
+3. `recommend_agents` 拒绝员工不可用、重复或指向本 Agent 的推荐，以及超过 3 项或理由超长的输入；同一 Attempt 再次调用替换上一组。
+4. 会话详情只返回各 Run 当前 Attempt 的推荐；重试后旧 Attempt 的推荐不再出现。读取时同事已停用的标为不可用。
+5. 管理端修改该开关形成新草稿，原验证结果不能发布新草稿。
+
+**验收：** 装配范围、可见性与输入校验按上述执行；推荐记录可追溯到 Run 与 Attempt。
+
+### REC-P2 真实 DSH 下的推荐
+
+**优先级：** P2 · **角色：** 员工 · **运行层级：** 真实 DSH Run/Attempt、Runtime Adapter<br>
+**前置数据：** 至少三位说明清晰、职责不同的已发布 AI 同事<br>
+**spec：** 手工执行并留证
+
+1. 问 dsh-work 助手“分析本月订单交付风险该找哪个 AI 同事”：助手调用目录与推荐工具，推荐相关同事并写清理由。
+2. 问一个明显属于某专门同事的问题（如产品不良原因分析）：助手优先推荐该同事，只用一两句话说明原因，不自己展开解答；推荐理由不声称同事说明之外的能力；同一对话追问时不重复推荐同一位。
+3. 问通用问题（如润色一段文字）：不推荐。
+
+**验收：** 留存 Run/Attempt 与推荐记录；记录推荐是否相关、是否过度推荐的人工结论。P1 绿灯不能替代本层。

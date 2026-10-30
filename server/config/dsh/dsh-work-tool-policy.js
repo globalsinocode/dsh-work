@@ -127,7 +127,7 @@ function publishRuntimeToolCatalog(ctx, path, mode) {
 }
 
 const readTools = new Set(['read', 'read_image', 'glob', 'grep', 'web_fetch', 'web_search', 'get_goal', 'job_list', 'job_output', 'inspect_admin_state', 'prepare_skill_installation'])
-const retrySafeTools = new Set(['read', 'read_image', 'glob', 'grep', 'web_search', 'get_goal', 'job_list', 'job_output', 'inspect_admin_state', 'prepare_skill_installation', 'activate_skill', 'propose_memory', 'project_tasks_list', 'project_task_get'])
+const retrySafeTools = new Set(['read', 'read_image', 'glob', 'grep', 'web_search', 'get_goal', 'job_list', 'job_output', 'inspect_admin_state', 'prepare_skill_installation', 'activate_skill', 'propose_memory', 'project_tasks_list', 'project_task_get', 'list_colleague_agents'])
 const concurrentTools = new Set(['read', 'read_image', 'glob', 'grep', 'web_fetch', 'web_search', 'get_goal', 'job_list', 'job_output', 'inspect_admin_state'])
 const toolTimeoutSeconds = new Map([
   ['todo_write', 10], ['create_goal', 10], ['get_goal', 10], ['update_goal', 10],
@@ -592,6 +592,34 @@ function registerPlatformTools(ctx) {
       },
       required: ['taskId'],
       minProperties: 2,
+      additionalProperties: false,
+    },
+  })
+  registerPlatformTool(ctx, socketPath, {
+    name: 'list_colleague_agents',
+    description: 'List the other AI colleagues (Agents) the employee you are talking with can use right now: agentId, name, description and example prompts. Use it before recommend_agents. It never includes yourself and never reveals Agents the employee cannot use.',
+    parameters: { type: 'object', properties: {}, additionalProperties: false },
+  })
+  registerPlatformTool(ctx, socketPath, {
+    name: 'recommend_agents',
+    description: 'Recommend 1 to 3 AI colleagues from list_colleague_agents. The employee sees each one as a card under your reply and can open a new conversation with it; the conversation is not handed over. reason (at most 120 characters, plain text) says what that colleague can do here that you cannot do as well. Calling it again in the same reply replaces the previous recommendations.',
+    parameters: {
+      type: 'object',
+      properties: {
+        recommendations: {
+          type: 'array', minItems: 1, maxItems: 3,
+          items: {
+            type: 'object',
+            properties: {
+              agentId: { type: 'string', minLength: 1, maxLength: 160 },
+              reason: { type: 'string', minLength: 1, maxLength: 120 },
+            },
+            required: ['agentId', 'reason'],
+            additionalProperties: false,
+          },
+        },
+      },
+      required: ['recommendations'],
       additionalProperties: false,
     },
   })

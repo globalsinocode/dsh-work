@@ -4839,6 +4839,10 @@
               }
             }
           },
+          "agentRecommendationEnabled": {
+            "type": "boolean",
+            "description": "是否可推荐其他 AI 同事（list_colleague_agents、recommend_agents）；仅个人对话中由员工发起的交互运行装配，只推荐员工本人可用的同事。编辑时省略则保留当前设置，新建时默认 false。"
+          },
           "maxOutputBytes": {
             "type": "integer",
             "minimum": 1024,

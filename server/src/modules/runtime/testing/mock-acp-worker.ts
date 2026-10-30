@@ -336,6 +336,22 @@ lines.on('line', (line) => {
       void emitPermissionRequest(requestId, sessionId).catch(() => failPrompt(pending, 'Permission log write failed', 'tool'))
       return
     }
+    // 推荐 AI 同事：只在消息含 `[mock:recommend]` 时调用推荐工具，推荐目录中的第一位同事；
+    // 其他用例即使装配了推荐工具也照常走普通回答。
+    if (process.env.DSH_PLATFORM_TOOL_SOCKET && currentText.includes('[mock:recommend]')
+      && (JSON.parse(process.env.DSH_ALLOWED_TOOLS_JSON ?? '[]') as string[]).includes('recommend_agents')) {
+      void (async () => {
+        try {
+          const listed = JSON.parse(await callPlatformTool('list_colleague_agents', {})) as { agents?: Array<{ agentId: string }> }
+          const first = listed.agents?.[0]
+          pending.answer = first
+            ? await callPlatformTool('recommend_agents', { recommendations: [{ agentId: first.agentId, reason: '这类问题由这位同事负责。' }] })
+            : '没有可推荐的 AI 同事。'
+          finishPrompt(pending, 'end_turn')
+        } catch { failPrompt(pending, 'Platform tool unavailable', 'tool') }
+      })()
+      return
+    }
     // 平台内置 Skill（dsh-work-*）出现在每个员工侧运行的目录中；替身只激活已安装 Skill，
     // 只有内置 Skill 时照常走普通回答，不改变其他用例的行为。
     const mockSkillName = mockActivationTarget(process.env.DSH_AGENT_SYSTEM_PROMPT ?? '')
