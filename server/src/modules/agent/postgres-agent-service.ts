@@ -18,6 +18,7 @@ import type { PostgresSkillService, RuntimeSkillConfiguration } from '../skill/p
 import type { PostgresToolConnectorService } from '../tool/postgres-tool-connector-service.ts'
 import { bindingBasisKey, toManifestToolBinding, type ManifestToolBinding, type ResolvedToolBinding } from '../../domain/tool-binding.ts'
 import { DSH_WORK_EXECUTION_TOOL_REFS } from '../../domain/tool-category.ts'
+import type { CoveringSkill } from '../skill/builtin-skills.ts'
 import type { McpConnectionSnapshot } from '../runtime/runtime-types.ts'
 import { authorizationDenied } from '../../domain/authorization-errors.ts'
 import { requirePlatformAdminActor } from '../authorization/platform-admin-actor.ts'
@@ -162,6 +163,9 @@ export interface RuntimeAgentSnapshot {
   skills: string[]
   skillInstructions: RuntimeSkillConfiguration[]
   tools: string[]
+  /** Agent 固定与会话选择的 Skill（不含依赖）及其“覆盖内置场景”，派发时据此去掉被覆盖的平台内置 Skill。 */
+  coveringSkills: CoveringSkill[]
+  /** 本 Agent 装配的内置工具（注册表默认工具、开启的联网搜索、平台工具），形如 name@version。 */
   runtimeTools: string[]
   /** B-03/I-04：发布版本固定绑定 + 当前语义解析出的 active 工具绑定修订。 */
   toolBindings: ResolvedToolBinding[]
@@ -1102,11 +1106,19 @@ export class PostgresAgentService {
     const runtimeSkills = this.skillService
       ? skillInstructions.map(skill => `${skill.id}@${skill.version}`)
       : skills
+    const rootIds = new Set(skills.map(reference => reference.slice(0, reference.lastIndexOf('@'))))
+    const covered = this.skillService ? await this.skillService.readCoveredBuiltinScenarios([...rootIds]) : new Map<string, string[]>()
+    const coveringSkills: CoveringSkill[] = skillInstructions.filter(skill => rootIds.has(skill.id)).map(skill => ({
+      reference: `${skill.id}@${skill.version}`,
+      name: skill.name ?? skill.id,
+      scenarios: covered.get(skill.id) ?? [],
+      modelInvocable: !skill.disableModelInvocation,
+    }))
     const systemPrompt = row.agentSpec
       ? assembleAgentInstructions(row.agentSpec)
       : row.systemPrompt
     const { agentId: _agentId, agentSpec: _agentSpec, bindingRefs: _bindingRefs, versionStatus: _versionStatus, ...snapshot } = row
-    return { ...snapshot, systemPrompt, skills: runtimeSkills, tools, skillInstructions, runtimeTools, toolBindings, mcpConnections, approvalMode }
+    return { ...snapshot, systemPrompt, skills: runtimeSkills, tools, skillInstructions, coveringSkills, runtimeTools, toolBindings, mcpConnections, approvalMode }
   }
 
   /**

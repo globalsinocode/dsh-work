@@ -2410,6 +2410,13 @@
               "null"
             ],
             "description": "回复的 Agent 名称"
+          },
+          "attachments": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "用户消息随发送附带的输入文件名（上传附件与引用文件）；无文件时缺省"
           }
         }
       },
@@ -2565,6 +2572,13 @@
               "null"
             ],
             "description": "该消息所属的 Run；共享讨论消息为 null"
+          },
+          "attachments": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "用户消息随发送附带的输入文件名（上传附件与引用文件）；无文件时缺省"
           }
         }
       },
@@ -2601,6 +2615,23 @@
           },
           "duration": {
             "type": "string"
+          },
+          "callId": {
+            "type": "string"
+          },
+          "event": {
+            "type": "string",
+            "description": "EX-PROGRESS-01：步骤来源的运行事件类型，如 run.started、tool.completed。"
+          },
+          "at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "来源事件的服务端发生时间；工具调用结果步骤为调用结束时间。"
+          },
+          "startedAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "工具调用开始时间（同一调用的 tool.started）；未收到开始事件时缺省。"
           }
         }
       },
@@ -2673,7 +2704,10 @@
             "enum": [
               "xlsx",
               "docx",
+              "pptx",
               "pdf",
+              "png",
+              "jpg",
               "markdown",
               "csv",
               "text",
@@ -2697,6 +2731,19 @@
           },
           "summary": {
             "type": "string"
+          },
+          "textPreview": {
+            "type": "string",
+            "enum": [
+              "available",
+              "failed",
+              "pending"
+            ],
+            "description": "Office/PDF 成果的解析文本预览状态（2b-5）；其他类型不返回"
+          },
+          "textPreviewError": {
+            "type": "string",
+            "description": "textPreview 为 failed 时的原因"
           }
         }
       },

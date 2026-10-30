@@ -1,17 +1,25 @@
 <script setup lang="ts">
 import { computed, toRef } from 'vue'
-import { ArrowDown, Close, CopyDocument, Document, EditPen, Lock, RefreshRight, Share, Warning } from '@element-plus/icons-vue'
+import { Close, CopyDocument, Lock, RefreshRight, Share, Warning } from '@element-plus/icons-vue'
 import { StatusTag } from '@dsh-work/ui-core'
 
 import ConversationMessageItem from './ConversationMessageItem.vue'
+import RunArtifactCards from './RunArtifactCards.vue'
+import RunProgressCard from './RunProgressCard.vue'
+import RunProgressSummary from './RunProgressSummary.vue'
 import { resultOutcomeLabels, useRunProgress } from '@/composables/useRunProgress'
+import { useAuthStore } from '@/stores/auth'
 import type { Artifact, ChatMessage, TaskRun } from '@/types/domain'
+import { mentionsUser } from '@/utils/mentions'
 import '@/styles/conversation-thread.css'
 
 /**
- * 一次执行（Run）的消息流（S5b 从 ConversationView 拆出）：消息、本轮成果卡片（下载 /
+ * 一次执行（Run）的消息流（S5b 从 ConversationView 拆出）：消息、本轮成果卡片（预览 / 下载 /
  * 继续修改）、执行中状态、审批等待、失败与结论提示。A 的对话详情与 B 的对话页（每段会话）
- * 共用；操作只发事件，写权限与导航由调用方决定。
+ * 共用；操作只发事件，写权限、导航与预览右栏由调用方决定。
+ *
+ * 个人会话详情可能含多轮 Run 的消息：成果优先取 threadArtifacts，并按 artifact.runId
+ * 挂到该 Run 最后一条助手回复下，避免只展示最新 Run 的 result.artifacts。
  */
 const props = withDefaults(defineProps<{
   task: TaskRun
@@ -19,34 +27,74 @@ const props = withDefaults(defineProps<{
   isOwn: (message: ChatMessage) => boolean
   canFollowUp?: boolean
   canRetry?: boolean
+  canResolveApproval?: boolean
+  resolvingApproval?: boolean
   /** 已在输入区引用的成果文件，对应卡片显示“已引用”。 */
   referencedFileIds?: string[]
-}>(), { canFollowUp: false, canRetry: false, referencedFileIds: () => [] })
+  /** 右栏正在预览的成果版本（`id@version`），对应卡片标为选中。 */
+  previewKey?: string | null
+}>(), {
+  canFollowUp: false,
+  canRetry: false,
+  canResolveApproval: false,
+  resolvingApproval: false,
+  referencedFileIds: () => [],
+  previewKey: null,
+})
+
+const authStore = useAuthStore()
 
 const emit = defineEmits<{
+  preview: [artifact: Artifact]
   download: [artifact: Artifact]
   'continue-editing': [artifact: Artifact]
   'copy-answer': [content: string]
   'copy-link': []
   'open-details': []
   retry: []
+  'resolve-approval': [decision: 'approved' | 'rejected']
 }>()
 
 const task = toRef(props, 'task')
-const { currentStepLabel, quietLabel, isTerminalRun } = useRunProgress(computed(() => task.value))
+const { isTerminalRun } = useRunProgress(computed(() => task.value))
 
-const lastAssistantMessageId = computed(() =>
-  [...task.value.messages]
-    .reverse()
-    .find(message => message.role === 'assistant' && message.runId === task.value.id)?.id,
+/** 气泡可展示的成果：多轮线程用 threadArtifacts，否则退回本轮 result.artifacts。 */
+const displayArtifacts = computed(() =>
+  task.value.threadArtifacts?.length ? task.value.threadArtifacts : task.value.result.artifacts,
 )
+
+/** 每个 runId 下最后一条助手消息 id → 用于挂成果卡。 */
+const lastAssistantIdByRun = computed(() => {
+  const map = new Map<string, string>()
+  for (const message of task.value.messages) {
+    if (message.role === 'assistant' && message.runId) map.set(message.runId, message.id)
+  }
+  return map
+})
+
+const lastAssistantMessageId = computed(() => lastAssistantIdByRun.value.get(task.value.id))
+
+/** EX-PROGRESS-01：本轮结束后，执行步骤摘要放在本轮第一条回复上方。 */
+const firstAssistantMessageId = computed(() =>
+  task.value.messages.find(message => message.role === 'assistant' && belongsToCurrentRun(message))?.id)
 
 function belongsToCurrentRun(message: ChatMessage) {
   return message.runId === task.value.id
 }
 
-function isReferenced(artifact: Artifact) {
-  return Boolean(artifact.fileId && props.referencedFileIds.includes(artifact.fileId))
+function artifactsForMessage(message: ChatMessage) {
+  if (message.role !== 'assistant' || !message.runId) return []
+  if (lastAssistantIdByRun.value.get(message.runId) !== message.id) return []
+  return displayArtifacts.value.filter(artifact =>
+    artifact.runId === message.runId
+    || (!artifact.runId && message.runId === task.value.id),
+  )
+}
+
+/** 执行隔离 2b-2：本轮 output 中未登记为成果的文件及原因，列在本轮最后一条回复下。 */
+function skippedArtifactsForMessage(message: ChatMessage) {
+  if (message.id !== lastAssistantMessageId.value || !belongsToCurrentRun(message) || !isTerminalRun.value) return []
+  return task.value.result.pendingItems.filter(item => item.kind === 'artifact_skipped').map(item => item.message)
 }
 
 /** 本轮最后一条回复在执行结束后显示业务结论与耗时，代替发送时间。 */
@@ -63,40 +111,32 @@ function messageMeta(message: ChatMessage) {
     :message="message"
     :own="isOwn(message)"
     :meta="messageMeta(message)"
+    :tag="!isOwn(message) && mentionsUser(message, authStore.user.id) ? '@了你' : undefined"
   >
+    <template v-if="isTerminalRun && message.id === firstAssistantMessageId" #before>
+      <RunProgressSummary :task="task" />
+    </template>
+    <RunArtifactCards
+      :artifacts="artifactsForMessage(message)"
+      :can-continue-editing="canFollowUp && belongsToCurrentRun(message)"
+      :referenced-file-ids="referencedFileIds"
+      :preview-key="previewKey"
+      @preview="emit('preview', $event)"
+      @download="emit('download', $event)"
+      @continue-editing="emit('continue-editing', $event)"
+    />
+
     <div
-      v-if="message.id === lastAssistantMessageId && belongsToCurrentRun(message) && task.result.artifacts.length"
-      class="answer-artifacts"
+      v-if="skippedArtifactsForMessage(message).length"
+      class="answer-skipped"
+      role="note"
+      aria-label="未登记为成果的文件"
+      data-testid="artifact-skipped"
     >
-      <div
-        v-for="artifact in task.result.artifacts"
-        :key="artifact.id"
-        class="answer-artifact"
-      >
-        <button
-          type="button"
-          class="answer-artifact__download"
-          @click="emit('download', artifact)"
-        >
-          <span><el-icon><Document /></el-icon></span>
-          <span>
-            <strong>{{ artifact.name }}</strong>
-            <small>{{ artifact.size }} · V{{ artifact.version }}</small>
-          </span>
-          <el-icon><ArrowDown /></el-icon>
-        </button>
-        <button
-          v-if="canFollowUp && artifact.canReference && artifact.fileId"
-          type="button"
-          class="answer-artifact__revise"
-          :data-testid="`continue-editing-${artifact.id}`"
-          :disabled="isReferenced(artifact)"
-          @click="emit('continue-editing', artifact)"
-        >
-          <el-icon><EditPen /></el-icon>
-          {{ isReferenced(artifact) ? '已引用' : '继续修改' }}
-        </button>
-      </div>
+      <p class="answer-skipped__title">以下文件未登记为成果</p>
+      <ul>
+        <li v-for="line in skippedArtifactsForMessage(message)" :key="line">{{ line }}</li>
+      </ul>
     </div>
 
     <div class="assistant-actions">
@@ -117,26 +157,11 @@ function messageMeta(message: ChatMessage) {
     </div>
   </ConversationMessageItem>
 
-  <article
+  <RunProgressCard
     v-if="['queued', 'running'].includes(task.status)"
-    class="conversation-message conversation-message--assistant conversation-message--working"
-  >
-    <div class="assistant-identity">
-      <span class="assistant-avatar">d</span>
-      <div>
-        <strong>dsh-work</strong>
-        <span>正在处理</span>
-      </div>
-    </div>
-    <div class="working-answer">
-      <span class="working-dots"><i></i><i></i><i></i></span>
-      <span data-testid="current-step">{{ currentStepLabel }}</span>
-      <button type="button" @click="emit('open-details')">查看执行过程</button>
-    </div>
-    <p v-if="quietLabel" class="working-quiet" role="status" data-testid="run-quiet-hint">
-      已 {{ quietLabel }}没有新的输出，任务仍在运行。Agent 可能在等待模型或工具返回，无需重复提交。
-    </p>
-  </article>
+    :task="task"
+    @open-details="emit('open-details')"
+  />
 
   <section v-if="task.status === 'awaiting_approval'" class="conversation-notice approval-notice">
     <span class="conversation-notice__icon"><el-icon><Lock /></el-icon></span>
@@ -148,6 +173,14 @@ function messageMeta(message: ChatMessage) {
         <div><dt>范围</dt><dd>{{ task.approval?.dataScope ?? '当前用户授权范围' }}</dd></div>
       </dl>
       <p>{{ task.approval?.nextStep ?? '审批完成后会从新的 Attempt 继续执行，无需重复提交。' }}</p>
+      <div v-if="canResolveApproval" class="conversation-notice__actions">
+        <el-button type="primary" :loading="resolvingApproval" @click="emit('resolve-approval', 'approved')">
+          允许本次
+        </el-button>
+        <el-button :disabled="resolvingApproval" @click="emit('resolve-approval', 'rejected')">
+          拒绝
+        </el-button>
+      </div>
     </div>
     <StatusTag status="awaiting_approval" label="等待确认" />
   </section>
@@ -192,4 +225,5 @@ function messageMeta(message: ChatMessage) {
   <p v-if="task.status === 'cancelled' && task.stoppedBy" class="conversation-stopped-by" data-testid="run-stopped-by">
     本轮执行已由 {{ task.stoppedBy }} 停止
   </p>
+
 </template>

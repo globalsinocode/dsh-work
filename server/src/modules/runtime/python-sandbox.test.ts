@@ -1,0 +1,357 @@
+import assert from 'node:assert/strict'
+import { spawnSync } from 'node:child_process'
+import { chmod, lstat, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { test } from 'node:test'
+import { ContainerExecutor, createPythonContainerName } from './container-executor.ts'
+import {
+  boundedUtf8Collector,
+  buildPythonSandboxArguments,
+  DockerExecutionBackend,
+  type PythonSandboxArgumentOptions,
+} from './docker-execution-backend.ts'
+import { PYTHON_SANDBOX_LIMITS } from './execution-backend.ts'
+
+const image = `python@sha256:${'a'.repeat(64)}`
+
+function dockerExecutor(pythonImage = image, command?: string): ContainerExecutor {
+  return new ContainerExecutor(new DockerExecutionBackend({ command }), { pythonImage })
+}
+
+function argumentOptions(overrides: Partial<PythonSandboxArgumentOptions> = {}): PythonSandboxArgumentOptions {
+  return {
+    name: `dsh-py-${'ab'.repeat(8)}`,
+    user: '65534:65534',
+    memorySwap: false,
+    apparmor: false,
+    ...overrides,
+  }
+}
+
+test('the sandbox requires a digest-pinned image and builds a closed command', () => {
+  assert.throws(() => dockerExecutor('python:3.13'), /sha256/)
+  assert.throws(() => buildPythonSandboxArguments(image, '/s', '/i', '/o', 'run.py', [], argumentOptions({ user: '0:0' })), /uid:gid/)
+  const args = buildPythonSandboxArguments(image, '/runtime/skill', '/runtime/input', '/runtime/output', 'scripts/check.py', ['value'], argumentOptions())
+  const imageIndex = args.indexOf(image)
+  assert.deepEqual(args.slice(imageIndex), [image, 'python', '-I', '-B', 'scripts/check.py', 'value'])
+  const options = args.slice(0, imageIndex)
+  for (const flag of ['--env', '--privileged', '--network=host']) assert.equal(options.includes(flag), false)
+  // No environment reaches the sandbox (the per-call path variables went with python_execute, plan 4.9).
+  assert.equal(options.includes('-e'), false)
+  assert.deepEqual(options.slice(0, 8), ['run', '--rm', '--name', `dsh-py-${'ab'.repeat(8)}`, '--label', 'dsh-work.python-sandbox=1', '--init', '--pull'])
+  assert.equal(options[options.indexOf('--pull') + 1], 'never')
+  assert.ok(options.includes('--network') && options[options.indexOf('--network') + 1] === 'none')
+  assert.ok(options.includes('--read-only'))
+  assert.ok(options.includes('--cap-drop') && options[options.indexOf('--cap-drop') + 1] === 'ALL')
+  assert.ok(options.includes('no-new-privileges'))
+  assert.ok(options.includes('seccomp=builtin'))
+  assert.equal(options.includes('apparmor=docker-default'), false)
+  assert.equal(options.includes('--memory-swap'), false)
+  assert.equal(options[options.indexOf('--user') + 1], '65534:65534')
+  assert.equal(options[options.indexOf('--shm-size') + 1], PYTHON_SANDBOX_LIMITS.shmSize)
+  assert.equal(options[options.indexOf('--memory') + 1], '256m')
+  assert.equal(options[options.indexOf('--cpus') + 1], '0.5')
+  assert.equal(options[options.indexOf('--pids-limit') + 1], '64')
+  assert.equal(options[options.indexOf('--stop-timeout') + 1], '2')
+  assert.equal(options[options.indexOf('--tmpfs') + 1], '/tmp:rw,noexec,nosuid,nodev,size=32m,mode=1777')
+  assert.ok(options.includes('type=bind,src=/runtime/skill,dst=/skill,readonly'))
+  assert.ok(options.includes('type=bind,src=/runtime/input,dst=/input,readonly'))
+  assert.ok(options.includes('type=bind,src=/runtime/output,dst=/output'))
+  assert.ok(options.indexOf('--ulimit') < imageIndex)
+})
+
+test('sandbox pins optional swap and apparmor only when the daemon supports them', () => {
+  const args = buildPythonSandboxArguments(image, '/s', '/i', '/o', 'run.py', [], argumentOptions({ memorySwap: true, apparmor: true }))
+  const imageIndex = args.indexOf(image)
+  const options = args.slice(0, imageIndex)
+  assert.equal(options[options.indexOf('--memory') + 1], '256m')
+  assert.equal(options[options.indexOf('--memory-swap') + 1], '256m')
+  assert.ok(options.includes('apparmor=docker-default'))
+  assert.ok(options.includes('seccomp=builtin'))
+})
+
+test('sandbox caps each file one byte above the collected maximum', () => {
+  const args = buildPythonSandboxArguments(image, '/s', '/i', '/o', 'run.py', [], argumentOptions())
+  const index = args.indexOf('--ulimit')
+  const limit = PYTHON_SANDBOX_LIMITS.maxArtifactBytes + 1
+  assert.equal(args[index + 1], `fsize=${limit}:${limit}`)
+  assert.ok(index < args.indexOf(image))
+  assert.match(createPythonContainerName(), /^dsh-py-[0-9a-f]{16}$/)
+  assert.throws(() => buildPythonSandboxArguments(image, '/tmp/a,b', '/i', '/o', 'run.py', [], argumentOptions()), /挂载路径/)
+})
+
+test('captured output keeps UTF-8 split across chunks and truncates by bytes without a broken character', () => {
+  const bytes = Buffer.from('生产计划')
+  const split = boundedUtf8Collector()
+  split.write(bytes.subarray(0, 4))
+  split.write(bytes.subarray(4))
+  assert.equal(split.text(), '生产计划')
+  const limited = boundedUtf8Collector(7)
+  limited.write(bytes)
+  limited.write(Buffer.from('ignored after the limit'))
+  assert.equal(limited.text(), '生产', '7 bytes hold two 3-byte characters; the cut third is dropped')
+})
+
+test('abort stops the mock container before the call settles and a failed removal is reported', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'dsh-py-mock-'))
+  const script = join(root, 'docker.mjs')
+  await writeFile(script, mockDocker, { mode: 0o755 })
+  await chmod(script, 0o755)
+  await writeFile(join(root, 'info.out'), 'true\n["name=apparmor"]\n')
+  const previous = process.env.DSH_PY_SANDBOX_SENTINEL
+  process.env.DSH_PY_SANDBOX_SENTINEL = 'sentinel'
+  const user = `${process.getuid?.()}:${process.getgid?.()}`
+  const executor = dockerExecutor(image, script)
+  try {
+    await executor.preflight()
+    const planted = `dsh-py-${'cd'.repeat(8)}`
+    await mkdir(join(root, 'state'), { recursive: true })
+    await writeFile(join(root, 'state', planted), 'up')
+    await executor.preflight()
+    const swept = await readCalls(root)
+    assert.ok(swept.some(call => call.args[0] === 'rm' && call.args.includes(planted)))
+    assert.deepEqual(await readdir(join(root, 'state')).catch(() => []), [])
+
+    const workspace = join(root, 'ws')
+    await mkdir(workspace, { recursive: true })
+    const ok = await sandbox(executor, workspace, 'ok.py', new AbortController().signal)
+    assert.equal(ok.exitCode, 0)
+    const runCall = (await readCalls(root)).find(call => call.args[0] === 'run' && call.args.at(-1) === 'ok.py')
+    assert.ok(runCall)
+    assert.equal(runCall.sentinel, false)
+    assert.equal(runCall.hasPath, true)
+    assert.ok(runCall.args.includes('seccomp=builtin'))
+    assert.ok(runCall.args.includes('apparmor=docker-default'))
+    assert.ok(runCall.args.includes('--memory-swap'))
+    assert.ok(runCall.args.includes('--init'))
+    assert.equal(runCall.args.includes('-e'), false, 'no environment variables')
+    assert.equal(runCall.args[runCall.args.indexOf('--user') + 1], user)
+
+    const controller = new AbortController()
+    const pending = sandbox(executor, workspace, 'abort.py', controller.signal)
+    const leak = join(workspace, 'output', 'leak.bin')
+    await waitForFile(leak)
+    const beforeAbort = Date.now()
+    controller.abort()
+    await assert.rejects(pending, (error: unknown) => error instanceof Error && error.name === 'AbortError')
+    const settledAt = Date.now()
+    const abortLog = await readCalls(root)
+    const stop = abortLog.find(call => call.args[0] === 'stop' && call.t >= beforeAbort)
+    const removed = abortLog.find(call => call.args[0] === 'rm' && call.t >= beforeAbort)
+    assert.ok(stop && stop.args[1] === '-t' && stop.args[2] === '2')
+    assert.ok(removed && removed.args.includes('-f'))
+    assert.ok(settledAt >= (removed?.t ?? 0))
+    await new Promise(resolve => setTimeout(resolve, 200))
+    const stamps = (await readFile(leak, 'utf8')).trim().split('\n').map(Number)
+    assert.ok(stamps.every(stamp => stamp <= settledAt))
+
+    const failing = new AbortController()
+    const cleanup = sandbox(executor, workspace, 'failclean.py', failing.signal)
+    await waitFor(() => existsCall(root, 'failclean.py'))
+    failing.abort()
+    await assert.rejects(cleanup, /清理失败/)
+
+    const quotaController = new AbortController()
+    const quotaPending = sandbox(executor, workspace, 'quota.py', quotaController.signal,
+      async () => (await readdir(join(workspace, 'output'))).length > PYTHON_SANDBOX_LIMITS.maxArtifactFiles)
+    try {
+      const quota = await Promise.race([
+        quotaPending,
+        new Promise<never>((_resolve, reject) => setTimeout(() => reject(new Error('quota stop timed out')), 5_000)),
+      ])
+      assert.equal(quota.stoppedEarly, true, 'shouldStop ends the run')
+    } finally {
+      quotaController.abort()
+      await quotaPending.catch(() => undefined)
+    }
+  } finally {
+    if (previous === undefined) delete process.env.DSH_PY_SANDBOX_SENTINEL
+    else process.env.DSH_PY_SANDBOX_SENTINEL = previous
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+const dockerIntegration = dockerIntegrationTarget()
+
+test('docker abort removes the sandbox container and stops host writes', { skip: dockerIntegration.skip, timeout: 60_000 }, async () => {
+  const imageRef = dockerIntegration.image
+  assert.ok(imageRef)
+  const root = await mkdtemp(join(tmpdir(), 'dsh-py-docker-'))
+  const before = new Set(sandboxContainers())
+  const controller = new AbortController()
+  try {
+    const workspace = join(root, 'ws')
+    await mkdir(join(workspace, 'skill', 'scripts'), { recursive: true })
+    await writeFile(join(workspace, 'skill', 'scripts', 'ignore_term.py'), [
+      'import os, signal, tempfile, time, pathlib',
+      'signal.signal(signal.SIGTERM, signal.SIG_IGN)',
+      'tempfile.mkstemp(prefix="sandbox-")',
+      'pathlib.Path("/output/uid.txt").write_text(str(os.getuid()))',
+      'leak = pathlib.Path("/output/leak.bin")',
+      'while True:',
+      '    leak.write_bytes((leak.read_bytes() if leak.exists() else b"") + b"x")',
+      '    time.sleep(0.05)',
+      '',
+    ].join('\n'), { mode: 0o644 })
+    const executor = dockerExecutor(imageRef)
+    await executor.preflight()
+    const pending = sandbox(executor, workspace, 'scripts/ignore_term.py', controller.signal)
+    const uidFile = join(workspace, 'output', 'uid.txt')
+    const leak = join(workspace, 'output', 'leak.bin')
+    // Python creates the file before writing it; wait for the content, not just the file.
+    await waitFor(async () => (await readFile(uidFile, 'utf8').catch(() => '')).trim().length > 0)
+    const uidText = (await readFile(uidFile, 'utf8')).trim()
+    assert.notEqual(uidText, '0')
+    assert.equal(uidText, String(process.getuid?.()))
+    assert.equal((await lstat(uidFile)).uid, process.getuid?.())
+    controller.abort()
+    await assert.rejects(pending, (error: unknown) => error instanceof Error && error.name === 'AbortError')
+    const settled = (await lstat(leak)).size
+    await new Promise(resolve => setTimeout(resolve, 400))
+    assert.equal((await lstat(leak)).size, settled)
+    const leaked = sandboxContainers().filter(name => !before.has(name))
+    assert.deepEqual(leaked, [])
+  } finally {
+    controller.abort()
+    const leaked = sandboxContainers().filter(name => !before.has(name))
+    if (leaked.length) spawnSync('docker', ['rm', '-f', ...leaked], { timeout: 15_000 })
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+const mockDocker = `#!/usr/bin/env node
+import { appendFileSync, mkdirSync, writeFileSync, readFileSync, readdirSync, rmSync, existsSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+const root = dirname(fileURLToPath(import.meta.url))
+const args = process.argv.slice(2)
+const log = join(root, 'calls.ndjson')
+appendFileSync(log, JSON.stringify({
+  t: Date.now(),
+  args,
+  sentinel: Object.prototype.hasOwnProperty.call(process.env, 'DSH_PY_SANDBOX_SENTINEL'),
+  hasPath: Boolean(process.env.PATH),
+}) + '\\n')
+const state = join(root, 'state')
+if (args[0] === 'info') {
+  process.stdout.write(existsSync(join(root, 'info.out')) ? readFileSync(join(root, 'info.out')) : 'false\\n[]\\n')
+  process.exit(0)
+}
+if (args[0] === 'image') process.exit(0)
+if (args[0] === 'ps') {
+  const names = existsSync(state) ? readdirSync(state) : []
+  process.stdout.write(names.filter(name => /^dsh-py-[0-9a-f]{16}$/.test(name)).join('\\n'))
+  process.exit(0)
+}
+if (args[0] === 'stop') process.exit(0)
+if (args[0] === 'rm') {
+  const mode = existsSync(join(root, 'mode')) ? readFileSync(join(root, 'mode'), 'utf8').trim() : ''
+  if (mode === 'failclean.py') {
+    process.stderr.write('Error: removal failed\\n')
+    process.exit(1)
+  }
+  for (const name of args) if (name.startsWith('dsh-py-')) rmSync(join(state, name), { force: true })
+  process.exit(0)
+}
+if (args[0] === 'run') {
+  const name = args[args.indexOf('--name') + 1]
+  mkdirSync(state, { recursive: true })
+  writeFileSync(join(state, name), 'up')
+  const entry = args.at(-1) ?? ''
+  writeFileSync(join(root, 'mode'), entry)
+  const output = mountSrc(args, '/output')
+  if (entry === 'ok.py') process.exit(0)
+  if (entry === 'quota.py' && output) {
+    for (let index = 0; index < 21; index += 1) writeFileSync(join(output, 'f' + String(index).padStart(2, '0') + '.txt'), 'x')
+  }
+  if (entry === 'abort.py' && output) {
+    const leak = join(output, 'leak.bin')
+    setInterval(() => appendFileSync(leak, String(Date.now()) + '\\n'), 30)
+  }
+  process.on('SIGTERM', () => {})
+  setInterval(() => {}, 1_000)
+}
+function mountSrc(argv, dst) {
+  for (let index = 0; index < argv.length; index += 1) {
+    if (argv[index] !== '--mount') continue
+    const value = argv[index + 1] ?? ''
+    if (!value.includes('dst=' + dst)) continue
+    return value.match(/src=([^,]+)/)?.[1]
+  }
+}
+`
+
+interface MockCall { t: number; args: string[]; sentinel: boolean; hasPath: boolean }
+
+async function readCalls(root: string): Promise<MockCall[]> {
+  const text = await readFile(join(root, 'calls.ndjson'), 'utf8').catch(() => '')
+  return text.split('\n').filter(Boolean).map(line => JSON.parse(line) as MockCall)
+}
+
+async function existsCall(root: string, entry: string): Promise<boolean> {
+  const calls = await readCalls(root)
+  return calls.some(call => call.args[0] === 'run' && call.args.at(-1) === entry)
+}
+
+/** One sandbox run as the service account, with `skill/`, `input/` and `output/` under the workspace. */
+async function sandbox(executor: ContainerExecutor, workspace: string, entry: string, signal: AbortSignal, shouldStop?: () => Promise<boolean>) {
+  const [skillRoot, inputRoot, outputRoot] = ['skill', 'input', 'output'].map(name => join(workspace, name))
+  await Promise.all([skillRoot, inputRoot, outputRoot].map(path => mkdir(path!, { recursive: true })))
+  return executor.runPythonSandbox({
+    user: `${process.getuid?.()}:${process.getgid?.()}`,
+    skillRoot: skillRoot!, inputRoot: inputRoot!, outputRoot: outputRoot!, entry, args: [], shouldStop,
+  }, signal)
+}
+
+async function waitForFile(path: string) {
+  const deadline = Date.now() + 5_000
+  while (Date.now() < deadline) {
+    try {
+      if ((await lstat(path)).isFile()) return
+    } catch { /* not created yet */ }
+    await new Promise(resolve => setTimeout(resolve, 20))
+  }
+  throw new Error(`timed out waiting for ${path}`)
+}
+
+async function waitFor(predicate: () => Promise<boolean>) {
+  const deadline = Date.now() + 5_000
+  while (Date.now() < deadline) {
+    if (await predicate()) return
+    await new Promise(resolve => setTimeout(resolve, 20))
+  }
+  throw new Error('condition was not reached')
+}
+
+function sandboxContainers(): string[] {
+  const listed = spawnSync('docker', ['ps', '-aq', '--filter', 'name=dsh-py-', '--format', '{{.Names}}'], {
+    encoding: 'utf8',
+    timeout: 15_000,
+  })
+  if (listed.status !== 0) return []
+  return listed.stdout.split('\n').map(name => name.trim()).filter(name => /^dsh-py-[0-9a-f]{16}$/.test(name))
+}
+
+function dockerIntegrationTarget(): { skip: string | false; image?: string } {
+  const info = spawnSync('docker', ['info', '--format', '{{.ServerVersion}}'], { encoding: 'utf8', timeout: 5_000 })
+  if (info.error || info.status !== 0) return { skip: 'Docker is not available' }
+  // The execution image also serves artifact text extraction through this sandbox.
+  const configured = process.env.DSH_WORK_EXECUTION_E2E_IMAGE?.trim()
+  if (configured && /^[A-Za-z0-9./:_-]+@sha256:[a-f0-9]{64}$/.test(configured)) {
+    const inspect = spawnSync('docker', ['image', 'inspect', configured], { encoding: 'utf8', timeout: 15_000 })
+    if (inspect.status === 0) return { skip: false, image: configured }
+    return { skip: 'DSH_WORK_EXECUTION_E2E_IMAGE is not present locally' }
+  }
+  const digests = spawnSync('docker', ['image', 'inspect', 'python:3.12-slim', '--format', '{{json .RepoDigests}}'], {
+    encoding: 'utf8',
+    timeout: 15_000,
+  })
+  if (digests.status !== 0) return { skip: 'python:3.12-slim is not present locally' }
+  try {
+    const parsed = JSON.parse(digests.stdout) as unknown
+    const digest = Array.isArray(parsed) ? parsed.find(value => typeof value === 'string' && /@sha256:[a-f0-9]{64}$/.test(value)) : undefined
+    if (typeof digest === 'string') return { skip: false, image: digest }
+  } catch { /* fall through */ }
+  return { skip: 'python:3.12-slim has no repo digest to pin' }
+}

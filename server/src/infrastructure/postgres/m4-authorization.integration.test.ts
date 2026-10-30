@@ -231,9 +231,11 @@ test('authorization is fail-closed and compiles the effective identity into Runt
   })
   assert.ok(!manifest?.data_scopes.includes('domain:supply-chain'))
   assert.deepEqual(manifest?.skills, [{ id: 'skill-document', version: '1.0.0' }])
+  // 内置工具由平台统一装配：默认工具、执行容器 bash、激活 Skill；联网搜索默认关闭。
   assert.deepEqual(manifest?.tools, [
     ...agentBuiltinToolNames({ webSearchEnabled: false })
       .map(id => ({ id, version: BUILTIN_TOOL_VERSION })),
+    { id: 'bash', version: BUILTIN_TOOL_VERSION },
     { id: 'activate_skill', version: BUILTIN_TOOL_VERSION },
   ])
   // 未指定 Skill 的会话不得凭空出现 selected_skill（字段缺失而非 null）。

@@ -11,6 +11,12 @@ import {
   type AcpSessionUpdate,
 } from './acp-json-rpc-client.ts'
 import { createPlatformToolBridge, type PlatformToolOperationLifecycle } from './platform-tool-bridge.ts'
+import { createRemoteSubprocessGateway, type ContainerCommandAudit } from './remote-subprocess-gateway.ts'
+import { assertRealWorkspaceDirectory } from '../../infrastructure/storage/workspace-directory.ts'
+import type { ContainerCommand, ContainerCommandResult } from './execution-backend.ts'
+import { describeExecutionToolchain, type ExecutionTool } from './execution-toolchain.ts'
+import { formatBytes, WORKSPACE_LIMITS } from './workspace-usage.ts'
+import { retireAttemptWorkspace, sweepAttemptWorkspaces } from './attempt-workspace-retention.ts'
 import { formatExecutionTime } from '../../domain/execution-time.ts'
 import {
   MAX_TOOL_CALL_EVENTS,
@@ -53,9 +59,16 @@ import { isAdminRunPurpose } from './runtime-types.ts'
 import { RequestError, dependencyTimeout, dependencyUnavailable, invalidRequest, stateConflict } from '../../domain/request-errors.ts'
 import { isAuthorizationChangeResponseCode, isAuthorizationDenial } from '../../domain/authorization-errors.ts'
 import { isDshBuiltinTool } from './builtin-tools.ts'
+import { isBuiltinSkillReference } from '../../domain/builtin-skill-ref.ts'
 
 const execFileAsync = promisify(execFile)
 const DEFAULT_SETUP_TIMEOUT_MS = 120_000
+/** Within the policy's 6 s authorization probe; cleanup normally takes 0.1–0.4 s (plan 3.7). */
+const EXECUTION_CONTAINER_IDLE_WAIT_MS = 3_000
+/** End-of-Attempt or checkpoint reads have no probe deadline; a killed command plus a sweep fit well within this. */
+const EXECUTION_CONTAINER_SETTLE_WAIT_MS = 30_000
+/** Tools that can write output/: the system prompt explains artifacts and the Attempt collects them when any is assembled. */
+const ARTIFACT_WRITING_TOOLS = new Set(['write', 'bash', 'python_execute'])
 
 /** 26-10-24 二期：思考过程转发上限（字符），防止失控流占用事件通道 */
 const MAX_REASONING_CHARS = 65536
@@ -135,6 +148,11 @@ export interface DshAcpRuntimeAdapterConfiguration {
    * 只拒绝本次调用并告知模型原因，不终止 Attempt。未配置时视为没有停用。
    */
   disabledBuiltinTools?: () => Promise<readonly string[]>
+  /**
+   * Runtime 配置当前紧急停用的平台内置 Skill（ID）。激活时读取：被停用的内置 Skill
+   * 只拒绝本次激活并告知模型原因，不终止 Attempt。未配置时视为没有停用。
+   */
+  disabledBuiltinSkills?: () => Promise<readonly string[]>
   permissionDecision?: (
     request: AcpPermissionRequest,
     manifest: RuntimeManifest,
@@ -165,10 +183,40 @@ export interface DshAcpRuntimeAdapterConfiguration {
     signal: AbortSignal,
   ) => Promise<unknown>
   recordPythonExecution?: (manifest: RuntimeManifest, skillId: string, entry: string, succeeded: boolean) => Promise<void>
+  /**
+   * 执行容器（执行隔离方案 1b）：DSH 的子进程经工具桥落到本 Attempt 的执行容器。生产启动总是配置
+   * （方案 4.9，不可用时不构建本 Adapter）；可选只为不起命令的 Worker 替身测试，带 bash 的 Manifest 在未配置时被拒绝。
+   */
+  remoteExecution?: {
+    exec(attemptId: string, workspace: string, command: ContainerCommand, signal: AbortSignal): Promise<ContainerCommandResult>
+    /** 静止保证（方案 3.7）：命令及其后的静止确认都结束前为 busy；静止无法恢复时为 failed。 */
+    waitUntilIdle(attemptId: string, timeoutMs: number): Promise<'idle' | 'busy' | 'failed'>
+    release(attemptId: string): Promise<void>
+    /** 不能再执行命令的原因：静止无法恢复，或工作区远超上限（方案 4.7）。 */
+    failureReason?(attemptId: string): 'quiescence' | 'workspace_limit' | undefined
+    /** 启动检查在执行镜像中找到的程序（2b-1），写入 Runtime 说明。 */
+    readonly toolchain?: readonly ExecutionTool[]
+  }
+  /** 执行容器内每条命令的审计摘要；不含输出正文。 */
+  recordContainerCommand?: (manifest: RuntimeManifest, audit: ContainerCommandAudit) => Promise<void>
+  /**
+   * Registers the files under output/ as artifacts. Non-compliant files are skipped with a
+   * fixed reason code instead of failing the Attempt (execution isolation 2b-2); structural
+   * problems (output/ replaced, workspace or authorization) still throw.
+   */
+  /**
+   * 执行隔离 2b-4：读取本 Run 绑定的输入原始文件（Manifest 的 original_mounts）。在初始授权复核之后、
+   * Worker 启动之前调用；返回的字节按 Manifest 校验摘要与大小。未配置时带原始文件的 Attempt 失败。
+   */
+  loadRuntimeOriginal?: (manifest: RuntimeManifest, fileId: string) => Promise<Buffer>
   collectArtifacts?: (
     manifest: RuntimeManifest,
     workspaceDirectory: string,
-  ) => Promise<Array<{ name: string; size: number }>>
+  ) => Promise<{
+    published: Array<{ name: string; size: number }>
+    skipped: Array<{ name: string; reason: string }>
+    skippedTotal: number
+  }>
   /** PF-01 durable receipts for write-effect platform tools. */
   operationLifecycle?: (manifest: RuntimeManifest) => PlatformToolOperationLifecycle
   /** Resolve current connector grants and credentials immediately before Worker spawn. */
@@ -212,6 +260,11 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
 
   async assertAvailable(manifest?: RuntimeManifest): Promise<void> {
     await this.assertModelRequirements(manifest?.model_requirements ?? [])
+    // bash only runs inside the Attempt execution container. Without it (no overlay) DSH would
+    // run the command on the host, so a Manifest carrying bash is refused, never downgraded.
+    if (!this.configuration.remoteExecution && manifest?.tools?.some(tool => tool.id === 'bash')) {
+      throw new ExecutionCapabilityUnavailableError('execution-container')
+    }
   }
 
   async execute(manifest: RuntimeManifest): Promise<RuntimeExecutionHandle> {
@@ -512,11 +565,31 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
     await Promise.allSettled([...this.runTasks])
   }
 
+  /** 执行隔离 2b-4：原始文件在授权复核后读取，校验后只读写入 input/original/。 */
+  private async mountOriginalFiles(record: ExecutionRecord, workspaceDirectory: string): Promise<void> {
+    const mounts = record.manifest.input.original_mounts ?? []
+    if (!mounts.length) return
+    if (!this.configuration.loadRuntimeOriginal) throw dependencyUnavailable('输入原始文件读取服务不可用')
+    const originals = join(workspaceDirectory, 'input', 'original')
+    for (const mount of mounts) {
+      const target = resolve(workspaceDirectory, mount.mount_path.slice('/workspace/'.length))
+      if (!target.startsWith(`${originals}/`)) throw new Error(`Unsafe original mount path: ${mount.mount_path}`)
+      const bytes = await this.configuration.loadRuntimeOriginal(record.manifest, mount.file_id)
+      if (bytes.length !== mount.size_bytes || createHash('sha256').update(bytes).digest('hex') !== mount.sha256) {
+        throw new Error(`输入原始文件校验失败：${mount.source_name}`)
+      }
+      await mkdir(dirname(target), { recursive: true })
+      await writeFile(target, bytes, { flag: 'wx', mode: 0o400 })
+      await chmod(target, 0o400)
+    }
+  }
+
   private async run(record: ExecutionRecord, workspaceDirectory: string): Promise<void> {
     const runStartMono = performance.now()
     try {
       await this.verifyExecutionAuthorization(record)
       if (record.terminal) return
+      await this.mountOriginalFiles(record, workspaceDirectory)
       this.setStatus(record, 'starting')
       this.armDeadline(record, 'setup', this.configuration.setupTimeoutMs ?? DEFAULT_SETUP_TIMEOUT_MS)
       assertPlatformToolPurpose(record.manifest)
@@ -553,6 +626,11 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
           const exactName = skill.name ?? skill.id
           if (skill.disable_model_invocation && !record.manifest.input.message.includes(exactName)) {
             throw new PlatformToolError({ status: 403, code: 'TOOL_PERMISSION_DENIED', message: `Skill ${exactName} 只允许用户显式激活` })
+          }
+          if (isBuiltinSkillReference(skill.id) && this.configuration.disabledBuiltinSkills) {
+            let disabled: readonly string[]
+            try { disabled = await this.configuration.disabledBuiltinSkills() } catch { throw toolUnavailable('内置 Skill 停用状态暂不可读，本次未激活') }
+            if (disabled.includes(skill.id)) throw toolUnavailable(`平台内置 Skill ${exactName} 已被管理员临时停用，请不依赖它继续完成任务`)
           }
           const materialized = record.materializedSkills.get(skill.id)
           if (!materialized) throw toolUnavailable(`Skill 文件夹未装载：${exactName}`)
@@ -607,14 +685,31 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
         if (!handle) throw dependencyUnavailable('项目任务工具不可用：未配置项目任务服务')
         registerPlatformTool(name, async (input, signal) => handle(name, input, record.manifest, signal))
       }
-      if (Object.keys(platformTools).length || this.configuration.authorizeExecution) {
+      const remoteExecution = this.configuration.remoteExecution
+      // Container mode: every tool's authorization probe first waits until the Attempt
+      // container is quiescent, so the host never touches the workspace while container code runs.
+      const authorizeTool = remoteExecution
+        ? async () => {
+          await this.awaitExecutionContainerIdle(record, remoteExecution)
+          await this.verifyExecutionAuthorization(record)
+        }
+        : this.configuration.authorizeExecution ? () => this.verifyExecutionAuthorization(record) : undefined
+      if (Object.keys(platformTools).length || this.configuration.authorizeExecution || remoteExecution) {
         record.bridge = await createPlatformToolBridge(platformTools as Record<string, PlatformToolRegistration>, record.manifest.limits.max_tool_calls,
-          this.configuration.authorizeExecution ? () => this.verifyExecutionAuthorization(record) : undefined,
+          authorizeTool,
           this.configuration.operationLifecycle?.(record.manifest),
           this.configuration.disabledBuiltinTools ? async (toolName) => {
             const disabled = await this.configuration.disabledBuiltinTools!()
             return isDshBuiltinTool(toolName) && disabled.includes(toolName)
-          } : undefined)
+          } : undefined,
+          remoteExecution ? createRemoteSubprocessGateway({
+            workspace: workspaceDirectory,
+            run: (command, signal) => remoteExecution.exec(record.manifest.attempt_id, workspaceDirectory, command, signal),
+            onCommand: audit => {
+              void Promise.resolve(this.configuration.recordContainerCommand?.(record.manifest, audit))
+                .catch(error => { console.warn('container command audit failed', safeErrorMessage(error)) })
+            },
+          }) : undefined)
       }
       if (record.cancelCause !== undefined) {
         this.finishFromCancellationCause(record)
@@ -641,11 +736,14 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
           env: {
             ...processConfiguration.env,
             ...(record.bridge ? { DSH_PLATFORM_TOOL_SOCKET: record.bridge.socket } : {}),
-            DSH_REQUIRE_CURRENT_AUTHORIZATION: String(Boolean(this.configuration.authorizeExecution)),
+            DSH_REQUIRE_CURRENT_AUTHORIZATION: String(Boolean(this.configuration.authorizeExecution || this.configuration.remoteExecution)),
             DSH_PERMISSION_MODE: 'workspace-write',
             DSH_SNAPSHOT: 'record',
             DSH_SNAPSHOT_SESSIONS_ROOT: join(record.snapshot.attemptDirectory, 'sessions'),
-            DSH_AGENT_SYSTEM_PROMPT: renderSystemPrompt(record.manifest),
+            DSH_AGENT_SYSTEM_PROMPT: renderSystemPrompt(record.manifest, {
+              executionToolchain: remoteExecution?.toolchain,
+              ...(remoteExecution ? { executionWorkspace: workspaceDirectory } : {}),
+            }),
             DSH_ALLOWED_TOOLS_JSON: JSON.stringify(record.manifest.tools.map(tool => tool.id)),
             DSH_MAX_TOOL_CALLS: String(record.manifest.limits.max_tool_calls),
             DSH_WORKSPACE_ROOT: workspaceDirectory,
@@ -716,11 +814,21 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
 
       // EX-00：Worker 在 prompt 结束时仍存活，此时采样其驻留内存与累计 CPU 时间。
       const workerResources = await sampleWorkerResources(record.client?.pid)
+      // 静止保证（方案 3.7）：读取 output/ 前先停止接收命令、等待清理结束并删除执行容器。
+      if (!(await this.settleExecutionContainer(record))) return
       let artifacts: Array<{ name: string; size: number }> = []
+      let skippedArtifacts: Array<{ name: string; reason: string }> = []
+      let skippedArtifactTotal = 0
       const collectStartMono = performance.now()
-      if (!isAdminRunPurpose(record.manifest.purpose) && record.manifest.tools.some(tool => tool.id === 'write')) {
+      // bash 也能在 output/ 写出成果（执行隔离 2b）：write 被紧急停用时同样要收集。
+      if (!isAdminRunPurpose(record.manifest.purpose)
+        // python_execute 在执行容器内把结果写入 output/（方案 4.8），同样收集。
+        && record.manifest.tools.some(tool => ARTIFACT_WRITING_TOOLS.has(tool.id))) {
         if (!this.configuration.collectArtifacts) throw dependencyUnavailable('成果收集服务不可用')
-        artifacts = await this.configuration.collectArtifacts(record.manifest, workspaceDirectory)
+        const collection = await this.configuration.collectArtifacts(record.manifest, workspaceDirectory)
+        artifacts = collection.published
+        skippedArtifacts = collection.skipped
+        skippedArtifactTotal = collection.skippedTotal
       }
       const artifactCollectMs = Math.round(performance.now() - collectStartMono)
       if (record.terminal) return
@@ -751,6 +859,7 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
         tool_failed_count: toolCalls.failed,
         ...(toolCalls.omitted > 0 ? { tool_calls_omitted: toolCalls.omitted } : {}),
         artifact_count: artifacts.length,
+        ...(skippedArtifactTotal > 0 ? { artifacts_skipped: skippedArtifacts, artifacts_skipped_total: skippedArtifactTotal } : {}),
         artifact_collect_ms: artifactCollectMs,
         worker_rss_kb: workerResources?.rssKb ?? null,
         worker_cpu_ms: workerResources?.cpuMs ?? null,
@@ -775,6 +884,14 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
       if (record.timeout !== undefined) clearTimeout(record.timeout)
       await record.client?.close().catch(() => undefined)
       await record.bridge?.close()
+      // The bridge is closed, so no further command can reach this Attempt's container.
+      await this.configuration.remoteExecution?.release(record.manifest.attempt_id).catch(error => {
+        console.warn('execution container release failed', safeErrorMessage(error))
+      })
+      // 方案 4.7：成果已入存储、检查点已读出，工作区随 Attempt 结束删除（失败的保留 3 天供排查）。
+      await retireAttemptWorkspace(record.snapshot.attemptDirectory, record.snapshot.status).catch(error => {
+        console.warn('attempt workspace cleanup failed', safeErrorMessage(error))
+      })
       if (record.manifest.mcp_connections?.length) {
         try {
           await this.finalizeMcpAudit(record)
@@ -912,6 +1029,77 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
     if (record.terminal) throw new Error('Attempt 已结束')
   }
 
+  /**
+   * 静止保证（方案 3.7）：Attempt 结束、宿主读取 output/ 之前调用。先让工具桥不再接收命令，
+   * 再等待清理结束并删除执行容器；任何一步失败都令 Attempt 失败，返回 false，调用方不再读取工作区。
+   */
+  private async settleExecutionContainer(record: ExecutionRecord): Promise<boolean> {
+    const remoteExecution = this.configuration.remoteExecution
+    if (!remoteExecution) return true
+    record.bridge?.abort()
+    const state = await remoteExecution.waitUntilIdle(record.manifest.attempt_id, EXECUTION_CONTAINER_SETTLE_WAIT_MS)
+    let released = state === 'idle'
+    if (released) {
+      released = await remoteExecution.release(record.manifest.attempt_id).then(() => true, () => false)
+    }
+    if (released) return true
+    if (!record.terminal) this.finishFailed(record, ...this.containerFailure(record, '执行容器未能静止或回收，未收集成果'))
+    return false
+  }
+
+  /**
+   * 方案 4.7：按回收规则清扫 Attempt 工作区（含上线前累积的历史目录）；本进程仍在执行的 Attempt 跳过。
+   * 服务启动后与定期调用，只删除 `workspace/`。
+   */
+  async sweepAttemptWorkspaces() {
+    // 每个目录检查时再看一次，清扫期间新开始的 Attempt 同样跳过。
+    const isActive = (directory: string) => [...this.executions.values()]
+      .some(record => !record.terminal && record.snapshot.attemptDirectory === directory)
+    return sweepAttemptWorkspaces(this.configuration.runtimeRoot, { isActive })
+  }
+
+  /** 执行容器不能再用时的失败码与说明：工作区远超上限（方案 4.7）单独报告，其余为静止无法恢复。 */
+  private containerFailure(record: ExecutionRecord, message: string): [string, string] {
+    return this.configuration.remoteExecution?.failureReason?.(record.manifest.attempt_id) === 'workspace_limit'
+      ? ['EXECUTION_WORKSPACE_LIMIT', `工作区超出 ${formatBytes(WORKSPACE_LIMITS.failBytes)}，任务已停止`]
+      : ['EXECUTION_CONTAINER_UNRECOVERABLE', message]
+  }
+
+  /** 读取工作区前确认执行容器空闲；不空闲则拒绝（静止无法恢复时 Attempt 失败）。 */
+  private async assertExecutionContainerIdle(record: ExecutionRecord): Promise<void> {
+    const remoteExecution = this.configuration.remoteExecution
+    if (!remoteExecution) return
+    const state = await remoteExecution.waitUntilIdle(record.manifest.attempt_id, EXECUTION_CONTAINER_SETTLE_WAIT_MS)
+    if (state === 'idle') return
+    if (state === 'failed' && !record.terminal) {
+      record.bridge?.abort()
+      this.finishFailed(record, ...this.containerFailure(record, '执行容器无法恢复静止，任务已停止'))
+      void record.client?.close().catch(() => undefined)
+    }
+    throw stateConflict('执行容器尚未静止，不能读取工作区')
+  }
+
+  /**
+   * 静止保证（方案 3.7、4.1）：等待本 Attempt 执行容器内的命令及其后的静止确认结束。
+   * 超时只拒绝本次工具调用；静止无法恢复时 Attempt 立即失败，不再执行任何工具。
+   */
+  private async awaitExecutionContainerIdle(
+    record: ExecutionRecord,
+    remoteExecution: NonNullable<DshAcpRuntimeAdapterConfiguration['remoteExecution']>,
+  ): Promise<void> {
+    const state = await remoteExecution.waitUntilIdle(record.manifest.attempt_id, EXECUTION_CONTAINER_IDLE_WAIT_MS)
+    if (state === 'idle') return
+    if (state === 'failed') {
+      if (!record.terminal) {
+        record.bridge?.abort()
+        this.finishFailed(record, ...this.containerFailure(record, '执行容器无法恢复静止，任务已停止'))
+        void record.client?.close().catch(() => undefined)
+      }
+      throw Object.assign(new Error('执行容器无法恢复静止'), { code: 'permission_denied' })
+    }
+    throw Object.assign(new Error('执行容器仍在清理，本次工具调用未执行'), { code: 'execution_container_busy' })
+  }
+
   /** A non-overlapping lifecycle check; it never runs an Agent or retries a tool. */
   private scheduleAuthorizationCheck(record: ExecutionRecord): void {
     if (!this.configuration.authorizeExecution || record.terminal) return
@@ -1015,7 +1203,11 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
           parameterDigest,
           resourceRef,
           dataVersion,
-          checkpointState: await captureResumeCheckpointContext(record, actionArguments ?? {}, toolCallId),
+          checkpointState: await (async () => {
+            // 静止保证（方案 3.7）：检查点要读取 output/，执行容器必须已经静止。
+            await this.assertExecutionContainerIdle(record)
+            return captureResumeCheckpointContext(record, actionArguments ?? {}, toolCallId)
+          })(),
         }
     // F-01：发布试运行没有审批人，也不能产生外部效果。生产中需要人工审批的动作在试运行中
     // 直接拒绝（trial_only），不创建持久化审批等待；无需审批的动作与生产一致自动放行。
@@ -1218,6 +1410,11 @@ function isExecutionAuthorizationRevocation(error: unknown): boolean {
   return error.code === 'permission_denied' || isAuthorizationChangeResponseCode(error.code)
 }
 
+function dshSchedulingOf(contract: object): Pick<RuntimeToolDescriptor, 'dshScheduling'> {
+  const scheduling = (contract as Record<string, unknown>)['dshScheduling']
+  return scheduling === 'parallel' || scheduling === 'exclusive' ? { dshScheduling: scheduling } : {}
+}
+
 function isRuntimeToolContract(value: unknown): value is {
   outputSchema: Record<string, unknown>
   outputValidation: RuntimeToolDescriptor['outputValidation']
@@ -1292,7 +1489,15 @@ export function matchSkillInstruction(
     || `${skill.id}@${skill.version}` === requested)
 }
 
-export function renderSystemPrompt(manifest: RuntimeManifest) {
+/** Office, PDF and image inputs: revising them means writing a new binary file, which needs bash. */
+const BINARY_INPUT_PATTERN = /\.(xlsx|docx|pptx|pdf|png|jpe?g)$/i
+
+/**
+ * `executionToolchain`: what the execution container's startup check found; listed when bash is assembled.
+ * `executionWorkspace`: the workspace's absolute path in execution container mode, where python_execute
+ * runs inside the container (plan 4.8) and scripts need absolute file arguments.
+ */
+export function renderSystemPrompt(manifest: RuntimeManifest, options: { executionToolchain?: readonly ExecutionTool[]; executionWorkspace?: string } = {}) {
   const sections = [manifest.agent_configuration.system_prompt.trim()]
   sections.push([
     '# 本次执行的实际能力边界',
@@ -1300,6 +1505,10 @@ export function renderSystemPrompt(manifest: RuntimeManifest) {
     `平台工具：${manifest.tools.length ? manifest.tools.map(tool => tool.id).join('、') : '无'}`,
     `MCP Server：${manifest.mcp_connections?.length ? manifest.mcp_connections.map(connection => connection.server_name).join('、') : '无'}`,
     '回答能力范围问题时，只依据本清单；未列出的 Shell 命令、后台任务、网页获取、平台数据写入或 Agent 委派等能力不得声称可用。实际调用仍以执行时权限校验为准。',
+    // 员工面对的是业务用语；管理运行的读者是管理员，保留技术说法。
+    ...(!isAdminRunPurpose(manifest.purpose) || manifest.purpose === 'agent-release-trial' ? [
+      '向用户介绍能力或限制时，用日常工作中的说法讲能帮他做成什么事，例如“整理、总结文档”“处理 Excel 表格”“生成 Word、PDF 或 PPT 文件”“把文件转换成另一种格式”；不要列出工具名、Skill 标识与版本号，也不要使用 MCP、沙箱、工作区、output、命令、Python 包名等技术说法。限制同样用用户能理解的话说，例如“不能上网查资料”“不会改动你上传的原文件，修改后的内容作为新文件交给你”。用户明确问技术细节时再说明。',
+    ] : []),
   ].join('\n'))
   if (manifest.timezone) {
     sections.push([
@@ -1338,24 +1547,72 @@ export function renderSystemPrompt(manifest: RuntimeManifest) {
       ].join('\n')),
     ].join('\n'))
   }
-  if (manifest.input.file_mounts.length > 0) {
+  const inputFiles = new Map<string, {
+    sourceName: string
+    mediaType: string
+    textPath?: string
+    originalPath?: string
+    revision?: { artifact_id: string; version: number }
+  }>()
+  for (const file of manifest.input.file_mounts) {
+    inputFiles.set(file.file_id, { sourceName: file.source_name, mediaType: file.media_type, textPath: file.mount_path, revision: file.artifact_revision })
+  }
+  for (const file of manifest.input.original_mounts ?? []) {
+    const known = inputFiles.get(file.file_id)
+    inputFiles.set(file.file_id, {
+      sourceName: file.source_name, mediaType: file.media_type, ...known,
+      originalPath: file.mount_path, revision: known?.revision ?? file.artifact_revision,
+    })
+  }
+  if (inputFiles.size > 0) {
     sections.push([
       '# 当前 Run 输入文件',
-      '以下文件已经过权限校验，并以只读方式挂载到当前会话工作目录。需要读取附件时，必须直接使用给出的“读取路径”，不得猜测文件名或扫描未授权目录。',
-      ...manifest.input.file_mounts.map((file, index) => [
-        `${index + 1}. ${file.source_name}`,
-        `   - 读取路径：${file.mount_path.slice('/workspace/'.length)}`,
-        `   - 媒体类型：${file.media_type}`,
-        ...(file.artifact_revision ? [`   - 这是此前生成的成果第 ${file.artifact_revision.version} 版；用户要求修改它时，把修改后的完整内容写入 output/${file.source_name}，平台会登记为第 ${file.artifact_revision.version + 1} 版；只是参考时不要重写`] : []),
+      '以下文件已经过权限校验，并以只读方式挂载到当前会话工作目录。需要读取附件时，必须直接使用给出的路径，不得猜测文件名或扫描未授权目录。',
+      ...[...inputFiles.values()].map((file, index) => [
+        `${index + 1}. ${file.sourceName}`,
+        ...(file.textPath ? [`   - 读取路径（解析文本）：${file.textPath.slice('/workspace/'.length)}`] : []),
+        ...(file.originalPath ? [`   - 原始文件（只读，供 bash 中的程序处理，如 pandas、openpyxl、LibreOffice）：${file.originalPath.slice('/workspace/'.length)}`] : []),
+        `   - 媒体类型：${file.mediaType}`,
+        ...(file.revision ? [!BINARY_INPUT_PATTERN.test(file.sourceName)
+          ? `   - 这是此前生成的成果第 ${file.revision.version} 版；用户要求修改它时，把修改后的完整内容写入 output/${file.sourceName}（按成果文件一节选择工具），平台会登记为第 ${file.revision.version + 1} 版；只是参考时不要重写`
+          : file.originalPath
+            ? `   - 这是此前生成的成果第 ${file.revision.version} 版；用户要求修改它时，基于原始文件处理，把修改后的完整文件写入 output/${file.sourceName}，平台会登记为第 ${file.revision.version + 1} 版；只是参考时不要重写`
+            // 2b-3：二进制成果有解析文本但本次没有 bash 时只能参考，不能写出新版本。
+            : `   - 这是此前生成的成果第 ${file.revision.version} 版，本次只能参考其解析文本，无法直接修改该文件；用户要求修改时说明当前不能运行命令，可改为提供文字版修改建议`] : []),
       ].join('\n')),
     ].join('\n'))
   }
-  // 发布试运行与员工执行使用同一成果说明（F-02）；试运行不登记成果，见下方附加说明。
-  if ((!isAdminRunPurpose(manifest.purpose) || manifest.purpose === 'agent-release-trial') && manifest.tools.some(tool => tool.id === 'write')) {
+  // 与成果收集同一装配条件（write、bash、python_execute 任一都能写 output/）。发布试运行与员工
+  // 执行使用同一成果说明（F-02），只是 Attempt 结束时不收集成果（见 isAdminRunPurpose 处的收集）。
+  const hasBash = manifest.tools.some(tool => tool.id === 'bash')
+  if ((!isAdminRunPurpose(manifest.purpose) || manifest.purpose === 'agent-release-trial')
+    && manifest.tools.some(tool => ARTIFACT_WRITING_TOOLS.has(tool.id))) {
     sections.push([
       '# 成果文件',
-      '需要向用户交付文件时，必须使用 write 工具写入 output 目录。Markdown、纯文本、CSV 和 HTML 分别使用 output/<文件名>.md、.txt、.csv、.html；不要写入其他目录。',
-      '只有 output 目录中通过平台检查并登记的文件会作为可下载成果展示。回答中应明确说明已生成的文件名。',
+      '需要向用户交付文件时，把文件写入工作区 output 目录的顶层，不要写入其他目录。'
+        + (manifest.tools.some(tool => tool.id === 'write') ? 'write 工具只能写 Markdown、纯文本和 CSV（output/<文件名>.md、.txt、.csv）。' : '')
+        + (hasBash ? 'HTML 以及 xlsx、docx、pptx、pdf、png、jpg 用 bash 中的程序生成到 output/<文件名>.<扩展名>。' : ''),
+      'output 是本次运行的临时工作区目录，不是用户电脑或共享盘上的文件夹。运行结束后平台检查其中的文件，合格的登记为成果，显示在本条回复下方的成果卡片中供用户查看或下载；工作区随后删除。未通过检查的文件由平台在回复下方列出原因。',
+      `面向用户的回答以成果名称说明交付内容，例如“已生成成果《${hasBash ? '销售汇总.xlsx' : '销售汇总.md'}》，可在下方成果卡片中查看或下载”；不要在回答中写 output/、input/、/workspace/ 或其他工作区路径，也不要让用户到某个目录中找文件。此要求优先于 Agent 说明和历史消息中的写法。`,
+      '此前轮次 output 中的文件不在本次工作区；需要基于此前成果继续工作时，只能使用上面“当前 Run 输入文件”中列出的成果，没有列出时请用户在该成果卡片上点“继续修改”。',
+    ].join('\n'))
+  }
+  if (hasBash) {
+    sections.push([
+      '# 运行命令',
+      'bash 在本次运行专用的执行容器中执行：不能联网，只能使用镜像中已安装的程序与 Python 包，不能安装新依赖；每次一条前台命令，单条命令有时限，不支持后台运行；工作目录就是当前会话工作区，文件读写与工具看到的是同一份。',
+      `工作区（输入、中间文件与成果合计）不能超过 ${formatBytes(WORKSPACE_LIMITS.maxBytes)}，超出时命令会被终止；不再需要的中间文件及时删除。本次运行结束后，未登记为成果的文件不会保留。`,
+      '命令产生的中间文件放在工作区其他目录（例如 work/）或 /tmp，不要放进 output。output 只放要交付给用户的顶层文件：Markdown、纯文本、CSV、HTML，以及 xlsx、docx、pptx、pdf、png、jpg；单个不超过 20 MB、合计不超过 50 MB、最多 20 个。含宏、脚本或会访问外部内容的文件，以及其他格式、子目录和隐藏文件都不会登记为成果，回答下方会列出未登记的文件。',
+      ...(options.executionToolchain?.length ? [
+        '执行镜像中已安装的程序（平台启动时检查得出；清单之外的程序不要假定存在，需要时先用 command -v 确认）：',
+        ...describeExecutionToolchain(options.executionToolchain),
+      ] : []),
+    ].join('\n'))
+  }
+  if (options.executionWorkspace && manifest.tools.some(tool => tool.id === 'python_execute')) {
+    sections.push([
+      '# Python 脚本',
+      `python_execute 在本次运行的执行容器中运行已激活 Skill 登记的脚本：工作目录是该 Skill 的目录，环境变量 DSH_SKILL_DIR、DSH_INPUT_DIR、DSH_OUTPUT_DIR 给出 Skill 目录、输入目录与输出目录（即工作区的 output/）的绝对路径。给脚本传文件参数时使用绝对路径，工作区位于 ${options.executionWorkspace}。脚本写入输出目录的文件按成果规则登记。这些路径只用于脚本参数，不要写进给用户的回答。`,
     ].join('\n'))
   }
   if (manifest.agent_configuration.skill_instructions.length > 0) {
@@ -1492,7 +1749,7 @@ async function captureResumeCheckpointContext(
   return {
     pending_action: { arguments: jsonClone(actionArguments) as Record<string, unknown> },
     completed_tool_results: completedToolResults,
-    workspace_files: await readCheckpointWorkspaceFiles(join(record.snapshot.attemptDirectory, 'workspace', 'output')),
+    workspace_files: await readCheckpointWorkspaceFiles(join(record.snapshot.attemptDirectory, 'workspace', 'output'), join(record.snapshot.attemptDirectory, 'workspace')),
     assistant_output: assistantOutput,
   }
 }
@@ -1544,10 +1801,13 @@ async function readCompletedToolResults(
   return completed
 }
 
-async function readCheckpointWorkspaceFiles(
+export async function readCheckpointWorkspaceFiles(
   outputRoot: string,
+  workspaceRoot: string,
 ): Promise<RuntimeResumeCheckpointContext['workspace_files']> {
   const result: RuntimeResumeCheckpointContext['workspace_files'] = []
+  // 执行隔离 1c：output/ 本身可能被容器内代码换成指向宿主目录的链接。子目录与文件仍由下面逐项按类型检查。
+  if (!(await assertRealWorkspaceDirectory(workspaceRoot, outputRoot))) return result
   let totalBytes = 0
   const visit = async (directory: string): Promise<void> => {
     for (const entry of await readdir(directory, { withFileTypes: true }).catch(() => [])) {
@@ -1883,6 +2143,7 @@ function parseRuntimeToolCatalog(values: unknown[]): RuntimeToolDescriptor[] {
       concurrencyPolicy: value['contract']['concurrencyPolicy'],
       completionSemantics: value['contract']['completionSemantics'],
       timeoutSeconds: value['contract']['timeoutSeconds'],
+      ...dshSchedulingOf(value['contract']),
     }
   })
 }

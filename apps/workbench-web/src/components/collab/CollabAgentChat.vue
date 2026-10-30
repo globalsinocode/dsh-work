@@ -1,16 +1,19 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
 import { ArrowLeft } from '@element-plus/icons-vue'
+import { ElMessage } from 'element-plus'
 
+import ArtifactPreviewPanel from '@/components/conversation/ArtifactPreviewPanel.vue'
 import RunComposer from '@/components/conversation/RunComposer.vue'
 import RunMessageList from '@/components/conversation/RunMessageList.vue'
+import { useMediaQuery } from '@/composables/useMediaQuery'
 import { useRunActions } from '@/composables/useRunActions'
 import { workbenchApi } from '@/api/client'
 import { useAuthStore } from '@/stores/auth'
 import { useCollabConversationStore } from '@/stores/collab-conversations'
 import { useContentStore } from '@/stores/content'
 import { useTaskStore } from '@/stores/tasks'
-import type { AgentConversation, AgentConversationSegment, ChatMessage, TaskRun } from '@/types/domain'
+import type { Artifact, AgentConversation, AgentConversationSegment, ChatMessage, TaskRun } from '@/types/domain'
 import { notifyActionFailure } from '@/utils/feedback'
 import '@/styles/conversation-thread.css'
 
@@ -58,6 +61,30 @@ const latestTask = computed(() => newestSegment.value ? segmentTask(newestSegmen
 /** 单聊都是本人的个人会话：停止与重试与 A 的个人对话同一口径（仅发起人）。 */
 const canOperate = computed(() => Boolean(latestTask.value && latestTask.value.requestedBy === authStore.user.id))
 const running = computed(() => ['queued', 'running', 'awaiting_approval'].includes(latestTask.value?.status ?? ''))
+const resolvingApproval = ref(false)
+
+function canResolveApproval(segment: AgentConversationSegment) {
+  const run = segmentTask(segment)
+  return Boolean(
+    run?.status === 'awaiting_approval'
+    && run.requestedBy === authStore.user.id
+    && run.approval?.employeeResolvable,
+  )
+}
+
+async function resolveApproval(segment: AgentConversationSegment, decision: 'approved' | 'rejected') {
+  const run = segmentTask(segment)
+  if (!run || resolvingApproval.value) return
+  resolvingApproval.value = true
+  try {
+    await taskStore.resolveRunApproval(run.id, decision)
+    ElMessage.success(decision === 'approved' ? '已允许本次操作' : '已拒绝本次操作')
+  } catch (cause) {
+    notifyActionFailure('确认操作', run.title, cause, '请刷新对话后重试。')
+  } finally {
+    resolvingApproval.value = false
+  }
+}
 
 const {
   stopping,
@@ -73,6 +100,12 @@ const {
   canOperate,
   onRetried: () => reloadNewest(),
 })
+
+/** EX-ARTIFACT-08：点击成果在右栏预览；宽屏（≥1280px）作为第三栏，否则为抽屉。换 AI 同事时关闭。 */
+const previewArtifact = ref<Artifact | null>(null)
+const previewDocked = useMediaQuery('(min-width: 1280px)', true)
+const previewKey = computed(() => previewArtifact.value ? `${previewArtifact.value.id}@${previewArtifact.value.version}` : null)
+watch(() => props.agentId, () => { previewArtifact.value = null })
 
 /** 只有续写目标那一段可以“继续修改”：引用只在同一会话内有效。 */
 function canFollowUp(segment: AgentConversationSegment) {
@@ -246,107 +279,134 @@ watch(() => [latestTask.value?.messages.length, latestTask.value?.status] as con
 </script>
 
 <template>
-  <section class="collab-agent-chat" :aria-label="agent ? `与 ${agent.name} 的对话` : '对话'">
-    <header class="collab-agent-chat__header">
-      <button type="button" class="collab-agent-chat__back" aria-label="返回对话列表" @click="emit('back')">
-        <el-icon><ArrowLeft /></el-icon>
-      </button>
-      <span class="collab-agent-chat__avatar" aria-hidden="true">{{ (agent?.name ?? agentProfile?.name ?? 'A').slice(0, 1) }}</span>
-      <div class="collab-agent-chat__title">
-        <h1>{{ agent?.name ?? agentProfile?.name ?? 'AI 同事' }}</h1>
-        <p>{{ agent?.description ?? agentProfile?.description ?? '' }}</p>
-      </div>
-      <el-tag v-if="agent && !agent.available" type="info" size="small" effect="plain">不可用</el-tag>
-    </header>
+  <div class="collab-agent-chat-layout">
+    <section class="collab-agent-chat" :aria-label="agent ? `与 ${agent.name} 的对话` : '对话'">
+      <header class="collab-agent-chat__header">
+        <button type="button" class="collab-agent-chat__back" aria-label="返回对话列表" @click="emit('back')">
+          <el-icon><ArrowLeft /></el-icon>
+        </button>
+        <span class="collab-agent-chat__avatar" aria-hidden="true">{{ (agent?.name ?? agentProfile?.name ?? 'A').slice(0, 1) }}</span>
+        <div class="collab-agent-chat__title">
+          <h1>{{ agent?.name ?? agentProfile?.name ?? 'AI 同事' }}</h1>
+          <p>{{ agent?.description ?? agentProfile?.description ?? '' }}</p>
+        </div>
+        <el-tag v-if="agent && !agent.available" type="info" size="small" effect="plain">不可用</el-tag>
+      </header>
 
-    <div ref="scroller" class="collab-agent-chat__scroll" aria-label="聊天">
-      <div class="collab-agent-chat__thread">
-        <el-skeleton v-if="loading" :rows="6" animated />
-        <el-alert v-else-if="loadError" type="error" :closable="false" :title="loadError">
-          <el-button size="small" @click="load">重试</el-button>
-        </el-alert>
-        <template v-else>
-          <button
-            v-if="nextCursor"
-            type="button"
-            class="thread-earlier"
-            :disabled="loadingEarlier"
-            @click="loadEarlier"
-          >{{ loadingEarlier ? '正在加载…' : '加载更早的对话' }}</button>
+      <div ref="scroller" class="collab-agent-chat__scroll" aria-label="聊天">
+        <div class="collab-agent-chat__thread">
+          <el-skeleton v-if="loading" :rows="6" animated />
+          <el-alert v-else-if="loadError" type="error" :closable="false" :title="loadError">
+            <el-button size="small" @click="load">重试</el-button>
+          </el-alert>
+          <template v-else>
+            <button
+              v-if="nextCursor"
+              type="button"
+              class="thread-earlier"
+              :disabled="loadingEarlier"
+              @click="loadEarlier"
+            >{{ loadingEarlier ? '正在加载…' : '加载更早的对话' }}</button>
 
-          <div v-if="!segments.length" class="collab-agent-chat__welcome">
-            <strong>开始与 {{ agent?.name ?? agentProfile?.name ?? 'AI 同事' }} 对话</strong>
-            <p>{{ agentProfile?.welcomeMessage || agent?.description || '在下方输入你的问题，发送后开始新的对话。' }}</p>
-          </div>
+            <div v-if="!segments.length" class="collab-agent-chat__welcome">
+              <strong>开始与 {{ agent?.name ?? agentProfile?.name ?? 'AI 同事' }} 对话</strong>
+              <p>{{ agentProfile?.welcomeMessage || agent?.description || '在下方输入你的问题，发送后开始新的对话。' }}</p>
+            </div>
 
-          <section
-            v-for="segment in displaySegments"
-            :key="segment.sessionId"
-            class="collab-segment"
-            :data-session-id="segment.sessionId"
-            :aria-label="segmentLabel(segment)"
-          >
-            <p class="collab-segment__divider">
-              <span aria-hidden="true"></span>
-              <span>{{ segmentLabel(segment) }}</span>
-              <span aria-hidden="true"></span>
-            </p>
-            <RunMessageList
-              v-if="segmentTask(segment)"
-              :task="segmentTask(segment)!"
-              :is-own="isOwn"
-              :can-follow-up="canFollowUp(segment)"
-              :can-retry="canRetry(segment)"
-              :referenced-file-ids="referencedArtifacts.map(item => item.fileId)"
-              @download="download"
-              @continue-editing="continueEditing"
-              @copy-answer="copyAnswer"
-              @copy-link="copyConversationLink(segmentLink(segment))"
-              @retry="retryRun"
-            />
-            <p v-else-if="segmentErrors[segment.sessionId]" class="collab-segment__empty" role="alert">
-              这段对话暂时无法读取：{{ segmentErrors[segment.sessionId] }}
-            </p>
-            <p v-else class="collab-segment__empty">这段对话还没有消息。</p>
-          </section>
-        </template>
-      </div>
-    </div>
-
-    <div class="collab-agent-chat__dock">
-      <div class="collab-agent-chat__dock-inner">
-        <RunComposer
-          v-if="canSend"
-          :referenced-artifacts="referencedArtifacts"
-          :running="running && canOperate"
-          :stopping="stopping"
-          :placeholder="`发消息给 ${agent?.name ?? 'AI 同事'}`"
-          @remove-reference="removeReferencedArtifact"
-          @submit="submit"
-          @stop="stopRun"
-        >
-          <template #notices>
-            <p v-if="segments.length && !continueSessionId" class="collab-agent-chat__notice" data-testid="new-session-notice">
-              {{ agent?.name }} 已更新版本，发送后将开始新的对话。
-            </p>
+            <section
+              v-for="segment in displaySegments"
+              :key="segment.sessionId"
+              class="collab-segment"
+              :data-session-id="segment.sessionId"
+              :aria-label="segmentLabel(segment)"
+            >
+              <p class="collab-segment__divider">
+                <span aria-hidden="true"></span>
+                <span>{{ segmentLabel(segment) }}</span>
+                <span aria-hidden="true"></span>
+              </p>
+              <RunMessageList
+                v-if="segmentTask(segment)"
+                :task="segmentTask(segment)!"
+                :is-own="isOwn"
+                :can-follow-up="canFollowUp(segment)"
+                :can-retry="canRetry(segment)"
+                :can-resolve-approval="canResolveApproval(segment)"
+                :resolving-approval="resolvingApproval"
+                :referenced-file-ids="referencedArtifacts.map(item => item.fileId)"
+                :preview-key="previewKey"
+                @preview="previewArtifact = $event"
+                @download="download"
+                @continue-editing="continueEditing"
+                @copy-answer="copyAnswer"
+                @copy-link="copyConversationLink(segmentLink(segment))"
+                @retry="retryRun"
+                @resolve-approval="(decision) => resolveApproval(segment, decision)"
+              />
+              <p v-else-if="segmentErrors[segment.sessionId]" class="collab-segment__empty" role="alert">
+                这段对话暂时无法读取：{{ segmentErrors[segment.sessionId] }}
+              </p>
+              <p v-else class="collab-segment__empty">这段对话还没有消息。</p>
+            </section>
           </template>
-        </RunComposer>
-        <p v-else-if="agent" class="collab-agent-chat__notice collab-agent-chat__notice--blocked" data-testid="agent-unavailable-notice">
-          该 AI 同事当前不可用，历史对话仍可查看；如需继续，请联系管理员或选择其他 AI 同事。
-        </p>
-        <p class="collab-agent-chat__disclaimer">AI 生成内容可能存在误差，重要业务结论请结合来源与企业制度确认。</p>
+        </div>
       </div>
-    </div>
-  </section>
+
+      <div class="collab-agent-chat__dock">
+        <div class="collab-agent-chat__dock-inner">
+          <RunComposer
+            v-if="canSend"
+            :referenced-artifacts="referencedArtifacts"
+            :running="running && canOperate"
+            :stopping="stopping"
+            :placeholder="`发消息给 ${agent?.name ?? 'AI 同事'}`"
+            @remove-reference="removeReferencedArtifact"
+            @submit="submit"
+            @stop="stopRun"
+          >
+            <template #notices>
+              <p v-if="segments.length && !continueSessionId" class="collab-agent-chat__notice" data-testid="new-session-notice">
+                {{ agent?.name }} 已更新版本，发送后将开始新的对话。
+              </p>
+            </template>
+          </RunComposer>
+          <p v-else-if="agent" class="collab-agent-chat__notice collab-agent-chat__notice--blocked" data-testid="agent-unavailable-notice">
+            该 AI 同事当前不可用，历史对话仍可查看；如需继续，请联系管理员或选择其他 AI 同事。
+          </p>
+          <p class="collab-agent-chat__disclaimer">AI 生成内容可能存在误差，重要业务结论请结合来源与企业制度确认。</p>
+        </div>
+      </div>
+    </section>
+    <ArtifactPreviewPanel
+      class="collab-agent-chat__preview"
+      :artifact="previewArtifact"
+      :docked="previewDocked"
+      :fullscreen-max-width="820"
+      @close="previewArtifact = null"
+    />
+  </div>
 </template>
 
 <style scoped>
+.collab-agent-chat-layout {
+  display: flex;
+  height: 100%;
+  min-height: 0;
+}
+
 .collab-agent-chat {
   display: flex;
   height: 100%;
   min-height: 0;
+  min-width: 0;
+  flex: 1 1 auto;
   flex-direction: column;
   background: #fff;
+}
+
+.collab-agent-chat__preview {
+  width: clamp(360px, 32vw, 480px);
+  flex: 0 0 auto;
 }
 
 .collab-agent-chat__header {

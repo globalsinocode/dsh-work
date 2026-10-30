@@ -1,7 +1,7 @@
 {
   "name": "@dsh-work/server",
   "version": "0.1.1",
-  "releaseVersion": "2026.10.26-02",
+  "releaseVersion": "2026.10.30-01",
   "private": true,
   "type": "module",
   "scripts": {
@@ -45,7 +45,7 @@
     "test:m5:capacity:integration": "node --env-file-if-exists=../.env --experimental-strip-types --test src/infrastructure/postgres/m5-capacity.integration.test.ts",
     "test:m5:workspace:integration": "node --env-file-if-exists=../.env --experimental-strip-types --test src/infrastructure/postgres/team-workspace-migration.integration.test.ts",
     "test:m5:members:integration": "node --env-file-if-exists=../.env --experimental-strip-types --test src/http/workspace-member-api.integration.test.ts",
-    "test:runtime": "node --env-file-if-exists=../.env --experimental-strip-types --test src/modules/runtime/runtime-adapter.test.ts src/modules/runtime/runtime-manifest-schema.test.ts src/modules/runtime/platform-tool-bridge.test.ts src/modules/runtime/python-skill-runner.test.ts config/dsh/dsh-work-tool-policy.test.js",
+    "test:runtime": "node --env-file-if-exists=../.env --experimental-strip-types --test src/modules/runtime/runtime-adapter.test.ts src/modules/runtime/runtime-manifest-schema.test.ts src/modules/runtime/platform-tool-bridge.test.ts src/modules/runtime/python-sandbox.test.ts src/modules/runtime/container-executor.test.ts src/modules/runtime/execution-container.test.ts src/infrastructure/storage/workspace-directory.test.ts config/dsh/dsh-work-tool-policy.test.js config/dsh/dsh-work-remote-subprocess.test.js",
     "start": "node dist/main.js",
     "test:m5:agent-members:integration": "node --env-file-if-exists=../.env --experimental-strip-types --test src/http/workspace-agent-member-api.integration.test.ts",
     "test:m5:revocation:integration": "node --env-file-if-exists=../.env --experimental-strip-types --test src/infrastructure/postgres/m5-revocation-pipeline.integration.test.ts",
@@ -81,17 +81,20 @@
     "test:review:p2:skill:integration": "node --env-file-if-exists=../.env --experimental-strip-types --test src/infrastructure/postgres/review-p2-skill-errors.integration.test.ts",
     "test:review:p2:logging": "node --env-file-if-exists=../.env --experimental-strip-types --test src/http/review-p2-error-logging.test.ts",
     "auth:bootstrap": "node --env-file-if-exists=../.env --experimental-strip-types src/modules/identity/local-bootstrap.ts",
+    "auth:import-ai-hub-local": "node --env-file-if-exists=../.env --experimental-strip-types src/modules/identity/import-ai-hub-local-password.ts",
     "test:builtin-tools:integration": "node --env-file-if-exists=../.env --experimental-strip-types --test src/infrastructure/postgres/builtin-tools.integration.test.ts",
     "test:s5:conversation-targets:integration": "node --env-file-if-exists=../.env --experimental-strip-types --test src/http/conversation-targets-api.integration.test.ts",
     "test:s5:timeline:integration": "node --env-file-if-exists=../.env --experimental-strip-types --test src/http/workspace-timeline-api.integration.test.ts",
     "test:s6:project-task-tools:integration": "node --env-file-if-exists=../.env --experimental-strip-types --test src/http/project-task-tools.integration.test.ts",
     "test:s5:preferences:integration": "node --env-file-if-exists=../.env --experimental-strip-types --test src/http/user-preferences-api.integration.test.ts",
     "test:agent-draft-policy": "node --env-file-if-exists=../.env --experimental-strip-types --test src/modules/agent/agent-draft-copy-policy.test.ts",
+    "test:execution-container:e2e": "node --env-file-if-exists=../.env --experimental-strip-types --test src/modules/runtime/execution-container.e2e.test.ts src/infrastructure/postgres/execution-container-startup.integration.test.ts",
     "test:local-auth": "node --experimental-strip-types --test src/modules/identity/local-auth.test.ts",
     "test:local-auth:integration": "node --env-file-if-exists=../.env --experimental-strip-types --test src/modules/identity/local-auth.integration.test.ts src/modules/identity/authentication-startup.integration.test.ts src/modules/identity/portal-auth.integration.test.ts"
   },
   "devDependencies": {
     "@types/node": "^24.7.2",
+    "@types/web-push": "^3.6.4",
     "typescript": "~5.9.3"
   },
   "dependencies": {
@@ -99,6 +102,7 @@
     "cron-parser": "5.10.1",
     "fflate": "^0.8.3",
     "postgres": "^3.4.9",
+    "web-push": "^3.6.7",
     "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz",
     "yaml": "^2.9.0"
   }

@@ -1,6 +1,6 @@
 # 管理端与平台
 
-冒烟环境、登录与身份、管理端、内置工具与操作计划、开发接入文档、MCP、持久化等待与审批。证据层级与写法见[验收目录索引](../TEST-CATALOG.md)。
+冒烟环境、登录与身份、管理端、内置工具与操作计划、开发接入文档、MCP、持久化等待与审批、平台内置 Skill。证据层级与写法见[验收目录索引](../TEST-CATALOG.md)。
 
 ### E2E-ENV-01 默认冒烟环境隔离
 
@@ -95,11 +95,12 @@
 **前置数据：** 已发布 Skill `skill-document`（依赖 `read`）；一个声明 `web_search` 的已发布 Skill；默认 Runtime `runtime-local-01`
 **spec：** `server/src/infrastructure/postgres/builtin-tools.integration.test.ts`、`server/src/infrastructure/postgres/agent-release-governance.integration.test.ts`、`server/src/modules/run/current-execution-authorization.test.ts`、`server/src/modules/skill/skill-package.test.ts`
 
-1. 新建 Agent，不开启联网搜索：运行快照装配 `read`、`glob`、`grep`、`read_image`、`write`、`edit`、`str_replace_editor`、`todo_write`，不含 `web_search`；运行审批模式为无需审批。
+1. 新建 Agent，不开启联网搜索：运行快照装配 `read`、`glob`、`grep`、`read_image`、`write`、`edit`、`str_replace_editor`、`todo_write`，不含 `web_search` 与 `bash`；运行审批模式为无需审批。
+   - 员工对话的 Manifest 另含 `bash`（执行隔离 2a；执行容器为必需，4.9），只有 Runtime 紧急停用能去掉；执行容器不可用时运行在创建前被拒绝。
 2. 在 Agent 能力中开启“允许联网搜索”，验证运行的 Manifest 含 `web_search`；编辑时不改开关则保留原设置。
-3. 选择声明 `web_search` 的 Skill 而 Agent 未开启联网搜索，保存与验证被拒绝并提示“未开启联网搜索”；Skill 依赖平台不提供的工具（如 `bash`）时说明“平台不提供该工具”。
+3. 选择声明 `web_search` 的 Skill 而 Agent 未开启联网搜索，保存与验证被拒绝并提示“未开启联网搜索”；Skill 依赖平台不提供或不能由 Skill 声明的工具（如 `bash`）时说明“平台不提供该工具”。
 4. SKILL.md 的 `allowed-tools` 按名称匹配内置工具（`Read`、`WebSearch`、`str_replace_editor`），未知工具标为不支持。
-5. 在 Runtime 配置中紧急停用 `web_search`：只接受 DSH 内置工具，平台工具（如 `python_execute`、`activate_skill`）被拒绝；新 Attempt 不再装配被停用工具，模型看不到它；执行中的 Attempt 再调用该工具时只拒绝这一次调用并告知模型“已被管理员临时停用”，运行继续并给出基于已有结果的回答；清空停用清单后恢复。
+5. 在 Runtime 配置中紧急停用 `web_search`（`bash` 同样可停用）：只接受 DSH 内置工具，平台工具（如 `python_execute`、`activate_skill`）与注册表以外的工具（如 `web_fetch`）被拒绝；新 Attempt 不再装配被停用工具，模型看不到它；执行中的 Attempt 再调用该工具时只拒绝这一次调用并告知模型“已被管理员临时停用”，运行继续并给出基于已有结果的回答；清空停用清单后恢复。
 
 **验收：** 管理员不能新增、同步或逐个授权内置工具；工具集由平台代码决定，Agent 只决定是否允许联网搜索；工作空间授权只包含 Agent 与 Skill；停用清单是运维止损开关，不是授权：派发时不装配，执行中只拒绝被停用工具的调用，不让运行整体失败。
 
@@ -113,7 +114,7 @@
 
 1. 管理端导航中不再出现“DSH 工具管理”与“工具权限”；旧地址 `/tools`、`/permissions` 跳转到 Runtimes。
 2. 进入“Agent 治理 → MCP 连接器”，列表只包含外部 MCP Connector。
-3. 进入“安全与运维 → Runtimes”，打开当前 Runtime 详情，“内置工具”区域列出全部内置工具的名称、来源（DSH/平台）、装配方式与停用状态，并显示服务启动时与 DSH 工具目录的核对结果。
+3. 进入“安全与运维 → Runtimes”，打开当前 Runtime 详情，“内置工具”区域列出全部内置工具的名称、来源（DSH/平台）、装配方式与停用状态，并显示服务启动时与 DSH 工具目录的核对结果，以及执行容器状态：已启用时说明装配 `bash`，未开启或启动检查未通过时说明不装配 `bash`（不可用的原因只在服务日志）。
 4. 在“配置 Runtime”中选择要紧急停用的 DSH 工具，保存前确认影响；平台工具不出现在可选项中。
 
 **验收：** 内置工具只读展示，唯一可操作的是 Runtime 级紧急停用；`/api/admin/v1/tools` 等工具治理接口不存在；MCP 页面与接口只返回外部 MCP Connector。
@@ -247,3 +248,54 @@
 3. 在审批前后重启服务并重放决定/事件；对真实外部动作制造超时未知，核对权威状态后再继续。
 
 **验收：** 留存身份、Run/Attempt、检查点、审批、外部回执、重启和撤权证据。一次性 PostgreSQL、合成 ACP Worker和组件测试通过不能替代本层。
+
+## 平台内置 Skill
+
+设计见[平台内置 Skill 方案](../../docs/design/builtin-skills-plan.md)，规则见[功能规则 5.5](../../docs/development/feature-rules.md#55-平台内置-skill)。
+
+### BSK-01 管理端查看内置 Skill、设置覆盖场景与紧急停用
+
+**优先级：** P0
+**角色：** 平台管理员
+**运行层级：** P0 冒烟服务与管理端组件测试；接口契约测试补充边界
+**前置数据：** 代码中的三个内置 Skill；一个已发布的已安装 Skill；默认 Runtime
+**spec：** `e2e/mvp-smoke.spec.ts`、`apps/admin-web/src/views/CapabilityManagementView.test.ts`、`apps/admin-web/src/views/RuntimeManagementView.test.ts`、`server/src/http/api-contract.test.ts`
+
+1. 进入“Skill 管理”，看到“平台内置”区域列出文件分析、HTML 页面、Office 文档三个内置 Skill，各自显示版本与场景；打开详情只能查看说明与正文，没有编辑、发布、回滚、停用或删除入口。
+2. 打开一个已安装 Skill 的详情，在“覆盖内置场景”中勾选“HTML 页面”并保存；再次打开时准确回显，审计日志出现对应记录。
+3. 进入“安全与运维 → Runtimes”，Runtime 详情列出内置 Skill 及版本；在“配置 Runtime”中选择紧急停用“HTML 页面”内置 Skill，保存后详情显示已停用；清空后恢复。
+
+**验收：** 内置 Skill 只读展示；唯一可改的是已安装 Skill 的覆盖场景与 Runtime 级紧急停用；覆盖场景只接受三个固定场景，内置 Skill 不能设置覆盖。
+
+### BSK-02 员工侧运行装配内置 Skill，按覆盖与停用让位
+
+**优先级：** P1
+**角色：** 员工、平台管理员
+**运行层级：** 专用可丢弃 PostgreSQL、受控测试身份与 Mock ACP Worker
+**前置数据：** 未固定任何 Skill 的已发布 Agent；一个已发布并标记覆盖 `html-page` 的 Skill；一个团队空间（只授权该 Agent，不授权额外 Skill）
+**spec：** `server/src/infrastructure/postgres/builtin-skills.integration.test.ts`、`server/src/modules/skill/builtin-skills.test.ts`、`server/src/modules/run/current-execution-authorization.test.ts`、`server/src/modules/runtime/runtime-adapter.test.ts`
+
+1. 员工在个人空间与该 Agent 对话：Manifest 含三个内置 Skill（内联正文、`id@version`），装配 `activate_skill`；目录中内置 Skill 排在最后。
+2. 在团队空间与该 Agent 对话并让运行排队后再执行：派发授权与执行前复核都不因内置 Skill 报“工作空间未授权 Skill”。
+3. 为 Agent 固定标记覆盖 `html-page` 的 Skill 并发布，再对话：Manifest 中没有 HTML 页面内置 Skill，并记录被覆盖的内置 Skill 与覆盖者；另两个内置 Skill 仍在。员工从 Skill 广场选择该 Skill 时同样生效。
+4. 管理员在 Runtime 中紧急停用“文件分析”内置 Skill：新运行不再装配，Manifest 记录停用；执行中的运行再激活它时只拒绝这一次并告知模型，运行继续。
+5. 管理助手、Skill 安装与试运行、会话摘要、项目档案员运行的 Manifest 中没有内置 Skill。
+6. 以“（平台内置）”结尾的名称上传、链接安装或经旧文本接口创建 Skill，被拒绝并说明原因。
+
+**验收：** 内置 Skill 不需要 Skill 授权或空间授权，不进入依赖闭包；覆盖与停用确定性生效并可从 Manifest 追溯；系统与管理运行不受影响。
+
+### BSK-P2 真实 DSH 下内置 Skill 提升产出
+
+**优先级：** P2
+**角色：** 员工
+**运行层级：** 真实 DSH Run/Attempt、Runtime Adapter 与执行容器
+**前置数据：** 未固定任何 Skill 的 Agent；一份含表格数据的 PDF 或 xlsx 附件
+**spec：** 手工执行，按第 5.2 节留证
+
+1. 上传附件要求分析并“生成一份 HTML 报告”：模型激活文件分析与 HTML 页面内置 Skill，成果为单个可离线预览的 HTML，结论标注出处、数值经计算。
+2. 要求“整理成 Word 文档”：模型激活 Office 文档内置 Skill，成果 docx 可打开、通过成果登记。
+3. 在 Runtime 中紧急停用 `bash` 后重复第 1 步：回答为 Markdown 并说明无法生成 HTML，运行不失败。
+
+另需观察：模型调用 `activate_skill` 时传入的名称能否唯一匹配（目录行形如“文件分析（平台内置）（dsh-work-file-analysis@1.0.0）”，只传“文件分析”会得到“没有唯一匹配”）。
+
+**验收：** 留存 Run/Attempt、激活记录、成果与版本；与不装配内置 Skill 的同题产出对比的人工结论写入发布说明。P0/P1 绿灯不能替代本层。

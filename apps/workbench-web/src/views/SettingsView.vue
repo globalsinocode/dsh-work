@@ -2,13 +2,17 @@
 import { onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { workbenchApi } from '@/api/client'
+import PageHeader from '@/components/PageHeader.vue'
 import { User } from '@element-plus/icons-vue'
 
 import ExternalConnections from '@/components/external-connections/external-connections.vue'
+import NotificationSettings from '@/components/notification-settings/notification-settings.vue'
 import { roleLabels, useAuthStore } from '@/stores/auth'
+import { isWorkbenchNotificationSupported } from '@/utils/system-notification-client'
 import type { McpUserGrantListItem } from '@/types/domain'
 
 const authStore = useAuthStore()
+const notificationSupported = isWorkbenchNotificationSupported()
 const route = useRoute()
 const router = useRouter()
 const policy = ref('')
@@ -62,13 +66,8 @@ onMounted(async () => {
 </script>
 
 <template>
+  <PageHeader title="用户中心" />
   <div class="page-container settings-page">
-    <header class="page-header">
-      <div>
-        <h1 class="page-title">用户中心</h1>
-        <p class="page-description">查看企业身份和当前账号的数据使用范围。</p>
-      </div>
-    </header>
 
     <div class="settings-layout">
       <section class="panel settings-section">
@@ -94,6 +93,8 @@ onMounted(async () => {
         :revoke="revokeMcp"
         :reload="loadMcpGrants"
       />
+
+      <NotificationSettings :enabled="notificationSupported" />
 
       <section class="panel settings-section retention-notice">
         <h2>内容保留与账号停用</h2>

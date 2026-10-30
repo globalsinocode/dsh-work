@@ -3,7 +3,7 @@ import { computed, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { adminApi } from '@/api/client'
 import type { AgentAccess, AgentRoutine, AgentRoutineExecution, AgentRoutineSchedule,
-  AgentVersionRecord, IdentityUserSummary, ManagedWorkspaceDefinition } from '@/types/domain'
+  AgentJoinedWorkspaceRecord, AgentVersionRecord, IdentityUserSummary } from '@/types/domain'
 
 const props = defineProps<{
   agentId: string
@@ -14,7 +14,8 @@ const props = defineProps<{
 const loading = ref(false)
 const saving = ref(false)
 const routines = ref<AgentRoutine[]>([])
-const workspaces = ref<ManagedWorkspaceDefinition[]>([])
+/** 只列 Agent 已加入、仍可用的项目空间；服务端在启用和每次触发时仍复核成员关系。 */
+const workspaces = ref<AgentJoinedWorkspaceRecord[]>([])
 const recipients = ref<IdentityUserSummary[]>([])
 const editorOpen = ref(false)
 const approvalOpen = ref(false)
@@ -72,13 +73,16 @@ async function load() {
   loading.value = true
   try {
     const [records, spaces, users] = await Promise.allSettled([
-      adminApi.getAgentRoutines(agentId), adminApi.getWorkspaces(),
+      adminApi.getAgentRoutines(agentId), adminApi.getAgentJoinedWorkspaces(agentId),
       adminApi.getIdentityUsers({ status: 'active', pageSize: 100 }),
     ])
     if (props.agentId !== agentId) return
     if (records.status === 'rejected') throw records.reason
     routines.value = records.value
-    workspaces.value = spaces.status === 'fulfilled' ? spaces.value : []
+    workspaces.value = spaces.status === 'fulfilled'
+      ? spaces.value.items.filter(space => space.workspaceType === 'team'
+        && space.workspaceStatus === 'active' && space.memberStatus === 'available')
+      : []
     recipients.value = users.status === 'fulfilled' ? users.value.items : []
   } catch (error) {
     ElMessage.error(error instanceof Error ? error.message : '主动任务加载失败')
@@ -215,7 +219,7 @@ async function showExecutions(routine: AgentRoutine) {
       <el-form label-position="top">
         <el-form-item label="规则名称"><el-input v-model="name" maxlength="120" show-word-limit /></el-form-item>
         <el-form-item label="固定 Agent Version"><el-select v-model="versionId" style="width:100%"><el-option v-for="version in publishedVersions" :key="version.id" :value="version.id" :label="`v${version.version}`" /></el-select></el-form-item>
-        <el-form-item label="工作空间"><el-select v-model="workspaceId" filterable allow-create default-first-option placeholder="选择项目空间，或输入已授权个人空间 ID" style="width:100%"><el-option v-for="space in workspaces" :key="space.id" :value="space.id" :label="space.name" /></el-select></el-form-item>
+        <el-form-item label="工作空间"><el-select v-model="workspaceId" filterable allow-create default-first-option placeholder="选择 Agent 已加入的项目空间，或输入已授权个人空间 ID" no-data-text="Agent 尚未加入可用的项目空间" style="width:100%"><el-option v-for="space in workspaces" :key="space.workspaceId" :value="space.workspaceId" :label="space.workspaceName" /></el-select></el-form-item>
         <el-form-item label="结果接收人"><el-select v-model="recipientUserId" filterable allow-create default-first-option placeholder="选择员工，或输入员工 ID" style="width:100%"><el-option v-for="user in recipients" :key="user.id" :value="user.id" :label="`${user.name} · ${user.id}`" /></el-select></el-form-item>
         <el-form-item label="触发方式"><el-select v-model="scheduleKind" style="width:100%"><el-option label="手动" value="manual" /><el-option label="每天" value="daily" /><el-option label="每周" value="weekly" /><el-option label="事件" value="event" /></el-select></el-form-item>
         <el-form-item label="时区"><el-input v-model="timezone" placeholder="例如 Asia/Shanghai" /></el-form-item>

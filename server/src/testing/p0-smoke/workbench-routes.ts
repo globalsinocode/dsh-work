@@ -2,6 +2,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 
 import { personalContentPolicy } from '../../modules/workbench/application/content-lifecycle-policy.ts'
 import type { WorkbenchQueryService } from './workbench-query-service.ts'
+import { notFound } from '../../domain/request-errors.ts'
 import { envelope, requireRequestIdentity, type RouteContext, type Router } from '../../http/router.ts'
 import { writeDownload } from '../../http/workbench/content-routes.ts'
 
@@ -43,4 +44,14 @@ export function registerPrototypeArtifactFileRoutes(router: Router, service: Wor
   }
   router.get(`${basePath}/artifacts/:artifactId/download`, download)
   router.get(`${basePath}/artifacts/:artifactId/versions/:versionId/download`, download)
+  // 冒烟夹具没有解析文本。Office/PDF 打开预览时返回“尚未生成”，避免缺路由被当成加载失败。
+  router.get(`${basePath}/artifacts/:artifactId/versions/:versionId/text`, async (_request, context) => {
+    requireRequestIdentity(context, 'workbench')
+    const artifactId = context.params.artifactId ?? ''
+    const artifact = (await service.getArtifacts()).find(item => item.id === artifactId)
+    if (!artifact || !['xlsx', 'docx', 'pptx', 'pdf'].includes(artifact.type)) {
+      throw notFound(`成果正文不存在：${artifactId}`)
+    }
+    return envelope('workbench', { status: 'pending' as const, type: artifact.type })
+  })
 }

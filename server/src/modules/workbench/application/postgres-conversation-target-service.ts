@@ -12,6 +12,7 @@ import {
   type ConversationTargetPage,
   type ConversationTargetStore,
   type ConversationTargetType,
+  type MentionSummary,
   unreadCountCap,
 } from './conversation-targets.ts'
 import { readableWorkspacePredicate } from './postgres-workspace-service.ts'
@@ -37,6 +38,7 @@ interface TargetRow {
   previewAt: Date | null
   unreadCount: number
   muted: boolean
+  mentioned: boolean
 }
 
 interface SegmentRow {
@@ -117,7 +119,14 @@ export class PostgresConversationTargetService implements ConversationTargetStor
              ) else array[t.name] end as "avatarNames",
              preview.role as "previewRole", preview.author as "previewAuthor",
              preview.content as "previewContent", preview.created_at as "previewAt",
-             unread.count as "unreadCount", ns.muted_at is not null as muted
+             unread.count as "unreadCount", ns.muted_at is not null as muted,
+             -- D38：@ 本人的未读提醒，不受静音影响；群组已按本人可读范围筛过（收权后不再出现）。
+             t.type = 'group' and exists (
+               select 1 from message_mentions mm
+                join sessions mms on mms.tenant_id = mm.tenant_id and mms.id = mm.session_id and mms.status = 'active'
+                where mm.tenant_id = ${tenantId} and mm.mentioned_user_id = ${input.userId}
+                  and mm.workspace_id = t.id and mm.read_at is null
+             ) as mentioned
         from targets t
         left join lateral (
           select m.role, m.content, m.created_at,
@@ -175,6 +184,7 @@ export class PostgresConversationTargetService implements ConversationTargetStor
       available: row.type === 'group' || available.has(row.id),
       unreadCount: Number(row.unreadCount),
       muted: row.type === 'group' && row.muted,
+      mentioned: row.type === 'group' && row.mentioned,
     }))
     const last = rows[items.length - 1]
     return {
@@ -297,7 +307,52 @@ export class PostgresConversationTargetService implements ConversationTargetStor
             updated_at = case when excluded.last_read_at > rs.last_read_at then now() else rs.updated_at end
       returning last_read_at as "lastReadAt"
     `
+    // D38：打开群组即读过其中 @ 本人的消息，提醒随之已读（不晚于已读位置）。
+    if (input.type === 'group') {
+      await sql`
+        update message_mentions mm set read_at = now()
+          from messages m
+         where mm.tenant_id = ${tenantId} and mm.mentioned_user_id = ${input.userId}
+           and mm.workspace_id = ${input.id} and mm.read_at is null
+           and m.tenant_id = mm.tenant_id and m.id = mm.message_id and m.created_at <= ${row!.lastReadAt}
+      `
+    }
     return { type: input.type, id: input.id, lastReadAt: row!.lastReadAt.toISOString() }
+  }
+
+  async listMentions(input: { userId: string }): Promise<{ items: MentionSummary[] }> {
+    const sql = this.database
+    const rows = await sql<Array<{ workspaceId: string; sessionId: string; count: number; latestAt: Date }>>`
+      select mm.workspace_id as "workspaceId", mm.session_id as "sessionId",
+             count(*)::integer as count, max(mm.created_at) as "latestAt"
+        from message_mentions mm
+        join workspaces w on w.tenant_id = mm.tenant_id and w.id = mm.workspace_id
+          and w.workspace_type = 'team' and w.status = 'active'
+        join sessions s on s.tenant_id = mm.tenant_id and s.id = mm.session_id and s.status = 'active'
+       where mm.tenant_id = ${tenantId} and mm.mentioned_user_id = ${input.userId} and mm.read_at is null
+         and (${readableWorkspacePredicate(sql, input.userId)})
+       group by mm.workspace_id, mm.session_id
+       order by max(mm.created_at) desc
+       limit 200
+    `
+    return { items: rows.map(row => ({ ...row, count: Number(row.count), latestAt: row.latestAt.toISOString() })) }
+  }
+
+  async markMentionsRead(input: { userId: string; workspaceId: string; sessionId?: string }) {
+    const sql = this.database
+    const [workspace] = await sql<Array<{ id: string }>>`
+      select w.id from workspaces w
+       where w.tenant_id = ${tenantId} and w.id = ${input.workspaceId} and w.workspace_type = 'team'
+         and (${readableWorkspacePredicate(sql, input.userId)})`
+    if (!workspace) throw notFound('项目空间不存在或无权访问')
+    const rows = await sql<Array<{ messageId: string }>>`
+      update message_mentions set read_at = now()
+       where tenant_id = ${tenantId} and mentioned_user_id = ${input.userId}
+         and workspace_id = ${input.workspaceId} and read_at is null
+         and ${input.sessionId ? sql`session_id = ${input.sessionId}` : sql`true`}
+      returning message_id as "messageId"
+    `
+    return { workspaceId: input.workspaceId, sessionId: input.sessionId ?? null, read: rows.length }
   }
 }
 

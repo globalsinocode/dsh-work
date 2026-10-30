@@ -21,6 +21,8 @@ import { registerWorkspaceAgentMemberRoutes } from './http/workbench/workspace-a
 import { registerWorkbenchAgentRoutes } from './http/workbench/agent-routes.ts'
 import { registerProjectRoutes } from './http/workbench/project-routes.ts'
 import { registerUserPreferenceRoutes } from './http/workbench/preference-routes.ts'
+import { registerPushRoutes } from './http/workbench/push-routes.ts'
+import { createWeknoraAccessService, registerWeknoraRoutes } from './http/workbench/weknora-routes.ts'
 import { registerConversationTargetRoutes } from './http/workbench/conversation-target-routes.ts'
 import { registerWorkspaceTimelineRoutes } from './http/workbench/workspace-timeline-routes.ts'
 import { registerOidcRoutes } from './http/auth-routes.ts'
@@ -45,13 +47,23 @@ import { PostgresAgentDelegationService } from './modules/run/postgres-agent-del
 import { DshAcpRuntimeAdapter } from './modules/runtime/dsh-acp-runtime-adapter.ts'
 import { CapabilityGuardedRuntime, UnavailableRuntime, ExecutionCapabilityUnavailableError, probeExecutionCapability, type CapabilityState } from './modules/runtime/execution-capabilities.ts'
 import type { AgentRuntimePort } from './modules/runtime/runtime-types.ts'
-import { PythonSkillRunner } from './modules/runtime/python-skill-runner.ts'
+import { ContainerExecutor } from './modules/runtime/container-executor.ts'
+import { DockerExecutionBackend } from './modules/runtime/docker-execution-backend.ts'
+import { AttemptExecutionContainers, removedExecutionSettingWarnings } from './modules/runtime/attempt-execution-containers.ts'
+import { startExecutionContainers } from './modules/runtime/execution-container-startup.ts'
+import { freeSpace } from './modules/runtime/workspace-usage.ts'
+import { ExecutionContainerPythonRunner } from './modules/runtime/execution-container-python.ts'
+import { normalizePythonPackageName } from './modules/skill/skill-installation-plan.ts'
+import { loadBuiltinSkillCatalog } from './modules/skill/builtin-skills.ts'
+import { missingDshBuiltinTools } from './modules/runtime/builtin-tools.ts'
+import { redactSensitiveText } from './security/safe-observability.ts'
 import {
   preflightDshRuntime,
   resolveDshRuntimeInstallation,
   type DshRuntimeInstallation,
 } from './modules/runtime/dsh-runtime-installation.ts'
 import { PostgresContentService } from './modules/workbench/application/postgres-content-service.ts'
+import { ContainerArtifactTextExtractor } from './modules/workbench/application/container-artifact-text-extractor.ts'
 import { PostgresWorkspaceMemberService } from './modules/workbench/application/postgres-workspace-member-service.ts'
 import { PostgresWorkspaceLifecycleService } from './modules/workbench/application/postgres-workspace-lifecycle-service.ts'
 import { PostgresWorkspaceAgentMemberService } from './modules/workbench/application/postgres-workspace-agent-member-service.ts'
@@ -83,6 +95,9 @@ import { PostgresProjectArchiveService } from './modules/workbench/application/p
 import { PostgresProjectService } from './modules/workbench/application/postgres-project-service.ts'
 import { ProjectTaskTools, mapProjectTaskToolError } from './modules/workbench/application/project-task-tools.ts'
 import { PostgresUserPreferenceService } from './modules/workbench/application/postgres-user-preference-service.ts'
+import { WebPushService } from './modules/workbench/application/web-push-service.ts'
+import { bindWebPushDispatch, WebPushDispatchService } from './modules/workbench/application/web-push-dispatch.ts'
+import { registerRunApprovalRoutes } from './http/workbench/run-approval-routes.ts'
 import { PostgresConversationTargetService } from './modules/workbench/application/postgres-conversation-target-service.ts'
 import { PostgresWorkspaceTimelineService } from './modules/workbench/application/postgres-workspace-timeline-service.ts'
 import { resolvePlatformTimezone } from './domain/execution-time.ts'
@@ -162,9 +177,13 @@ async function start() {
   let agentDataSweep: NodeJS.Timeout | null = null
   let workspaceObjectGcSweep: NodeJS.Timeout | null = null
   let dshCapability: CapabilityState = { status: 'not-configured' }
-  let pythonCapability: CapabilityState = { status: 'not-configured' }
+  let pythonCapability: CapabilityState = { status: 'unavailable', code: 'PYTHON_UNAVAILABLE' }
+  let attemptContainers: AttemptExecutionContainers | null = null
+  let executionContainerCapability: CapabilityState = { status: 'unavailable', code: 'EXECUTION_CONTAINER_UNAVAILABLE' }
   const projectRoot = fileURLToPath(new URL('../..', import.meta.url))
   const dataRoot = resolve(projectRoot, process.env.DSH_WORK_DATA_ROOT ?? '.runtime')
+  // 平台内置 Skill 随代码发布；内容与版本锁不一致属于发布缺陷，服务不启动（builtin-skills-plan 5.1）。
+  const builtinSkills = loadBuiltinSkillCatalog(resolve(projectRoot, 'server/config/builtin-skills'))
   const skillArtifacts = new SkillArtifactStore(new LocalObjectStorage(resolve(dataRoot, 'skills'), { fileMode: 0o400 }))
   await migrateSkillFilesToFileSystem(database, skillArtifacts)
   // Database migrations and identity initialization above stay fail-closed.
@@ -174,15 +193,45 @@ async function start() {
     await preflightDshRuntime(installation)
     return installation
   })
-  dshInstallation = dsh.value
   dshCapability = dsh.state
-  const python = await probeExecutionCapability('python', process.env.DSH_WORK_PYTHON_IMAGE ? async () => {
-    const runner = new PythonSkillRunner(process.env.DSH_WORK_PYTHON_IMAGE!)
-    await runner.preflight()
-    return runner
-  } : null)
-  const pythonRunner = python.value
-  pythonCapability = python.state
+  // 执行隔离阶段 3（方案 4.9）：执行容器为必需。DSH 子进程只经执行容器叠加层运行；
+  // 执行容器启动检查失败时不在宿主执行，Runtime 不可用，所有 Agent 运行在创建前明确失败。
+  for (const message of removedExecutionSettingWarnings(process.env)) console.warn(message)
+  if (dsh.value) {
+    const baseInstallation = dsh.value
+    const probed = await probeExecutionCapability('execution-container', () => startExecutionContainers(baseInstallation, {
+      projectRoot, dataRoot, image: process.env.DSH_WORK_EXECUTION_IMAGE,
+    }), error => {
+      console.warn(`execution container unavailable; Agent runs are refused until it is fixed and the service restarts: ${redactSensitiveText(error instanceof Error ? error.message : String(error)).slice(0, 500)}`)
+    })
+    if (probed.value) {
+      dshInstallation = probed.value.installation
+      attemptContainers = probed.value.containers
+      attemptContainers.startMaintenance()
+      console.warn(`execution container toolchain: ${attemptContainers.toolchain.map(tool => tool.version ? `${tool.id} ${tool.version}` : tool.id).join(', ')}`)
+    }
+    executionContainerCapability = probed.state
+  }
+  // 执行隔离 1b②（方案 4.8）：python_execute 在本 Attempt 的执行容器内运行，可用性随执行容器与镜像中的 python3，
+  // Skill 声明的依赖按执行镜像实际已安装的包核对。
+  const containerPythonRunner = attemptContainers?.toolchain.some(tool => tool.id === 'python3')
+    ? new ExecutionContainerPythonRunner(attemptContainers)
+    : null
+  if (containerPythonRunner) pythonCapability = { status: 'available' }
+  // 执行隔离 2b-3：二进制成果的解析文本只在一次性容器中生成（执行镜像、Python 沙箱姿态、独立的 2 个槽位）。
+  // 解析容器启动失败时不解析，二进制成果仍可发布，只是没有解析文本。
+  let extractionExecutor: ContainerExecutor | null = null
+  if (attemptContainers) {
+    const containers = attemptContainers
+    try {
+      const executor = new ContainerExecutor(new DockerExecutionBackend(), { pythonImage: containers.image, maxContainers: 2 })
+      await executor.preflight()
+      executor.startMaintenance()
+      extractionExecutor = executor
+    } catch (error) {
+      console.warn(`artifact text extraction unavailable: ${redactSensitiveText(error instanceof Error ? error.message : String(error)).slice(0, 500)}`)
+    }
+  }
   const conversations = new PostgresConversationRepository(database)
   const authorization = new PostgresAuthorizationService(database, {
     // AI Hub 身份的后台任务必须复核目录；配置降级为 local 时传 null，
@@ -198,7 +247,16 @@ async function start() {
   })
   const objectStorage = new LocalObjectStorage(resolve(dataRoot, 'storage'))
   const workspaceObjectGc = new WorkspaceObjectGcService(database, objectStorage)
-  const content = new PostgresContentService(database, objectStorage, authorization, undefined, undefined, workspaceObjectGc)
+  const content = new PostgresContentService(database, objectStorage, authorization, undefined, undefined, {
+    objectGc: workspaceObjectGc,
+    artifactTextExtractor: extractionExecutor && attemptContainers
+      ? new ContainerArtifactTextExtractor(extractionExecutor, {
+          user: attemptContainers.user,
+          scriptRoot: resolve(projectRoot, 'server/config/execution'),
+          workRoot: resolve(dataRoot, 'artifact-extraction'),
+        })
+      : undefined,
+  })
   const runs = new PostgresRunRepository(database)
   const tasks = new PostgresTaskRepository(database)
   const taskQueries = new PostgresTaskQueryService(database, tasks, runs)
@@ -226,6 +284,10 @@ async function start() {
     disabledBuiltinTools: async () => {
       if (!operationsRef.current) return []
       return (await operationsRef.current.getRuntimePolicy('runtime-local-01')).disabledTools ?? []
+    },
+    disabledBuiltinSkills: async () => {
+      if (!operationsRef.current) return []
+      return (await operationsRef.current.getRuntimePolicy('runtime-local-01')).disabledBuiltinSkills ?? []
     },
     resolveMcpConnections: async manifest => {
       if (mcpServiceRef.current) return mcpServiceRef.current.resolveRuntimeConnections(manifest)
@@ -280,6 +342,7 @@ async function start() {
     loadSkillArtifact: skill => skillArtifacts.readRuntimeArtifact(skill.artifact_ref!, skill.files ?? [], skill.instructions_sha256!),
     recordSkillActivation: (manifest, skill, digest) => installationService.recordActivation(manifest, skill, digest),
     recordPythonExecution: (manifest, skillId, entry, succeeded) => installationService.recordPythonExecution(manifest, skillId, entry, succeeded),
+    loadRuntimeOriginal: (manifest, fileId) => content.readRuntimeOriginal(manifest, fileId),
     collectArtifacts: (manifest, workspaceDirectory) => content.publishRuntimeArtifacts({ manifest, workspaceDirectory }),
     operationLifecycle: manifest => ({
       async begin(input) {
@@ -307,18 +370,32 @@ async function start() {
         })
       },
     }),
-    ...(pythonRunner ? { executePython: (input, manifest, workspace, signal) => pythonRunner.execute(input, manifest, workspace, signal) } : {}),
-  }) : new UnavailableRuntime('runtime-local-01')
+    ...(containerPythonRunner ? { executePython: (input, manifest, workspace, signal) => containerPythonRunner.execute(input, manifest, workspace, signal) } : {}),
+    ...(attemptContainers ? {
+      remoteExecution: attemptContainers,
+      recordContainerCommand: async (manifest, audit) => {
+        await operations.appendAudit(
+          'system',
+          'run.container.command',
+          manifest.run_id,
+          audit.exitCode === 0 || audit.exitCode === 1 ? 'success' : 'failed',
+          manifest.trace_id ?? manifest.run_id,
+          `${audit.executable} · 退出码 ${audit.exitCode ?? (audit.timedOut ? '超时' : audit.aborted ? '已取消' : '无')} · ${audit.durationMs} ms · 输出 ${audit.stdoutBytes}/${audit.stderrBytes} 字节${audit.truncated ? '（已截断）' : ''} · ${audit.summary}`,
+        )
+      },
+    } : {}),
+  }) : new UnavailableRuntime('runtime-local-01', dsh.value ? 'execution-container' : 'dsh')
   const runtime = new CapabilityGuardedRuntime(dshAdapter, pythonCapability)
   executionRuntime = runtime
   const workspaceMembers = new PostgresWorkspaceMemberService(database, authorization)
   const workspaceLifecycle = new PostgresWorkspaceLifecycleService(database)
   const notificationRecipientPorts = createPostgresNotificationRecipientPorts(database)
-  bindWorkspaceNotificationRecipients(new WorkspaceNotificationRecipientService(
+  const workspaceNotificationRecipients = new WorkspaceNotificationRecipientService(
     database,
     notificationRecipientPorts.participants,
     notificationRecipientPorts.members,
-  ))
+  )
+  bindWorkspaceNotificationRecipients(workspaceNotificationRecipients)
   const workspaceActivity = new PostgresWorkspaceActivityService(database, new PostgresWorkspaceService(database))
   const workspaceUsage = new PostgresWorkspaceUsageService(database, new PostgresWorkspaceService(database), authorization)
   const operations = new PostgresOperationsService(
@@ -326,6 +403,7 @@ async function start() {
     runtime,
     authorization,
     identityConfiguration.mode === 'oidc' ? 'ai-hub-oidc' : identityConfiguration.mode === 'local' ? 'local-password' : 'mock',
+    builtinSkills,
   )
   operationsRef.current = operations
   const runtimePolicy = await operations.getRuntimePolicy('runtime-local-01')
@@ -352,6 +430,19 @@ async function start() {
   void toolService.syncToolCatalog({ actor: 'U00008' }).catch(error => {
     console.warn('DSH tool catalog startup sync skipped:', error)
   })
+  // 内置工具由代码注册表管理；启动时尽力比对 DSH 当前工具目录，结果只写入日志，
+  // 执行能力不可用不阻止核心 API 启动。
+  void runtime.listTools?.().then(tools => {
+    const missingTools = missingDshBuiltinTools(tools.map(tool => tool.id))
+    if (missingTools.length) console.warn('DSH profile is missing built-in tools:', missingTools)
+  }).catch(error => {
+    console.warn('DSH built-in tool catalog check skipped:', error)
+  })
+  const executionContainerStatus = () => executionContainerCapability.status === 'available' ? 'available' as const : 'unavailable' as const
+  // 方案 4.7：执行容器可用时报告数据卷剩余空间是否低于阈值（低时不运行命令）。
+  const executionDiskLow = async () => attemptContainers
+    ? (await freeSpace(dataRoot).catch(() => null))?.low ?? false
+    : false
   const skills = new PostgresSkillService(database, operations, skillArtifacts)
   // C7 only inspects execution capability; it never starts a Worker/model call.
   const checkInstallationRuntime = async (references: string[], requiredPackages: string[]) => {
@@ -359,8 +450,8 @@ async function start() {
     const health = await runtime.health()
     if (health.status === 'offline' || !health.acceptingRuns) throw new ExecutionCapabilityUnavailableError('dsh')
     if (references.includes('python_execute@1.0.0') && pythonCapability.status !== 'available') throw new ExecutionCapabilityUnavailableError('python')
-    const configuredPackages = new Set(pythonPackages.map(value => value.toLowerCase()))
-    if (requiredPackages.some(name => !configuredPackages.has(name.toLowerCase()))) {
+    const configuredPackages = new Set(pythonPackages.map(normalizePythonPackageName))
+    if (requiredPackages.some(name => !configuredPackages.has(normalizePythonPackageName(name)))) {
       throw new RequestError(503, 'SKILL_DEPENDENCIES_UNAVAILABLE', '声明的 Python 依赖未配置并验证，当前不可发布')
     }
   }
@@ -434,13 +525,14 @@ async function start() {
       projectTasks: projects,
       projectArchive,
       timezone: resolvePlatformTimezone(process.env.DSH_WORK_TIMEZONE),
+      builtinSkills,
     },
   )
   projects.attachRunStarter(orchestration)
   persistentWait = new PostgresPersistentWaitService(database, runs, {
     reauthorize: manifest => orchestration!.assertWaitingRunAuthorization(manifest),
     enqueue: (run, manifest) => orchestration!.enqueueResumedAttempt(run, manifest),
-  }, dshInstallation?.version ?? 'unavailable')
+  }, dsh.value?.version ?? 'unavailable')
   persistentWaitRef.current = persistentWait
   orchestration.setPersistentWaitService(persistentWait)
   orchestration.setDelegationService(delegation)
@@ -449,8 +541,8 @@ async function start() {
     cancelRun: async (runId, reason) => { await orchestration!.systemCancelRun(runId, 'system_revoke', reason) },
   })
   persistentWait.start()
-  const pythonPackages = (process.env.DSH_WORK_PYTHON_PACKAGES ?? '').split(',').map(value => value.trim()).filter(Boolean)
-  const installationService: AdminSkillInstallationService = new AdminSkillInstallationService(database, orchestration, authorization, acquireSkillSource, Boolean(pythonRunner), pythonPackages, skillArtifacts, checkInstallationRuntime)
+  const pythonPackages = containerPythonRunner && attemptContainers ? [...attemptContainers.pythonPackages] : []
+  const installationService: AdminSkillInstallationService = new AdminSkillInstallationService(database, orchestration, authorization, acquireSkillSource, Boolean(containerPythonRunner), pythonPackages, skillArtifacts, checkInstallationRuntime)
   const assistantService = new AdminAssistantService(database, orchestration, authorization, installationService, skills, agents, operations)
   skills.setPackageTester((userId, skill, prompt) => installationService.testPackage(userId, skill, prompt))
   skills.setPackageTestLifecycle({
@@ -474,6 +566,21 @@ async function start() {
   await content.backfillArtifactExtractions()
     .then(result => { if (result.extracted > 0) console.warn('artifact extraction backfill completed', result) })
     .catch(error => console.error('artifact extraction backfill failed', error))
+  // 2b-3：二进制成果补解析在后台进行，不阻塞启动；容器失败的批次留待下次启动。
+  void content.backfillBinaryArtifactExtractions()
+    .then(result => { if (result.extracted > 0 || result.failed > 0) console.warn('binary artifact extraction backfill completed', result) })
+    .catch(error => console.error('binary artifact extraction backfill failed', redactSensitiveText(error instanceof Error ? error.message : String(error)).slice(0, 500)))
+  // 执行隔离 4.7：启动后与每 6 小时按回收规则清扫 Attempt 工作区（含历史目录），不阻塞启动。
+  let workspaceSweep: NodeJS.Timeout | null = null
+  if (dshAdapter instanceof DshAcpRuntimeAdapter) {
+    const adapter = dshAdapter
+    const sweepWorkspaces = () => void adapter.sweepAttemptWorkspaces()
+      .then(result => { if (result.removed > 0) console.warn('attempt workspace sweep completed', result) })
+      .catch(error => console.error('attempt workspace sweep failed', redactSensitiveText(error instanceof Error ? error.message : String(error)).slice(0, 500)))
+    sweepWorkspaces()
+    workspaceSweep = setInterval(sweepWorkspaces, 6 * 60 * 60 * 1000)
+    workspaceSweep.unref()
+  }
   if (restartRecovery.failed > 0 || restartRecovery.resumedQueued > 0) {
     console.warn('service restart recovery completed', restartRecovery)
   }
@@ -524,6 +631,15 @@ async function start() {
   registerWorkspaceLifecycleRoutes(router, workspaceLifecycle, authorization)
   registerWorkspaceActivityRoutes(router, workspaceActivity, authorization)
   registerUserPreferenceRoutes(router, new PostgresUserPreferenceService(database))
+  const webPushService = new WebPushService(database, {
+    vapidPublicKey: process.env.DSH_VAPID_PUBLIC_KEY,
+    vapidPrivateKey: process.env.DSH_VAPID_PRIVATE_KEY,
+    vapidSubject: process.env.DSH_VAPID_SUBJECT,
+  })
+  bindWebPushDispatch(new WebPushDispatchService(database, webPushService, workspaceNotificationRecipients))
+  registerPushRoutes(router, webPushService)
+  registerWeknoraRoutes(router, createWeknoraAccessService(database))
+  registerRunApprovalRoutes(router, database, runs, persistentWait, 'postgres')
   registerConversationTargetRoutes(router, new PostgresConversationTargetService(database, agents), authorization)
   registerWorkspaceTimelineRoutes(router, new PostgresWorkspaceTimelineService(database, new PostgresWorkspaceService(database)), authorization)
   registerWorkspaceUsageRoutes(router, workspaceUsage, authorization)
@@ -539,10 +655,13 @@ async function start() {
   if (trialRecovery.interrupted > 0) console.warn('agent release trial recovery completed', trialRecovery)
   registerAgentReleaseRoutes(router, agentRelease)
   // S3 验证与发布：管理端 Agent 详情页的用例/验证/发布接口（浏览器夹具一直单独装配，生产入口此前缺失）。
-  registerAgentValidationRoutes(router, agents,
-    new PostgresAgentValidationService(database, agents, skills, orchestration, mcpService),
-    new PostgresAgentRunHistory(database))
-  registerSkillRoutes(router, skills)
+  const agentValidation = new PostgresAgentValidationService(database, agents, skills, orchestration, mcpService)
+  // 启动收敛：重启前尚未取得 Run 的验证案例标为“服务重启中断”，可单独重跑；
+  // 已在运行的案例 Run 由重启恢复收敛，读取验证时折叠为同一状态。
+  const validationRecovery = await agentValidation.recoverInterruptedValidations()
+  if (validationRecovery.interrupted > 0) console.warn('agent validation recovery completed', validationRecovery)
+  registerAgentValidationRoutes(router, agents, agentValidation, new PostgresAgentRunHistory(database))
+  registerSkillRoutes(router, skills, async () => builtinSkills.status((await operations.getRuntimePolicy('runtime-local-01')).disabledBuiltinSkills))
   registerToolRoutes(router, toolService)
   registerWorkbenchAgentRoutes(router, agents, authorization)
   registerModelGovernanceRoutes(router, new ModelGovernanceService(modelRepository))
@@ -558,7 +677,7 @@ async function start() {
     // is intentionally separate; a DB outage never reports core readiness.
     try {
       await checkDatabase(database)
-      return { status: 'ready', core: true, executionCapabilities: { dsh: dshCapability, python: pythonCapability } }
+      return { status: 'ready', core: true, executionCapabilities: { dsh: dshCapability, python: pythonCapability, executionContainer: executionContainerCapability } }
     } catch {
       return httpResult(503, { status: 'not-ready', core: false, code: 'DATABASE_UNAVAILABLE' })
     }
@@ -570,7 +689,11 @@ async function start() {
     envelope('system', {
       service: 'dsh-work-server',
       status: 'ok',
-      executionCapabilities: { dsh: { status: dshCapability.status }, python: { status: pythonCapability.status } },
+      executionCapabilities: {
+        dsh: { status: dshCapability.status },
+        python: { status: pythonCapability.status },
+        executionContainer: { status: executionContainerStatus(), ...((await executionDiskLow()) ? { diskLow: true } : {}) },
+      },
       dshRuntime: {
         status: executionRuntime ? (await executionRuntime.health()).status : dshInstallation ? 'connected' : 'not-configured',
       },
@@ -590,10 +713,13 @@ async function start() {
         if (memoryProposalSweep) clearInterval(memoryProposalSweep)
         if (agentDataSweep) clearInterval(agentDataSweep)
         if (workspaceObjectGcSweep) clearInterval(workspaceObjectGcSweep)
+        if (workspaceSweep) clearInterval(workspaceSweep)
         if (automationSweep) await automationSweep.close()
         if (revocationSweep) revocationSweep.close()
         persistentWait?.close()
         if (orchestration) await orchestration.close()
+        extractionExecutor?.close()
+        attemptContainers?.close()
         await database.end()
         process.exit(0)
       })()

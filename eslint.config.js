@@ -71,6 +71,12 @@ export default tseslint.config(
     },
   },
   {
+    files: ['apps/workbench-web/public/push-sw.js'],
+    languageOptions: {
+      globals: { ...globals.serviceworker, URL: 'readonly' },
+    },
+  },
+  {
     files: ['**/*.mjs'],
     ...tseslint.configs.disableTypeChecked,
     languageOptions: {

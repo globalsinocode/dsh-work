@@ -10,6 +10,7 @@ import {
   type ConversationTargetPage,
   type ConversationTargetStore,
   type ConversationTargetType,
+  type MentionSummary,
 } from '../../modules/workbench/application/conversation-targets.ts'
 import type { SmokeRepository } from './smoke-repository.ts'
 
@@ -23,8 +24,32 @@ export class MemoryConversationTargetStore implements ConversationTargetStore {
   /** 已读的对话对象（进程内，S5e）：未读数为夹具中该对象的 Agent 回复数，标记已读后为 0。 */
   private readonly readTargets = new Set<string>()
 
+  /**
+   * D38：预置一条 @ 测试身份的未读提醒（`ws-supply` 的一段讨论），供冒烟验证“[有人@我]”与打开即已读；
+   * 登记与成员校验由 PostgreSQL 实现与 MODE-API-04 集成测试保证。
+   */
+  private readonly mentions: Array<MentionSummary & { read: boolean }> = [
+    { workspaceId: 'ws-supply', sessionId: 'session-1002', count: 1, latestAt: syntheticTime(0), read: false },
+  ]
+
   constructor(repository: SmokeRepository) {
     this.repository = repository
+  }
+
+  async listMentions(): Promise<{ items: MentionSummary[] }> {
+    return { items: this.mentions.filter(item => !item.read).map(({ read: _read, ...item }) => item) }
+  }
+
+  async markMentionsRead(input: { workspaceId: string; sessionId?: string }) {
+    const workspace = (await this.repository.read('workspaces')).find(item => item.id === input.workspaceId && item.type === 'team')
+    if (!workspace) throw notFound('项目空间不存在或无权访问')
+    let read = 0
+    for (const item of this.mentions) {
+      if (item.read || item.workspaceId !== input.workspaceId || (input.sessionId && item.sessionId !== input.sessionId)) continue
+      item.read = true
+      read += item.count
+    }
+    return { workspaceId: input.workspaceId, sessionId: input.sessionId ?? null, read }
   }
 
   async markRead(input: { type: ConversationTargetType; id: string; upTo?: Date }): Promise<ConversationReadState> {
@@ -35,6 +60,7 @@ export class MemoryConversationTargetStore implements ConversationTargetStore {
       : agents.some(item => item.id === input.id) || (await this.allTargets()).some(item => item.type === 'agent' && item.id === input.id)
     if (!exists) throw notFound(input.type === 'group' ? '群组不存在或无权访问' : 'AI 同事不存在')
     this.readTargets.add(`${input.type}:${input.id}`)
+    if (input.type === 'group') await this.markMentionsRead({ workspaceId: input.id })
     const now = new Date()
     const at = input.upTo && input.upTo < now ? input.upTo : now
     return { type: input.type, id: input.id, lastReadAt: at.toISOString() }
@@ -123,6 +149,7 @@ export class MemoryConversationTargetStore implements ConversationTargetStore {
       replies.set(key, (replies.get(key) ?? 0) + task.messages.filter(message => message.role !== 'user').length)
     }
     const unread = (key: string) => this.readTargets.has(key) ? 0 : replies.get(key) ?? 0
+    const mentioned = (workspaceId: string) => this.mentions.some(item => !item.read && item.workspaceId === workspaceId)
     for (const [index, task] of tasks.entries()) {
       const workspace = workspaces.find(item => item.id === task.workspaceId)
       if (!workspace) continue
@@ -149,6 +176,7 @@ export class MemoryConversationTargetStore implements ConversationTargetStore {
         available: isGroup || agent?.status === 'published',
         unreadCount: unread(key),
         muted: false,
+        mentioned: isGroup && mentioned(workspace.id),
         order: index,
       })
     }
@@ -158,6 +186,7 @@ export class MemoryConversationTargetStore implements ConversationTargetStore {
         type: 'group', id: workspace.id, name: workspace.name, description: workspace.description,
         avatarNames: workspace.members.slice(0, 4), lastMessage: null,
         lastActiveAt: syntheticTime(tasks.length + targets.size), available: true, unreadCount: 0, muted: false,
+        mentioned: mentioned(workspace.id),
         order: tasks.length + targets.size,
       })
     }

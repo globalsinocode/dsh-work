@@ -5,6 +5,7 @@ project_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 cd "${project_root}"
 
 deployment_scripts=(
+  deploy/execution-image/smoke-test.sh
   scripts/deploy/backup.sh
   scripts/deploy/set-macmini-endpoints.sh
   scripts/deploy/init-intranet-ca.sh

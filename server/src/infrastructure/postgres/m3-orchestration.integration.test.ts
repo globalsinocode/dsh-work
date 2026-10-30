@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { createHash, randomUUID } from 'node:crypto'
-import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, symlink, writeFile } from 'node:fs/promises'
+import { spawnSync } from 'node:child_process'
 import { createServer, type Server } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -33,6 +34,8 @@ import type { DatabaseClient } from './database.ts'
 import { createThrowawayDatabase, type ThrowawayDatabase } from './test-database.ts'
 import { bindTestWorkspaceNotificationRecipients } from './workspace-notification-recipient-test-fixture.ts'
 import { LocalObjectStorage } from '../storage/local-object-storage.ts'
+import { minimalDocx, minimalPptx, minimalXlsx } from '../../testing/office-fixtures.ts'
+import type { ArtifactTextExtraction, ArtifactTextExtractorPort } from '../../modules/workbench/application/container-artifact-text-extractor.ts'
 
 const databaseUrl = process.env.DSH_WORK_TEST_DATABASE_URL
 if (!databaseUrl) throw new Error('DSH_WORK_TEST_DATABASE_URL 未配置')
@@ -408,7 +411,8 @@ test('validated Runtime output is published once as a downloadable Artifact', as
 
     const first = await content.publishRuntimeArtifacts({ manifest, workspaceDirectory })
     const repeated = await content.publishRuntimeArtifacts({ manifest, workspaceDirectory })
-    assert.deepEqual(first, [{ name: '生产欠料管理PRD.md', size: Buffer.byteLength('# 生产欠料管理 PRD\n') }])
+    assert.deepEqual(first.published, [{ name: '生产欠料管理PRD.md', size: Buffer.byteLength('# 生产欠料管理 PRD\n') }])
+    assert.deepEqual(first.skipped, [])
     assert.deepEqual(repeated, first)
     releaseCompletion()
     await waitForTask(created.id, 'succeeded')
@@ -516,6 +520,17 @@ test('EX-01 tool call outcomes are kept as run steps and counted in the task res
   ])
   assert.equal(task.result.evidence.toolCalls, 2)
   assert.equal(task.result.evidence.toolFailures, 1)
+
+  // EX-PROGRESS-01：步骤带来源事件与服务端时间；调用结果步骤带同一调用的开始时间，员工端据此算耗时。
+  const iso = (value: string | undefined) => typeof value === 'string' && !Number.isNaN(Date.parse(value))
+  const [read, fetch, demo] = toolSteps
+  assert.equal(read?.event, 'tool.completed')
+  assert.ok(iso(read?.startedAt) && iso(read?.at) && Date.parse(read!.startedAt!) <= Date.parse(read!.at!))
+  assert.equal(fetch?.event, 'tool.started')
+  assert.equal(fetch?.startedAt, fetch?.at)
+  assert.ok(iso(demo?.startedAt) && Date.parse(demo!.startedAt!) <= Date.parse(demo!.at!))
+  assert.ok(iso(task.steps.find(step => step.event === 'run.started')?.at))
+  assert.ok(iso(task.steps.find(step => step.event === 'run.completed')?.at))
 })
 
 test('EX-02 long conversations keep the first message, fall back to trimming and then use a background summary', async () => {
@@ -632,7 +647,7 @@ test('HTML Runtime output is published as a previewable html Artifact', async ()
     const manifest = attempt!.manifest as unknown as RuntimeManifest
 
     const published = await content.publishRuntimeArtifacts({ manifest, workspaceDirectory })
-    assert.deepEqual(published, [{ name: '华东区风险看板.html', size: Buffer.byteLength(markup) }])
+    assert.deepEqual(published.published, [{ name: '华东区风险看板.html', size: Buffer.byteLength(markup) }])
     releaseCompletion()
     await waitForTask(created.id, 'succeeded')
 
@@ -809,6 +824,7 @@ test('compilation failure converges the Run instead of leaving it queued without
     versionId: session.agentVersionId, systemPrompt: 'Read the selected Skill resources and answer the employee faithfully.',
     skills: ['first@1.0.0', 'second@1.0.0'],
     skillInstructions: ['first', 'second'].map(id => ({ id, version: '1.0.0', instructions: 'Read the packaged resources and summarize their contents.', tools: [], files: [resource('x'.repeat(600 * 1024))] })),
+    coveringSkills: [],
     runtimeTools: [], tools: [], toolBindings: [], dataScopes: ['enterprise:authorized'], projectTasksEnabled: false, mcpConnections: [], approvalMode: 'risk_based', roleIds: [], maxOutputBytes: 65536, maxToolCalls: 20, timeoutSeconds: 300,
   }
   snapshot.skillInstructions[0]!.files = [resource('x'.repeat(1024 * 1024 + 1))]
@@ -848,7 +864,7 @@ test('model admission rejects employee, automation and release trial preparation
           const snapshot: RuntimeAgentSnapshot = {
             versionId: session.agentVersionId, modelRequirements: ['structured-output'],
             systemPrompt: '请根据当前授权范围内的信息回答用户问题，并标注结论依据。',
-            skills: [], skillInstructions: [], runtimeTools: [], tools: [], toolBindings: [], dataScopes: ['enterprise:authorized'],
+            skills: [], skillInstructions: [], coveringSkills: [], runtimeTools: [], tools: [], toolBindings: [], dataScopes: ['enterprise:authorized'],
             projectTasksEnabled: false, mcpConnections: [],
             approvalMode: 'risk_based', roleIds: [],
             maxOutputBytes: 65536, maxToolCalls: 20, timeoutSeconds: 300,
@@ -1471,3 +1487,302 @@ class DeterministicRuntime implements AgentRuntimePort {
     execution.resolve(structuredClone(execution.snapshot))
   }
 }
+
+test('2b-2: compliant files are published, non-compliant ones are skipped with a reason, and re-publishing agrees', async () => {
+  const session = await orchestration.createSession({ userId: 'U00001', title: '运行命令生成成果' })
+  const root = await mkdtemp(join(tmpdir(), 'dsh-work-artifact-policy-'))
+  const workspaceDirectory = join(root, 'workspace')
+  const output = join(workspaceDirectory, 'output')
+  await mkdir(join(output, 'tmp'), { recursive: true })
+  await writeFile(join(root, 'host-secret.md'), '# host\n')
+  await writeFile(join(output, '周报.md'), '# 周报\n')
+  await writeFile(join(output, '数据.xlsx'), minimalXlsx())
+  await writeFile(join(output, '宏.xlsx'), minimalXlsx({ 'xl/vbaProject.bin': 'macro' }))
+  await writeFile(join(output, '图.svg'), '<svg/>')
+  await writeFile(join(output, '伪装.pdf'), Buffer.from('89504e470d0a1a0a00', 'hex'))
+  await writeFile(join(output, '.草稿.md'), '# hidden\n')
+  await writeFile(join(output, '大文件.txt'), Buffer.alloc(20 * 1024 * 1024 + 1, 0x61))
+  await writeFile(join(output, '说明.docx'), minimalDocx())
+  await symlink(join(root, 'host-secret.md'), join(output, '链接.md'))
+  const fifo = spawnSync('mkfifo', [join(output, '管道.txt')]).status === 0
+
+  let release: () => void = () => undefined
+  runtime.completionGate = new Promise<void>(resolve => { release = resolve })
+  try {
+    const created = await orchestration.startRun({ userId: 'U00001', sessionId: session.id, prompt: '整理数据', idempotencyKey: randomUUID() })
+    assert.ok(created)
+    await waitForTask(created.id, 'running')
+    const attempt = await runs.getAttempt('tenant-dsh-work', created.currentAttemptId!)
+    const manifest = attempt!.manifest as unknown as RuntimeManifest
+
+    const first = await content.publishRuntimeArtifacts({ manifest, workspaceDirectory })
+    assert.deepEqual(first.published.map(item => item.name).sort(), ['周报.md', '数据.xlsx', '说明.docx'].sort())
+    const reasons = Object.fromEntries(first.skipped.map(item => [item.name, item.reason]))
+    assert.deepEqual(reasons, {
+      'tmp': 'not_regular_file',
+      '宏.xlsx': 'active_content',
+      '图.svg': 'unsupported_format',
+      '伪装.pdf': 'content_mismatch',
+      '.草稿.md': 'hidden_file',
+      '大文件.txt': 'too_large',
+      '链接.md': 'not_regular_file',
+      ...(fifo ? { '管道.txt': 'not_regular_file' } : {}),
+    })
+    assert.equal(first.skippedTotal, first.skipped.length)
+    // 判断只依赖文件名与内容：重复发布得到相同结果。
+    assert.deepEqual(await content.publishRuntimeArtifacts({ manifest, workspaceDirectory }), first)
+    release()
+    await waitForTask(created.id, 'succeeded')
+    assert.deepEqual(await content.publishRuntimeArtifacts({ manifest, workspaceDirectory }), first, 'idempotent after success')
+
+    const task = await conversations.getTask(created.id, 'U00001')
+    const byName = new Map(task!.result.artifacts.map(artifact => [artifact.name, artifact]))
+    assert.equal(byName.get('数据.xlsx')?.type, 'xlsx')
+    assert.equal(byName.get('说明.docx')?.type, 'docx')
+    // 二进制成果没有解析文本也可引用：执行容器为必需，挂载原始文件（2b-4、方案 4.9）。
+    assert.equal(byName.get('数据.xlsx')?.canReference, true)
+    assert.equal(byName.get('周报.md')?.canReference, true)
+    const fileId = await content.artifactFileId(byName.get('数据.xlsx')!.id, 1, 'U00001')
+    const downloaded = await content.readFile(fileId, 'U00001')
+    assert.equal(downloaded.mimeType, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+    assert.ok(downloaded.bytes.equals(minimalXlsx()))
+    const stored = await database<{ name: string }[]>`
+      select original_name as name from file_objects
+       where tenant_id = 'tenant-dsh-work' and session_id = ${session.id}`
+    assert.deepEqual(stored.map(row => row.name).sort(), ['周报.md', '数据.xlsx', '说明.docx'].sort(), 'skipped files are never stored')
+  } finally {
+    release()
+  }
+})
+
+test('2b-4: with bash, inputs also mount their originals and a binary artifact is revised to V2; without bash it is refused', async () => {
+  const bashConversations = new PostgresConversationRepository(database)
+  const withBash = new RunOrchestrationService(
+    runs, bashConversations, new ModelGovernanceService(new PostgresModelGovernanceRepository(database)), runtime,
+    content, new PostgresOperationsService(database), undefined, undefined, new PostgresAuthorizationService(database),
+    { tasks: new PostgresTaskRepository(database) },
+  )
+  const session = await withBash.createSession({ userId: 'U00001', title: '修改表格成果' })
+  const turn = async (service: RunOrchestrationService, prompt: string, fileIds: string[], output: Record<string, Buffer>) => {
+    const workspaceDirectory = await mkdtemp(join(tmpdir(), 'dsh-work-original-mounts-'))
+    await mkdir(join(workspaceDirectory, 'output'))
+    let release: () => void = () => undefined
+    runtime.completionGate = new Promise<void>(resolve => { release = resolve })
+    try {
+      const created = await service.startRun({ userId: 'U00001', sessionId: session.id, prompt, idempotencyKey: randomUUID(), fileIds })
+      assert.ok(created)
+      await waitForTask(created.id, 'running')
+      const attempt = await runs.getAttempt('tenant-dsh-work', created.currentAttemptId!)
+      const manifest = attempt!.manifest as unknown as RuntimeManifest
+      const publish = async (files: Record<string, Buffer>) => {
+        for (const [name, bytes] of Object.entries(files)) await writeFile(join(workspaceDirectory, 'output', name), bytes)
+        return content.publishRuntimeArtifacts({ manifest, workspaceDirectory })
+      }
+      return { created, manifest, publish, release, first: Object.keys(output).length ? await publish(output) : null }
+    } catch (error) {
+      release()
+      throw error
+    }
+  }
+
+  // V1: a binary artifact from an earlier round.
+  const v1 = await turn(withBash, '生成数据表', [], { '数据.xlsx': minimalXlsx() })
+  v1.release()
+  await waitForTask(v1.created.id, 'succeeded')
+  const artifact = (await bashConversations.getTask(v1.created.id, 'U00001'))!.result.artifacts.find(item => item.name === '数据.xlsx')!
+  assert.equal(artifact.canReference, true, 'the execution container mounts the original')
+  const upload = await content.storeSessionFile(session.id, '明细.csv', 'text/csv', Buffer.from('物料,数量\nA,3\n'), 'U00001')
+
+  // With bash disabled by the Runtime a binary artifact cannot be an input: refused before an Attempt exists.
+  const operations = new PostgresOperationsService(database, runtime)
+  const runtimeRow = (await operations.getRuntimes()).find(item => item.id === 'runtime-local-01')!
+  const setDisabled = (disabledTools: string[]) => operations.updateRuntimeConfiguration({
+    runtimeId: runtimeRow.id, maxConcurrentWorkers: runtimeRow.maxConcurrentWorkers,
+    attemptTimeoutMinutes: runtimeRow.attemptTimeoutMinutes, schedulingStatus: runtimeRow.schedulingStatus, disabledTools, actor: 'U00008',
+  })
+  await setDisabled(['bash'])
+  try {
+    await assert.rejects(
+      withBash.startRun({ userId: 'U00001', sessionId: session.id, prompt: '改一下', idempotencyKey: randomUUID(), fileIds: [artifact.fileId!] }),
+      /需要运行命令的能力/,
+    )
+  } finally {
+    await setDisabled([])
+  }
+
+  const v2 = await turn(withBash, '把 A 的数量改成 5', [artifact.fileId!, upload.id], {})
+  try {
+    const { manifest } = v2
+    assert.deepEqual(manifest.input.file_mounts.map(mount => mount.source_name), ['明细.csv'], 'only the upload has extracted text')
+    // With bash both inputs also mount their originals: the binary artifact only that way.
+    assert.deepEqual(manifest.input.original_mounts?.map(mount => mount.source_name), ['数据.xlsx', '明细.csv'])
+    const [xlsxMount, csvMount] = manifest.input.original_mounts!
+    assert.match(xlsxMount!.mount_path, /^\/workspace\/input\/original\/01-[A-Za-z0-9._-]+\.xlsx$/)
+    assert.match(csvMount!.mount_path, /^\/workspace\/input\/original\/02-[A-Za-z0-9._-]+\.csv$/)
+    assert.deepEqual(xlsxMount!.artifact_revision, { artifact_id: artifact.id, version: 1 })
+    const [binding] = await database<{ extractionId: string | null }[]>`
+      select extraction_id as "extractionId" from run_input_files
+       where tenant_id = 'tenant-dsh-work' and run_id = ${v2.created.id} and file_id = ${artifact.fileId!}`
+    assert.equal(binding?.extractionId, null)
+
+    // The Adapter reads originals by Run binding only.
+    assert.ok((await content.readRuntimeOriginal(manifest, artifact.fileId!)).equals(minimalXlsx()))
+    const stranger = await content.storeSessionFile(session.id, '无关.csv', 'text/csv', Buffer.from('x\n'), 'U00001')
+    await assert.rejects(content.readRuntimeOriginal(manifest, stranger.id), /不属于本次运行/)
+
+    // An unchanged copy is not a new version; a modified file is V2 of the same artifact.
+    const unchanged = await v2.publish({ '数据.xlsx': minimalXlsx() })
+    assert.deepEqual(unchanged.published, [])
+    const revised = await v2.publish({ '数据.xlsx': minimalXlsx({ 'xl/worksheets/sheet1.xml': '<worksheet>A=5</worksheet>' }) })
+    assert.deepEqual(revised.published.map(item => item.name), ['数据.xlsx'])
+    v2.release()
+    await waitForTask(v2.created.id, 'succeeded')
+    const versions = await database<{ versionNo: number }[]>`
+      select version_no as "versionNo" from artifact_versions where tenant_id = 'tenant-dsh-work' and artifact_id = ${artifact.id} order by version_no`
+    assert.deepEqual(versions.map(row => row.versionNo), [1, 2])
+  } finally {
+    v2.release()
+  }
+})
+
+test('2b-3: binary artifacts get container-extracted text, failures are recorded, and outages are backfilled', async () => {
+  const calls: string[][] = []
+  let outage = false
+  const extractor: ArtifactTextExtractorPort = {
+    async extract(files) {
+      calls.push(files.map(file => file.type))
+      if (outage) throw new Error('no extraction capacity')
+      return files.map((file): ArtifactTextExtraction => file.type === 'pdf'
+        ? { ok: false, detectedType: 'pdf', code: 'PDF_UNREADABLE', message: 'PDF 无法读取' }
+        : { ok: true, detectedType: file.type, text: `# ${file.type} 解析文本\n华东\t1200`, pageCount: file.type === 'pptx' ? 1 : null, sheetCount: file.type === 'xlsx' ? 1 : null, rowCount: 2 })
+    },
+  }
+  const extracting = new PostgresContentService(
+    database, new LocalObjectStorage(`/tmp/dsh-work-m3-extract-${randomUUID()}`), new PostgresAuthorizationService(database),
+    undefined, undefined, { artifactTextExtractor: extractor },
+  )
+  const operations = new PostgresOperationsService(database, runtime)
+  const orchestrator = new RunOrchestrationService(
+    runs, new PostgresConversationRepository(database),
+    new ModelGovernanceService(new PostgresModelGovernanceRepository(database)), runtime,
+    extracting, operations, undefined, undefined, new PostgresAuthorizationService(database),
+    { tasks: new PostgresTaskRepository(database) },
+  )
+  // The execution container is always required (plan 4.9); a run goes without bash only when the Runtime disables it.
+  const runtimeRow = (await operations.getRuntimes()).find(item => item.id === 'runtime-local-01')!
+  const setDisabled = (disabledTools: string[]) => operations.updateRuntimeConfiguration({
+    runtimeId: runtimeRow.id, maxConcurrentWorkers: runtimeRow.maxConcurrentWorkers,
+    attemptTimeoutMinutes: runtimeRow.attemptTimeoutMinutes, schedulingStatus: runtimeRow.schedulingStatus, disabledTools, actor: 'U00008',
+  })
+  const session = await orchestrator.createSession({ userId: 'U00001', title: '解析二进制成果' })
+  const turn = async (orchestrator: RunOrchestrationService, prompt: string, fileIds: string[], output: Record<string, Buffer>) => {
+    const workspaceDirectory = await mkdtemp(join(tmpdir(), 'dsh-work-binary-text-'))
+    await mkdir(join(workspaceDirectory, 'output'))
+    for (const [name, bytes] of Object.entries(output)) await writeFile(join(workspaceDirectory, 'output', name), bytes)
+    let release: () => void = () => undefined
+    runtime.completionGate = new Promise<void>(resolve => { release = resolve })
+    try {
+      const created = await orchestrator.startRun({ userId: 'U00001', sessionId: session.id, prompt, idempotencyKey: randomUUID(), fileIds })
+      assert.ok(created)
+      await waitForTask(created.id, 'running')
+      const manifest = (await runs.getAttempt('tenant-dsh-work', created.currentAttemptId!))!.manifest as unknown as RuntimeManifest
+      const published = Object.keys(output).length ? await extracting.publishRuntimeArtifacts({ manifest, workspaceDirectory }) : null
+      release()
+      await waitForTask(created.id, 'succeeded')
+      return { created, manifest, published }
+    } finally {
+      release()
+    }
+  }
+  const pdf = Buffer.from('%PDF-1.7\n1 0 obj\n<< /Type /Catalog >>\nendobj\ntrailer\n<< /Root 1 0 R >>\n%%EOF\n', 'latin1')
+
+  // One container call for all binary artifacts of the turn; text artifacts keep their own text.
+  const first = await turn(orchestrator, '生成报告', [], {
+    '数据.xlsx': minimalXlsx(), '说明.docx': minimalDocx(), '概览.pptx': minimalPptx(), '报告.pdf': pdf, '周报.md': Buffer.from('# 周报\n'),
+  })
+  assert.equal(first.published?.published.length, 5)
+  assert.equal(calls.length, 1, 'one extraction container per turn')
+  assert.deepEqual([...calls[0]!].sort(), ['docx', 'pdf', 'pptx', 'xlsx'])
+  const extractions = await database<{ name: string; version: string; type: string; status: string; code: string | null; pages: number | null; sheets: number | null }[]>`
+    select f.original_name as name, fe.extractor_version as version, fe.detected_type as type, fe.status, fe.error_code as code,
+           fe.page_count as pages, fe.sheet_count as sheets
+      from file_extractions fe join file_objects f on f.tenant_id = fe.tenant_id and f.id = fe.file_id
+     where fe.tenant_id = 'tenant-dsh-work' and f.session_id = ${session.id} order by f.original_name`
+  assert.deepEqual(Object.fromEntries(extractions.map(row => [row.name, [row.version, row.type, row.status, row.code, row.pages, row.sheets]])), {
+    '数据.xlsx': ['exec-office-v1', 'xlsx', 'succeeded', null, null, 1],
+    '说明.docx': ['exec-office-v1', 'docx', 'succeeded', null, null, null],
+    '概览.pptx': ['exec-office-v1', 'pptx', 'succeeded', null, 1, null],
+    '报告.pdf': ['exec-office-v1', 'pdf', 'failed', 'PDF_UNREADABLE', null, null],
+    '周报.md': ['m4-basic-v1', 'text', 'succeeded', null, null, null],
+  })
+
+  // A binary artifact can always be revised in a later turn: the execution container mounts its original.
+  const artifacts = (await new PostgresConversationRepository(database).getTask(first.created.id, 'U00001'))!.result.artifacts
+  const workbook = artifacts.find(item => item.name === '数据.xlsx')!
+  assert.equal(workbook.canReference, true)
+  // 我的文件: with text the xlsx can start a new conversation; the PDF whose extraction failed cannot.
+  const personal = await extracting.listPersonalFiles({ actorUserId: 'U00001', source: 'artifact', limit: 50 })
+  const listed = Object.fromEntries(personal.items.filter(item => item.sessionId === session.id).map(item => [item.name, [item.parseStatus, item.canReference]]))
+  assert.deepEqual(listed['数据.xlsx'], ['succeeded', true])
+  assert.deepEqual(listed['报告.pdf'], ['failed', false])
+  // With bash disabled the xlsx is an input through its text only.
+  await setDisabled(['bash'])
+  const report = artifacts.find(item => item.name === '报告.pdf')!
+  try {
+    const textOnly = await turn(orchestrator, '总结表格', [workbook.fileId!], {})
+    assert.deepEqual(textOnly.manifest.input.file_mounts.map(mount => [mount.source_name, mount.content]), [['数据.xlsx', '# xlsx 解析文本\n华东\t1200']])
+    assert.equal(textOnly.manifest.input.original_mounts, undefined)
+    // A binary artifact whose extraction failed is refused without bash.
+    await assert.rejects(
+      orchestrator.startRun({ userId: 'U00001', sessionId: session.id, prompt: '读报告', idempotencyKey: randomUUID(), fileIds: [report.fileId!] }),
+      /需要运行命令的能力/,
+    )
+  } finally {
+    await setDisabled([])
+  }
+  // With bash it gets both the text and the original.
+  const both = await turn(orchestrator, '改表格', [workbook.fileId!], {})
+  assert.deepEqual(both.manifest.input.file_mounts.map(mount => mount.source_name), ['数据.xlsx'])
+  assert.deepEqual(both.manifest.input.original_mounts?.map(mount => mount.source_name), ['数据.xlsx'])
+
+  // 2b-5: artifacts say whether their text can be previewed, and the text reads with download permission.
+  const preview = (items: Array<{ name: string; textPreview?: string; textPreviewError?: string }>) =>
+    Object.fromEntries(items.map(item => [item.name, [item.textPreview ?? null, item.textPreviewError ?? null]]))
+  const expectedPreview = {
+    '数据.xlsx': ['available', null], '说明.docx': ['available', null], '概览.pptx': ['available', null],
+    '报告.pdf': ['failed', 'PDF 无法读取'], '周报.md': [null, null],
+  }
+  assert.deepEqual(preview(artifacts), expectedPreview)
+  assert.deepEqual(preview((await extracting.listArtifacts('U00001')).filter(item => item.runId === first.created.id)), expectedPreview)
+  const sheetText = await extracting.readArtifactText(workbook.id, 1, 'U00001')
+  assert.deepEqual(sheetText, { status: 'available', type: 'xlsx', text: '# xlsx 解析文本\n华东\t1200', pageCount: null, sheetCount: 1, rowCount: 2 })
+  assert.deepEqual(await extracting.readArtifactText(report.id, 1, 'U00001'), { status: 'failed', type: 'pdf', message: 'PDF 无法读取' })
+  const weekly = artifacts.find(item => item.name === '周报.md')!
+  await assert.rejects(extracting.readArtifactText(weekly.id, 1, 'U00001'), /没有解析文本预览/)
+  await assert.rejects(extracting.readArtifactText(workbook.id, 1, 'U00008'), /不存在或不可访问/)
+  await assert.rejects(extracting.readArtifactText(workbook.id, 9, 'U00001'), /不存在或不可访问/)
+
+  // The container cannot run: the artifact is published without any extraction, and the backfill adds it later.
+  outage = true
+  const later = await turn(orchestrator, '再生成一份', [], { '补充.docx': minimalDocx({ 'word/extra.xml': '<x/>' }) })
+  assert.deepEqual(later.published?.published.map(item => item.name), ['补充.docx'])
+  const [missing] = await database<{ count: number }[]>`
+    select count(*)::integer as count from file_extractions fe join file_objects f on f.tenant_id = fe.tenant_id and f.id = fe.file_id
+     where f.tenant_id = 'tenant-dsh-work' and f.original_name = '补充.docx' and f.session_id = ${session.id}`
+  assert.equal(missing?.count, 0)
+  const supplement = (await new PostgresConversationRepository(database).getTask(later.created.id, 'U00001'))!.result.artifacts.find(item => item.name === '补充.docx')!
+  assert.equal(supplement.textPreview, 'pending')
+  assert.deepEqual(await extracting.readArtifactText(supplement.id, 1, 'U00001'), { status: 'pending', type: 'docx' })
+  outage = false
+  calls.length = 0
+  const backfilled = await extracting.backfillBinaryArtifactExtractions()
+  assert.ok(backfilled.extracted >= 1)
+  assert.equal(calls.flat().includes('pdf'), false, 'the recorded PDF failure is not retried')
+  const [recorded] = await database<{ status: string; version: string }[]>`
+    select fe.status, fe.extractor_version as version from file_extractions fe join file_objects f on f.tenant_id = fe.tenant_id and f.id = fe.file_id
+     where f.tenant_id = 'tenant-dsh-work' and f.original_name = '补充.docx' and f.session_id = ${session.id}`
+  assert.deepEqual(recorded, { status: 'succeeded', version: 'exec-office-v1' })
+  // Nothing readable is left: another backfill records nothing new.
+  const again = await extracting.backfillBinaryArtifactExtractions()
+  assert.equal(again.extracted + again.failed, 0)
+})

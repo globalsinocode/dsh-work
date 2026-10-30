@@ -14,6 +14,7 @@ import {
   Paperclip,
   Plus,
   Search,
+  User,
   VideoPause,
 } from '@element-plus/icons-vue'
 
@@ -46,9 +47,10 @@ const props = withDefaults(
     /**
      * TW-10 共享讨论：团队会话里可 @ 的 Agent 成员（workspace_agent_member id
      * + 展示名）。非空时输入 `@` 弹出补全；提交时在最终文本里把 `@名称`
-     * 解析回成员 id 放进 mentions。
+     * 解析回成员 id 放进 mentions。D38：`kind: 'member'` 的候选是群内同事（@ 只提醒），
+     * 浮层中标“同事”；缺省为 Agent。
      */
-    mentionOptions?: Array<{ id: string; name: string }>
+    mentionOptions?: Array<{ id: string; name: string; kind?: 'agent' | 'member' }>
     /**
      * TW-10：团队会话中「带附件但未 @Agent」没有对应语义（讨论消息不支持附件）。
      * 开启后提交时在组件内拦截并保留输入与文件，而不是交给调用方丢弃。
@@ -136,6 +138,7 @@ const mentionOpen = computed(() => mentionQuery.value !== null && filteredMentio
 const mentionPanelOpen = computed(() => mentionQuery.value !== null && props.mentionOptions.length > 0)
 
 watch(filteredMentions, () => { mentionIndex.value = 0 })
+const hasMemberMentions = computed(() => props.mentionOptions.some(option => option.kind === 'member'))
 
 function refreshMentionState() {
   void nextTick(() => {
@@ -648,7 +651,7 @@ defineExpose({ getDraft, setDraft })
       v-if="mentionPanelOpen"
       class="composer__mentions"
       role="listbox"
-      aria-label="提及 Agent"
+      :aria-label="hasMemberMentions ? '提及 Agent 或同事' : '提及 Agent'"
       data-testid="mention-options"
     >
       <template v-if="filteredMentions.length">
@@ -662,12 +665,14 @@ defineExpose({ getDraft, setDraft })
           :aria-selected="index === mentionIndex"
           @mousedown.prevent="applyMention(option)"
         >
-          <span class="composer__mention-icon"><el-icon><Cpu /></el-icon></span>
+          <span class="composer__mention-icon" :class="{ 'composer__mention-icon--member': option.kind === 'member' }">
+            <el-icon><User v-if="option.kind === 'member'" /><Cpu v-else /></el-icon>
+          </span>
           <span class="composer__mention-name">{{ option.name }}</span>
-          <span class="composer__mention-kind">Agent</span>
+          <span class="composer__mention-kind">{{ option.kind === 'member' ? '同事' : 'Agent' }}</span>
         </button>
       </template>
-      <p v-else class="composer__mention-empty">没有匹配的 Agent</p>
+      <p v-else class="composer__mention-empty">{{ hasMemberMentions ? '没有匹配的 Agent 或同事' : '没有匹配的 Agent' }}</p>
     </div>
   </section>
 </template>
@@ -737,6 +742,11 @@ defineExpose({ getDraft, setDraft })
   color: #176750;
   background: #e8f5f0;
   font-size: var(--dsh-font-size-caption);
+}
+
+.composer__mention-icon--member {
+  color: #3d5a99;
+  background: #ebf0fa;
 }
 
 .composer__mention-name {

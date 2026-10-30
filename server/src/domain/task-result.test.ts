@@ -83,6 +83,36 @@ test('succeeded run with committed answer and registered artifacts is achieved',
   assert.equal(result.completedAt, occurredAt.toISOString())
 })
 
+test('files skipped at collection are listed with fixed reasons and keep the run from counting as achieved', () => {
+  const result = deriveTaskResult(evidence({
+    events: [
+      event('e1', 'assistant.completed'),
+      event('e2', 'run.completed', {
+        artifact_count: 1,
+        artifacts_skipped: [
+          { name: '宏.xlsx', reason: 'active_content' },
+          { name: 'tmp', reason: 'not_regular_file' },
+          { name: 'forged.md', reason: '<script>raw parser text</script>' },
+        ],
+        artifacts_skipped_total: 5,
+      }),
+    ],
+    committedMessageIds: new Set(['message-assistant-e1']),
+    artifacts: [artifact('artifact-1')],
+    sources: [source],
+  }))
+  // The answer and the registered artifact stay; the skipped files make the result not fully achieved.
+  assert.equal(result.primaryOutput?.messageId, 'message-assistant-e1')
+  assert.equal(result.receipts.some(receipt => receipt.kind === 'artifact' && receipt.status === 'completed'), true)
+  assert.equal(result.outcome, 'unverified')
+  assert.deepEqual(result.pendingItems.filter(item => item.kind === 'artifact_skipped').map(item => item.message), [
+    '“宏.xlsx”未登记为成果：含宏、脚本或会访问外部内容的组件',
+    '“tmp”未登记为成果：不是普通文件（目录、链接或特殊文件）',
+    '另有 3 个文件未登记为成果。',
+  ])
+  assert.equal(JSON.stringify(result).includes('raw parser text'), false, 'unknown reason codes are never echoed')
+})
+
 test('model self-report does not verify the goal when declared artifacts are missing', () => {
   // 关键验收：模型自述「已完成并生成 4 个成果」，登记只有 3 个 → 不显示已达成。
   const result = deriveTaskResult(evidence({

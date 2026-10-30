@@ -26,6 +26,82 @@
         "responses": { "200": { "$ref": "#/components/responses/Ok" }, "403": { "$ref": "#/components/responses/Error" } }
       }
     },
+    "/integrations/weknora/status": {
+      "get": {
+        "operationId": "getWeknoraStatus",
+        "summary": "查询当前员工的 WeKnora 知识库连接状态",
+        "responses": { "200": { "$ref": "#/components/responses/Ok" }, "401": { "$ref": "#/components/responses/Error" }, "503": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/integrations/weknora/bind/start": {
+      "post": {
+        "operationId": "startWeknoraBind",
+        "summary": "开始把当前员工绑定到 WeKnora 账号",
+        "responses": { "200": { "$ref": "#/components/responses/Ok" }, "401": { "$ref": "#/components/responses/Error" }, "503": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/integrations/weknora/bind/callback": {
+      "get": {
+        "operationId": "completeWeknoraBindCallback",
+        "summary": "完成 WeKnora 绑定并重定向回知识库页",
+        "parameters": [
+          { "name": "state", "in": "query", "schema": { "type": "string" } },
+          { "name": "bind_code", "in": "query", "schema": { "type": "string" } },
+          { "name": "bind_error", "in": "query", "schema": { "type": "string" } }
+        ],
+        "responses": { "302": { "description": "重定向到知识库页" }, "503": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/integrations/weknora/link": {
+      "delete": {
+        "operationId": "unlinkWeknora",
+        "summary": "解除当前员工与 WeKnora 的绑定",
+        "responses": { "200": { "$ref": "#/components/responses/Ok" }, "401": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/integrations/weknora/knowledge-bases": {
+      "get": {
+        "operationId": "listWeknoraKnowledgeBases",
+        "summary": "列出当前员工可读的 WeKnora 知识库",
+        "responses": { "200": { "$ref": "#/components/responses/Ok" }, "401": { "$ref": "#/components/responses/Error" }, "503": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/integrations/weknora/knowledge-bases/{id}": {
+      "get": {
+        "operationId": "getWeknoraKnowledgeBase",
+        "summary": "读取一个 WeKnora 知识库",
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "$ref": "#/components/responses/Ok" }, "401": { "$ref": "#/components/responses/Error" }, "503": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/integrations/weknora/knowledge-bases/{id}/documents": {
+      "get": {
+        "operationId": "listWeknoraDocuments",
+        "summary": "列出一个 WeKnora 知识库中的文档",
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "$ref": "#/components/responses/Ok" }, "401": { "$ref": "#/components/responses/Error" }, "503": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/integrations/weknora/knowledge-bases/{id}/search": {
+      "post": {
+        "operationId": "searchWeknoraKnowledgeBase",
+        "summary": "在一个 WeKnora 知识库中检索",
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["query"], "properties": { "query": { "type": "string" } } } } } },
+        "responses": { "200": { "$ref": "#/components/responses/Ok" }, "401": { "$ref": "#/components/responses/Error" }, "422": { "$ref": "#/components/responses/Error" }, "503": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/integrations/weknora/documents/{id}/content": {
+      "get": {
+        "operationId": "getWeknoraDocumentContent",
+        "summary": "读取一份 WeKnora 文档内容",
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "disposition", "in": "query", "schema": { "type": "string", "enum": ["inline", "attachment"] } }
+        ],
+        "responses": { "200": { "description": "上游文档内容" }, "401": { "$ref": "#/components/responses/Error" }, "503": { "$ref": "#/components/responses/Error" } }
+      }
+    },
     "/session": {
       "get": {
         "operationId": "getCurrentSession",
@@ -116,6 +192,166 @@
           "422": {
             "$ref": "#/components/responses/Error"
           }
+        }
+      }
+    },
+    "/me/push/config": {
+      "get": {
+        "operationId": "getPushConfig",
+        "summary": "读取 Web Push 公钥",
+        "responses": {
+          "200": {
+            "description": "VAPID 公钥",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    { "$ref": "#/components/schemas/Envelope" },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": { "$ref": "#/components/schemas/PushConfig" }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Error" },
+          "503": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/me/push/subscriptions": {
+      "put": {
+        "operationId": "upsertPushSubscription",
+        "summary": "登记或更新本机 Push 订阅",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/PushSubscriptionInput" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "订阅已保存",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    { "$ref": "#/components/schemas/Envelope" },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": { "$ref": "#/components/schemas/PushSubscriptionUpsertResult" }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Error" },
+          "422": { "$ref": "#/components/responses/Error" },
+          "503": { "$ref": "#/components/responses/Error" }
+        }
+      },
+      "delete": {
+        "operationId": "deletePushSubscription",
+        "summary": "注销本机 Push 订阅",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/PushSubscriptionDeleteInput" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "订阅已删除",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    { "$ref": "#/components/schemas/Envelope" },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": { "$ref": "#/components/schemas/PushSubscriptionDeleteResult" }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Error" },
+          "422": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/me/notification-preferences": {
+      "get": {
+        "operationId": "getNotificationPreferences",
+        "summary": "读取通知偏好",
+        "responses": {
+          "200": {
+            "description": "通知偏好",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    { "$ref": "#/components/schemas/Envelope" },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": { "$ref": "#/components/schemas/NotificationPreferences" }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Error" }
+        }
+      },
+      "patch": {
+        "operationId": "patchNotificationPreferences",
+        "summary": "更新通知偏好",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/NotificationPreferencesPatch" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "保存后的通知偏好",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    { "$ref": "#/components/schemas/Envelope" },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": { "$ref": "#/components/schemas/NotificationPreferences" }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Error" },
+          "422": { "$ref": "#/components/responses/Error" }
         }
       }
     },
@@ -259,7 +495,7 @@
       "post": {
         "operationId": "markConversationTargetRead",
         "summary": "标记对话对象已读",
-        "description": "员工端双模式 S5e：把本人在该对话对象（agent = 与该 AI 同事的单聊，group = 本人所在的群组）上的已读位置前进到 upTo（缺省或晚于当前时间按当前时间），只进不退。只写本人的已读位置，与按空间的通知已读和静音分开。无权群组与不存在的 AI 同事返回 404。",
+        "description": "员工端双模式 S5e：把本人在该对话对象（agent = 与该 AI 同事的单聊，group = 本人所在的群组）上的已读位置前进到 upTo（缺省或晚于当前时间按当前时间），只进不退。只写本人的已读位置，与按空间的通知已读和静音分开。无权群组与不存在的 AI 同事返回 404。群组同时把本人在该群组、不晚于新已读位置的 @ 提醒标为已读（D38）。",
         "parameters": [
           {
             "name": "type",
@@ -332,6 +568,68 @@
           "422": {
             "$ref": "#/components/responses/Error"
           }
+        }
+      }
+    },
+    "/me/mentions": {
+      "get": {
+        "operationId": "listMyMentions",
+        "summary": "本人未读的 @ 提醒",
+        "description": "D38：按项目空间与讨论汇总本人未读的 @ 提醒，只含本人当前是成员的活动项目空间（读取时重查成员身份，失权后不再返回）；不受按空间静音影响。",
+        "responses": {
+          "200": {
+            "description": "未读提醒汇总",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    { "$ref": "#/components/schemas/Envelope" },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "type": "object",
+                          "required": ["items"],
+                          "properties": {
+                            "items": { "type": "array", "items": { "$ref": "#/components/schemas/MentionSummary" } }
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/me/mentions/read": {
+      "post": {
+        "operationId": "markMyMentionsRead",
+        "summary": "把本人的 @ 提醒标为已读",
+        "description": "D38：把本人在该项目空间（给出 sessionId 时只限该讨论）的 @ 提醒标为已读；只写本人的提醒状态。无权或不存在的项目空间返回 404。",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["workspaceId"],
+                "properties": {
+                  "workspaceId": { "type": "string", "maxLength": 200 },
+                  "sessionId": { "type": "string", "maxLength": 200 }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "$ref": "#/components/responses/Ok" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" },
+          "422": { "$ref": "#/components/responses/Error" }
         }
       }
     },
@@ -1219,15 +1517,6 @@
         }
       }
     },
-    "/workspaces/{workspaceId}/sessions/{sessionId}/project-task": {
-      "parameters": [{ "name": "workspaceId", "in": "path", "required": true, "schema": { "type": "string" } }, { "name": "sessionId", "in": "path", "required": true, "schema": { "type": "string" } }],
-      "post": {
-        "operationId": "markSessionAsProjectTask",
-        "summary": "把讨论线程设为任务（非只读成员）",
-        "description": "项目空间 S1：负责人为该线程最近一次执行的 Agent 成员，可选 title（默认取线程标题）。未经 @Agent 执行的线程或已是任务的线程返回 409。",
-        "responses": { "201": { "$ref": "#/components/responses/Ok" }, "403": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" }, "422": { "$ref": "#/components/responses/Error" } }
-      }
-    },
     "/workspaces/{workspaceId}/agent-members/{id}": {
       "parameters": [
         {
@@ -1567,7 +1856,7 @@
       "get": {
         "operationId": "getSessionThread",
         "summary": "获取会话共享线程（消息流 + Run 列表 + 发送者/触发人归因）；团队会话对全部现任成员可读，个人会话限创建者",
-        "description": "messages[].runId 为 null 表示不产生 Run 的讨论消息；runs 供内联展示每条执行的最新状态；currentUserRole 供前端对只读成员禁用写入口。归档团队空间保持只读可读。runs[].stoppedByName 为已停止执行的停止人。",
+        "description": "messages[].runId 为 null 表示不产生 Run 的讨论消息；runs 供内联展示每条执行的最新状态；currentUserRole 供前端对只读成员禁用写入口。归档团队空间保持只读可读。runs[].stoppedByName 为已停止执行的停止人。artifacts 为本页消息所属各 Run 当前 Attempt 登记的成果（含 runId、fileId、canReference），供任务对话把成果挂在对应回复下（D37）。",
         "responses": {
           "200": {
             "$ref": "#/components/responses/Ok"
@@ -1762,6 +2051,14 @@
                   },
                   "cumulativeBudget": {
                     "$ref": "#/components/schemas/TaskCumulativeBudgetInput"
+                  },
+                  "mentionedUserIds": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "maxItems": 50,
+                    "description": "D38：同一条消息 @ 的同事（用户 ID）。服务端只为现任成员登记站内提醒，发送者本人与非成员被忽略，按“消息 + 接收人”去重；不影响是否执行。"
                   }
                 }
               }
@@ -1890,6 +2187,56 @@
         }
       }
     },
+    "/runs/{runId}/approval": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/RunId"
+        }
+      ],
+      "post": {
+        "operationId": "resolveRunApproval",
+        "summary": "发起人确认本次 Run 的待决审批",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["decision"],
+                "properties": {
+                  "decision": {
+                    "type": "string",
+                    "enum": ["approved", "rejected"]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "决议已记录",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    { "$ref": "#/components/schemas/Envelope" },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": { "$ref": "#/components/schemas/RunApprovalResolution" }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "403": { "$ref": "#/components/responses/Error" },
+          "409": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
     "/artifacts": {
       "get": {
         "operationId": "listArtifacts",
@@ -2004,6 +2351,42 @@
             }
           },
           "403": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/artifacts/{artifactId}/versions/{versionId}/text": {
+      "parameters": [
+        {
+          "name": "artifactId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "versionId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "get": {
+        "operationId": "getArtifactVersionText",
+        "summary": "读取 Office/PDF 成果版本的解析文本预览",
+        "description": "执行隔离 2b-5：读取权限与下载相同。返回 status=available（text 为解析文本，另有 pageCount/sheetCount/rowCount）、failed（message 为原因）或 pending（尚未解析）；type 为 xlsx/docx/pptx/pdf。其他类型的成果返回 422，请直接下载。成果列表与对话中的成果对 Office/PDF 另返回 textPreview（available/failed/pending）与失败时的 textPreviewError。",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
             "$ref": "#/components/responses/Error"
           }
         }
@@ -2795,7 +3178,7 @@
     "/automations": {
       "get": {
         "operationId": "listAutomations",
-        "summary": "列出当前员工的自动任务；默认 active 不含已归档，status=archived 仅返回 disabled",
+        "summary": "列出当前员工的自动任务；默认 active 不含已归档，status=archived 仅返回 disabled，每项附带最近一次执行摘要 lastExecution",
         "parameters": [
           {
             "name": "status",
@@ -2871,6 +3254,42 @@
             "$ref": "#/components/responses/Error"
           },
           "403": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/automations/schedule-preview": {
+      "post": {
+        "operationId": "previewAutomationSchedule",
+        "summary": "规则预览：按与调度相同的日历计算接下来最多 3 个运行时间（UTC）；无状态，不保存任何内容",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "schedule"
+                ],
+                "properties": {
+                  "schedule": {
+                    "$ref": "#/components/schemas/AutomationSchedule"
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
             "$ref": "#/components/responses/Error"
           }
         }
@@ -3209,6 +3628,14 @@
                     "type": "string",
                     "minLength": 1,
                     "maxLength": 20000
+                  },
+                  "mentionedUserIds": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "maxItems": 50,
+                    "description": "D38：同一条消息 @ 的同事（用户 ID）。服务端只为现任成员登记站内提醒，发送者本人与非成员被忽略，按“消息 + 接收人”去重；不影响是否执行。"
                   }
                 }
               }
@@ -4248,7 +4675,8 @@
           "lastActiveAt",
           "available",
           "unreadCount",
-          "muted"
+          "muted",
+          "mentioned"
         ],
         "properties": {
           "type": {
@@ -4303,7 +4731,21 @@
           "muted": {
             "type": "boolean",
             "description": "群组已按空间静音（3.7）：未读照常计数，列表弱化显示；单聊恒为 false。"
+          },
+          "mentioned": {
+            "type": "boolean",
+            "description": "D38：群组中有 @ 本人的未读提醒（不受按空间静音影响）；单聊恒为 false。"
           }
+        }
+      },
+      "MentionSummary": {
+        "type": "object",
+        "required": ["workspaceId", "sessionId", "count", "latestAt"],
+        "properties": {
+          "workspaceId": { "type": "string" },
+          "sessionId": { "type": "string" },
+          "count": { "type": "integer", "minimum": 1 },
+          "latestAt": { "type": "string", "format": "date-time" }
         }
       },
       "ConversationMessagePreview": {
@@ -4582,6 +5024,21 @@
                   "string",
                   "null"
                 ]
+              },
+              "mentionedUserIds": {
+                "type": "array",
+                "items": { "type": "string" },
+                "description": "D38：该发言 @ 并登记了提醒的同事（用户 ID）。"
+              },
+              "attachments": {
+                "type": [
+                  "array",
+                  "null"
+                ],
+                "items": {
+                  "type": "string"
+                },
+                "description": "用户发言触发 Run 时附带的输入文件名；无文件时为 null"
               }
             }
           },
@@ -4839,6 +5296,75 @@
           }
         }
       },
+      "PushConfig": {
+        "type": "object",
+        "required": ["vapidPublicKey"],
+        "properties": {
+          "vapidPublicKey": { "type": "string" }
+        }
+      },
+      "PushSubscriptionInput": {
+        "type": "object",
+        "required": ["endpoint", "keys"],
+        "properties": {
+          "endpoint": { "type": "string" },
+          "keys": {
+            "type": "object",
+            "required": ["p256dh", "auth"],
+            "properties": {
+              "p256dh": { "type": "string" },
+              "auth": { "type": "string" }
+            }
+          }
+        }
+      },
+      "PushSubscriptionUpsertResult": {
+        "type": "object",
+        "required": ["endpoint", "updated"],
+        "properties": {
+          "endpoint": { "type": "string" },
+          "updated": { "type": "boolean", "const": true }
+        }
+      },
+      "PushSubscriptionDeleteInput": {
+        "type": "object",
+        "required": ["endpoint"],
+        "properties": {
+          "endpoint": { "type": "string" }
+        }
+      },
+      "PushSubscriptionDeleteResult": {
+        "type": "object",
+        "required": ["endpoint", "deleted"],
+        "properties": {
+          "endpoint": { "type": "string" },
+          "deleted": { "type": "boolean", "const": true }
+        }
+      },
+      "NotificationPreferences": {
+        "type": "object",
+        "required": ["collabUnread", "runFinished"],
+        "properties": {
+          "collabUnread": { "type": "boolean" },
+          "runFinished": { "type": "boolean" }
+        }
+      },
+      "NotificationPreferencesPatch": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "collabUnread": { "type": "boolean" },
+          "runFinished": { "type": "boolean" }
+        }
+      },
+      "RunApprovalResolution": {
+        "type": "object",
+        "required": ["runId", "decision"],
+        "properties": {
+          "runId": { "type": "string" },
+          "decision": { "type": "string", "enum": ["approved", "rejected"] }
+        }
+      },
       "WorkspaceNotificationState": {
         "type": "object",
         "required": [
@@ -4991,6 +5517,7 @@
             "enum": [
               "answer_uncommitted",
               "artifact_registration_gap",
+              "artifact_skipped",
               "no_deliverable",
               "no_verified_deliverable",
               "output_truncated",

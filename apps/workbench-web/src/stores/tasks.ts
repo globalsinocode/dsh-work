@@ -84,8 +84,6 @@ export const useTaskStore = defineStore('tasks', () => {
     try {
       const loaded = await workbenchApi.getTasks()
       if (current !== generation) return
-      const loadedAt = Date.now()
-      for (const task of loaded) task.lastActivityAt ??= loadedAt
       tasks.value = loaded
       initialized.value = true
       for (const task of activeTasks.value) subscribe(task.id)
@@ -129,6 +127,7 @@ export const useTaskStore = defineStore('tasks', () => {
     workspaceAgentMemberId?: string,
     agentVersionId?: string,
     skillVersionId?: string,
+    mentionedUserIds: string[] = [],
   ) {
     void _workspaceName
     const current = generation
@@ -166,6 +165,7 @@ export const useTaskStore = defineStore('tasks', () => {
       attachments,
       referencedFileIds,
       workspaceAgentMemberId,
+      mentionedUserIds,
     })
     requireGeneration(current)
     intentRegistry.complete('session:new', sessionIntent.key)
@@ -179,6 +179,7 @@ export const useTaskStore = defineStore('tasks', () => {
     attachments: File[],
     workspaceAgentMemberId?: string,
     referencedFileIds: string[] = [],
+    mentionedUserIds: string[] = [],
   ) {
     const epoch = generation
     const current = getTask(id)
@@ -188,6 +189,7 @@ export const useTaskStore = defineStore('tasks', () => {
       attachments,
       referencedFileIds,
       workspaceAgentMemberId,
+      mentionedUserIds,
     })
     requireGeneration(epoch)
     subscribe(task.id)
@@ -197,12 +199,12 @@ export const useTaskStore = defineStore('tasks', () => {
   /**
    * TW-10 讨论消息：不产生 Run，仅写入共享消息流。返回后由调用方刷新线程。
    */
-  async function postSessionMessage(sessionId: string, content: string) {
+  async function postSessionMessage(sessionId: string, content: string, mentionedUserIds: string[] = []) {
     const current = generation
     const fingerprint = content.trim()
     const handle = intentRegistry.begin(`message:${sessionId}`, fingerprint)
     try {
-      const result = await workbenchApi.postSessionMessage(sessionId, content, handle.key)
+      const result = await workbenchApi.postSessionMessage(sessionId, content, handle.key, mentionedUserIds)
       requireGeneration(current)
       intentRegistry.complete(`message:${sessionId}`, handle.key)
       return result
@@ -212,9 +214,13 @@ export const useTaskStore = defineStore('tasks', () => {
     }
   }
 
-  async function startTeamDiscussion(workspaceId: string, prompt: string) {
+  async function startTeamDiscussion(workspaceId: string, prompt: string, mentionedUserIds: string[] = []) {
     const current = generation
-    const sessionFingerprint = JSON.stringify({ workspaceId, prompt: prompt.trim() })
+    const sessionFingerprint = JSON.stringify({
+      workspaceId,
+      prompt: prompt.trim(),
+      mentionedUserIds: [...mentionedUserIds].sort(),
+    })
     const sessionIntent = intentRegistry.begin(`discussion:${workspaceId}`, sessionFingerprint)
     try {
       const session = await workbenchApi.createSession({
@@ -223,7 +229,7 @@ export const useTaskStore = defineStore('tasks', () => {
         clientIntentId: sessionIntent.key,
       })
       requireGeneration(current)
-      await postSessionMessage(session.id, prompt)
+      await postSessionMessage(session.id, prompt, mentionedUserIds)
       intentRegistry.complete(`discussion:${workspaceId}`, sessionIntent.key)
       requireGeneration(current)
       return session
@@ -276,6 +282,8 @@ export const useTaskStore = defineStore('tasks', () => {
     attachments: File[]
     referencedFileIds?: string[]
     workspaceAgentMemberId?: string
+    /** D38：同时 @ 的同事，只登记站内提醒。 */
+    mentionedUserIds?: string[]
   }) {
     const current = generation
     const runFingerprint = JSON.stringify({
@@ -294,6 +302,7 @@ export const useTaskStore = defineStore('tasks', () => {
         idempotencyKey: runIntent.key,
         fileIds: [...new Set([...(input.referencedFileIds ?? []), ...uploadedFileIds])],
         ...(input.workspaceAgentMemberId ? { workspaceAgentMemberId: input.workspaceAgentMemberId } : {}),
+        ...(input.mentionedUserIds?.length ? { mentionedUserIds: input.mentionedUserIds } : {}),
       })
       if (!task) throw new Error('Run 创建失败')
       requireGeneration(current)
@@ -482,13 +491,14 @@ export const useTaskStore = defineStore('tasks', () => {
       task.approval = {
         object: `工具 ${toolName}`,
         reason: durable
-          ? '本轮动作、参数摘要、资源和数据版本已固定，当前执行已释放 Worker。'
+          ? '本次操作已暂停，请确认是否允许执行。'
           : 'DSH 请求本轮一次性工具权限，服务端正在校验 Agent、角色和数据范围。',
         nextStep: durable
-          ? '平台管理员处理后会创建新的 Attempt 继续执行；无需重复提交。'
+          ? '允许后将从当前等待继续执行；拒绝后本次 Run 结束。'
           : '当前动作正在自动确认，无需手动操作；确认结果会自动更新。',
         toolName,
         dataScope: task.workspaceName === '我的空间' ? '当前员工个人授权范围' : `${task.workspaceName}成员授权范围`,
+        employeeResolvable: durable,
       }
     }
     if (event.event_type === 'run.waiting') task.status = 'awaiting_approval'
@@ -507,7 +517,6 @@ export const useTaskStore = defineStore('tasks', () => {
     }
     if (event.event_type === 'run.completed') task.status = 'succeeded'
     task.updatedAt = '刚刚'
-    task.lastActivityAt = Date.now()
 
     if (event.event_type === 'assistant.delta' && event.display_message) {
       const messageId = `${event.attempt_id}-streaming`
@@ -525,18 +534,39 @@ export const useTaskStore = defineStore('tasks', () => {
       scheduleRunReconciliation(event.run_id)
     }
 
-    if (event.event_type === 'tool.started' || event.event_type === 'tool.completed') {
-      applyToolEvent(task, event)
+    // EX-01：工具调用实时显示为“正在调用”，结果到达后在同一行原地更新。
+    // 只有 live 的 tool.started 进入时间线（重放/非实时开始不另起一行）。
+    // 按 callId 合并，快照与实时事件产生的同一调用始终只占一行。
+    const callId = typeof event.safe_metadata['call_id'] === 'string' ? event.safe_metadata['call_id'] : null
+    const live = event.safe_metadata['live'] === true
+    const callStepIndex = callId ? task.steps.findIndex((item) => item.callId === callId) : -1
+    // EX-PROGRESS-01：新连接会从头重放事件，重放的旧事件已在快照步骤里；只用新事件测量时钟差。
+    const replayed = event.event_type === 'tool.started' && callId ? callStepIndex >= 0
+      : event.event_type === 'tool.completed' && callStepIndex >= 0 ? task.steps[callStepIndex]!.status !== 'running'
+        : task.steps.some((item) => item.id === event.event_id)
+    const occurredAt = Date.parse(event.occurred_at)
+    if (!replayed && !event.event_type.startsWith('assistant.') && Number.isFinite(occurredAt)) {
+      task.clockOffsetMs = Date.now() - occurredAt
+    }
+    if (event.event_type === 'tool.started') {
+      if (live && callId && callStepIndex < 0) task.steps.push(toolStartedStep(callId, event))
+    } else if (event.event_type === 'tool.completed' && callId) {
+      if (callStepIndex < 0) task.steps.push(toolStep(event))
+      else if (task.steps[callStepIndex]!.status === 'running') {
+        const started = task.steps[callStepIndex]!
+        const completed = toolStep(event)
+        task.steps.splice(callStepIndex, 1, { ...completed, id: started.id, ...(started.startedAt ? { startedAt: started.startedAt } : {}) })
+      }
     } else if (!['assistant.delta', 'assistant.completed', 'assistant.reasoning'].includes(event.event_type)) {
       const step = task.steps.find((item) => item.id === event.event_id)
-      if (!step) {
-        task.steps.push({
-          id: event.event_id,
-          title: eventTitle(event.event_type),
-          detail: event.display_message ?? '执行状态已更新。',
-          status: eventStepStatus(event.event_type),
-        })
-      }
+      if (!step) task.steps.push(event.event_type === 'tool.completed' ? toolStep(event) : {
+        id: event.event_id,
+        title: eventTitle(event.event_type),
+        detail: event.display_message ?? '执行状态已更新。',
+        status: eventStepStatus(event.event_type),
+        event: event.event_type,
+        at: event.occurred_at,
+      })
     }
 
     if (isTerminal(task.status)) {
@@ -606,13 +636,14 @@ export const useTaskStore = defineStore('tasks', () => {
   function upsert(task: TaskRun | null | undefined) {
     if (!task) return
     const index = tasks.value.findIndex((item) => item.id === task.id)
+    const previous = index >= 0 ? tasks.value[index] : undefined
+    const clockOffsetMs = previous?.clockOffsetMs ?? task.clockOffsetMs
     if (index >= 0) {
-      const merged = mergeTaskSnapshot(tasks.value[index]!, task)
-      // 刷新服务端快照时保留“最后收到事件”的时刻；首次关注执行中的 Run 以此刻为起点。
-      merged.lastActivityAt = tasks.value[index]?.lastActivityAt ?? task.lastActivityAt ?? Date.now()
+      const merged = mergeTaskSnapshot(previous!, task)
+      if (clockOffsetMs !== undefined) merged.clockOffsetMs = clockOffsetMs
       tasks.value.splice(index, 1, merged)
     } else {
-      task.lastActivityAt ??= Date.now()
+      if (clockOffsetMs !== undefined) task.clockOffsetMs = clockOffsetMs
       tasks.value.unshift(task)
     }
   }
@@ -622,10 +653,15 @@ export const useTaskStore = defineStore('tasks', () => {
     streams.delete(runId)
   }
 
+  async function resolveRunApproval(runId: string, decision: 'approved' | 'rejected') {
+    await workbenchApi.resolveRunApproval(runId, decision)
+    await refreshRun(runId)
+  }
+
   return {
     tasks, loading, initialized, activeTasks, recentTasks, sessionActivity, reset, load, getTask, loadTask,
     createTask, sendMessage, postSessionMessage, startTeamDiscussion, loadSessionThread, loadEarlierThreadMessages, uploadSessionFiles,
-    startRunWithSessionFiles, cancelTask, retryTask, deleteConversation, refreshRun, refresh,
+    startRunWithSessionFiles, cancelTask, retryTask, deleteConversation, refreshRun, refresh, resolveRunApproval,
     upsert, subscribe, subscribeWorkspaceSessions, unsubscribeWorkspaceSessions,
   }
 })
@@ -646,7 +682,7 @@ function eventTitle(eventType: string) {
 }
 
 /** EX-01：与服务端 mapSteps 相同的工具调用步骤。 */
-function toolStep(event: { event_id: string; display_message: string | null; safe_metadata: Record<string, unknown> }) {
+function toolStep(event: { event_id: string; event_type: string; occurred_at: string; display_message: string | null; safe_metadata: Record<string, unknown> }) {
   const outcome = event.safe_metadata['status']
   const toolName = typeof event.safe_metadata['tool_name'] === 'string' ? event.safe_metadata['tool_name'] : undefined
   const callId = typeof event.safe_metadata['call_id'] === 'string' ? event.safe_metadata['call_id'] : undefined
@@ -657,40 +693,23 @@ function toolStep(event: { event_id: string; display_message: string | null; saf
     status: outcome === 'failed' ? 'failed' as const : outcome === 'unknown' ? 'pending' as const : 'succeeded' as const,
     ...(toolName ? { tool: toolName } : {}),
     ...(callId ? { callId } : {}),
+    event: event.event_type,
+    at: event.occurred_at,
   }
 }
 
-function applyToolEvent(task: TaskRun, event: RuntimeEvent) {
-  const callId = typeof event.safe_metadata['call_id'] === 'string' ? event.safe_metadata['call_id'] : undefined
-  const live = event.safe_metadata['live'] === true
+function toolStartedStep(callId: string, event: { event_type: string; occurred_at: string; display_message: string | null; safe_metadata: Record<string, unknown> }) {
   const toolName = typeof event.safe_metadata['tool_name'] === 'string' ? event.safe_metadata['tool_name'] : undefined
-  if (event.event_type === 'tool.started') {
-    if (!callId || !live) return
-    if (task.steps.some(step => step.callId === callId)) return
-    task.steps.push({
-      id: `tool-call-${callId}`,
-      title: '正在调用工具',
-      detail: event.display_message ?? '',
-      status: 'running',
-      ...(toolName ? { tool: toolName } : {}),
-      callId,
-    })
-    return
-  }
-  if (event.event_type !== 'tool.completed') return
-  const mapped = toolStep(event)
-  if (callId) {
-    const existing = task.steps.find(step => step.callId === callId)
-    if (existing) {
-      existing.title = mapped.title
-      existing.detail = mapped.detail
-      existing.status = mapped.status
-      if (mapped.tool) existing.tool = mapped.tool
-      return
-    }
-  }
-  if (!task.steps.some(step => step.id === event.event_id)) {
-    task.steps.push(mapped)
+  return {
+    id: `tool-call-${callId}`,
+    title: '正在调用工具',
+    detail: event.display_message ?? '工具调用进行中。',
+    status: 'running' as const,
+    callId,
+    ...(toolName ? { tool: toolName } : {}),
+    event: event.event_type,
+    at: event.occurred_at,
+    startedAt: event.occurred_at,
   }
 }
 

@@ -8,21 +8,33 @@ import type { Artifact, Workspace, WorkspaceFile, WorkspaceFileProjection } from
 import type { DatabaseClient, DatabaseTransaction } from '../../../infrastructure/postgres/database.ts'
 import type { PostgresAuthorizationService } from '../../authorization/postgres-authorization-service.ts'
 import { authorizationDenied, canReadWorkspaceObject, isAuthorizationDenial, permissionDenied, requestInvalid } from '../../../domain/authorization-errors.ts'
-import { dependencyUnavailable } from '../../../domain/request-errors.ts'
-import type { FileAttachment, PreparedRuntimeFile } from '../../runtime/runtime-types.ts'
+import { dependencyUnavailable, invalidRequest, stateConflict } from '../../../domain/request-errors.ts'
+import type { FileAttachment, FileMount, OriginalFileMount, PreparedRuntimeFile, RuntimeManifest } from '../../runtime/runtime-types.ts'
 import { isAdminRunPurpose } from '../../runtime/runtime-types.ts'
 import { insertTeamWorkspaceRows } from './team-workspace-rows.ts'
 import { BaselineFileSafetyScanner, type FileSafetyScannerPort } from './file-safety-scanner.ts'
 import { extractDocument } from './document-extractor.ts'
+import {
+  BINARY_TEXT_TYPES, CONTAINER_EXTRACTOR_VERSION,
+  type ArtifactTextExtraction, type ArtifactTextExtractorPort, type BinaryTextType,
+} from './container-artifact-text-extractor.ts'
+import { artifactTextPreviewColumns, TEXT_EXTRACTOR_VERSIONS, withTextPreview, type ArtifactTextPreviewState } from './artifact-text-preview.ts'
+import {
+  ARTIFACT_LIMITS, artifactFormat, checkArtifactContent, checkArtifactName, displayArtifactName, isTextArtifactType,
+  type ArtifactSkipReason,
+} from './artifact-file-policy.ts'
 import { PostgresWorkspaceService, readableWorkspacePredicate, type WorkspaceType } from './postgres-workspace-service.ts'
 import { workspaceStateConflict } from './workspace-state-conflict-error.ts'
 import { recordWorkspaceActivity } from './workspace-activity-writer.ts'
-import { invalidRequest, stateConflict } from '../../../domain/request-errors.ts'
 import { joinObjectKey, type ObjectStorage } from '../../../domain/object-storage.ts'
 import { WorkspaceObjectGcService } from './workspace-object-gc-service.ts'
+import { assertRealWorkspaceDirectory } from '../../../infrastructure/storage/workspace-directory.ts'
 
 const tenantId = 'tenant-dsh-work'
 const allowedExtensions = new Set(['.pdf', '.docx', '.xlsx', '.xls', '.csv', '.txt', '.md'])
+/** 每次 Run 的输入文件上限：文件数与解析文本合计字节。 */
+const maxRuntimeFiles = 5
+const maxRuntimeTextBytes = 1024 * 1024
 
 interface FileRow {
   id: string
@@ -85,6 +97,12 @@ export interface WorkspaceFileVersionPage {
 export type UploadedWorkspaceFileVersion = WorkspaceFileProjection
 
 export type PersonalFileSource = 'material' | 'attachment' | 'artifact'
+/** 2b-5: an Office/PDF artifact version's extracted text for preview, or why there is none. */
+export type ArtifactTextPreview =
+  | { status: 'available'; type: BinaryTextType; text: string; pageCount: number | null; sheetCount: number | null; rowCount: number | null }
+  | { status: 'failed'; type: BinaryTextType; message: string }
+  | { status: 'pending'; type: BinaryTextType }
+
 export interface PersonalFileSummary {
   id: string
   name: string
@@ -122,15 +140,31 @@ interface StoredExtractionAttachment {
 interface RuntimeFileRow {
   workspaceId: string
   fileId: string
-  extractionId: string
+  /** Null for a binary artifact without extracted text (execution isolation 2b-4). */
+  extractionId: string | null
   originalName: string
   mimeType: string
-  textStorageKey: string
-  textSha256: string
-  attachments: StoredExtractionAttachment[]
+  textStorageKey: string | null
+  textSha256: string | null
+  attachments: StoredExtractionAttachment[] | null
+  sha256: string | null
+  sizeBytes: number
   /** Set when the file is a run artifact version: the mount tells the Agent which artifact it revises. */
   artifactId: string | null
   artifactVersion: number | null
+}
+
+/** Originals mounted for bash: the accepted artifact formats plus the text and table uploads. */
+const ORIGINAL_MOUNT_EXTENSIONS = new Set(['.xlsx', '.docx', '.pptx', '.pdf', '.png', '.jpg', '.jpeg', '.csv', '.txt', '.md', '.html', '.htm'])
+
+/** Most skipped files reported back per run; the total is reported as well. */
+const MAX_REPORTED_SKIPS = 20
+
+/** Artifact collection of one Attempt: registered files and the ones skipped with a fixed reason. */
+export interface RuntimeArtifactCollection {
+  published: Array<{ name: string; size: number }>
+  skipped: Array<{ name: string; reason: ArtifactSkipReason }>
+  skippedTotal: number
 }
 
 interface PreparedRuntimeArtifact {
@@ -143,17 +177,28 @@ interface PreparedRuntimeArtifact {
   bytes: Buffer
   sha256: string
   storageKey: string
-  /** Original text kept as the file's extraction so a later turn can mount it; null when not usable as text. */
+  /**
+   * The file's extraction so a later turn can mount it: the original text of a text artifact, or
+   * container-extracted text of a binary one (2b-3); null when not usable as text.
+   */
   text: ArtifactInputText | null
+  /** Binary artifact whose extraction ran and failed; recorded so it is not retried. */
+  textFailure?: { detectedType: BinaryTextType; code: string; message: string }
 }
 
 interface ArtifactInputText {
+  extractorVersion: string
   content: string
   sha256: string
   storageKey: string
-  detectedType: 'csv' | 'text'
-  rowCount: number
+  detectedType: 'csv' | 'text' | BinaryTextType
+  rowCount: number | null
+  pageCount?: number | null
+  sheetCount?: number | null
 }
+
+/** Most binary artifacts one extraction container parses at once (startup backfill). */
+const BACKFILL_BATCH_FILES = 10
 
 export class PostgresContentService {
   private readonly database: DatabaseClient
@@ -162,6 +207,7 @@ export class PostgresContentService {
   private readonly scanner: FileSafetyScannerPort
   private readonly workspaces: PostgresWorkspaceService
   private readonly objectGc: WorkspaceObjectGcService | null
+  private readonly artifactTextExtractor: ArtifactTextExtractorPort | null
 
   constructor(
     database: DatabaseClient,
@@ -169,14 +215,19 @@ export class PostgresContentService {
     authorization: PostgresAuthorizationService,
     scanner: FileSafetyScannerPort = new BaselineFileSafetyScanner(),
     workspaces = new PostgresWorkspaceService(database),
-    objectGc: WorkspaceObjectGcService | null = new WorkspaceObjectGcService(database, storage),
+    /**
+     * `artifactTextExtractor`: container extraction of binary artifacts (2b-3); without it they get no text.
+     * `objectGc`: workspace object retention; omitted callers still get the default sweeper.
+     */
+    options: { artifactTextExtractor?: ArtifactTextExtractorPort; objectGc?: WorkspaceObjectGcService | null } = {},
   ) {
     this.database = database
     this.storage = storage
     this.authorization = authorization
     this.scanner = scanner
     this.workspaces = workspaces
-    this.objectGc = objectGc
+    this.objectGc = options.objectGc === undefined ? new WorkspaceObjectGcService(database, storage) : options.objectGc
+    this.artifactTextExtractor = options.artifactTextExtractor ?? null
   }
 
   /**
@@ -443,8 +494,10 @@ export class PostgresContentService {
       agentName: string | null
       agentVersion: string | null
       initiatedBy: string | null
+      textPreview: ArtifactTextPreviewState | null
+      textPreviewError: string | null
     }[]>`
-      select a.id, a.name, a.artifact_type as "artifactType", av.version_no as version,
+      select a.id, a.name, a.artifact_type as "artifactType", av.version_no as version, ${artifactTextPreviewColumns(this.database)},
              f.size_bytes as "sizeBytes", av.created_at as "createdAt",
              av.source_run_id as "runId", a.workspace_id as "workspaceId",
              w.workspace_type as "workspaceType", s.status as "sourceSessionStatus",
@@ -496,7 +549,7 @@ export class PostgresContentService {
       if (row.workspaceType !== 'team') return null
       return readable.get(row.workspaceId) === true ? row : null
     })
-    return visible.filter((row): row is (typeof rows)[number] => row !== null).map((row) => ({
+    return visible.filter((row): row is (typeof rows)[number] => row !== null).map((row) => withTextPreview({
       id: row.id,
       name: row.name,
       type: row.artifactType,
@@ -511,7 +564,7 @@ export class PostgresContentService {
         agent: row.agentName && row.agentVersion ? { name: row.agentName, version: row.agentVersion } : null,
         initiatedBy: row.initiatedBy,
       } : null,
-    }))
+    }, row))
   }
 
   /** Uses existing file_objects/extractions/Artifact relations; no second catalog.
@@ -571,7 +624,7 @@ export class PostgresContentService {
            order by av.version_no desc, av.id desc limit 1
         ) result on true
         left join lateral (select fe.status from file_extractions fe where fe.tenant_id = f.tenant_id and fe.file_id = f.id
-          and fe.extractor_version = 'm4-basic-v1' order by fe.created_at desc, fe.id desc limit 1) extraction on true
+          and fe.extractor_version = any(${TEXT_EXTRACTOR_VERSIONS}) order by fe.created_at desc, fe.id desc limit 1) extraction on true
        where f.tenant_id = ${tenantId} and w.workspace_type = 'personal'
          and (${readableWorkspacePredicate(this.database, input.actorUserId)})
          and f.removed_at is null
@@ -1400,12 +1453,25 @@ export class PostgresContentService {
   }
 
   /** 运行输入文件「可解析」谓词：启用预检与实际挂载必须使用同一份条件。 */
+  /**
+   * A file can be a Run input when it is clean, not removed, and either has extracted text, or is a
+   * binary platform artifact (Office, PDF, image) that is mounted as its original file when bash is
+   * assembled (execution isolation 2b-4). Uploads whose extraction failed stay unusable. Callers
+   * left-join `fe` on a succeeded extraction of one of `TEXT_EXTRACTOR_VERSIONS`.
+   */
   private runtimeFileReadyPredicate() {
     return this.database`
       and f.scan_status = 'clean'
       and f.removed_at is null
-      and fe.status = 'succeeded'
-      and fe.extractor_version = 'm4-basic-v1'
+      and (
+        fe.id is not null
+        or exists (
+          select 1 from artifact_versions bav
+            join artifacts ba on ba.tenant_id = bav.tenant_id and ba.id = bav.artifact_id
+           where bav.tenant_id = f.tenant_id and bav.file_object_id = f.id
+             and ba.artifact_type in ('xlsx', 'docx', 'pptx', 'pdf', 'png', 'jpg')
+        )
+      )
     `
   }
 
@@ -1414,9 +1480,11 @@ export class PostgresContentService {
       select f.workspace_id as "workspaceId", f.id as "fileId", fe.id as "extractionId", f.original_name as "originalName",
              f.mime_type as "mimeType", fe.text_storage_key as "textStorageKey",
              fe.text_sha256 as "textSha256", fe.attachments as "attachments",
+             f.sha256, f.size_bytes::integer as "sizeBytes",
              art.id as "artifactId", art.version_no as "artifactVersion"
         from file_objects f
-        join file_extractions fe on fe.tenant_id = f.tenant_id and fe.file_id = f.id
+        left join file_extractions fe on fe.tenant_id = f.tenant_id and fe.file_id = f.id
+          and fe.status = 'succeeded' and fe.extractor_version = any(${TEXT_EXTRACTOR_VERSIONS})
         join sessions target on target.tenant_id = f.tenant_id and target.id = ${input.sessionId}
         left join lateral (
           select a.id, av.version_no from artifact_versions av
@@ -1511,59 +1579,179 @@ export class PostgresContentService {
     sessionId: string
     fileIds: string[]
     userId: string
+    /**
+     * 附件跨轮延续：上一轮的会话附件（listCarriedSessionFileIds）。只在剩余名额与解析文本额度内
+     * 挂载；不可访问、已移除、没有解析文本或超出额度的跳过，不使本轮失败。显式文件仍按原规则
+     * 失败即拒绝。
+     */
+    carriedFileIds?: string[]
   }): Promise<PreparedRuntimeFile[]> {
     const fileIds = [...new Set(input.fileIds.map(id => id.trim()).filter(Boolean))]
-    if (fileIds.length > 5) throw invalidRequest('每次 Run 最多分析 5 个文件')
+    if (fileIds.length > maxRuntimeFiles) throw invalidRequest('每次 Run 最多分析 5 个文件')
     const prepared: PreparedRuntimeFile[] = []
     let totalBytes = 0
-    let attachmentCount = 0
-    let attachmentBytes = 0
+    const attachmentUsage = { count: 0, bytes: 0 }
     for (const [index, fileId] of fileIds.entries()) {
       const row = await this.resolveRuntimeFile({ sessionId: input.sessionId, fileId, userId: input.userId })
-      const content = (await this.storage.get(row.textStorageKey)).toString('utf8')
-      totalBytes += Buffer.byteLength(content)
-      if (totalBytes > 1024 * 1024) throw invalidRequest('本次 Run 的文件解析文本合计超过 1 MB，请减少或拆分文件')
-      const safeName = safeMountName(row.originalName, index)
-      const attachments: FileAttachment[] = []
-      for (const attachment of row.attachments ?? []) {
-        // 单个 Run 的图片总量与文件数另设上限：文本配额只管文字。
-        if (attachmentCount >= 12) throw invalidRequest('本次 Run 的内嵌图片超过 12 张，请减少文件或拆分后再上传')
-        const bytes = await this.storage.get(attachment.storage_key)
-        if (createHash('sha256').update(bytes).digest('hex') !== attachment.sha256) {
-          throw dependencyUnavailable(`文件附件校验失败：${row.originalName} 的 ${attachment.name}`)
-        }
-        attachmentBytes += bytes.length
-        if (attachmentBytes > 16 * 1024 * 1024) throw invalidRequest('本次 Run 的内嵌图片合计超过 16 MB，请减少文件或拆分后再上传')
-        attachmentCount += 1
-        attachments.push({
-          file_id: row.fileId,
-          name: attachment.name,
-          mount_path: `/workspace/input/attachments/${attachment.name}`,
-          media_type: attachment.media_type,
-          content_sha256: attachment.sha256,
-          content_base64: bytes.toString('base64'),
-          source: attachment.source,
+      const file = await this.toPreparedRuntimeFile(row, index, attachmentUsage, true)
+      // 显式文件超限时 toPreparedRuntimeFile 已抛错；这里只收窄「跳过」返回值，避免静默丢掉用户选中的文件。
+      if (!file) throw invalidRequest('文件无法挂载到本次 Run')
+      totalBytes += file.textBytes
+      if (totalBytes > maxRuntimeTextBytes) throw invalidRequest('本次 Run 的文件解析文本合计超过 1 MB，请减少或拆分文件')
+      attachmentUsage.count += file.attachmentCount
+      attachmentUsage.bytes += file.attachmentBytes
+      prepared.push(file.prepared)
+    }
+    for (const fileId of input.carriedFileIds ?? []) {
+      if (prepared.length >= maxRuntimeFiles) break
+      if (fileIds.includes(fileId)) continue
+      const row = await this.resolveRuntimeFile({ sessionId: input.sessionId, fileId, userId: input.userId })
+        .catch((error: unknown) => {
+          if (isAuthorizationDenial(error)) return null
+          throw error
         })
+      if (!row || (!row.textStorageKey && !row.sha256)) continue
+      const file = await this.toPreparedRuntimeFile(row, prepared.length, attachmentUsage, false)
+      if (!file) continue
+      if (totalBytes + file.textBytes > maxRuntimeTextBytes) continue
+      totalBytes += file.textBytes
+      attachmentUsage.count += file.attachmentCount
+      attachmentUsage.bytes += file.attachmentBytes
+      prepared.push(file.prepared)
+    }
+    return prepared
+  }
+
+  private async toPreparedRuntimeFile(
+    row: RuntimeFileRow,
+    index: number,
+    attachmentUsage: { count: number; bytes: number },
+    enforceAttachmentLimits: boolean,
+  ): Promise<{ prepared: PreparedRuntimeFile; textBytes: number; attachmentCount: number; attachmentBytes: number } | null> {
+    const safeName = safeMountName(row.originalName, index)
+    const revision = row.artifactId && row.artifactVersion
+      ? { artifact_revision: { artifact_id: row.artifactId, version: row.artifactVersion } }
+      : {}
+    let mount: FileMount | null = null
+    let textBytes = 0
+    if (row.textStorageKey && row.textSha256) {
+      const content = (await this.storage.get(row.textStorageKey)).toString('utf8')
+      textBytes = Buffer.byteLength(content)
+      mount = {
+        file_id: row.fileId,
+        mount_path: `/workspace/input/${safeName}.txt`,
+        access: 'read_only',
+        source_name: row.originalName,
+        media_type: row.mimeType,
+        content_sha256: row.textSha256,
+        content,
+        ...revision,
       }
-      prepared.push({
-        fileId: row.fileId,
-        extractionId: row.extractionId,
-        mount: {
+    }
+    const attachments: FileAttachment[] = []
+    let attachmentBytes = 0
+    for (const attachment of row.attachments ?? []) {
+      if (attachmentUsage.count + attachments.length >= 12) {
+        if (!enforceAttachmentLimits) return null
+        throw invalidRequest('本次 Run 的内嵌图片超过 12 张，请减少文件或拆分后再上传')
+      }
+      const bytes = await this.storage.get(attachment.storage_key)
+      if (createHash('sha256').update(bytes).digest('hex') !== attachment.sha256) {
+        throw dependencyUnavailable(`文件附件校验失败：${row.originalName} 的 ${attachment.name}`)
+      }
+      if (attachmentUsage.bytes + attachmentBytes + bytes.length > 16 * 1024 * 1024) {
+        if (!enforceAttachmentLimits) return null
+        throw invalidRequest('本次 Run 的内嵌图片合计超过 16 MB，请减少文件或拆分后再上传')
+      }
+      attachmentBytes += bytes.length
+      attachments.push({
+        file_id: row.fileId,
+        name: attachment.name,
+        mount_path: `/workspace/input/attachments/${attachment.name}`,
+        media_type: attachment.media_type,
+        content_sha256: attachment.sha256,
+        content_base64: bytes.toString('base64'),
+        source: attachment.source,
+      })
+    }
+    const extension = extname(row.originalName).toLowerCase()
+    const original: OriginalFileMount | null = row.sha256 && ORIGINAL_MOUNT_EXTENSIONS.has(extension) && row.sizeBytes > 0
+      ? {
           file_id: row.fileId,
-          mount_path: `/workspace/input/${safeName}.txt`,
+          mount_path: `/workspace/input/original/${safeName}${extension}`,
           access: 'read_only',
           source_name: row.originalName,
           media_type: row.mimeType,
-          content_sha256: row.textSha256,
-          content,
-          ...(row.artifactId && row.artifactVersion
-            ? { artifact_revision: { artifact_id: row.artifactId, version: row.artifactVersion } }
-            : {}),
-        },
+          sha256: row.sha256,
+          size_bytes: row.sizeBytes,
+          ...revision,
+        }
+      : null
+    return {
+      prepared: {
+        fileId: row.fileId,
+        sourceName: row.originalName,
+        extractionId: row.extractionId,
+        mount,
+        original,
         attachments,
-      })
+      },
+      textBytes,
+      attachmentCount: attachments.length,
+      attachmentBytes,
     }
-    return prepared
+  }
+
+  /**
+   * 附件跨轮延续：本轮没有选择文件时，沿用本人在该会话最近一轮有输入文件的执行所用的会话附件，
+   * 追问仍能就同一文件作答；那一轮本身是延续来的也照样沿用，因此会一直延续到用户发送新文件为止。
+   * 只取上传到本会话的附件；成果版本经“继续修改”显式引用，不隐式延续；他人在共享会话中发送的
+   * 附件不带入。本轮选择了文件时调用方不调用本方法，避免“这个文件”指代不清。
+   */
+  async listCarriedSessionFileIds(input: { sessionId: string; userId: string }): Promise<string[]> {
+    const rows = await this.database<{ fileId: string }[]>`
+      with latest as (
+        select r.id from runs r
+         where r.tenant_id = ${tenantId} and r.session_id = ${input.sessionId}
+           and r.requested_by = ${input.userId}
+           and exists (
+             select 1 from run_input_files any_input
+              where any_input.tenant_id = r.tenant_id and any_input.run_id = r.id
+           )
+         order by r.created_at desc, r.id desc
+         limit 1
+      )
+      select rif.file_id as "fileId"
+        from latest
+        join run_input_files rif on rif.tenant_id = ${tenantId} and rif.run_id = latest.id
+        join file_objects f on f.tenant_id = rif.tenant_id and f.id = rif.file_id
+       where f.session_id = ${input.sessionId} and f.removed_at is null
+         and not exists (
+           select 1 from artifact_versions av
+            where av.tenant_id = f.tenant_id and av.file_object_id = f.id
+         )
+       group by rif.file_id
+       order by min(rif.created_at), rif.file_id
+    `
+    return rows.map(row => row.fileId)
+  }
+
+  /**
+   * 执行隔离 2b-4：Runtime Adapter 在 Attempt 开始时读取原始文件。只读已绑定到该 Run 的输入
+   * （run_input_files；恢复执行的新 Attempt 沿用同一 Run 的绑定），且文件仍干净、未移除；
+   * 摘要与大小由调用方按 Manifest 校验。
+   */
+  async readRuntimeOriginal(manifest: RuntimeManifest, fileId: string): Promise<Buffer> {
+    const [row] = await this.database<{ storageKey: string }[]>`
+      select f.storage_key as "storageKey"
+        from run_input_files rif
+        join file_objects f on f.tenant_id = rif.tenant_id and f.id = rif.file_id
+       where rif.tenant_id = ${tenantId} and rif.run_id = ${manifest.run_id} and rif.file_id = ${fileId}
+         and f.scan_status = 'clean' and f.removed_at is null
+       limit 1
+    `
+    if (!row) throw authorizationDenied('输入文件不属于本次运行或已不可用')
+    return this.storage.get(row.storageKey)
   }
 
   /**
@@ -1588,7 +1776,8 @@ export class PostgresContentService {
       const [row] = await this.database<{ id: string }[]>`
         select f.id
           from file_objects f
-          join file_extractions fe on fe.tenant_id = f.tenant_id and fe.file_id = f.id
+          left join file_extractions fe on fe.tenant_id = f.tenant_id and fe.file_id = f.id
+            and fe.status = 'succeeded' and fe.extractor_version = any(${TEXT_EXTRACTOR_VERSIONS})
           join workspaces target on target.tenant_id = f.tenant_id and target.id = ${input.workspaceId}
          where f.tenant_id = ${input.tenantId} and f.id = ${fileId}
            ${this.runtimeFileReadyPredicate()}
@@ -1654,54 +1843,72 @@ export class PostgresContentService {
   async publishRuntimeArtifacts(input: {
     manifest: import('../../runtime/runtime-types.ts').RuntimeManifest
     workspaceDirectory: string
-  }): Promise<Array<{ name: string; size: number }>> {
+  }): Promise<RuntimeArtifactCollection> {
     const { manifest } = input
     // 管理侧 purpose 不产生员工成果；自动化任务（purpose='automation'）是
     // 员工运行，仍走正常成果收集（AG-03）。
-    if (isAdminRunPurpose(manifest.purpose)) return []
-    await this.requireActiveWorkspace(manifest.workspace_id, manifest.user_context.user_id)
-
+    if (isAdminRunPurpose(manifest.purpose)) return { published: [], skipped: [], skippedTotal: 0 }
     const workspaceRoot = resolve(input.workspaceDirectory)
     const outputRoot = resolve(workspaceRoot, 'output')
     if (!isStrictResolvedPathInside(workspaceRoot, outputRoot)) throw invalidRequest('Runtime 成果目录无效')
+    // 执行隔离 1c：output/ 本身可能被容器内代码换成指向宿主目录的链接，读取前先确认。
+    await assertRealWorkspaceDirectory(workspaceRoot, outputRoot)
+    await this.requireActiveWorkspace(manifest.workspace_id, manifest.user_context.user_id)
     const entries = await readdir(outputRoot, { withFileTypes: true })
-    if (entries.length > 20) throw invalidRequest('单次 Run 最多生成 20 个成果文件')
 
     // EX-02：本 Attempt 挂载过同会话的成果、并输出同名文件时，登记为该成果的下一版本；
     // 未引用或同名指向多个成果（无法确定）时仍作为新成果，不把碰巧同名的文件串成版本。
     const revisable = new Map<string, string | null>()
+    // 引用版本的内容摘要：原样复制回 output/ 的同名文件不产生新版本（执行隔离 2b-4）。
+    const referencedSha = new Map<string, string>()
     if (manifest.session_id) {
-      const referenced = await this.database<{ name: string; artifactId: string }[]>`
-        select distinct a.name, a.id as "artifactId"
+      const referenced = await this.database<{ name: string; artifactId: string; sha256: string | null }[]>`
+        select distinct a.name, a.id as "artifactId", f.sha256
           from run_input_files rif
           join artifact_versions av on av.tenant_id = rif.tenant_id and av.file_object_id = rif.file_id
           join artifacts a on a.tenant_id = av.tenant_id and a.id = av.artifact_id
+          join file_objects f on f.tenant_id = av.tenant_id and f.id = av.file_object_id
          where rif.tenant_id = ${tenantId} and rif.attempt_id = ${manifest.attempt_id}
            and a.session_id = ${manifest.session_id}
       `
-      for (const row of referenced) revisable.set(row.name, revisable.has(row.name) ? null : row.artifactId)
+      for (const row of referenced) {
+        revisable.set(row.name, revisable.has(row.name) ? null : row.artifactId)
+        if (row.sha256) referencedSha.set(`${row.artifactId}\0${row.sha256}`, row.name)
+      }
     }
 
+    // 执行隔离 2b-2：不合规的文件跳过并说明原因，不让整轮回答丢失；判断只依赖文件名与内容，
+    // 同一输出重复发布得到相同结果。output/ 本身被替换、空间或授权复核失败仍整轮失败（见上文）。
     const prepared: PreparedRuntimeArtifact[] = []
+    const skipped: RuntimeArtifactCollection['skipped'] = []
+    let skippedTotal = 0
+    const skip = (name: string, reason: ArtifactSkipReason) => {
+      skippedTotal += 1
+      if (skipped.length < MAX_REPORTED_SKIPS) skipped.push({ name: displayArtifactName(name), reason })
+    }
     let totalBytes = 0
     for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
-      if (!entry.isFile() || entry.name.startsWith('.') || entry.name.includes('\0')) {
-        throw new Error(`成果目录只允许顶层普通文件：${entry.name}`)
-      }
-      const extension = extname(entry.name).toLowerCase()
-      const type = artifactTypeForExtension(extension)
-      if (!type) throw new Error(`成果文件格式不受支持：${entry.name}`)
+      const nameProblem = checkArtifactName(entry.name)
+      if (nameProblem === 'invalid_name' || nameProblem === 'hidden_file') { skip(entry.name, nameProblem); continue }
       const sourcePath = resolve(outputRoot, entry.name)
       if (!isStrictResolvedPathInside(outputRoot, sourcePath)) throw invalidRequest(`成果文件路径无效：${entry.name}`)
+      // lstat 而不是 stat：不跟随链接，也不打开管道等特殊文件；硬链接（nlink > 1）同样不收。
       const details = await lstat(sourcePath)
-      if (!details.isFile() || details.nlink !== 1) throw new Error(`成果文件不是独立普通文件：${entry.name}`)
-      if (details.size < 1 || details.size > 10 * 1024 * 1024) throw invalidRequest(`成果文件大小必须为 1 B～10 MB：${entry.name}`)
-      totalBytes += details.size
-      if (totalBytes > 20 * 1024 * 1024) throw stateConflict('单次 Run 成果文件合计不能超过 20 MB')
+      if (!details.isFile() || details.nlink !== 1) { skip(entry.name, 'not_regular_file'); continue }
+      if (nameProblem) { skip(entry.name, nameProblem); continue }
+      if (details.size > ARTIFACT_LIMITS.maxFileBytes) { skip(entry.name, 'too_large'); continue }
+      if (prepared.length >= ARTIFACT_LIMITS.maxFiles) { skip(entry.name, 'too_many_files'); continue }
+      if (totalBytes + details.size > ARTIFACT_LIMITS.maxTotalBytes) { skip(entry.name, 'total_too_large'); continue }
       const bytes = await readFile(sourcePath)
-      const scan = await this.scanner.scan({ name: entry.name, mimeType: artifactMimeType(type), bytes })
-      if (!scan.clean) throw new Error(`成果文件安全检查未通过：${entry.name}`)
+      const format = artifactFormat(entry.name)!
+      const contentProblem = checkArtifactContent(entry.name, bytes)
+      if (contentProblem) { skip(entry.name, contentProblem); continue }
+      const scan = await this.scanner.scan({ name: entry.name, mimeType: format.mimeType, bytes })
+      if (!scan.clean) { skip(entry.name, 'security_scan_failed'); continue }
       const contentSha256 = createHash('sha256').update(bytes).digest('hex')
+      const revises = revisable.get(entry.name)
+      if (revises && referencedSha.get(`${revises}\0${contentSha256}`) === entry.name) continue
+      totalBytes += bytes.length
       const identity = createHash('sha256').update(`${manifest.attempt_id}\0${entry.name}\0${contentSha256}`).digest('hex').slice(0, 32)
       const artifactIdentity = createHash('sha256').update(`${manifest.run_id}\0${entry.name}`).digest('hex').slice(0, 32)
       const fileId = `file-artifact-${identity}`
@@ -1710,14 +1917,16 @@ export class PostgresContentService {
         artifactVersionId: `artifact-version-${identity}`,
         fileId,
         name: entry.name,
-        type,
-        mimeType: artifactMimeType(type),
+        type: format.type,
+        mimeType: format.mimeType,
         bytes,
         sha256: contentSha256,
-        storageKey: joinObjectKey('artifact-files', manifest.task_id, `file-artifact-${identity}${extension}`),
-        text: artifactInputText(type, bytes, fileId),
+        storageKey: joinObjectKey('artifact-files', manifest.task_id, `file-artifact-${identity}${extname(entry.name).toLowerCase()}`),
+        text: artifactInputText(format.type, bytes, fileId),
       })
     }
+    // 2b-3：二进制成果的解析文本在一次性容器中生成；容器本身失败时不写解析记录，启动补解析会重试。
+    await this.attachBinaryArtifactTexts(prepared)
 
     for (const artifact of prepared) {
       await this.storage.putIfAbsent(artifact.storageKey, artifact.bytes)
@@ -1802,10 +2011,20 @@ export class PostgresContentService {
           await transaction`
             insert into file_extractions (
               id, tenant_id, file_id, extractor_version, detected_type, status,
-              text_storage_key, text_sha256, character_count, row_count
+              text_storage_key, text_sha256, character_count, page_count, sheet_count, row_count
             ) values (
-              ${`extraction-${artifact.fileId}`}, ${tenantId}, ${artifact.fileId}, 'm4-basic-v1', ${artifact.text.detectedType}, 'succeeded',
-              ${artifact.text.storageKey}, ${artifact.text.sha256}, ${artifact.text.content.length}, ${artifact.text.rowCount}
+              ${`extraction-${artifact.fileId}`}, ${tenantId}, ${artifact.fileId}, ${artifact.text.extractorVersion},
+              ${artifact.text.detectedType}, 'succeeded', ${artifact.text.storageKey}, ${artifact.text.sha256},
+              ${artifact.text.content.length}, ${artifact.text.pageCount ?? null}, ${artifact.text.sheetCount ?? null}, ${artifact.text.rowCount}
+            )
+          `
+        } else if (artifact.textFailure) {
+          await transaction`
+            insert into file_extractions (
+              id, tenant_id, file_id, extractor_version, detected_type, status, error_code, error_message
+            ) values (
+              ${`extraction-${artifact.fileId}`}, ${tenantId}, ${artifact.fileId}, ${CONTAINER_EXTRACTOR_VERSION},
+              ${artifact.textFailure.detectedType}, 'failed', ${artifact.textFailure.code}, ${artifact.textFailure.message}
             )
           `
         }
@@ -1833,7 +2052,7 @@ export class PostgresContentService {
         `
       }
     })
-    return prepared.map(artifact => ({ name: artifact.name, size: artifact.bytes.length }))
+    return { published: prepared.map(artifact => ({ name: artifact.name, size: artifact.bytes.length })), skipped, skippedTotal }
   }
 
   /**
@@ -1848,6 +2067,7 @@ export class PostgresContentService {
         join artifacts a on a.tenant_id = av.tenant_id and a.id = av.artifact_id
         join file_objects f on f.tenant_id = av.tenant_id and f.id = av.file_object_id
        where av.tenant_id = ${tenantId} and f.removed_at is null and f.scan_status = 'clean'
+         and a.artifact_type in ('markdown', 'text', 'csv', 'html')
          and not exists (select 1 from file_extractions fe where fe.tenant_id = f.tenant_id and fe.file_id = f.id)
        order by f.id
        limit ${limit}
@@ -1889,6 +2109,94 @@ export class PostgresContentService {
       extracted += inserted.count
     }
     return { inspected: rows.length, extracted }
+  }
+
+  /**
+   * 2b-3 backfill: binary artifacts without any extraction (published before 2b-3, or while the
+   * extraction container could not run) get container-extracted text. Meant to run in the
+   * background after startup; when a batch's container fails the rest waits for the next start.
+   */
+  async backfillBinaryArtifactExtractions(limit = 200): Promise<{ inspected: number; extracted: number; failed: number }> {
+    const counts = { inspected: 0, extracted: 0, failed: 0 }
+    if (!this.artifactTextExtractor) return counts
+    const rows = await this.database<{ fileId: string; storageKey: string; artifactType: BinaryTextType }[]>`
+      select distinct on (f.id) f.id as "fileId", f.storage_key as "storageKey", a.artifact_type as "artifactType"
+        from artifact_versions av
+        join artifacts a on a.tenant_id = av.tenant_id and a.id = av.artifact_id
+        join file_objects f on f.tenant_id = av.tenant_id and f.id = av.file_object_id
+       where av.tenant_id = ${tenantId} and f.removed_at is null and f.scan_status = 'clean'
+         and a.artifact_type = any(${BINARY_TEXT_TYPES as BinaryTextType[]})
+         and f.size_bytes <= ${ARTIFACT_LIMITS.maxFileBytes}
+         and not exists (select 1 from file_extractions fe where fe.tenant_id = f.tenant_id and fe.file_id = f.id)
+       order by f.id
+       limit ${limit}
+    `
+    counts.inspected = rows.length
+    for (let start = 0; start < rows.length; start += BACKFILL_BATCH_FILES) {
+      const batch: Array<{ fileId: string; type: BinaryTextType; bytes: Buffer }> = []
+      for (const row of rows.slice(start, start + BACKFILL_BATCH_FILES)) {
+        const bytes = await this.storage.get(row.storageKey).catch(() => null)
+        if (bytes) batch.push({ fileId: row.fileId, type: row.artifactType, bytes })
+      }
+      const results = await this.artifactTextExtractor.extract(batch.map(file => ({ name: file.fileId, type: file.type, bytes: file.bytes })))
+      for (const [index, file] of batch.entries()) {
+        const result = results[index]
+        if (!result) continue
+        if (result.ok) {
+          const text = binaryArtifactText(file.fileId, result)
+          await this.storage.putIfAbsent(text.storageKey, Buffer.from(text.content, 'utf8'))
+          const inserted = await this.database`
+            insert into file_extractions (
+              id, tenant_id, file_id, extractor_version, detected_type, status,
+              text_storage_key, text_sha256, character_count, page_count, sheet_count, row_count
+            ) values (
+              ${`extraction-${file.fileId}`}, ${tenantId}, ${file.fileId}, ${CONTAINER_EXTRACTOR_VERSION}, ${text.detectedType}, 'succeeded',
+              ${text.storageKey}, ${text.sha256}, ${text.content.length}, ${text.pageCount ?? null}, ${text.sheetCount ?? null}, ${text.rowCount}
+            )
+            on conflict (id) do nothing
+          `
+          counts.extracted += inserted.count
+        } else {
+          const inserted = await this.database`
+            insert into file_extractions (
+              id, tenant_id, file_id, extractor_version, detected_type, status, error_code, error_message
+            ) values (
+              ${`extraction-${file.fileId}`}, ${tenantId}, ${file.fileId}, ${CONTAINER_EXTRACTOR_VERSION},
+              ${result.detectedType}, 'failed', ${result.code}, ${result.message}
+            )
+            on conflict (id) do nothing
+          `
+          counts.failed += inserted.count
+        }
+      }
+    }
+    return counts
+  }
+
+  /**
+   * 2b-3: binary artifacts get their text from the container extractor. A file-level failure is
+   * recorded (the artifact can still be mounted as its original file); when the container itself
+   * cannot run nothing is recorded, publishing goes on, and the startup backfill retries.
+   */
+  private async attachBinaryArtifactTexts(artifacts: PreparedRuntimeArtifact[]) {
+    const pending = artifacts.flatMap(artifact => {
+      const type = BINARY_TEXT_TYPES.find(candidate => candidate === artifact.type)
+      return type && !artifact.text ? [{ artifact, type }] : []
+    })
+    if (!pending.length || !this.artifactTextExtractor) return
+    let results: ArtifactTextExtraction[]
+    try {
+      results = await this.artifactTextExtractor.extract(pending.map(({ artifact, type }) => ({ name: artifact.name, type, bytes: artifact.bytes })))
+    } catch (error) {
+      console.warn(`artifact text extraction unavailable; binary artifacts are published without text: ${error instanceof Error ? error.message : String(error)}`)
+      return
+    }
+    for (const [index, { artifact }] of pending.entries()) {
+      const result = results[index]
+      if (!result) continue
+      if (result.ok) artifact.text = binaryArtifactText(artifact.fileId, result)
+      else artifact.textFailure = { detectedType: result.detectedType, code: result.code, message: result.message }
+    }
   }
 
   async getRunInputFileIds(runId: string, attemptId?: string | null) {
@@ -2280,6 +2588,50 @@ export class PostgresContentService {
   }
 
   /**
+   * 2b-5：Office/PDF 成果某个版本的解析文本，供“查看正文”与成果预览。读取权限与下载相同
+   * （artifactFileId）；文本按解析记录的摘要校验后返回。其他类型没有解析文本预览。
+   */
+  async readArtifactText(artifactId: string, version: number, actorUserId: string): Promise<ArtifactTextPreview> {
+    const fileId = await this.artifactFileId(artifactId, version, actorUserId)
+    const [row] = await this.database<{
+      artifactType: Artifact['type']
+      status: 'succeeded' | 'failed' | null
+      detectedType: BinaryTextType | null
+      textStorageKey: string | null
+      textSha256: string | null
+      errorMessage: string | null
+      pageCount: number | null
+      sheetCount: number | null
+      rowCount: number | null
+    }[]>`
+      select a.artifact_type as "artifactType", fe.status, fe.detected_type as "detectedType",
+             fe.text_storage_key as "textStorageKey", fe.text_sha256 as "textSha256", fe.error_message as "errorMessage",
+             fe.page_count as "pageCount", fe.sheet_count as "sheetCount", fe.row_count as "rowCount"
+        from artifact_versions av
+        join artifacts a on a.tenant_id = av.tenant_id and a.id = av.artifact_id
+        join file_objects f on f.tenant_id = av.tenant_id and f.id = av.file_object_id
+        left join lateral (
+          select * from file_extractions x
+           where x.tenant_id = f.tenant_id and x.file_id = f.id and x.extractor_version = any(${TEXT_EXTRACTOR_VERSIONS})
+           order by x.created_at desc, x.id desc limit 1
+        ) fe on true
+       where av.tenant_id = ${tenantId} and av.artifact_id = ${artifactId} and av.file_object_id = ${fileId}
+         and f.scan_status = 'clean' and f.removed_at is null
+    `
+    if (!row) throw authorizationDenied('Artifact 不存在或不可访问')
+    if (!BINARY_TEXT_TYPES.some(type => type === row.artifactType)) throw invalidRequest('该成果类型没有解析文本预览，请直接下载或查看原文')
+    const type = row.artifactType as BinaryTextType
+    if (!row.status) return { status: 'pending', type }
+    if (row.status === 'failed' || !row.textStorageKey) return { status: 'failed', type, message: row.errorMessage ?? '文件解析失败' }
+    const text = (await this.storage.get(row.textStorageKey)).toString('utf8')
+    if (createHash('sha256').update(text).digest('hex') !== row.textSha256) throw stateConflict('成果解析文本与记录不一致，请联系管理员')
+    return {
+      status: 'available', type, text,
+      pageCount: row.pageCount, sheetCount: row.sheetCount, rowCount: row.rowCount,
+    }
+  }
+
+  /**
    * 团队空间设置写入：先取空间行锁（与归档/成员变更同一把锁、同一锁序），
    * 再在锁内复核「空间活跃」与「调用者是负责人」。归档在等待锁期间提交时，
    * 这里必须拒绝，避免设置改写穿透只读态。
@@ -2333,22 +2685,6 @@ function detectedType(extension: string): 'pdf' | 'docx' | 'xlsx' | 'csv' | 'tex
   return 'text'
 }
 
-function artifactTypeForExtension(extension: string): Artifact['type'] | null {
-  if (extension === '.md') return 'markdown'
-  if (extension === '.txt') return 'text'
-  if (extension === '.csv') return 'csv'
-  if (extension === '.html' || extension === '.htm') return 'html'
-  return null
-}
-
-function artifactMimeType(type: Artifact['type']) {
-  if (type === 'markdown') return 'text/markdown; charset=utf-8'
-  if (type === 'csv') return 'text/csv; charset=utf-8'
-  if (type === 'html') return 'text/html; charset=utf-8'
-  if (type === 'text') return 'text/plain; charset=utf-8'
-  return 'application/octet-stream'
-}
-
 /**
  * Artifacts are already text (Markdown, text, CSV, HTML). The extraction keeps the original
  * content, not a summary, so a later turn can revise the file itself. Text that is not valid
@@ -2356,6 +2692,8 @@ function artifactMimeType(type: Artifact['type']) {
  * still published, it just cannot be attached to a later message.
  */
 function artifactInputText(type: Artifact['type'], bytes: Buffer, fileId: string): ArtifactInputText | null {
+  // 二进制成果（Office、PDF）的解析文本由容器解析器生成（attachBinaryArtifactTexts）；不能把原始字节当文本挂载。
+  if (!isTextArtifactType(type)) return null
   let content: string
   try {
     content = new TextDecoder('utf-8', { fatal: true }).decode(bytes)
@@ -2365,11 +2703,25 @@ function artifactInputText(type: Artifact['type'], bytes: Buffer, fileId: string
   content = content.replaceAll('\r\n', '\n').replaceAll('\r', '\n')
   if (!content.trim() || content.length > 512_000) return null
   return {
+    extractorVersion: 'm4-basic-v1',
     content,
     sha256: createHash('sha256').update(content).digest('hex'),
     storageKey: joinObjectKey('extractions', fileId, 'm4-basic-v1.txt'),
     detectedType: type === 'csv' ? 'csv' : 'text',
     rowCount: content.split('\n').length,
+  }
+}
+
+function binaryArtifactText(fileId: string, extraction: Extract<ArtifactTextExtraction, { ok: true }>): ArtifactInputText {
+  return {
+    extractorVersion: CONTAINER_EXTRACTOR_VERSION,
+    content: extraction.text,
+    sha256: createHash('sha256').update(extraction.text).digest('hex'),
+    storageKey: joinObjectKey('extractions', fileId, `${CONTAINER_EXTRACTOR_VERSION}.txt`),
+    detectedType: extraction.detectedType,
+    rowCount: extraction.rowCount,
+    pageCount: extraction.pageCount,
+    sheetCount: extraction.sheetCount,
   }
 }
 

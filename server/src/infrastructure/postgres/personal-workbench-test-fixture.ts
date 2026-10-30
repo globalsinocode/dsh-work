@@ -7,6 +7,7 @@ import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { createThrowawayDatabase } from './test-database.ts'
 import { PostgresContentService } from '../../modules/workbench/application/postgres-content-service.ts'
+import type { ArtifactTextExtractorPort } from '../../modules/workbench/application/container-artifact-text-extractor.ts'
 import { PostgresConversationRepository } from '../../modules/workbench/application/postgres-conversation-repository.ts'
 import { PostgresAuthorizationService } from '../../modules/authorization/postgres-authorization-service.ts'
 import { PostgresRunRepository } from '../../modules/run/postgres-run-repository.ts'
@@ -59,11 +60,13 @@ export async function personalWorkbenchFixture(prefix: string, options: {
   teamCollaboration?: boolean
   /** 项目空间（S1～S6）浏览器夹具：注册项目/成员/生命周期/活动/用量路由。 */
   projectSpace?: boolean
+  /** 二进制成果解析的测试替身（不启动容器）；未传时二进制成果没有解析文本。 */
+  artifactTextExtractor?: ArtifactTextExtractorPort
 } = {}) {
   const db = await createThrowawayDatabase({ namePrefix: prefix, maxConnections: 6 })
   const root = await mkdtemp(join(tmpdir(), prefix))
   const auth = new PostgresAuthorizationService(db.client)
-  const content = new PostgresContentService(db.client, new LocalObjectStorage(root), auth)
+  const content = new PostgresContentService(db.client, new LocalObjectStorage(root), auth, undefined, undefined, { artifactTextExtractor: options.artifactTextExtractor })
   const conversations = new PostgresConversationRepository(db.client)
   let unbindNotificationRecipients = bindTestWorkspaceNotificationRecipients(db.client)
   const runs = new PostgresRunRepository(db.client)

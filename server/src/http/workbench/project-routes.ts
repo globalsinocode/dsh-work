@@ -148,17 +148,6 @@ export function registerProjectRoutes(
     return envelope('workbench', await projects.resumeTaskSchedule(workspaceId, context.params['taskId'] ?? '', identity.userId), 'postgres')
   })
 
-  router.post(`${basePath}/workspaces/:workspaceId/sessions/:sessionId/project-task`, async (request, context) => {
-    const identity = requireRequestIdentity(context, 'workbench')
-    const workspaceId = context.params['workspaceId'] ?? ''
-    await requireTeamActor(authorization, identity, workspaceId, [...writerRoles], projectOnly)
-    const body = await readObject(request)
-    const task = await projects.markThreadAsTask(workspaceId, context.params['sessionId'] ?? '', identity.userId, {
-      title: body.title,
-    })
-    return httpResult(201, envelope('workbench', task, 'postgres'))
-  })
-
   router.get(`${basePath}/workspaces/:workspaceId/project-archive`, async (_request, context) => {
     const identity = requireRequestIdentity(context, 'workbench')
     const workspaceId = context.params['workspaceId'] ?? ''

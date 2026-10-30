@@ -74,7 +74,9 @@ watch(() => route.name === 'collab-chats' ? route.query.conversation : undefined
 const pageVisible = ref(typeof document === 'undefined' || document.visibilityState !== 'hidden')
 const activeUnread = computed(() => {
   const key = activeKey.value
-  return key ? conversations.targets.find(item => `${item.type}:${item.id}` === key)?.unreadCount ?? 0 : 0
+  const target = key ? conversations.targets.find(item => `${item.type}:${item.id}` === key) : undefined
+  // @ 提醒（D38）同样在打开时清除：只有提醒没有未读数时也要标记。
+  return target ? target.unreadCount + (target.mentioned ? 1 : 0) : 0
 })
 watch([activeKey, activeUnread, pageVisible], ([key, unread, visible]) => {
   if (!key || unread <= 0 || !visible) return

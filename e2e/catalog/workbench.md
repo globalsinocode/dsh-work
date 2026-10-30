@@ -48,7 +48,7 @@
 - 负责人经「管理成员」管理员工、调整角色并验证收权；经右栏 Agent 区块「管理 Agent」独立入口管理 Agent 成员（P1，需多角色测试身份）。
 - 上传文件、上传新版本、失败版本保留且旧版本仍可引用（P1）。
 - 归档后历史读取仍可用、新对话/上传/重试被拒（P1）。
-- 真实 DSH 双账号上传共享文件、引用执行、收权和归档验收（P2，复用 `scripts/runtime/team-workspace-e2e.ts`，已通过）。
+- 真实 DSH 双账号上传共享文件、引用执行、收权和归档验收（P2，2026-09 以一次性脚本 `scripts/runtime/team-workspace-e2e.ts` 执行并通过，属历史证据；该脚本按旧团队空间旅程编写且在宿主运行 DSH，已于 2026-10-28 删除，重新验收需按项目空间旅程与执行容器另行编写）。
 
 P1/P2 的执行结果须单独记录数据库、身份、Runtime/DSH 版本和实际账号；没有这些证据时只能报告 P0 Prototype 浏览器结果。
 
@@ -72,16 +72,36 @@ P1/P2 的执行结果须单独记录数据库、身份、Runtime/DSH 版本和�
 4. 回到新对话后确认所选 AI 同事以可移除的胶囊项显示在对话框操作区，名称与开场提示可见；发起对话时沿用既有 Run/Attempt → Runtime Adapter → DSH 链路。
 5. 在窄屏下重复打开导航和两个目录页，筛选、卡片、空态与错误重试不溢出且具备可访问名称。
 
-**可观察结果：** 工作模式主导航依次保留「新对话、Skill 广场、AI 同事、项目空间、定时任务」（S5a 起“自动任务”改称“定时任务”；协作模式见 MODE-E2E-03）；目录只展示服务端按当前员工授权返回的已发布对象。卡片选择只负责预选已有 Skill/Agent，不赋予员工上传、安装、编辑、发布或调整能力依赖的权限。
+**可观察结果：** 工作模式主导航依次保留「新对话、Skill 广场、AI 同事、项目空间、知识库、定时任务」（S5a 起“自动任务”改称“定时任务”；知识库见 [knowledge.md](./knowledge.md)；协作模式见 MODE-E2E-03）；目录只展示服务端按当前员工授权返回的已发布对象。卡片选择只负责预选已有 Skill/Agent，不赋予员工上传、安装、编辑、发布或调整能力依赖的权限。
 
 **spec：** `e2e/personal-workbench.spec.ts`
 
-- **P0 原型导航**，普通员工，内存合成资料：工作模式主导航只显示新对话、Skill 广场、AI 同事、项目空间和定时任务；历史对话与我的文件保留上下文入口及直达路由，不显示为主导航项。个人空间不作为可管理卡片或选择器，旧个人链接继续解析到本人资源入口。对应 `e2e/personal-workbench.spec.ts`。原型不承诺持久化或真实执行。
+- **P0 原型导航**，普通员工，内存合成资料：工作模式主导航只显示新对话、Skill 广场、AI 同事、项目空间、知识库和定时任务；历史对话与我的文件保留上下文入口及直达路由，不显示为主导航项。个人空间不作为可管理卡片或选择器，旧个人链接继续解析到本人资源入口。对应 `e2e/personal-workbench.spec.ts`。原型不承诺持久化或真实执行。
 - **P1 集成工作闭环**，有效员工 A 与 B，独立可丢弃 PostgreSQL + 受控身份、无真实模型：准备 A 的 60+ 轮旧会话、空会话、个人材料、会话附件、生成成果及一个已撤权团队。通过页面搜索并恢复旧对话；上传和引用文件；下载并逻辑移除；对话移除后成果保留、来源标记已移除。B 和失权团队数据不得返回。对应 `e2e/personal-integration/closure.spec.ts` 与服务器 `review-b3/b4/b5` 集成套件；页面的 API 模拟测试只证明交互，不代替这些真实 PostgreSQL 测试。
 - **P1 归属与竞态**：团队页面发起明确团队任务；随后全局新对话仍属个人，默认个人解析失败不得回退团队；切换用户/筛选后迟到响应不得恢复旧内容。对话/资源恢复不改变 Workspace 归属。
 - **P2 真实验收**：上述闭环追加真实 OIDC、DSH 与企业扫描及成果质量检查，单独留证，本轮未运行不得标记业务验收通过。
 
 **本批实际执行记录：** P1 使用专用 PostgreSQL、受控 HTTP 与合成 Runtime，不使用页面 API 拦截。浏览器预演和首条 Playwright 均因容器 Chromium URL 管理策略报 `ERR_BLOCKED_BY_ADMINISTRATOR`；其他浏览器用例未运行，未宣称浏览器通过。组件/Store 和真实数据库 HTTP 回归已单独通过；详见 `docs/development/review-d12-evidence.md`。
+
+### SHELL-HEADER-01 列表页统一固定页头
+
+**优先级：** P1
+
+**角色：** 普通员工
+
+**运行层级：** P0 原型浏览器冒烟（内存合成）
+
+**前置数据：** 无需业务数据；项目空间列表使用冒烟夹具
+
+**操作步骤：**
+
+1. 依次打开定时任务、项目空间、历史对话、我的文件、用户中心。
+2. 在内容较长的页面向下滚动。
+3. 在窄屏（工作模式菜单按钮浮在左上角、协作模式顶部有固定栏）下重复上述检查。
+
+**可观察结果：** 各页顶部是同一结构的固定区域：只有页面标题（一级标题）和页面主操作，不显示副标题；区域占满内容区宽度、不进入左侧导航，高度保持紧凑，滚动时保持在顶部；窄屏下不被菜单按钮或协作模式顶栏遮挡。Skill 广场、AI 同事目录与协作模式的列表/详情布局不在本条范围内。
+
+**spec：** `e2e/page-header.spec.ts`（五个页面逐一检查一级标题、无副标题、宽度、高度与滚动吸顶，并覆盖工作模式窄屏菜单按钮与协作模式 52px 顶栏）。我的成果路由当前重定向到我的文件，页面组件同样改用统一页头。
 
 ## EX-02 跨轮成果延续
 
@@ -96,11 +116,25 @@ P1/P2 的执行结果须单独记录数据库、身份、Runtime/DSH 版本和�
 3. 平台工具失败显示与错误码对应的固定原因（如“调用参数不符合工具要求”“已达到本次执行的工具调用次数上限”）；未知错误码和内置工具失败显示“工具返回失败”；无结果记录显示“未收到调用结果”。
 4. 事件不含工具参数和输出内容。
 5. 工作台执行步骤逐条显示工具名与结果，失败步骤为失败状态；结果核验显示“工具调用 N（失败 M，原因见执行步骤）”。
-6. **实时（2026-10-17）：** DSH 在执行中发出 ACP `tool_call`/`tool_call_update` 时，平台随即产生 `tool.started`（“正在调用”）与带 `live: true` 的 `tool.completed`，同一 `call_id` 在执行步骤中只占一行并原地更新；“正在处理”提示显示“正在调用 工具名”。结束时按会话日志补齐未实时完成的调用，已实时完成的不重复；`run.completed` 的总数与失败数不变。本轮结束仍无结果的“正在调用”显示为“未收到调用结果”。
+6. **实时（2026-10-17）：** DSH 在执行中发出 ACP `tool_call`/`tool_call_update` 时，平台随即产生 `tool.started`（“正在调用”）与带 `live: true` 的 `tool.completed`，同一 `call_id` 在执行步骤中只占一行并原地更新；“正在处理”卡片逐步列出调用（见 EX-PROGRESS-01）。结束时按会话日志补齐未实时完成的调用，已实时完成的不重复；`run.completed` 的总数与失败数不变。本轮结束仍无结果的“正在调用”显示为“未收到调用结果”。
 
 **验收：** 上述测试通过；P2 另需在目标环境用真实 DSH 让 Agent 读取一个不存在的文件，确认执行步骤出现失败的工具调用、任务本身仍可完成，并留证 Run/Attempt 与 DSH 版本。实时部分另需确认：执行过程中（而非结束后）出现“正在调用 read”，随后原地变为失败，最终每个调用只有一行。
 
 **本地 P2（2026-10-16）：** 已通过。真实 `read` 失败 1 次，步骤和失败计数可见，`tool.completed` 早于 `run.completed`，Run 为 `succeeded`。服务基线、Run/Attempt、DSH 精确版本与截图见验收记录（Git 历史：提交 `9521be2` 的 `docs/development/runtime-execution-local-p2-2026-10-16.json`）；未覆盖目标部署环境及 ACP 实时通知。
+
+### EX-PROGRESS-01 执行中逐步显示正在进行的步骤，结束后收起为一行
+
+**优先级：** P1 · **角色：** 员工 · **运行层级：** 组件与 Store 单测、一次性 PostgreSQL（步骤时间）、P0 冒烟（确定性执行中 Run）<br>
+**前置数据：** 一次执行中的 Run，已完成若干工具调用、另有一个正在调用的工具；一次已结束的 Run<br>
+**spec：** `apps/workbench-web/src/utils/run-progress-steps.test.ts`、`apps/workbench-web/src/components/conversation/conversation-components.test.ts`、`apps/workbench-web/src/stores/tasks.test.ts`、`server/src/infrastructure/postgres/m3-orchestration.integration.test.ts`、`e2e/mvp-smoke.spec.ts`
+
+1. 执行中，“正在处理”卡片按顺序列出已完成的步骤（工具以易懂名称显示，如“读取文件”“运行 Python”，未知工具显示“调用 工具名”）及各自耗时；失败的调用标为失败，未收到结果的标为“未收到结果”。
+2. 当前步骤带进行中标记和每秒走动的计时：正在调用工具时显示“正在读取文件 · N 秒”；没有工具在运行时显示模型在思考——首个工具前为“正在理解问题”，之后为“正在思考下一步”。卡片标题旁显示本次已用时间。
+3. 不再出现“已 N 秒没有新的输出……”的提示；计时不靠读屏逐秒播报，只在步骤变化时播报。
+4. 排队时显示“正在排队等待执行”；工具权限自动确认期间显示“正在确认工具权限”；进入持久化审批等待时仍显示原有审批说明，审批后新 Attempt 继续执行，等待时间单列为“等待审批”，不计入思考。平台内部事件（进入队列、Worker 开始执行等）不在卡片中列出，仍可在“查看执行过程”中看到。
+5. 结束后卡片消失，在该轮回答上方显示“已完成 N 个步骤（调用工具 M 次）· 用时 …”，点击展开同一份步骤列表；刷新页面后仍可展开，耗时来自服务端事件时间。
+
+**验收：** 上述测试通过。P2 另需在真实 DSH 下执行一次会调用工具的任务，确认执行过程中（而非结束后）步骤逐条出现、计时持续走动、结束后可展开，留证 Run/Attempt 与 DSH 版本。已知限制：DSH 在一次模型调用结束后才发送事件，模型生成期间只有计时在走，没有文字。
 
 ### EX-ARTIFACT-01 引用上一轮成果并产生新版本
 
@@ -116,6 +150,144 @@ P1/P2 的执行结果须单独记录数据库、身份、Runtime/DSH 版本和�
 **验收：** 两轮后同一成果有 V1、V2，两版下载内容分别为原文与修改后内容；附带的新文件是独立成果；跨用户引用被拒绝。P2 另需在目标环境用真实 DSH 完成“第一轮生成 Markdown/CSV、第二轮修改指定部分”，下载两版核对差异，并留证 Run/Attempt 与 DSH 版本。
 
 **本地 P2（2026-10-16）：** 已通过两轮 Markdown 修改。V1 按 `artifact_revision` 只读挂载，输入权限为 `0400`；同名成果登记 V2，仅改指定行，附录为独立 V1。V2 完成后重新下载 V1 与原文一致。服务基线、Run/Attempt、成果 ID、SHA-256 与截图见验收记录（Git 历史：提交 `9521be2` 的 `docs/development/runtime-execution-local-p2-2026-10-16.json`）；跨用户拒绝仍以既有 P1 证据为准，本次未复跑。
+
+### EX-ARTIFACT-02 多轮对话中各轮成果留在各自的回复下
+
+**优先级：** P1 · **角色：** 员工 · **运行层级：** 一次性 PostgreSQL、合成 Runtime（不调用模型）、真实 HTTP 接口与浏览器<br>
+**前置数据：** `personalWorkbenchFixture` 一次性库；合成 Runtime 对含 `P1-成果达成` 的 prompt 登记一个文本成果，正文含该轮 prompt<br>
+**spec：** `e2e/personal-integration/thread-artifacts.spec.ts`、`apps/workbench-web/src/components/conversation/conversation-components.test.ts`
+
+1. 员工在个人空间同一对话中先后发送两条会生成成果的任务；两轮完成后重新打开该对话（刷新页面）。
+2. 每轮的成果卡显示在该轮助手回复下方，较早一轮的成果仍可见，不因后续追问而消失。
+3. 「继续修改」只出现在当前（最新一轮）的成果上；较早一轮的成果可下载、可预览，不能直接引用续写。
+4. 点击 Markdown 与文本成果在右栏预览该版本的完整正文（见 EX-ARTIFACT-08）；读取失败时在右栏提示，可重试。
+5. 协作模式与 AI 同事的单聊使用同一消息列表，行为一致；团队/项目空间对话不在本条范围内。
+
+**验收：** 刷新后两轮成果分别位于对应回复下，正文与各自一轮的输入对应；「继续修改」仅一处；读取失败可在右栏提示并重试成功。P2 另需在目标环境用真实 DSH 两轮各生成一份 Markdown，刷新后核对两份正文。
+
+### EX-ATTACH-01 对话中上传的文件显示在发送它的消息下，后续各轮仍可就该文件问答
+
+**优先级：** P1 · **角色：** 员工 · **运行层级：** 一次性 PostgreSQL、合成 Runtime（不调用模型）、真实 HTTP 接口与浏览器<br>
+**前置数据：** `personalWorkbenchFixture` 一次性库；两份合成 CSV 文件<br>
+**spec：** `e2e/personal-integration/message-attachments.spec.ts`、`apps/workbench-web/src/components/conversation/conversation-components.test.ts`、`server/src/infrastructure/postgres/m4-file-analysis.integration.test.ts`（含审批恢复后的新 Attempt）、`server/src/http/workspace-timeline-api.integration.test.ts`（群组时间线）
+
+1. 员工在新对话中从「添加内容 → 上传本地文件」选择一个文件并发送。
+2. 对话列表中该条消息下方列出所附文件名；文件随消息进入本轮输入（上传附件与引用的文件、成果都按本轮实际输入列出）。
+3. 在同一对话中再附一个文件追问；本轮只以新附的文件作为输入，不混入上一轮的文件；两轮消息各自列出自己的文件，较早一轮的文件不因追问消失。
+4. 刷新页面后两轮的文件仍在各自的消息下。协作模式的单聊与群组对话使用同一消息组件，行为一致。
+5. 再追问一轮且不附文件：本轮沿用上一轮的附件作为输入（功能规则“附件跨轮延续”），回复可就该文件作答；这条消息下不列文件。
+
+**验收：** 每条消息下只列该轮发送的文件，刷新后不变；附了文件的消息只以本轮文件作为输入；不附文件的追问沿用上一轮的附件。沿用的附件已移除时本轮不带文件照常执行，也不改用更早轮次的附件（服务端集成测试）。P2 另需在目标环境用真实 DSH：先在一段已有多份附件的对话中上传新文档并要求“总结一下这个文档”，确认只总结该文档；再不附文件追问其中的具体内容，确认回答基于该文档；刷新后核对文件标签。
+
+### EX-ARTIFACT-03 运行命令生成的 Office 等成果登记；不合规文件跳过并提示（执行隔离 2b-2）
+
+**优先级：** P1 · **角色：** 员工 · **运行层级：** 一次性 PostgreSQL 与成果发布服务、校验模块单元测试、员工端组件测试；真实 DSH 生成 Office 文件属 P2<br>
+**前置数据：** 一次成功 Run 的 `output/` 中同时有合规的 xlsx/docx/pptx/pdf/png/jpg、文本类成果，以及不合规的文件（不支持的格式、子目录、隐藏文件、超过 20 MB、扩展名与文件头不符、含宏或脚本等活动内容）<br>
+**spec：** `server/src/modules/workbench/application/artifact-file-policy.test.ts`、`server/src/infrastructure/postgres/m3-orchestration.integration.test.ts`、`server/src/domain/task-result.test.ts`、`server/src/modules/runtime/runtime-adapter.test.ts`、`apps/workbench-web/src/components/conversation/conversation-components.test.ts`
+
+1. 合规文件登记为成果，回答照常提交；二进制成果卡片提供下载，“继续修改”见 EX-ARTIFACT-04，“查看正文”与图片预览见 EX-ARTIFACT-07。
+2. 不合规文件不登记、不落盘，其余成果不受影响；该轮回答下方列出未登记的文件及原因（如“格式不支持”“含宏或脚本等活动内容”“超过 20 MB”），结果核验标为未完全达成。
+3. Office 文件允许普通超链接；含宏、ActiveX、嵌入的 OLE 对象、外部数据连接、打开时取远程内容的外部关系，或 PDF 脚本、启动动作、嵌入文件时不登记；无法完整检查的文件按不合规处理。
+4. 单个成果不超过 20 MB、每轮合计不超过 50 MB、最多 20 个；超出部分按文件名顺序跳过并说明。
+5. `output/` 本身被替换为链接、工作空间或授权复核失败时，整轮仍按失败处理，不登记任何成果。
+
+**验收：** 上述测试通过；同一输出重复发布结果一致。P2 另需在目标环境用真实 DSH 经 `bash` 生成 xlsx/docx 并转换为 PDF，下载核对内容，并制造一个不合规文件确认回答仍保留并列出原因。
+
+### EX-ARTIFACT-04 运行命令时挂载原始文件，二进制成果可跨轮修改（执行隔离 2b-4）
+
+**优先级：** P1 · **角色：** 员工 · **运行层级：** 一次性 PostgreSQL、Manifest 编译器、Runtime Adapter（受控 Worker）；真实 Docker + DSH 端到端为 opt-in；真实模型修改 Office 文件属 P2<br>
+**前置数据：** 执行容器可用（为必需，执行隔离 4.9）；个人或团队会话中有一个已上传的 xlsx 附件，以及一次成功 Run 登记的 xlsx 成果<br>
+**spec：** `server/src/modules/runtime/runtime-manifest-schema.test.ts`、`server/src/modules/runtime/runtime-adapter.test.ts`、`server/src/infrastructure/postgres/m3-orchestration.integration.test.ts`、`server/src/modules/runtime/execution-container.e2e.test.ts`
+
+1. 本轮装配了 `bash` 时，所选附件除解析文本（`input/*.txt`）外，另以只读方式挂载原始文件（`input/original/`）；二进制成果没有解析文本，只挂原始文件。运行说明分别列出两类路径。
+2. 二进制成果卡片提供“继续修改”；引用后模型把修改后的完整文件写入 `output/<原名>`，平台登记为该成果的下一版本，旧版本仍可下载。原样复制、内容未变的文件不产生新版本。
+3. 未装配 `bash`（被 Runtime 紧急停用；执行容器不可用时整个运行被拒绝）时，有解析文本的二进制成果只挂解析文本，运行说明告知只能参考、不能修改；没有解析文本的二进制成果不能作为本轮输入，提交前提示原因，不创建 Attempt（见 EX-ARTIFACT-06）；文本类附件照常只挂解析文本。
+4. 原始文件在 Attempt 开始时按 Run 绑定读取，校验摘要与大小，不一致即失败；不属于本 Run 的文件不能被读取。
+
+**验收：** 上述测试通过。P2 另需在目标环境用真实 DSH 修改一个 xlsx 成果的指定单元格，下载 V1、V2 核对差异，并留证 Run/Attempt 与 DSH 版本。
+
+### EX-ARTIFACT-05 执行镜像的 Office 工具链：启动检查与运行说明（执行隔离 2b-1）
+
+**优先级：** P1 · **角色：** 平台管理员、员工 · **运行层级：** 工具链检查与 Runtime 说明单元测试、Runtime Adapter（受控 Worker）；真实 Docker + DSH 端到端与服务启动检查为 opt-in（`DSH_WORK_EXECUTION_E2E_IMAGE` 指向执行镜像工作流产出的镜像）；真实模型生成 Office 文件属 P2<br>
+**前置数据：** 一个摘要锁定的执行镜像（含 LibreOffice、poppler、pandoc 与 Python 包）；只含 `rg` 的旧镜像以其工具链检查的实际输出作为单元测试数据<br>
+**spec：** `server/src/modules/runtime/execution-toolchain.test.ts`、`server/src/modules/runtime/runtime-adapter.test.ts`、`server/src/modules/runtime/execution-container.e2e.test.ts`、`server/src/infrastructure/postgres/execution-container-startup.integration.test.ts`
+
+1. 服务启动时在与执行容器相同的隔离条件下检查镜像：缺少 `bash`、`rg`、LibreOffice 或 `pdftoppm` 任一项，或未配置镜像时，执行容器显示不可用，所有 Agent 运行在创建前被拒绝，DSH 不在宿主执行；服务日志说明原因。旧开关 `DSH_WORK_EXECUTION_CONTAINER` 即使设为 `off` 也只被提示忽略（执行隔离 4.9）。
+2. 检查通过时，服务日志列出检查到的程序与版本；员工运行装配 `bash` 时，运行说明列出这些程序的用途与版本（含 pandas 等 Python 包），并说明镜像内置中文字体；未检查到的可选程序不出现在说明中。
+3. 在执行容器内，模型用 Python 生成含中文的 xlsx，经 LibreOffice 转为 PDF 写入 `output/`，PDF 中文使用简体字形；再把 PDF 页面转为图片。
+
+**验收：** 上述测试通过；旧镜像的检查输出被判为缺少 `soffice`、`pdftoppm`（单元测试，未以旧镜像实际启动服务）。P2 另需在目标环境用真实 DSH 生成含中文的 xlsx/docx 并转为 PDF，下载核对字形与内容。
+
+### EX-ARTIFACT-06 Office/PDF 成果在隔离容器中解析，可作为后续对话的文本参考（执行隔离 2b-3）
+
+**优先级：** P1 · **角色：** 员工 · **运行层级：** 解析端口单元测试（容器以测试替身代替）、一次性 PostgreSQL 与成果发布服务（解析器测试替身）、Runtime Adapter；真实 Docker 解析用例为 opt-in（`DSH_WORK_EXECUTION_E2E_IMAGE`）；真实模型基于解析文本作答属 P2<br>
+**前置数据：** 执行容器可用；一次运行在 `output/` 写出 xlsx、docx、pptx、pdf 与一个 Markdown 文件，其中 PDF 无法读取<br>
+**spec：** `server/src/modules/workbench/application/container-artifact-text-extractor.test.ts`、`server/src/infrastructure/postgres/m3-orchestration.integration.test.ts`、`server/src/modules/runtime/runtime-adapter.test.ts`、`server/src/modules/runtime/execution-container.e2e.test.ts`
+
+1. 成果登记时，本轮的 Office/PDF 成果在一个与外界隔离的一次性容器中解析出文本，服务本身不打开这些文件；Markdown 等文本成果照旧以原文作为解析文本。
+2. 解析失败的文件（如无法读取的 PDF）照常登记为成果，只是不能作为文本参考，下次不再重试；解析容器本身无法运行时成果照常登记，服务重启后在后台补齐解析。
+3. 引用 Office 成果时同时提供解析文本与原始文件，对话中的成果始终可“继续修改”；`bash` 被 Runtime 紧急停用时，有解析文本的 Office 成果只作为参考资料，运行说明告知只能参考、不能修改。
+4. 解析文本中，表格按工作表列出（没有计算结果的公式显示公式本身），演示文稿按页列出文字、表格与备注；容器写出的链接文件或非 UTF-8 内容不被采信。
+
+**验收：** 上述测试通过；真实 Docker 用例用执行镜像生成的真实 Office 文件核对解析文本。P2 另需在目标环境用真实 DSH 生成 xlsx 后，在下一轮只引用它请模型复述其中数字，核对与表格一致。
+
+### EX-ARTIFACT-07 Office/PDF 成果查看解析文本、图片成果直接预览（执行隔离 2b-5）
+
+**优先级：** P1 · **角色：** 员工 · **运行层级：** 一次性 PostgreSQL、合成 Runtime（不调用模型）与测试用解析器替身（不启动容器）、真实 HTTP 接口与浏览器；组件与接口测试<br>
+**前置数据：** `personalWorkbenchFixture` 一次性库；合成 Runtime 对含 `P1-办公成果` 的 prompt 经真实成果发布流程登记 xlsx（两个工作表）、docx、pptx、无法解析的 pdf 与 png，解析文本由测试替身给出<br>
+**spec：** `e2e/personal-integration/artifact-preview.spec.ts`、`apps/workbench-web/src/components/conversation/conversation-components.test.ts`、`apps/workbench-web/src/components/ArtifactContentDialog.test.ts`、`apps/workbench-web/src/components/ArtifactCard.test.ts`、`apps/workbench-web/src/utils/artifact-preview.test.ts`、`server/src/infrastructure/postgres/m3-orchestration.integration.test.ts`
+
+1. 对话回复下，点击表格、文档、演示稿成果在右栏（EX-ARTIFACT-08）显示解析文本，顶部说明不含版式等内容；表格按工作表以表格显示并可切换工作表，演示稿按页列出文字与备注。
+2. 解析失败的成果（如无法读取的 PDF）在成果卡旁说明原因并提示下载，右栏同样说明；尚未解析的说明正文暂未生成。
+3. 图片成果在回复下直接显示缩略图，点击在右栏显示原图，可下载、可关闭；图片只经鉴权下载取得，不拼接直链。
+4. “我的文件”中，解析成功的表格、文档、演示稿与图片类生成成果提供“预览”：对话框中显示解析文本（表格依次列出全部工作表）或图片；解析失败的不提供（列表已说明“解析失败，原文件仍可下载”）。项目空间的成果卡同样提供“预览”，解析失败的卡片显示“无法预览”与原因；HTML 成果仍在隔离沙箱中渲染。
+5. 解析文本的读取权限与下载相同；读取失败时在原处提示，可重试。
+
+**验收：** 上述测试通过；浏览器中逐项点开核对显示与可访问名称。P2 另需在目标环境用真实 DSH 生成 xlsx/docx/pptx 与图片，核对查看正文与预览的内容与原文件一致。
+
+### EX-ARTIFACT-08 点击成果在右栏预览
+
+**优先级：** P1 · **角色：** 员工（A 工作模式对话、B 协作模式与 AI 同事单聊） · **运行层级：** 一次性 PostgreSQL、合成 Runtime（不调用模型）与测试用解析器替身、真实 HTTP 接口与浏览器；组件测试<br>
+**前置数据：** `personalWorkbenchFixture` 一次性库；合成 Runtime 对含 `P1-办公成果` 的 prompt 登记 xlsx（两个工作表）、docx、pptx、无法解析的 pdf 与 png；对含 `P1-成果达成` 的 prompt 登记文本成果<br>
+**spec：** `e2e/personal-integration/artifact-preview.spec.ts`、`e2e/personal-integration/thread-artifacts.spec.ts`、`apps/workbench-web/src/components/conversation/conversation-components.test.ts`、`apps/workbench-web/src/components/conversation/ArtifactPreviewPanel.test.ts`、`apps/workbench-web/src/components/ArtifactPreviewBody.test.ts`
+
+1. 回复下的成果卡整体是“预览”入口，卡旁另有下载按钮与（可引用时）“继续修改”；不再就地展开正文，图片缩略图点击也不再弹窗，二者都在右栏打开。
+2. 宽屏（≥1280px）右栏与对话并排，对话区相应变窄，输入框不被遮挡；右栏顶部显示“成果预览”、文件名与版本、下载和“关闭成果预览”。正在预览的成果卡标为选中。
+3. 点击另一个成果时右栏替换为该成果（版本不同视为不同成果），先显示加载中；晚到的旧内容不得出现在新成果名下。
+4. 按类型显示：Markdown/文本为正文；表格、文档、演示稿与 PDF 为解析文本（同 EX-ARTIFACT-07）；HTML 在隔离沙箱中渲染（右栏不提供源代码视图）；图片为原图。解析失败或尚未解析的说明原因并提供下载；空文件说明没有可显示的内容；读取失败提示并可重试。
+5. 窄屏（721–1279px）以及项目空间内嵌的对话中，右栏改为覆盖在对话上的抽屉；手机宽度（≤720px，协作模式 ≤820px）全屏。抽屉可点遮罩、关闭按钮或按 Esc 收起。
+6. 打开“对话详情”时收起成果预览，打开成果预览时收起“对话详情”；切换到别的对话时右栏关闭。
+7. 协作模式与 AI 同事的单聊同样在右栏预览。
+8. 右栏与抽屉提供“全屏查看”：展开后预览盖住整个窗口，按钮变为“退出全屏”；Esc 先退出全屏、再按才关闭预览；关闭后再打开恢复为原来的右栏或抽屉。全屏时焦点留在预览内（Tab 在预览的首尾之间循环，不落到被遮住的对话上），正文最宽 1200px 并居中。手机宽度本已全屏，不提供该按钮。
+
+**验收：** 上述测试通过；浏览器中在宽屏、窄屏与手机宽度下逐项核对布局、可访问名称与加载/失败/无正文状态。下载仍走鉴权通道，HTML 沙箱不带 `allow-same-origin`，Office/PDF 只显示解析文本。P2 另需在目标环境用真实 DSH 生成各类成果后逐个预览核对。
+
+### EX-SHELL-01 运行命令的工作区容量上限与回收（执行隔离 4.7）
+
+**优先级：** P1 · **角色：** 员工、平台管理员 · **运行层级：** 计量与回收单元测试、执行容器单元测试（测试替身）、Runtime Adapter（受控 Worker）；真实 Docker 用例（计量按比例放大，避免真实写满 2 GB）；真实 DSH 与目标环境属 P2<br>
+**前置数据：** 执行容器可用；一个装配了 `bash` 的员工运行<br>
+**spec：** `server/src/modules/runtime/workspace-usage.test.ts`、`server/src/modules/runtime/execution-container.test.ts`、`server/src/modules/runtime/runtime-adapter.test.ts`
+
+1. 运行说明告知工作区合计不超过 2 GB；命令持续写文件使工作区超过上限时，该命令被终止，模型收到“工作区已用 X，超过上限 2 GB”的说明，本轮可继续；随后删除文件的命令照常执行。
+2. 命令结束后工作区仍超过 4 GB 时本轮失败，原因为工作区超限，而不是“执行容器无法恢复静止”。
+3. 服务器数据卷剩余空间不足（低于 10 GB 或 10%）时，命令不运行并说明原因，已在运行的命令终止；管理端 Runtime 页面与健康状态显示告警。
+4. 本轮结束后工作区被删除，已登记的成果仍可下载与预览；失败的本轮保留工作区 3 天；服务重启后历史工作区按同一规则清扫，仍在运行的本轮不受影响。
+
+**验收：** 上述测试通过；真实 Docker 用例中写文件的命令在上限附近被终止、删除命令不被终止。P2 另需在目标环境用真实 DSH 让模型生成大文件，核对终止说明与回收结果，并观察剩余空间告警。
+
+### EX-SHELL-02 Skill Python 脚本在执行容器内运行，结果登记为成果（执行隔离 1b②）
+
+**优先级：** P1 · **角色：** 员工、平台管理员 · **运行层级：** Python 执行单元测试（执行容器以测试替身代替）、Skill 安装计划单元测试、Runtime Adapter（受控 Worker）；真实 Docker 用例为 opt-in；真实 DSH 运行带脚本的 Skill 属 P2<br>
+**前置数据：** 执行容器可用，执行镜像含 `python3`；一个已发布、含 `.py` 入口的 Skill 被员工运行激活<br>
+**spec：** `server/src/modules/runtime/execution-container-python.test.ts`、`server/src/modules/runtime/python-sandbox.test.ts`、`server/src/modules/skill/skill-package.test.ts`、`server/src/modules/runtime/runtime-adapter.test.ts`、`server/src/modules/runtime/execution-container.e2e.test.ts`
+
+1. 模型调用 `python_execute` 时，脚本在本轮的执行容器内运行，工作目录是该 Skill 的目录；脚本经 `DSH_INPUT_DIR`、`DSH_OUTPUT_DIR`、`DSH_SKILL_DIR` 找到输入、输出与 Skill 目录；运行说明给出工作区路径，模型传入绝对路径的文件参数。
+2. 脚本写入输出目录的文件在调用结果中列出，本轮结束时按成果规则登记，可下载、预览与继续修改；不合规的文件跳过并说明。
+3. 脚本只能运行 Skill 登记的入口，不能提交源码或命令；超时、工作区超限时调用被终止并说明。
+4. 安装 Skill 时，写死 `/skill`、`/input`、`/output` 的脚本在安装计划中提示需复核；Skill 声明的 Python 依赖按执行镜像实际已安装的包判断能否发布。
+5. 没有每次调用一个容器的模式（执行隔离 4.9）：执行容器不可用时整个运行被拒绝；镜像不含 `python3` 时 Python 能力不可用。成果解析使用的一次性沙箱不传任何环境变量。
+
+**验收：** 上述测试通过；真实 Docker 用例中脚本经环境变量读写并写出成果。P2 另需在目标环境用真实 DSH 运行一个带 Python 脚本的 Skill，核对结果与成果登记。
 
 ### EX-CONTEXT-01 长对话保留首条约束并使用对话摘要
 

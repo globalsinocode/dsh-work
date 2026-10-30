@@ -22,7 +22,7 @@ test('LOCAL-AUTH-P1 administrator provisions an employee, changes revoke session
   await page.goto(`${adminUrl}/identity`)
   await expect(page.getByRole('heading', { name: '登录运营平台' })).toBeVisible()
   await signIn(page, 'browser.admin@example.invalid', 'intentionally wrong')
-  await expect(page.getByRole('alert')).toContainText('账号或密码错误')
+  await expect(page.getByRole('alert')).toContainText('密码错误')
   await signIn(page, 'browser.admin@example.invalid', 'AdminPass123')
   await expect(page).toHaveURL(`${adminUrl}/identity`)
   await expect(page.getByRole('button', { name: '同步员工', exact: true })).toHaveCount(0)
@@ -116,7 +116,7 @@ test('LOCAL-AUTH-P1 administrator provisions an employee, changes revoke session
     await employee.reload()
     await expect(employee.getByRole('heading', { name: '登录员工工作台' })).toBeVisible()
     await signIn(employee, username, privatePassword)
-    await expect(employee.getByRole('alert')).toContainText('账号或密码错误')
+    await expect(employee.getByRole('alert')).toContainText('账号已停用')
 
     await drawer.getByRole('button', { name: '启用账号', exact: true }).click()
     await page.getByRole('dialog', { name: '确认启用账号' }).getByRole('button', { name: '确认', exact: true }).click()
@@ -181,10 +181,12 @@ test('LOCAL-AUTH-P1 a newly provisioned administrator changes the initial passwo
 })
 
 test('LOCAL-AUTH-P1 login is accessible at phone width and configuration failures can be retried', async ({ page }, testInfo) => {
+  // LocalAuthPage 对 configuration 最多自动重试 12 次、间隔 1s，需等自动重试耗尽才出现错误态。
+  test.setTimeout(45_000)
   await page.setViewportSize({ width: 390, height: 844 })
   await page.route('**/auth/admin/configuration', route => route.fulfill({ status: 503, contentType: 'application/json', body: '{}' }))
   await page.goto(`${adminUrl}/login`)
-  await expect(page.getByRole('alert')).toContainText('暂时无法加载登录配置')
+  await expect(page.getByRole('alert')).toContainText('暂时无法加载登录配置', { timeout: 20_000 })
   await page.unroute('**/auth/admin/configuration')
   await page.getByRole('button', { name: '重试', exact: true }).click()
   await expect(page.getByLabel('登录账号', { exact: true })).toBeVisible()

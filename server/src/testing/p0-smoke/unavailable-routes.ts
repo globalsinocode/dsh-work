@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 
 import { envelope, httpResult, type Router } from '../../http/router.ts'
+import { registerSchedulePreviewRoute } from '../../http/workbench/automation-routes.ts'
 
 const basePath = '/api/workbench/v1'
 
@@ -72,6 +73,17 @@ export function registerUnavailableWorkbenchCommandRoutes(router: Router) {
     envelope('workbench', { items: [], nextCursor: null, hasMore: false }))
   router.post(`${basePath}/automations/:automationId/archive`, async (_request, context) =>
     unavailable(`自动任务 ${context.params['automationId'] ?? ''}`))
+  router.get(`${basePath}/integrations/weknora/status`, async () => envelope('workbench', {
+    configured: false,
+    linked: false,
+    source: null,
+    canUnlink: false,
+    directoryAccount: 'none',
+  }, 'prototype-memory'))
+  // 规则预览是纯日历计算，原型模式与真实服务同一实现。
+  registerSchedulePreviewRoute(router)
+  // AI 同事主动任务结果：原型模式没有执行记录，返回空集合。
+  router.get(`${basePath}/agent-routine-results`, async () => envelope('workbench', []))
 }
 
 function unavailable(object: string) {

@@ -298,13 +298,9 @@ test('任务线程：停止执行后标注由谁停止', async () => {
   assert.equal(stopped.latestRunStatus, 'cancelled')
 })
 
-test('设为任务：@Agent 执行过的讨论线程可设为任务，重复设置与未执行线程被拒', async () => {
+test('讨论线程不能设为任务：任务只由成员明确新建；历史列表只为任务对话标注所属任务', async () => {
   const ws = await seedSpace('mark')
   const agentMemberId = await joinAgent(ws, 'mark')
-  const empty = await api('POST', `${base}/sessions`, { as: ws.member, body: { title: '空讨论', workspaceId: ws.id } })
-  const emptyId = (empty.body.data as { id: string }).id
-  assert.equal((await api('POST', `${base}/workspaces/${ws.id}/sessions/${emptyId}/project-task`, { as: ws.member, body: {} })).status, 409)
-
   const discussion = await api('POST', `${base}/sessions`, { as: ws.member, body: { title: '库存讨论', workspaceId: ws.id } })
   const sessionId = (discussion.body.data as { id: string }).id
   const run = await api('POST', `${base}/sessions/${sessionId}/runs`, {
@@ -313,20 +309,17 @@ test('设为任务：@Agent 执行过的讨论线程可设为任务，重复设�
   assert.equal(run.status, 202, JSON.stringify(run.body))
   runtime.releaseAll()
 
-  assert.equal((await api('POST', `${base}/workspaces/${ws.id}/sessions/${sessionId}/project-task`, { as: ws.viewer, body: {} })).status, 403)
-  const marked = await api('POST', `${base}/workspaces/${ws.id}/sessions/${sessionId}/project-task`, { as: ws.member, body: {} })
-  assert.equal(marked.status, 201, JSON.stringify(marked.body))
-  const task = marked.body.data as TaskView & { title: string }
-  assert.equal(task.title, '库存讨论')
-  assert.equal(task.sessionId, sessionId)
-  assert.equal(task.assignee.agentMemberId, agentMemberId)
-  assert.equal((await api('POST', `${base}/workspaces/${ws.id}/sessions/${sessionId}/project-task`, { as: ws.member, body: {} })).status, 409)
+  assert.equal((await api('POST', `${base}/workspaces/${ws.id}/sessions/${sessionId}/project-task`, { as: ws.member, body: {} })).status, 404)
+  const created = await api('POST', `${base}/workspaces/${ws.id}/project-tasks`, {
+    as: ws.member, body: { title: '核对库存', assignee: { type: 'employee', id: ws.member } },
+  })
+  assert.equal(created.status, 201, JSON.stringify(created.body))
+  const task = created.body.data as TaskView
 
-  // 团队历史列表标注任务线程所属的项目任务；普通讨论为 null。
   const history = await api('GET', `${base}/workspaces/${ws.id}/sessions`, { as: ws.member })
   const rows = (history.body.data as { items: Array<{ sessionId: string; projectTaskId: string | null }> }).items
-  assert.equal(rows.find(row => row.sessionId === sessionId)?.projectTaskId, (task as TaskView).id)
-  assert.equal(rows.find(row => row.sessionId === emptyId)?.projectTaskId, null)
+  assert.equal(rows.find(row => row.sessionId === sessionId)?.projectTaskId, null)
+  assert.equal(rows.find(row => row.sessionId === task.sessionId)?.projectTaskId, task.id)
 })
 
 test('任务分页：同一毫秒内创建的任务按微秒游标逐页取全；sessionId 精确查找线程任务；limit 越界 422（P2-15）', async () => {
@@ -371,23 +364,6 @@ test('任务分页：同一毫秒内创建的任务按微秒游标逐页取全�
 
   assert.equal((await api('GET', `${base}/workspaces/${ws.id}/project-tasks?limit=101`, { as: ws.member })).status, 422)
   assert.equal((await api('GET', `${base}/workspaces/${ws.id}/project-tasks?cursor=bm90LWEtY3Vyc29y`, { as: ws.member })).status, 422)
-})
-
-test('设为任务：并发设置同一线程只有一个成功，另一个 409（空间锁串行化，P2-7 兜底）', async () => {
-  // 空间行锁把两次请求串行：后到者通常先命中预检的 409。服务端另把唯一索引冲突映射为
-  // 409，覆盖锁范围外的并发/重放；该分支难以在集成测试里稳定构造，保留为防御性路径。
-  const ws = await seedSpace('mark-race')
-  const agentMemberId = await joinAgent(ws, 'mark-race')
-  const discussion = await api('POST', `${base}/sessions`, { as: ws.member, body: { title: '并发设为任务', workspaceId: ws.id } })
-  const sessionId = (discussion.body.data as { id: string }).id
-  const run = await api('POST', `${base}/sessions/${sessionId}/runs`, {
-    as: ws.member, body: { prompt: '@助手 并发设为任务', idempotencyKey: `mark-race-${sessionId}`, workspaceAgentMemberId: agentMemberId },
-  })
-  assert.equal(run.status, 202, JSON.stringify(run.body))
-  runtime.releaseAll()
-  const results = await Promise.all([0, 1].map(() =>
-    api('POST', `${base}/workspaces/${ws.id}/sessions/${sessionId}/project-task`, { as: ws.member, body: {} })))
-  assert.deepEqual(results.map(result => result.status).sort(), [201, 409], JSON.stringify(results.map(result => result.body)))
 })
 
 test('任务线程：并发回复只受理一个执行；启动未能受理时任务可重新启动（P1-1、P1-2）', async () => {
@@ -712,15 +688,11 @@ test('任务细节：越界日期 422，停用的 Agent 不能承接，重复完
   assert.equal(inputs?.count, 1)
 
   const agentMemberId = await joinAgent(ws, 'detail')
-  const discussion = await api('POST', `${base}/sessions`, { as: ws.member, body: { title: '到货讨论', workspaceId: ws.id } })
-  const sessionId = (discussion.body.data as { id: string }).id
-  const run = await api('POST', `${base}/sessions/${sessionId}/runs`, {
-    as: ws.member, body: { prompt: '@助手 看看到货', idempotencyKey: `detail-${sessionId}`, workspaceAgentMemberId: agentMemberId },
-  })
-  assert.equal(run.status, 202, JSON.stringify(run.body))
-  runtime.releaseAll()
   await database`update workspace_agent_members set status = 'disabled' where tenant_id = ${tenantId} and id = ${agentMemberId}`
-  assert.equal((await api('POST', `${base}/workspaces/${ws.id}/sessions/${sessionId}/project-task`, { as: ws.member, body: {} })).status, 409)
+  const disabled = await api('POST', `${base}/workspaces/${ws.id}/project-tasks`, {
+    as: ws.member, body: { title: '核对到货', assignee: { type: 'agent', id: agentMemberId } },
+  })
+  assert.equal(disabled.status, 409, JSON.stringify(disabled.body))
   await drainRuntime()
 })
 
@@ -928,6 +900,46 @@ test('Agent 任务：执行携带当前档案版本，成功后成果交给档�
   assert.deepEqual(versions[0]!.sourceTasks.map(item => item.id), [task.id])
 })
 
+test('任务对话：带回本页各次执行登记的成果（按 runId），只读成员可读，非成员拒绝（D37）', async () => {
+  await drainRuntime()
+  const ws = await seedSpace('thread-artifacts')
+  const agentMemberId = await joinAgent(ws, 'thread-artifacts')
+  const created = await api('POST', `${base}/workspaces/${ws.id}/project-tasks`, {
+    as: ws.member, body: { title: '输出库存周报', assignee: { type: 'agent', id: agentMemberId } },
+  })
+  const task = created.body.data as TaskView
+  const started = await api('POST', `${base}/workspaces/${ws.id}/project-tasks/${task.id}/start`, {
+    as: ws.member, body: { idempotencyKey: `thread-artifacts-start-${task.id}` },
+  })
+  const running = started.body.data as TaskView
+  await waitForManifest(running.latestRunId!)
+  await seedArtifact({
+    workspaceId: ws.id, sessionId: running.sessionId!, runId: running.latestRunId!, createdBy: ws.member, label: 'weekly', currentAttempt: true,
+  })
+  // 同一空间其他讨论里的成果不进入这个任务对话。
+  const discussion = await api('POST', `${base}/sessions`, { as: ws.other, body: { title: '临时讨论', workspaceId: ws.id } })
+  const discussionId = (discussion.body.data as { id: string }).id
+  const asked = await api('POST', `${base}/sessions/${discussionId}/runs`, {
+    as: ws.other, body: { prompt: '@助手 汇总一下', idempotencyKey: `thread-artifacts-ask-${discussionId}`, workspaceAgentMemberId: agentMemberId },
+  })
+  const askedRunId = (asked.body.data as { runId?: string; id?: string }).runId ?? (asked.body.data as { id: string }).id
+  await waitForManifest(askedRunId)
+  await seedArtifact({ workspaceId: ws.id, sessionId: discussionId, runId: askedRunId, createdBy: ws.other, label: 'other', currentAttempt: true })
+  runtime.releaseAll()
+  await waitForRun(running.latestRunId!)
+
+  const thread = await api('GET', `${base}/sessions/${running.sessionId}`, { as: ws.viewer })
+  assert.equal(thread.status, 200, JSON.stringify(thread.body))
+  const artifacts = (thread.body.data as { artifacts: Array<{ name: string; runId: string; fileId: string; version: number }> }).artifacts
+  assert.deepEqual(artifacts.map(artifact => [artifact.name, artifact.runId, artifact.version]), [
+    [`${ws.id}-weekly.txt`, running.latestRunId, 1],
+  ])
+  assert.equal(artifacts[0]!.fileId, `file-${ws.id}-weekly`)
+  assert.equal((await api('GET', `${base}/sessions/${running.sessionId}`, { as: ws.outsider })).status, 403)
+  // 任务对话展开执行步骤时读取 Run 详情：只读成员同样可读。
+  assert.equal((await api('GET', `${base}/runs/${running.latestRunId}`, { as: ws.viewer })).status, 200)
+})
+
 test('团队成果：标注所属项目任务、承接 Agent 版本与发起人，任务移除后不再标注', async () => {
   await drainRuntime()
   const ws = await seedSpace('artifact-origin')
@@ -1071,7 +1083,7 @@ async function drainRuntime(timeoutMs = 10_000) {
   throw new Error('等待受控 Runtime 清空超时')
 }
 
-async function seedArtifact(input: { workspaceId: string; sessionId: string; runId: string; createdBy: string; label: string }) {
+async function seedArtifact(input: { workspaceId: string; sessionId: string; runId: string; createdBy: string; label: string; currentAttempt?: boolean }) {
   const fileId = `file-${input.workspaceId}-${input.label}`
   const artifactId = `artifact-${input.workspaceId}-${input.label}`
   await database`
@@ -1091,6 +1103,15 @@ async function seedArtifact(input: { workspaceId: string; sessionId: string; run
     insert into artifact_versions (id, tenant_id, artifact_id, version_no, file_object_id, source_run_id)
     values (${`${artifactId}-v1`}, ${tenantId}, ${artifactId}, 1, ${fileId}, ${input.runId})
   `
+  // 登记到 Run 当前 Attempt（Runtime 正常发布成果的形态）：任务对话按当前 Attempt 取成果。
+  if (input.currentAttempt) {
+    await database`
+      update artifact_versions av set source_attempt_id = r.current_attempt_id
+        from runs r
+       where av.tenant_id = ${tenantId} and av.id = ${`${artifactId}-v1`}
+         and r.tenant_id = av.tenant_id and r.id = av.source_run_id
+    `
+  }
 }
 
 async function completeEmployeeTask(ws: { id: string; member: string; admin: string }, title: string, note: string): Promise<TaskView> {

@@ -3,7 +3,11 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath, URL } from 'node:url'
 
 import vue from '@vitejs/plugin-vue'
+import { VitePWA } from 'vite-plugin-pwa'
 import { defineConfig } from 'vite'
+
+import { resolveBrandPublicDir } from '../shared/vite-brand-public.ts'
+import { createDshWorkPwaOptions } from '../shared/vite-pwa-options.ts'
 
 interface ServerPackageMetadata {
   releaseVersion?: string
@@ -32,7 +36,19 @@ const adminPort = Number(process.env.DSH_WORK_ADMIN_PORT ?? 4180)
 const serverPort = Number(process.env.DSH_WORK_SERVER_PORT ?? 4190)
 
 export default defineConfig({
-  plugins: [vue()],
+  publicDir: resolveBrandPublicDir(import.meta.url),
+  plugins: [
+    vue(),
+    VitePWA(
+      createDshWorkPwaOptions({
+        name: 'dsh-work 管理后台',
+        short_name: 'dsh-work 管理',
+        description: 'dsh-work 企业 AI 平台管理后台',
+        start_url: '/overview',
+        id: '/overview',
+      }),
+    ),
+  ],
   define: {
     __DSH_WORK_RELEASE_VERSION__: JSON.stringify(serverPackage.releaseVersion ?? '开发构建'),
     __DSH_WORK_BUILD_COMMIT__: JSON.stringify(resolveBuildCommit()),

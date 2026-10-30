@@ -2,6 +2,7 @@
 import { computed, inject, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { projectTaskDetailKey } from '@/composables/project-task-detail'
+import { spaceView, useSpaceRoutes } from '@/composables/space-routes'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   ArrowDown,
@@ -10,7 +11,6 @@ import {
   CopyDocument,
   DataLine,
   Document,
-  EditPen,
   Lock,
   RefreshRight,
   Share,
@@ -29,6 +29,7 @@ import { runGuardedAction } from '@/utils/action-guard'
 import { downloadArtifactFile, notifyActionFailure } from '@/utils/feedback'
 import { exportConversation } from '@/utils/conversation-export'
 import { continueChoice, type ContinueChoice } from '@/utils/continue-intent'
+import { colleagueMentionOptions, mentionsUser, splitMentions, type MentionOption } from '@/utils/mentions'
 import { scheduleLabel, scheduleReasonLabel } from '@/utils/project-task-schedule'
 import { isTransientRequestError } from '@/utils/request-error'
 import { runFailureDetailReason } from '@/utils/run-error-display'
@@ -37,6 +38,14 @@ import {
   createEmptyTeamComposerBridge,
   teamComposerBridgeKey,
 } from '@/components/team-space-composer/team-composer-bridge'
+import ArtifactPreviewPanel from '@/components/conversation/ArtifactPreviewPanel.vue'
+import ConversationMessageItem from '@/components/conversation/ConversationMessageItem.vue'
+import RunArtifactCards from '@/components/conversation/RunArtifactCards.vue'
+import RunProgressCard from '@/components/conversation/RunProgressCard.vue'
+import RunProgressSummary from '@/components/conversation/RunProgressSummary.vue'
+import RunStepsDisclosure from '@/components/conversation/RunStepsDisclosure.vue'
+import { useMediaQuery } from '@/composables/useMediaQuery'
+import '@/styles/conversation-thread.css'
 
 const route = useRoute()
 const router = useRouter()
@@ -70,33 +79,54 @@ const targetLoading = ref(false)
  * （reconcileConversationRoute），保证团队对话始终停留在空间上下文。
  */
 /**
- * 项目任务详情内嵌：作为 /workspaces/:id/tasks/:taskId/thread/:conversationId 渲染时，
- * 任务信息、返回与任务标识由外层任务详情提供，线程内导航（续接产生新 Run、查看执行记录）
- * 停留在任务详情下。
+ * 项目任务详情内嵌：工作模式与协作模式共用本页。页面类型看 meta.spaceView
+ * （spaceView），不写死路由名；任务信息与返回由外层任务详情提供，线程内导航留在当前模式。
  */
-const isTaskThreadRoute = computed(() => route.name === 'workspace-task-thread')
+const spaceRoutes = useSpaceRoutes()
+const isTaskThreadRoute = computed(() => spaceView(route) === 'task-thread')
 const isEmbeddedInWorkspace = computed(() =>
-  route.name === 'workspace-conversation' || isTaskThreadRoute.value)
+  spaceView(route) === 'conversation' || isTaskThreadRoute.value)
 const isActiveConversationRoute = computed(() =>
-  route.name === 'workspace-conversation' || route.name === 'conversation' || isTaskThreadRoute.value)
+  route.name === 'conversation' || isEmbeddedInWorkspace.value)
 const embeddedWorkspaceId = computed(() =>
   isEmbeddedInWorkspace.value ? String(route.params.id) : '')
-const routeTargetId = computed(() => {
-  if (route.name === 'workspace-conversation' || route.name === 'workspace-task-thread') {
-    return String(route.params.conversationId ?? '')
-  }
-  if (route.name === 'conversation') {
-    return String(route.params.id ?? '')
-  }
-  return ''
+const routeTargetId = computed(() =>
+  isEmbeddedInWorkspace.value ? String(route.params.conversationId ?? '') : String(route.params.id ?? ''))
+
+/**
+ * EX-ARTIFACT-08：点击成果在右栏预览。宽屏（≥1280px）与对话并排；窄屏与空间内嵌时为抽屉。
+ * 右栏与「对话详情」抽屉同在右侧，打开一个就收起另一个；切换到别的对话时关闭。
+ */
+const wideForPreview = useMediaQuery('(min-width: 1280px)', true)
+const previewDocked = computed(() => wideForPreview.value && !isEmbeddedInWorkspace.value)
+const previewKey = computed(() => previewArtifact.value ? `${previewArtifact.value.id}@${previewArtifact.value.version}` : null)
+/**
+ * HTML / Markdown / CSV 仍走成果预览对话框（源代码切换与表格）。
+ * PDF 与纯文本走右栏：PDF 只展示解析文本或失败原因，文本展示该版本原文（EX-ARTIFACT-08）。
+ */
+const DIALOG_PREVIEW_TYPES = new Set<Artifact['type']>(['html', 'markdown', 'csv'])
+function openPreview(artifact: Artifact) {
+  detailsOpen.value = false
+  previewArtifact.value = artifact
+  previewOpen.value = DIALOG_PREVIEW_TYPES.has(artifact.type)
+}
+const panelArtifact = computed(() => {
+  const artifact = previewArtifact.value
+  if (!artifact || previewOpen.value || DIALOG_PREVIEW_TYPES.has(artifact.type)) return null
+  return artifact
 })
+function closePreview() {
+  previewArtifact.value = null
+  previewOpen.value = false
+}
+watch(detailsOpen, (open) => { if (open) closePreview() })
 
 function conversationPath(target: string) {
   if (isTaskThreadRoute.value) {
-    return `/workspaces/${embeddedWorkspaceId.value}/tasks/${String(route.params.taskId)}/thread/${target}`
+    return spaceRoutes.taskThread(embeddedWorkspaceId.value, String(route.params.taskId), target)
   }
   return isEmbeddedInWorkspace.value
-    ? `/workspaces/${embeddedWorkspaceId.value}/conversations/${target}`
+    ? spaceRoutes.conversation(embeddedWorkspaceId.value, target)
     : `/conversations/${target}`
 }
 
@@ -137,6 +167,12 @@ const canOperateRun = computed(() => Boolean(
   task.value && !workspaceArchived.value && !isRunViewer.value
   && (task.value.workspaceType === 'team' || isRequester.value),
 ))
+const canResolveApproval = computed(() => Boolean(
+  task.value?.status === 'awaiting_approval'
+  && isRequester.value
+  && task.value.approval?.employeeResolvable,
+))
+const resolvingApproval = ref(false)
 const canStop = computed(() => Boolean(
   task.value && canOperateRun.value
   && ['queued', 'running', 'awaiting_approval'].includes(task.value.status),
@@ -189,11 +225,14 @@ function isOwnMessage(message: { role: string; senderId?: string | null }) {
 
 /** 当前空间可 @ 的 Agent 成员（独立对话页加载；空间内嵌由底栏使用空间页名册）。 */
 const agentMembers = ref<WorkspaceAgentMember[]>([])
-const mentionOptions = computed(() =>
-  agentMembers.value
+/** D38：可 @ 的同事（现任成员，不含本人）；任务对话中不 @ 同事。 */
+const colleagues = ref<Array<{ userId: string; displayName: string }>>([])
+const mentionOptions = computed<MentionOption[]>(() => [
+  ...agentMembers.value
     .filter(member => member.status === 'available' && member.allowedActions.includes('start_conversation'))
-    .map(member => ({ id: member.id, name: member.name })),
-)
+    .map(member => ({ id: member.id, name: member.name, kind: 'agent' as const })),
+  ...(projectTask.value ? [] : colleagueMentionOptions(colleagues.value, authStore.user.id)),
+])
 
 /**
  * 项目空间 S1：当前线程若是 Agent 任务线程，回复默认交给承接 Agent，无需 @；
@@ -201,15 +240,18 @@ const mentionOptions = computed(() =>
  */
 const projectTask = ref<ProjectTask | null>(null)
 const currentSessionId = computed(() => task.value?.sessionId ?? sessionThread.value?.sessionId ?? null)
-const markingAsTask = ref(false)
+/** 追问会换到新 Run 的地址但仍是同一对话：只在换到别的会话时关闭成果预览。 */
+let previewSessionId: string | null = null
+watch(currentSessionId, (sessionId) => {
+  if (!sessionId) return
+  if (previewSessionId && sessionId !== previewSessionId) {
+    previewArtifact.value = null
+    previewOpen.value = false
+  }
+  previewSessionId = sessionId
+}, { immediate: true })
 const projectTaskLoading = ref(false)
 const projectTaskError = ref('')
-/** 已经过 @Agent 执行、但还不是任务的团队线程，可由非只读成员设为任务。 */
-const canMarkAsTask = computed(() => {
-  if (!isTeamSession.value || projectTask.value || !currentSessionId.value) return false
-  if (task.value) return canOperateRun.value
-  return canWriteSession.value && (sessionThread.value?.runs.length ?? 0) > 0
-})
 
 const taskDetail = inject(projectTaskDetailKey, null)
 /** 任务详情内的任务对话（会话视图）；执行详情（Run 视图）不算。 */
@@ -251,8 +293,8 @@ async function loadProjectTask(workspaceId: string | undefined) {
     const page = await workbenchApi.listProjectTasks(workspaceId, { sessionId, limit: 1 })
     if (currentSessionId.value !== sessionId) return
     projectTask.value = page.items.find(item => item.sessionId === sessionId) ?? null
-    if (projectTask.value && route.name === 'workspace-conversation') {
-      await router.replace(`/workspaces/${workspaceId}/tasks/${projectTask.value.id}/thread/${routeTargetId.value}`)
+    if (projectTask.value && spaceView(route) === 'conversation') {
+      await router.replace(spaceRoutes.taskThread(workspaceId, projectTask.value.id, routeTargetId.value))
     }
   } catch (error) {
     if (currentSessionId.value !== sessionId) return
@@ -268,38 +310,31 @@ function reloadProjectTask() {
   void loadProjectTask(workspaceId)
 }
 
-async function markAsTask() {
-  const workspaceId = task.value?.workspaceId ?? sessionThread.value?.workspaceId
-  const sessionId = currentSessionId.value
-  if (!workspaceId || !sessionId || markingAsTask.value) return
-  markingAsTask.value = true
-  try {
-    const marked = await workbenchApi.markSessionAsProjectTask(workspaceId, sessionId)
-    projectTask.value = marked
-    ElMessage.success('已设为任务')
-    if (!isTaskThreadRoute.value) {
-      await router.replace(`/workspaces/${workspaceId}/tasks/${marked.id}/thread/${routeTargetId.value}`)
-    }
-  } catch (error) {
-    notifyActionFailure('设为任务', '当前线程', error, '确认该线程已由 Agent 执行过且尚未设为任务后重试。')
-  } finally {
-    markingAsTask.value = false
-  }
-}
-
 const teamComposerBridge = inject(teamComposerBridgeKey, null)
 
 async function loadAgentMembers(workspaceId: string | undefined) {
   if (isEmbeddedInWorkspace.value) return
   if (!workspaceId || !isTeamSession.value) {
     agentMembers.value = []
+    colleagues.value = []
     return
   }
-  try {
-    agentMembers.value = await workbenchApi.listWorkspaceAgentMembers(workspaceId)
-  } catch {
-    agentMembers.value = []
-  }
+  await Promise.all([
+    (async () => {
+      try {
+        agentMembers.value = await workbenchApi.listWorkspaceAgentMembers(workspaceId)
+      } catch {
+        agentMembers.value = []
+      }
+    })(),
+    (async () => {
+      try {
+        colleagues.value = (await workbenchApi.listWorkspaceMembers(workspaceId)).items
+      } catch {
+        colleagues.value = []
+      }
+    })(),
+  ])
 }
 
 function syncTeamComposerBridge() {
@@ -319,9 +354,6 @@ function syncTeamComposerBridge() {
   bridge.showJumpToLatest = showJumpToLatest.value
   bridge.scrollToLatest = () => scrollToBottom()
 }
-const currentStep = computed(() =>
-  task.value?.steps.find((step) => ['running', 'awaiting_approval'].includes(step.status)),
-)
 const lastAssistantMessageId = computed(() =>
   [...(task.value?.messages ?? [])]
     .reverse()
@@ -364,6 +396,11 @@ const conversationMessages = computed<ChatMessage[]>(() => {
     ...runMessages.filter(message => !known.has(message.id)),
   ]
 })
+
+/** EX-PROGRESS-01：本轮结束后，步骤摘要放在本轮第一条回复上方。 */
+const firstCurrentRunAssistantMessageId = computed(() =>
+  conversationMessages.value.find(message => message.role === 'assistant' && message.runId === task.value?.id)?.id,
+)
 
 /** 各 Run 在消息流里最后一条 assistant 回复的 id，成果卡片挂在这条消息下。 */
 const terminalAssistantMessageIdByRun = computed(() => {
@@ -452,21 +489,6 @@ function messageInputAttachments(
   return runAttachmentsById.value.get(runId) ?? (task.value?.id === runId ? task.value.attachments : [])
 }
 
-function inputAttachmentSubtitle(fileName: string) {
-  const extension = fileName.split('.').pop()?.toLowerCase() ?? ''
-  const labels: Record<string, string> = {
-    pdf: 'PDF',
-    docx: 'Word',
-    xlsx: 'Excel',
-    xls: 'Excel',
-    csv: 'CSV',
-    txt: '文本',
-    md: 'Markdown',
-  }
-  const kind = labels[extension] ?? (extension ? extension.toUpperCase() : '文件')
-  return `${kind} · 已上传`
-}
-
 let prefetchRunArtifactsEpoch = 0
 /**
  * 已确认无需再拉取详情的 Run。预拉取本身会写 store，若重复触发就会形成
@@ -513,6 +535,25 @@ async function prefetchSessionRunArtifacts() {
     }
   }
 }
+/**
+ * D38：打开团队对话（讨论或其中一次执行）即把该讨论的 @ 提醒标为已读——执行详情只载入本次执行的
+ * 消息，不能以“页面里有没有 @ 本人的发言”为条件；停留期间新到 @ 本人的发言也随即已读。只写本人的
+ * 提醒状态，失败不影响阅读（下次打开再标）。
+ */
+const mentionsOfMeInView = computed(() => {
+  const messages: Array<{ senderId?: string | null; mentionedUserIds?: string[] }> =
+    sessionThread.value?.messages ?? task.value?.messages ?? []
+  return messages.filter(message => message.senderId !== authStore.user.id && mentionsUser(message, authStore.user.id)).length
+})
+watch([currentSessionId, isTeamSession, mentionsOfMeInView], async ([sessionId, team]) => {
+  const workspaceId = task.value?.workspaceId ?? sessionThread.value?.workspaceId
+  if (!sessionId || !team || !workspaceId) return
+  try {
+    await workbenchApi.markMentionsRead(workspaceId, sessionId)
+  } catch {
+    // 标记失败不打扰阅读：提醒保留，下次打开再标。
+  }
+}, { immediate: true })
 
 const sourceTypeLabels: Record<TaskSource['type'], string> = {
   knowledge: '企业知识',
@@ -537,13 +578,17 @@ const isTerminalRun = computed(() =>
 function goBack() {
   if (isTaskThreadRoute.value) {
     const sessionId = task.value?.sessionId ?? sessionThread.value?.sessionId
-    void router.push(sessionId ? conversationPath(sessionId) : `/workspaces/${embeddedWorkspaceId.value}/tasks/${String(route.params.taskId)}`)
+    void router.push(sessionId ? conversationPath(sessionId) : spaceRoutes.task(embeddedWorkspaceId.value, String(route.params.taskId)))
     return
   }
   // 嵌入态的返回固定归位到所属空间页（线程返回控件回到列表）：外部旧链接
   // 经 replace 归位后，router.back() 会跳出空间上下文，不能依赖历史栈。
   if (isEmbeddedInWorkspace.value) {
     const workspaceId = String(route.params.id ?? embeddedWorkspaceId.value)
+    if (String(route.name ?? '').startsWith('collab-')) {
+      void router.push(workspaceId ? spaceRoutes.home(workspaceId) : { name: 'collab-chats' })
+      return
+    }
     if (!workspaceId) {
       void router.push({ name: 'workspaces' })
       return
@@ -596,6 +641,19 @@ async function stopCurrentRun() {
   }
 }
 
+async function resolveApproval(decision: 'approved' | 'rejected') {
+  if (!task.value || resolvingApproval.value || !canResolveApproval.value) return
+  resolvingApproval.value = true
+  try {
+    await taskStore.resolveRunApproval(task.value.id, decision)
+    ElMessage.success(decision === 'approved' ? '已允许本次操作' : '已拒绝本次操作')
+  } catch (cause) {
+    notifyActionFailure('确认操作', task.value.title, cause, '请刷新对话后重试。')
+  } finally {
+    resolvingApproval.value = false
+  }
+}
+
 function retryRun() {
   const current = task.value
   if (!current || !canOperateRun.value) return
@@ -641,11 +699,6 @@ function exportCurrentRunTranscript() {
 
 function download(item: Artifact) {
   void downloadArtifactFile(item)
-}
-
-function openPreview(item: Artifact) {
-  previewArtifact.value = item
-  previewOpen.value = true
 }
 
 /**
@@ -696,9 +749,10 @@ const sendMode = ref<'agent' | 'comment'>('agent')
 const agentTaskDone = computed(() => isAgentTaskConversation.value && conversationTask.value?.status === 'done')
 const effectiveSendMode = computed<'agent' | 'comment'>(() =>
   !isAgentTaskConversation.value || threadHasActiveRun.value || agentTaskDone.value ? 'comment' : sendMode.value)
-/** S4：两类任务都可在对话中“标记完成”。 */
+/** S4：两类任务都可在对话中“标记完成”；协作模式改由任务详情的操作菜单提供（D37）。 */
 const canCompleteFromConversation = computed(() =>
-  inTaskConversation.value && conversationTask.value?.status !== 'done' && Boolean(taskDetail?.can('complete')))
+  inTaskConversation.value && !taskDetail?.completeInMenu && conversationTask.value?.status !== 'done'
+  && Boolean(taskDetail?.can('complete')))
 const canStartFromConversation = computed(() => taskNotStarted.value && Boolean(taskDetail?.can('start')))
 const taskComposerPlaceholder = computed(() => {
   if (!inTaskConversation.value) return ''
@@ -802,6 +856,53 @@ function formatTimelineTime(value: string) {
   return Number.isNaN(date.getTime()) ? '' : date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false })
 }
 
+/** D37：每次执行的最后一条回复下挂该次执行登记的成果、执行步骤与复制。 */
+const threadLastReplyIdByRun = computed(() => {
+  const map = new Map<string, string>()
+  for (const message of sessionThread.value?.messages ?? []) {
+    if (message.role === 'assistant' && message.runId) map.set(message.runId, message.id)
+  }
+  return map
+})
+
+function isLastRunReply(message: SessionThreadMessage) {
+  return Boolean(message.runId && threadLastReplyIdByRun.value.get(message.runId) === message.id)
+}
+
+function threadArtifactsFor(message: SessionThreadMessage) {
+  if (!isLastRunReply(message)) return []
+  return (sessionThread.value?.artifacts ?? []).filter(artifact => artifact.runId === message.runId)
+}
+
+/**
+ * D37：排队或执行中的执行与会话页同样显示进度卡片：读取 Run 详情并订阅其事件（本人刚发起的
+ * 执行已在发送时订阅）；读取失败时只保留执行记录。结束后卡片消失，由回复与成果取代。
+ */
+const LIVE_RUN_STATUSES = ['queued', 'running']
+const threadLiveRunIds = computed(() => inTaskConversation.value
+  ? (sessionThread.value?.runs ?? []).filter(run => LIVE_RUN_STATUSES.includes(run.status)).map(run => run.runId)
+  : [])
+watch(threadLiveRunIds, (runIds) => {
+  for (const runId of runIds) {
+    if (!taskStore.getTask(runId)) void taskStore.loadTask(runId).catch(() => undefined)
+  }
+}, { immediate: true })
+
+function liveRun(runId: string) {
+  const run = taskStore.getTask(runId)
+  return run && LIVE_RUN_STATUSES.includes(run.status) ? run : undefined
+}
+
+/** 继续修改只用于下一条交给 Agent 的消息：执行中或任务已完成时只能评论，不提供。 */
+const canContinueEditingInThread = computed(() =>
+  canWriteSession.value && isAgentTaskConversation.value && !threadHasActiveRun.value && !agentTaskDone.value)
+
+function continueEditingInThread(artifact: Artifact) {
+  continueEditing(artifact)
+  sendMode.value = 'agent'
+}
+
+/** 任务对话的首条消息是任务标题与说明（创建任务时写入），不算评论。 */
 const briefMessageId = computed(() =>
   sessionThread.value && !sessionThread.value.hasMoreMessages ? sessionThread.value.messages[0]?.id ?? null : null)
 
@@ -851,11 +952,17 @@ async function submitTaskConversation(
         const createdRun = await taskStore.startRunWithSessionFiles(sessionId, {
           prompt: payload.prompt,
           attachments: payload.files,
+          referencedFileIds: referencedArtifacts.value.map(item => item.fileId),
           workspaceAgentMemberId: taskThreadAgentId.value,
         })
+        referencedArtifacts.value = []
         taskStore.subscribe(createdRun.id)
       }
     } else {
+      if (referencedArtifacts.value.length) {
+        ElMessage.warning('引用的成果需要交给 Agent 处理；只评论时请先移除引用。')
+        return
+      }
       if (payload.files.length) {
         ElMessage.warning(isAgentTaskConversation.value
           ? '评论不支持附件；需要 Agent 处理文件时请选择“交给 Agent”。'
@@ -945,15 +1052,17 @@ async function submitFollowUp(payload: {
     return
   }
   try {
-    const mentionedMemberId = isTeamSession.value ? payload.mentions?.[0] ?? taskThreadAgentId.value : undefined
+    const { agentMemberIds, userIds } = splitMentions(payload.mentions)
+    const mentionedUserIds = isTeamSession.value && !taskThreadAgentId.value ? userIds : []
+    const mentionedMemberId = isTeamSession.value ? agentMemberIds[0] ?? taskThreadAgentId.value : undefined
     if (isTeamSession.value && !mentionedMemberId) {
-      // TW-10：团队共享会话里不 @ 的消息是全员可见的讨论，不产生执行。
+      // TW-10：团队共享会话里不 @ Agent 的消息是全员可见的讨论，不产生执行；@ 同事只提醒（D38）。
       if (payload.files.length || referencedArtifacts.value.length) {
         ElMessage.warning('带附件或引用成果的消息需要 @Agent 发起执行；纯讨论消息不支持附件。')
         payload.release?.()
         return
       }
-      await taskStore.postSessionMessage(task.value.sessionId, payload.prompt)
+      await taskStore.postSessionMessage(task.value.sessionId, payload.prompt, mentionedUserIds)
       payload.confirm?.()
       try {
         await taskStore.refreshRun(task.value.id)
@@ -985,6 +1094,7 @@ async function submitFollowUp(payload: {
       const nextTask = await taskStore.sendMessage(
         task.value.id, payload.prompt, payload.files, mentionedMemberId,
         referencedArtifacts.value.map(item => item.fileId),
+        mentionedUserIds,
       )
       referencedArtifacts.value = []
       if (nextTask) await router.replace(conversationPath(nextTask.id))
@@ -1028,13 +1138,16 @@ async function submitSessionMessage(payload: {
     return
   }
   try {
-    const mentionedMemberId = isTeamSession.value ? payload.mentions?.[0] ?? taskThreadAgentId.value : undefined
+    const { agentMemberIds, userIds } = splitMentions(payload.mentions)
+    const mentionedUserIds = isTeamSession.value && !taskThreadAgentId.value ? userIds : []
+    const mentionedMemberId = isTeamSession.value ? agentMemberIds[0] ?? taskThreadAgentId.value : undefined
     // 团队会话 @ 成员，或个人会话（沿用会话绑定 Agent）：发起 Run。
     if (mentionedMemberId || !isTeamSession.value) {
       const createdRun = await taskStore.startRunWithSessionFiles(thread.sessionId, {
         prompt: payload.prompt,
         attachments: payload.files,
         workspaceAgentMemberId: mentionedMemberId,
+        mentionedUserIds,
       })
       taskStore.subscribe(createdRun.id)
       await router.replace(conversationPath(createdRun.id))
@@ -1046,7 +1159,7 @@ async function submitSessionMessage(payload: {
       payload.release?.()
       return
     }
-    await taskStore.postSessionMessage(thread.sessionId, payload.prompt)
+    await taskStore.postSessionMessage(thread.sessionId, payload.prompt, mentionedUserIds)
     payload.confirm?.()
     try {
       sessionThread.value = await taskStore.loadSessionThread(thread.sessionId)
@@ -1115,13 +1228,13 @@ async function reconcileConversationRoute() {
   const workspaceId = task.value?.workspaceId ?? sessionThread.value?.workspaceId
   if (isEmbeddedInWorkspace.value) {
     if (workspaceId && workspaceId !== embeddedWorkspaceId.value) {
-      await router.replace(`/workspaces/${workspaceId}/conversations/${routeTargetId.value}`)
+      await router.replace(spaceRoutes.conversation(workspaceId, routeTargetId.value))
     }
     return
   }
   const workspaceType = task.value?.workspaceType ?? sessionThread.value?.workspaceType
   if (workspaceType !== 'team' || !workspaceId) return
-  await router.replace(`/workspaces/${workspaceId}/conversations/${routeTargetId.value}`)
+  await router.replace(spaceRoutes.conversation(workspaceId, routeTargetId.value))
 }
 
 /**
@@ -1327,7 +1440,14 @@ watch(
 </script>
 
 <template>
-  <div class="conversation-page" :class="{ 'conversation-page--embedded': isEmbeddedInWorkspace, 'conversation-page--task': inTaskConversation }">
+  <div
+    class="conversation-page"
+    :class="{
+      'conversation-page--embedded': isEmbeddedInWorkspace,
+      'conversation-page--task': inTaskConversation,
+      'conversation-page--previewing': Boolean(task && panelArtifact && previewDocked),
+    }"
+  >
     <div v-if="(taskStore.loading || targetLoading) && !task && !sessionThread && !threadMissing" class="conversation-state">
       <el-skeleton :rows="8" animated />
     </div>
@@ -1341,9 +1461,6 @@ watch(
           <h1 v-if="!isTaskThreadRoute">{{ sessionThread.title }}</h1>
           <span class="conversation-skill"><span>发起人</span>{{ sessionThread.creatorName }}</span>
           <span v-if="projectTask && !isTaskThreadRoute" class="conversation-skill" data-testid="task-thread-badge"><span>任务</span>{{ projectTask.title }}</span>
-        </div>
-        <div v-if="canMarkAsTask" class="conversation-header__actions">
-          <el-button data-testid="mark-as-task" text :loading="markingAsTask" @click="markAsTask">设为任务</el-button>
         </div>
       </header>
 
@@ -1378,42 +1495,54 @@ watch(
                   <AssistantMessageContent :text="item.message.content" />
                 </div>
               </details>
-              <article
+              <ConversationMessageItem
                 v-else-if="item.kind === 'message'"
                 class="conversation-message"
                 data-testid="task-conversation-message"
-                :class="[`conversation-message--${item.message.role}`, { 'conversation-message--own': isOwnMessage(item.message) }]"
+                :message="item.message"
+                :own="isOwnMessage(item.message)"
+                :tag="messageTag(item.message)"
+                :show-requester="false"
               >
-                <div class="assistant-identity">
-                  <span class="assistant-avatar" :class="{ 'assistant-avatar--user': item.message.role === 'user' }">
-                    {{ (item.message.role === 'user' ? item.message.senderName ?? '我' : item.message.agentName ?? 'dsh-work').slice(0, 1) }}
-                  </span>
-                  <div>
-                    <strong>{{ item.message.role === 'user' ? item.message.senderName ?? '我' : item.message.agentName ?? 'dsh-work' }}</strong>
-                    <span>{{ item.message.createdAt }}</span>
+                <template v-if="isLastRunReply(item.message)" #before>
+                  <RunStepsDisclosure :run-id="item.message.runId!" />
+                </template>
+                <template v-if="isLastRunReply(item.message)">
+                  <RunArtifactCards
+                    :artifacts="threadArtifactsFor(item.message)"
+                    :can-continue-editing="canContinueEditingInThread"
+                    :referenced-file-ids="referencedArtifacts.map(reference => reference.fileId)"
+                    :preview-key="previewKey"
+                    @preview="openPreview"
+                    @download="download"
+                    @continue-editing="continueEditingInThread"
+                  />
+                  <div class="assistant-actions">
+                    <button type="button" aria-label="复制回答" @click="copyAnswer(item.message.content)">
+                      <el-icon><CopyDocument /></el-icon>
+                    </button>
                   </div>
-                  <span v-if="messageTag(item.message)" class="task-conversation-tag" data-testid="task-conversation-tag">{{ messageTag(item.message) }}</span>
-                </div>
-                <div v-if="item.message.role === 'user'" class="assistant-answer user-message">
-                  <p>{{ item.message.content }}</p>
-                </div>
-                <div v-else class="assistant-answer">
-                  <AssistantMessageContent :text="item.message.content" />
-                </div>
-              </article>
-              <button
-                v-else-if="item.kind === 'run'"
-                type="button"
-                class="task-conversation-record task-conversation-record--run"
-                :class="`task-conversation-record--${runRecordTone(item.run)}`"
-                data-testid="task-conversation-run"
-                title="查看执行详情"
-                @click="openSessionRun(item.run.runId)"
-              >
-                <span class="task-conversation-record__line" aria-hidden="true"></span>
-                <span>{{ formatTimelineTime(item.run.createdAt) }} · {{ runRecordText(item.run) }}</span>
-                <span class="task-conversation-record__line" aria-hidden="true"></span>
-              </button>
+                </template>
+              </ConversationMessageItem>
+              <template v-else-if="item.kind === 'run'">
+                <button
+                  type="button"
+                  class="task-conversation-record task-conversation-record--run"
+                  :class="`task-conversation-record--${runRecordTone(item.run)}`"
+                  data-testid="task-conversation-run"
+                  :title="'查看执行详情'"
+                  @click="openSessionRun(item.run.runId)"
+                >
+                  <span class="task-conversation-record__line" aria-hidden="true"></span>
+                  <span>{{ formatTimelineTime(item.run.createdAt) }} · {{ runRecordText(item.run) }}</span>
+                  <span class="task-conversation-record__line" aria-hidden="true"></span>
+                </button>
+                <RunProgressCard
+                  v-if="liveRun(item.run.runId)"
+                  :task="liveRun(item.run.runId)!"
+                  @open-details="openSessionRun(item.run.runId)"
+                />
+              </template>
               <div v-else class="task-conversation-event" data-testid="task-conversation-event">
                 <p class="task-conversation-record">
                   <span class="task-conversation-record__line" aria-hidden="true"></span>
@@ -1455,27 +1584,23 @@ watch(
                 </div>
               </div>
               <div class="assistant-answer user-message">
-                <div
+                <p>{{ message.content }}</p>
+                <ul
                   v-if="messageInputAttachments(message, firstUserMessageIdByRunInThread).length"
-                  class="user-message-attachments answer-artifacts"
+                  class="message-attachments"
                   data-testid="user-message-attachments"
-                  :aria-label="`附件 ${messageInputAttachments(message, firstUserMessageIdByRunInThread).length} 个`"
+                  aria-label="附带文件"
                 >
-                  <div
+                  <li
                     v-for="name in messageInputAttachments(message, firstUserMessageIdByRunInThread)"
                     :key="name"
-                    class="answer-artifact"
+                    class="message-attachment"
+                    :title="name"
                   >
-                    <div class="answer-artifact__card">
-                      <span><el-icon><Document /></el-icon></span>
-                      <span>
-                        <strong>{{ name }}</strong>
-                        <small>{{ inputAttachmentSubtitle(name) }}</small>
-                      </span>
-                    </div>
-                  </div>
-                </div>
-                <p>{{ message.content }}</p>
+                    <el-icon><Document /></el-icon>
+                    <span>{{ name }}</span>
+                  </li>
+                </ul>
               </div>
             </template>
             <template v-else>
@@ -1569,6 +1694,22 @@ watch(
               标记完成
             </el-button>
           </div>
+          <div
+            v-if="canWriteSession && inTaskConversation && referencedArtifacts.length"
+            class="referenced-artifacts"
+            data-testid="referenced-artifacts"
+          >
+            <span>引用成果</span>
+            <el-tag
+              v-for="item in referencedArtifacts"
+              :key="item.fileId"
+              closable
+              effect="plain"
+              @close="removeReferencedArtifact(item.fileId)"
+            >
+              {{ item.name }} · V{{ item.version }}
+            </el-tag>
+          </div>
           <TaskComposer
             v-if="canWriteSession && (!isEmbeddedInWorkspace || inTaskConversation)"
             compact
@@ -1594,6 +1735,14 @@ watch(
           <p>AI 生成内容可能存在误差，重要业务结论请结合来源与企业制度确认。</p>
         </div>
       </div>
+
+      <ArtifactPreviewPanel
+        v-if="inTaskConversation"
+        class="conversation-preview"
+        :artifact="panelArtifact"
+        :docked="previewDocked"
+        @close="closePreview"
+      />
     </template>
 
     <el-result
@@ -1616,7 +1765,7 @@ watch(
         </el-button>
         <el-button
           :type="targetLoadFailed ? 'default' : 'primary'"
-          @click="isEmbeddedInWorkspace ? router.push(`/workspaces/${embeddedWorkspaceId}`) : router.push('/workbench')"
+          @click="isEmbeddedInWorkspace ? router.push(spaceRoutes.home(embeddedWorkspaceId)) : router.push('/workbench')"
         >
           {{ isEmbeddedInWorkspace ? '返回工作空间' : '返回工作台' }}
         </el-button>
@@ -1638,7 +1787,6 @@ watch(
         </div>
         <div class="conversation-header__actions">
           <span v-if="projectTask && !isTaskThreadRoute" class="conversation-skill" data-testid="task-thread-badge"><span>任务</span>{{ projectTask.title }}</span>
-          <el-button v-if="canMarkAsTask" data-testid="mark-as-task" text :loading="markingAsTask" @click="markAsTask">设为任务</el-button>
           <StatusTag :status="task.status" dot />
           <el-button text :icon="DataLine" @click="detailsOpen = true">
             <span class="header-action-label">对话详情</span>
@@ -1691,31 +1839,31 @@ watch(
                 </div>
               </div>
               <div class="assistant-answer user-message">
-                <div
+                <p>{{ message.content }}</p>
+                <ul
                   v-if="messageInputAttachments(message, firstUserMessageIdByRun).length"
-                  class="user-message-attachments answer-artifacts"
+                  class="message-attachments"
                   data-testid="user-message-attachments"
-                  :aria-label="`附件 ${messageInputAttachments(message, firstUserMessageIdByRun).length} 个`"
+                  aria-label="附带文件"
                 >
-                  <div
+                  <li
                     v-for="name in messageInputAttachments(message, firstUserMessageIdByRun)"
                     :key="name"
-                    class="answer-artifact"
+                    class="message-attachment"
+                    :title="name"
                   >
-                    <div class="answer-artifact__card">
-                      <span><el-icon><Document /></el-icon></span>
-                      <span>
-                        <strong>{{ name }}</strong>
-                        <small>{{ inputAttachmentSubtitle(name) }}</small>
-                      </span>
-                    </div>
-                  </div>
-                </div>
-                <p>{{ message.content }}</p>
+                    <el-icon><Document /></el-icon>
+                    <span>{{ name }}</span>
+                  </li>
+                </ul>
               </div>
             </template>
 
             <template v-else>
+              <RunProgressSummary
+                v-if="isTerminalRun && task && message.id === firstCurrentRunAssistantMessageId"
+                :task="task"
+              />
               <div class="assistant-identity">
                 <span class="assistant-avatar">{{ (message.agentName ?? 'dsh-work').slice(0, 1) }}</span>
                 <div>
@@ -1733,48 +1881,15 @@ watch(
               <div class="assistant-answer">
                 <AssistantMessageContent :text="message.content" />
 
-                <div
-                  v-if="messageArtifacts(message).length"
-                  class="answer-artifacts"
-                >
-                  <div
-                    v-for="artifact in messageArtifacts(message)"
-                    :key="artifact.id"
-                    class="answer-artifact"
-                  >
-                    <button
-                      type="button"
-                      class="answer-artifact__open"
-                      data-testid="artifact-open-preview"
-                      @click="openPreview(artifact)"
-                    >
-                      <span><el-icon><Document /></el-icon></span>
-                      <span>
-                        <strong>{{ artifact.name }}</strong>
-                        <small>{{ artifact.size }} · V{{ artifact.version }}</small>
-                      </span>
-                    </button>
-                    <button
-                      type="button"
-                      class="answer-artifact__download"
-                      data-testid="artifact-download"
-                      @click="download(artifact)"
-                    >
-                      下载
-                    </button>
-                    <button
-                      v-if="canFollowUp && belongsToCurrentRun(message) && artifact.canReference && artifact.fileId"
-                      type="button"
-                      class="answer-artifact__revise"
-                      :data-testid="`continue-editing-${artifact.id}`"
-                      :disabled="referencedArtifacts.some(item => item.fileId === artifact.fileId)"
-                      @click="continueEditing(artifact)"
-                    >
-                      <el-icon><EditPen /></el-icon>
-                      {{ referencedArtifacts.some(item => item.fileId === artifact.fileId) ? '已引用' : '继续修改' }}
-                    </button>
-                  </div>
-                </div>
+                <RunArtifactCards
+                  :artifacts="messageArtifacts(message)"
+                  :can-continue-editing="canFollowUp && belongsToCurrentRun(message)"
+                  :referenced-file-ids="referencedArtifacts.map(item => item.fileId)"
+                  :preview-key="previewKey"
+                  @preview="openPreview"
+                  @download="download"
+                  @continue-editing="continueEditing"
+                />
 
                 <div class="assistant-actions">
                   <button type="button" aria-label="复制回答" @click="copyAnswer(message.content)">
@@ -1796,23 +1911,11 @@ watch(
             </template>
           </article>
 
-          <article
+          <RunProgressCard
             v-if="['queued', 'running'].includes(task.status)"
-            class="conversation-message conversation-message--assistant conversation-message--working"
-          >
-            <div class="assistant-identity">
-              <span class="assistant-avatar">d</span>
-              <div>
-                <strong>dsh-work</strong>
-                <span>正在处理</span>
-              </div>
-            </div>
-            <div class="working-answer">
-              <span class="working-dots"><i></i><i></i><i></i></span>
-              <span>{{ currentStep?.title ?? '正在准备回答' }}</span>
-              <button type="button" @click="detailsOpen = true">查看执行过程</button>
-            </div>
-          </article>
+            :task="task"
+            @open-details="detailsOpen = true"
+          />
 
           <section v-if="task.status === 'awaiting_approval'" class="conversation-notice approval-notice">
             <span class="conversation-notice__icon"><el-icon><Lock /></el-icon></span>
@@ -1824,6 +1927,14 @@ watch(
                 <div><dt>范围</dt><dd>{{ task.approval?.dataScope ?? '当前用户授权范围' }}</dd></div>
               </dl>
               <p>{{ task.approval?.nextStep ?? '审批完成后会从新的 Attempt 继续执行，无需重复提交。' }}</p>
+              <div v-if="canResolveApproval" class="conversation-notice__actions">
+                <el-button type="primary" :loading="resolvingApproval" @click="resolveApproval('approved')">
+                  允许本次
+                </el-button>
+                <el-button :disabled="resolvingApproval" @click="resolveApproval('rejected')">
+                  拒绝
+                </el-button>
+              </div>
             </div>
             <StatusTag status="awaiting_approval" label="等待确认" />
           </section>
@@ -2056,13 +2167,19 @@ watch(
         </section>
       </el-drawer>
 
-      <ArtifactPreviewDialog
-        v-if="previewArtifact"
-        v-model:open="previewOpen"
-        :artifact="previewArtifact"
+      <ArtifactPreviewPanel
+        class="conversation-preview"
+        :artifact="panelArtifact"
+        :docked="previewDocked"
+        @close="closePreview"
       />
 
     </template>
+    <ArtifactPreviewDialog
+      v-if="previewOpen && previewArtifact"
+      v-model:open="previewOpen"
+      :artifact="previewArtifact"
+    />
   </div>
 </template>
 
@@ -2169,6 +2286,29 @@ watch(
   width: min(100%, 920px);
   min-height: calc(100vh - 330px);
   margin: 0 auto;
+}
+
+/* EX-ARTIFACT-08：成果预览右栏与对话并排，标题栏、对话与输入区让出右栏宽度。 */
+.conversation-page--previewing {
+  --conversation-preview-width: clamp(380px, 36vw, 520px);
+}
+
+.conversation-page--previewing .conversation-header,
+.conversation-page--previewing .conversation-composer-dock {
+  right: var(--conversation-preview-width);
+}
+
+.conversation-page--previewing .conversation-scroll {
+  margin-right: var(--conversation-preview-width);
+}
+
+.conversation-page > .conversation-preview {
+  position: absolute;
+  z-index: 13;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: var(--conversation-preview-width);
 }
 
 /* TW-10 空间内嵌套：高度收敛到空间页对话面板，底栏由空间页承载。 */

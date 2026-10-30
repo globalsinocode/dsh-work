@@ -13,6 +13,7 @@ import {
   Monitor,
   MoreFilled,
   Plus,
+  Reading,
   Setting,
   Share,
   SwitchButton,
@@ -52,6 +53,7 @@ const navigation = [
   { label: 'Skill 广场', path: '/skills', icon: Grid },
   { label: 'AI 同事', path: '/agents', icon: UserFilled },
   { label: '项目空间', path: '/workspaces', icon: Collection },
+  { label: '知识库', path: '/knowledge', icon: Reading },
   { label: '定时任务', path: '/automations', icon: AlarmClock },
 ]
 
@@ -499,6 +501,8 @@ onBeforeUnmount(() => {
   .employee-sidebar--mobile-open { transform: translateX(0); }
   .sidebar-scrim { display: block; }
   .employee-shell__body { margin-left: 0; }
+  /* 为左上角浮动菜单按钮让位，避免盖住统一页头的标题。 */
+  .employee-main { --dsh-page-topbar-inset-start: 44px; }
   .employee-mobile-menu { position: fixed; z-index: 18; top: 12px; left: 12px; display: inline-flex; border-color: #dfdfdc; background: rgb(255 255 255 / 90%); box-shadow: 0 4px 16px rgb(24 25 24 / 8%); backdrop-filter: blur(8px); }
 }
 </style>

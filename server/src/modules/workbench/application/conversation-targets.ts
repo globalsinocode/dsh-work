@@ -34,6 +34,8 @@ export interface ConversationTarget {
   unreadCount: number
   /** 群组已按空间静音（3.7）：未读照常计数，列表以弱化样式显示；单聊恒为 false。 */
   muted: boolean
+  /** D38：群组中有 @ 本人的未读提醒（不受静音影响）；单聊恒为 false。 */
+  mentioned: boolean
 }
 
 export const unreadCountCap = 100
@@ -42,6 +44,14 @@ export interface ConversationReadState {
   type: ConversationTargetType
   id: string
   lastReadAt: string
+}
+
+/** D38：本人未读 @ 提醒，按空间与讨论汇总（只含本人当前可读的项目空间）。 */
+export interface MentionSummary {
+  workspaceId: string
+  sessionId: string
+  count: number
+  latestAt: string
 }
 
 export interface ConversationTargetPage {
@@ -88,6 +98,10 @@ export interface ConversationTargetStore {
   resolveConversation(input: { userId: string; conversationId: string }): Promise<ConversationLocation>
   /** 把本人在该对话对象的已读位置前进到 `upTo`（缺省或晚于当前时间按当前时间），只进不退。 */
   markRead(input: { userId: string; type: ConversationTargetType; id: string; upTo?: Date }): Promise<ConversationReadState>
+  /** D38：本人未读的 @ 提醒；读取时重查成员身份。 */
+  listMentions(input: { userId: string }): Promise<{ items: MentionSummary[] }>
+  /** D38：把本人在该空间（或其中一个讨论）的 @ 提醒标为已读；无权空间按 404。 */
+  markMentionsRead(input: { userId: string; workspaceId: string; sessionId?: string }): Promise<{ workspaceId: string; sessionId: string | null; read: number }>
 }
 
 export const previewLength = 120

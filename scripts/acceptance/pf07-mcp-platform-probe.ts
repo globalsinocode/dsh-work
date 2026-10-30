@@ -1,4 +1,9 @@
-/** Disposable PostgreSQL + actual Run/Attempt + DSH + loopback MCP write probe. */
+/**
+ * Disposable PostgreSQL + actual Run/Attempt + DSH + loopback MCP write probe.
+ * DSH runs through the execution container exactly as in production (execution isolation plan 4.9), so
+ * DSH_WORK_EXECUTION_IMAGE must name a pulled, digest-pinned execution image. The container startup check
+ * sweeps leftover dsh-exec-* containers: do not run this while a local server has Agent runs in flight.
+ */
 import assert from 'node:assert/strict'
 import { randomBytes, randomUUID } from 'node:crypto'
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
@@ -17,6 +22,7 @@ import { PostgresRunRepository } from '../../server/src/modules/run/postgres-run
 import { RunOrchestrationService } from '../../server/src/modules/run/run-orchestration-service.ts'
 import { DshAcpRuntimeAdapter } from '../../server/src/modules/runtime/dsh-acp-runtime-adapter.ts'
 import { preflightDshRuntime, resolveDshRuntimeInstallation } from '../../server/src/modules/runtime/dsh-runtime-installation.ts'
+import { startExecutionContainers } from '../../server/src/modules/runtime/execution-container-startup.ts'
 import { PostgresEncryptedCredentialStore } from '../../server/src/modules/tool/postgres-encrypted-credential-store.ts'
 import { PostgresMcpConnectorService } from '../../server/src/modules/tool/postgres-mcp-connector-service.ts'
 import { PostgresContentService } from '../../server/src/modules/workbench/application/postgres-content-service.ts'
@@ -29,8 +35,8 @@ if (!['localhost', '127.0.0.1', '::1'].includes(maintenanceUrl.hostname)) {
   throw new Error('PF-07 probe only accepts a loopback PostgreSQL maintenance host')
 }
 const projectRoot = resolve(import.meta.dirname, '../..')
-const installation = await resolveDshRuntimeInstallation({ projectRoot })
-await preflightDshRuntime(installation)
+const baseInstallation = await resolveDshRuntimeInstallation({ projectRoot })
+await preflightDshRuntime(baseInstallation)
 
 const tenantId = 'tenant-dsh-work'
 const nonce = randomUUID().slice(0, 8)
@@ -43,6 +49,7 @@ let secondaryFixture: Awaited<ReturnType<typeof startPf07McpFixture>> | undefine
 const directory = await mkdtemp(join(tmpdir(), 'pf07-mcp-platform-'))
 let disposable: Awaited<ReturnType<typeof createThrowawayDatabase>> | undefined
 let runtime: DshAcpRuntimeAdapter | undefined
+let execution: Awaited<ReturnType<typeof startExecutionContainers>> | undefined
 let orchestration: RunOrchestrationService | undefined
 let mcpService: PostgresMcpConnectorService | undefined
 let cleanedUp = false
@@ -52,6 +59,7 @@ async function cleanup() {
   cleanedUp = true
   await orchestration?.close().catch(() => undefined)
   await runtime?.close().catch(() => undefined)
+  execution?.containers.close()
   await disposable?.dispose()
   await secondaryFixture?.close()
   await fixture.close()
@@ -69,6 +77,8 @@ try {
   const conversations = new PostgresConversationRepository(database)
   const content = new PostgresContentService(database, new LocalObjectStorage(resolve(directory, 'storage')), authorization)
   const runs = new PostgresRunRepository(database)
+  execution = await startExecutionContainers(baseInstallation, { projectRoot, dataRoot: directory, image: process.env.DSH_WORK_EXECUTION_IMAGE })
+  const { installation, containers } = execution
   runtime = new DshAcpRuntimeAdapter({
     runtimeId: 'runtime-local-01',
     runtimeRoot: resolve(directory, 'attempts'),
@@ -92,6 +102,8 @@ try {
     },
     permissionDecision: async () => 'allow_once',
     collectArtifacts: (manifest, workspaceDirectory) => content.publishRuntimeArtifacts({ manifest, workspaceDirectory }),
+    remoteExecution: containers,
+    loadRuntimeOriginal: (manifest, fileId) => content.readRuntimeOriginal(manifest, fileId),
   })
   const operations = new PostgresOperationsService(database, runtime, authorization, 'mock')
   const secrets = new PostgresEncryptedCredentialStore(database, {
@@ -320,7 +332,7 @@ try {
   assert.deepEqual((await mcp.resolveConnections({ mode: 'selected', connectorIds: [otherConnector.id] })).map(item => item.connector_id), [otherConnector.id])
   console.log(JSON.stringify({
     status: 'passed', scope: 'disposable-postgres-real-dsh-mcp-run',
-    identity: 'synthetic', runtimeVersion: installation.version, runtimeCommit: installation.commit,
+    identity: 'synthetic', runtimeVersion: baseInstallation.version, runtimeCommit: baseInstallation.commit,
     connectorId: connector.id, runId: started.id, attemptId: attempt.id, receiptId: receipt.id,
     selectedScope: { agentVersionId: selectedAgent.version.id, runId: selectedRun.id, attemptId: selectedAttempt.id,
       connectorId: connector.id, excludedConnectorId: otherConnector.id },

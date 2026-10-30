@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import RuntimeManagementView from './RuntimeManagementView.vue'
 import { useAuthStore } from '../stores/auth'
 import { useContentStore } from '../stores/content'
-import type { BuiltinToolStatus, RuntimeDefinition } from '../types/domain'
+import type { BuiltinSkillStatus, BuiltinToolStatus, RuntimeDefinition } from '../types/domain'
 
 const wrappers: VueWrapper[] = []
 
@@ -23,6 +23,16 @@ const runtime: RuntimeDefinition = {
   lastHeartbeat: '刚刚', checkedAt: '刚刚', healthMessage: 'DSH Runtime 可用。',
   capabilities: ['ACP stdio', 'DSH Agent Loop'],
   disabledTools: [],
+  disabledBuiltinSkills: ['dsh-work-html-page'],
+}
+
+const builtinSkills: BuiltinSkillStatus = {
+  skills: [
+    { id: 'dsh-work-file-analysis', name: '文件分析（平台内置）', description: '分析文件', version: '1.0.0', scenario: 'file-analysis', instructions: '……', tools: ['read@1.0.0'], files: [] },
+    { id: 'dsh-work-html-page', name: 'HTML 页面（平台内置）', description: '生成页面', version: '1.0.0', scenario: 'html-page', instructions: '……', tools: ['read@1.0.0'], files: [] },
+  ],
+  scenarios: [{ id: 'file-analysis', label: '文件分析' }, { id: 'html-page', label: 'HTML 页面' }, { id: 'office-document', label: 'Office 文档' }],
+  disabledBuiltinSkills: ['dsh-work-html-page'],
 }
 
 const builtin: BuiltinToolStatus = {
@@ -30,9 +40,11 @@ const builtin: BuiltinToolStatus = {
     { name: 'read', label: '读取文本文件', source: 'dsh', effect: 'read', risk: 'low', assembly: 'always', constraints: [] },
     { name: 'web_search', label: '联网搜索', source: 'dsh', effect: 'read', risk: 'medium', assembly: 'agent-opt-in', constraints: [] },
     { name: 'python_execute', label: 'Python 执行', source: 'platform', effect: 'write', risk: 'medium', assembly: 'runtime', constraints: [] },
+    { name: 'bash', label: '运行命令', source: 'dsh', effect: 'write', risk: 'medium', assembly: 'execution-container', constraints: [] },
   ],
   disabledTools: [],
   catalog: { checkedAt: '2026-10-22T00:00:00.000Z', missingTools: ['web_search'] },
+  executionContainer: { status: 'unavailable' },
 }
 
 async function render() {
@@ -43,6 +55,7 @@ async function render() {
   vi.spyOn(content, 'load').mockResolvedValue(undefined)
   content.runtimes.push(runtime)
   content.builtinTools = builtin
+  content.builtinSkills = builtinSkills
   const router = createRouter({
     history: createMemoryHistory(),
     routes: [{ path: '/runtimes', component: RuntimeManagementView }],
@@ -72,7 +85,7 @@ interface RuntimeViewState {
   inspect: (item: RuntimeDefinition) => void
   openConfiguration: (item: RuntimeDefinition) => void
   saveConfiguration: () => Promise<void>
-  configurationForm: { disabledTools: string[] }
+  configurationForm: { disabledTools: string[]; disabledBuiltinSkills: string[] }
   disableableTools: Array<{ name: string }>
   catalogAlert: { type: string; title: string } | null
 }
@@ -90,7 +103,9 @@ describe('Runtime built-in tools', () => {
     const panel = wrapper.get('[aria-label="内置工具"]')
     expect(panel.text()).toContain('随平台代码发布')
     expect(panel.text()).toContain('DSH 未提供以下内置工具，相关运行会失败：web_search')
-    expect(state(wrapper).disableableTools.map(tool => tool.name)).toEqual(['read', 'web_search'])
+    // 执行容器是所有 Agent 运行的前提：不可用时说明影响与处理方式，原因只在服务日志。
+    expect(panel.get('[data-testid="execution-container-status"]').text()).toContain('执行容器启动检查未通过：所有 Agent 运行暂不能执行')
+    expect(state(wrapper).disableableTools.map(tool => tool.name)).toEqual(['read', 'web_search', 'bash'])
   })
 
   it('confirms before disabling a tool and saves the list with the Runtime configuration', async () => {
@@ -105,5 +120,28 @@ describe('Runtime built-in tools', () => {
 
     expect(confirm).toHaveBeenCalledWith(expect.stringContaining('web_search'), '确认停用内置工具', expect.anything())
     expect(update).toHaveBeenCalledWith(expect.objectContaining({ runtimeId: runtime.id, disabledTools: ['web_search'] }))
+  })
+
+  it('lists built-in Skills with their emergency-disable state in Runtime details', async () => {
+    const { wrapper } = await render()
+    state(wrapper).inspect(runtime)
+    await flushPromises()
+    const panel = wrapper.get('[aria-label="平台内置 Skill"]')
+    expect(panel.text()).toContain('随平台代码发布')
+  })
+
+  it('confirms before disabling a built-in Skill and keeps the current list when unchanged', async () => {
+    const { wrapper, content } = await render()
+    const confirm = vi.spyOn(ElMessageBox, 'confirm').mockResolvedValue('confirm' as never)
+    const update = vi.spyOn(content, 'updateRuntimeConfiguration').mockResolvedValue(runtime)
+    state(wrapper).openConfiguration(runtime)
+    await flushPromises()
+    expect(state(wrapper).configurationForm.disabledBuiltinSkills).toEqual(['dsh-work-html-page'])
+    state(wrapper).configurationForm.disabledBuiltinSkills = ['dsh-work-html-page', 'dsh-work-file-analysis']
+    await state(wrapper).saveConfiguration()
+    await flushPromises()
+
+    expect(confirm).toHaveBeenCalledWith(expect.stringContaining('文件分析（平台内置）'), '确认停用平台内置 Skill', expect.anything())
+    expect(update).toHaveBeenCalledWith(expect.objectContaining({ disabledBuiltinSkills: ['dsh-work-html-page', 'dsh-work-file-analysis'] }))
   })
 })

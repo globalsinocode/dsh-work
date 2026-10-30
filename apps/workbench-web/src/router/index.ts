@@ -131,11 +131,24 @@ const router = createRouter({
     { path: '/files', name: 'my-files', component: () => import('@/views/MyFilesView.vue'), meta: { title: '我的文件', section: '员工工作台' } },
     { path: '/history', name: 'history', component: () => import('@/views/HistoryView.vue'), meta: { title: '历史对话', section: '员工工作台' } },
     { path: '/sessions/:id', name: 'session-detail', component: () => import('@/views/SessionResumeView.vue'), meta: { title: '对话', section: '员工工作台' } },
+    { path: '/chat/:sessionId', redirect: (to) => ({ name: 'session-detail', params: { id: String(to.params.sessionId) } }) },
     {
       path: '/automations',
       name: 'automations',
       component: () => import('@/views/AutomationsView.vue'),
       meta: { title: '定时任务', section: '员工工作台' },
+    },
+    {
+      path: '/knowledge',
+      name: 'knowledge-bases',
+      component: () => import('@/views/knowledge-bases/index.vue'),
+      meta: { title: '知识库', section: '员工工作台' },
+    },
+    {
+      path: '/knowledge/:kbId',
+      name: 'knowledge-base',
+      component: () => import('@/views/knowledge-base/index.vue'),
+      meta: { title: '知识库', section: '员工工作台' },
     },
     {
       path: '/artifacts',

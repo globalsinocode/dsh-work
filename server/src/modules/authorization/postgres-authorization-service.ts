@@ -9,6 +9,7 @@ import {
   permissionRevoked,
   roleDisabled,
 } from '../../domain/authorization-errors.ts'
+import { installedSkillReferences } from '../../domain/builtin-skill-ref.ts'
 import { requirePlatformAdminActor } from './platform-admin-actor.ts'
 import { resolveAudienceCeiling, type AudienceCeiling } from './agent-audience-ceiling.ts'
 import type { RuntimeManifest } from '../runtime/runtime-types.ts'
@@ -278,7 +279,7 @@ export class PostgresAuthorizationService {
       workspaceId: source.workspaceId,
       recipientUserId: source.recipientUserId,
       scopeCeiling: { roleIds: source.roleIds, dataScopes: source.dataScopes },
-      additionalSkillReferences: manifest.skills.map(skill => `${skill.id}@${skill.version}`),
+      additionalSkillReferences: installedSkillReferences(manifest.skills),
     })
     if (!manifest.principal_context
       || source.principalId !== decision.executorPrincipalId

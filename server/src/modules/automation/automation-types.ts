@@ -67,7 +67,26 @@ export interface AutomationExecutionPage {
 }
 
 export type AutomationExecutionKind = 'scheduled' | 'manual' | 'missed'
+
 export type AutomationAdmissionStatus = 'accepted' | 'skipped' | 'interrupted'
+
+/** 列表投影：最近一次执行的摘要，供“最近一次”展示；不含冻结配置。 */
+export interface AutomationLastExecution {
+  id: string
+  kind: AutomationExecutionKind
+  plannedSlotUtc: string | null
+  missedFromUtc: string | null
+  missedToUtc: string | null
+  admissionStatus: AutomationAdmissionStatus
+  reasonCode: string | null
+  runStatus: string | null
+  resultOutcome: TaskResultOutcome | null
+  createdAt: string
+}
+
+export interface AutomationListItem extends AutomationRecord {
+  lastExecution: AutomationLastExecution | null
+}
 
 /** 受理时冻结的执行配置——恢复与审计不允许回读任务现值。 */
 export interface FrozenExecutionConfig {

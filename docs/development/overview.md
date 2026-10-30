@@ -22,7 +22,7 @@ MVP 聚焦三类业务场景：
 MVP 明确不包含：
 
 - 员工自建 Tool、Connector、插件或 MCP；
-- 任意 Shell、任意 SQL 或 DSH Web UI 直达；
+- 任意 Shell、任意 SQL 或 DSH Web UI 直达（执行容器内的受控单次 `bash` 已实现，员工侧运行默认装配；执行容器自阶段 3 起为必需，C 档 P2 已于 2026-10-28 在 Mac mini 验收通过，见[执行隔离方案](../design/execution-isolation-plan.md)）；
 - 写入 ERP/MES 等高风险业务操作；
 - PPT 生成、开放式 Agent 市场和跨企业多租户 SaaS；
 - 为了形式上的“平台化”拆分业务微服务。
@@ -88,7 +88,7 @@ dsh-work 保存可面向用户和治理的业务状态；DSH 保存运行时技�
 
 运行时统一通过 DSH 发起工具调用。工具分两类管理：
 
-- **内置工具**（DSH 原生工具与 dsh-work 平台工具）随代码发布，[注册表](../../server/src/modules/runtime/builtin-tools.ts)是唯一来源，不是可管理的数据，没有目录同步、逐工具授权或绑定修订。每个 Agent 运行默认获得工作区文件与任务进度工具（`read`、`glob`、`grep`、`read_image`、`write`、`edit`、`str_replace_editor`、`todo_write`），由执行策略限制在当前 Run 工作区和 output 目录；联网搜索 `web_search` 与项目任务管理（`project_tasks_*`）由 Agent 版本开关决定——后者仅在团队空间由人发起的运行中装配（定时执行只装配读工具）；激活 Skill、Python 执行和经验申请按运行内容装配；管理工具按 Run purpose 注入。注册表以外的工具（如 `bash`、`web_fetch`、Agent 协作与 Runtime 控制工具）一律不放行。管理员只能在 Runtime 配置中紧急停用 DSH 工具：新运行不再装配，执行中的运行再调用该工具时只拒绝这一次调用并告知模型，运行本身不中断。模型只看到本次运行放行的工具。管理端在 `安全与运维 → Runtimes` 只读展示内置工具及启动时与 DSH 工具目录的核对结果。
+- **内置工具**（DSH 原生工具与 dsh-work 平台工具）随代码发布，[注册表](../../server/src/modules/runtime/builtin-tools.ts)是唯一来源，不是可管理的数据，没有目录同步、逐工具授权或绑定修订。每个 Agent 运行默认获得工作区文件与任务进度工具（`read`、`glob`、`grep`、`read_image`、`write`、`edit`、`str_replace_editor`、`todo_write`），由执行策略限制在当前 Run 工作区和 output 目录；联网搜索 `web_search` 与项目任务管理（`project_tasks_*`）由 Agent 版本开关决定——后者仅在团队空间由人发起的运行中装配（定时执行只装配读工具）；激活 Skill、Python 执行和经验申请按运行内容装配；管理工具按 Run purpose 注入。`bash` 由平台为员工侧 Agent 运行（对话、定时任务、发布试运行）装配，在每 Attempt 的断网执行容器中前台单次执行；系统与管理运行不装配，Skill 不能声明，Runtime 紧急停用后不出现在模型可见工具中。执行容器为必需（执行隔离 4.9），启动检查未通过时所有 Agent 运行在创建前被拒绝。注册表以外的工具（如 `web_fetch`、后台任务 `job_*`、Agent 协作与 Runtime 控制工具）一律不放行。管理员只能在 Runtime 配置中紧急停用 DSH 工具：新运行不再装配，执行中的运行再调用该工具时只拒绝这一次调用并告知模型，运行本身不中断。模型只看到本次运行放行的工具。管理端在 `安全与运维 → Runtimes` 只读展示内置工具、启动时与 DSH 工具目录的核对结果，以及执行容器状态（决定是否装配 `bash`）。
 - **MCP 外部工具**以 Connector 为管理单元，由 Agent Version 显式选择；登记时发现的清单即生效，之后新增或输入 Schema 变化的 Tool 须管理员确认，入口为 `MCP 连接器`。
 
 该分类不改变执行职责：DSH 仍持有单次 Attempt 的 Agent Loop；Platform Tool Bridge 只提供确定性处理器；MCP Connector 不进入内置工具注册表，内置工具也不能借 Connector 配置扩大用途。
@@ -265,8 +265,8 @@ flowchart LR
 - AI Hub 环境中明确指定的初始管理员只可一次性初始化首位本地平台管理员；应用负责人和平台登记人不因此获权，之后所有授权在 dsh-work 管理端维护；
 - API 不信任浏览器提交的 `actor`、用户 ID、角色或数据范围；
 - Workspace、Agent、Skill、Tool、Connector、文件和 Artifact 都在服务端执行对象级授权；
-- DSH 子进程使用环境白名单，应用数据库变量和敏感覆盖项不传入；
-- 模型 Provider 凭据保存外部引用；`none` 与 `bearer` 仍是连接器级凭据，全体获准调用共用一个上游身份。`user_oauth` 的访问令牌按员工主体加密保存，Attempt 只注入本次人类主体的令牌；未授权不回退到连接器凭据。平台不按员工身份过滤 MCP 返回体。连接器级 Bearer 与员工令牌均由环境主密钥加密后保存 PostgreSQL 密文，明文只在服务端运行边界解析，不进入 Manifest、Patch、API 响应或日志；
+- DSH 子进程使用环境白名单，应用数据库变量和敏感覆盖项不传入；DSH 会话遥测由平台强制关闭，不允许覆盖（见 [Runtime 交付 3.1 节](../release/dsh-runtime-delivery.md#31-会话遥测强制关闭)）；
+- 模型 Provider 凭据保存外部引用；`none` 与 `bearer` 仍是连接器级凭据，全体获准调用共用一个上游身份。`user_oauth` 的访问令牌按员工主体加密保存，Attempt 只注入本次人类主体的令牌；未授权不回退到连接器凭据。平台不按员工身份过滤 MCP 返回体。MCP Bearer Token、连接器级 Bearer 与员工令牌均由环境主密钥加密后保存 PostgreSQL 密文，明文只在服务端运行边界解析，不进入 Manifest、Patch、API 响应或日志；
 - 文件执行扩展名、MIME、大小、签名、路径和工作空间校验，正式环境仍需企业级恶意文件扫描；
 - Tool/Connector 默认只读、固定 Schema、超时、字段过滤并记录脱敏审计；
 - HTTP 状态码只来自类型化错误（`server/src/domain/request-errors.ts`、`AuthorizationDeniedError` 等），不按错误消息文字推断；未类型化的错误一律返回 500 和链路编号，授权拒绝只按类型识别；
@@ -277,7 +277,7 @@ flowchart LR
 - Agent、Skill、文件、知识、运行、审计和本地授权属于 dsh-work，可独立开发和发布；独立账号登录无需启动 AI Hub。
 - Skill 已有版本、配置校验、发布和 Agent 固定引用能力；管理端已将手工创建/编辑表单替换为独立「新增 Skill」页签，该页签仅提供 ZIP 上传，链接、明确自然语言和命令格式安装迁入独立「管理助手」页面。管理助手通过 `admin-assistant` DSH Run 处理普通问答和意图提案，管理员第一次确认后才调度 `admin-skill-install`、`admin-agent-manage` 或 `admin-platform-operations` 专用 Run。Agent 与 Runtime 专用助手只生成绑定摘要的精确操作计划，第二次确认且目标状态未变化时才复用既有领域服务写入。Skill 安装继续生成结构化包计划并以一个事务保存根 Skill、同源依赖和依赖图；严格试运行要求所有 Skill 留下真实激活证据，管理员随后发布。资源随版本存储，新的 Attempt 先获得渐进式目录，再通过 `activate_skill` 获取锁定正文和只读资源路径。规则见[功能规则](feature-rules.md#4-管理助手)。
 - 管理端 Agent 查看与编辑分离：详情页只读展示概览并管理岗位权限、主动任务、经验、版本历史和运行记录；职责与人格、能力（及首次发布前的角色与权限）在独立的草稿编辑流程中按步骤修改并自动保存，最后一步“验证与发布”：验证时冻结待发布版本，示例问题、主动任务与自定义问题在后台并行运行，逐项判定通过后发布，回滚只移动版本指针（[功能规则](feature-rules.md#9-agent-验证与发布)）；自动任务已有本人身份、固定 Agent Version、独立 Session 的实现及回归用例。代码和用例存在不代表目标环境真实 DSH、OIDC 或完整 E2E 验收通过，未完成事项见本节末尾。员工自助贡献、按对象负责人审核、新工具完整准入和受控经验积累仍属后续范围；当前 Agent/Tool 上传配置由管理员负责，不建设外部开发者生态。未来经验提炼仅生成候选，经确认后发布，不自动修改 Prompt、Skill、脚本、工具或权限，也不共享私人数据与凭据。
-- 已有 Skill 的 Python 脚本执行遵守[功能规则第 6 节](feature-rules.md#6-skill-python-执行)：DSH 调用平台 `python_execute`，每次调用使用摘要锁定、无网络、只读根文件系统、非 root 用户和资源受限的临时容器；取消或超时会停止并删除该容器。未配置合规镜像时安装计划标记不兼容，不存在宿主机 Python 或直接模型调用回退。
+- 已有 Skill 的 Python 脚本执行遵守[功能规则第 6 节](feature-rules.md#6-skill-python-执行)：DSH 调用平台 `python_execute`，每次调用使用摘要锁定、无网络、只读根文件系统、非 root 用户和资源受限的临时容器；取消或超时会停止并删除该容器。容器统一经服务内执行器模块启动，并受本实例全局并发槽位约束；执行器与业务服务同进程、同账号，是代码边界而非账号隔离。未配置合规镜像时安装计划标记不兼容，不存在宿主机 Python 或直接模型调用回退。
 - Runtime 以单机执行为基线；多节点租约、失联回收和跨节点调度需要另行实现，不能只增加实例就认定已经支持。
 - 使用 AI Hub 账号时依赖其 OIDC、`/me`、员工目录和一次性 Bootstrap；专用 Scope、`actor_type`、`business_user` 及数据库提供方标记意味着替换身份平台需要适配和映射迁移。
 - AI Hub 账号的业务角色在本地，但上游账号停用或转为平台账号仍会影响访问资格；默认每 900 秒同步，失败会延迟状态传播。
@@ -292,7 +292,9 @@ flowchart LR
 - **平台基线 P2（PF-07）：** 当前目标版本尚未在真实 DSH、OIDC、多账号和批准连接器下逐场景留证，发布门禁未通过，见 [PF-07 验收手册](pf07-platform-acceptance.md)。
 - **Agent 配置与发布：** 规则见[功能规则](feature-rules.md)第 8、9 节；验证中的 MCP 与平台写入隔离尚未真实验收，需审批工具待首个准入时补测。
 - **Runtime 执行：** 见 [Runtime 优化方案](../design/runtime-execution-optimization-plan.md)。
-- **项目空间：** S0～S4 与 S5（员工端双模式）已实现；S6（Agent 项目任务工具：版本开关、装配、via 归因与时间线卡片）服务端与员工端已接通，集成测试见 `project-task-tools.integration.test.ts`；真实 DSH 中 Agent 选择并调用工具属 P2，见 [项目空间方案](../design/project-space-plan.md) 第 13 节。项目档案员是 `project-archive` 系统运行，与会话摘要一样经 Run/Attempt → Runtime Adapter → DSH 执行。
+- **执行隔离与受控 Shell：** 阶段 1a（容器统一经执行器模块启动）、1b 的 subprocess 部分、1c（“静止”保证：命令后清扫、清理期间工具等待、无法恢复时 Attempt 失败、`output/` 本身检查、工具独占性准入）与 2a（C 档单次 `bash`：执行容器内运行、平台装配、单文件大小上限、安全回归）已实现：`glob`/`grep`/`bash` 在每 Attempt 的执行容器内运行。DSH Worker 的文件工具仍是应用层边界。2b-2 已实现：`output/` 另收 xlsx、docx、pptx、pdf、png、jpg，不合规文件跳过并在回答下方说明，不再令整轮失败（功能规则第 1 节“成果登记”）。2b-4 已实现：装配 `bash` 时附件与引用成果另挂原始文件，二进制成果可跨轮修改为下一版（功能规则第 1 节“原始文件输入”）。2b-1 已实现：执行镜像由仓库内 Dockerfile 经 CI 构建并推送 GHCR（附来源证明），启动检查要求镜像含 `bash`、`rg`、LibreOffice 与 `pdftoppm`，检查到的工具链写入 Runtime 说明。2b-3 已实现：PDF、DOCX、XLSX、PPTX 成果的解析文本在一次性容器中生成，不在服务进程内解析。2b-5 已实现：Office/PDF 成果可在对话中“查看正文”（解析文本）、图片成果直接显示缩略图，“我的文件”与项目空间成果卡可预览。4.7 已实现：每个 Attempt 工作区上限 2 GiB（平台计量，超出终止命令），数据卷剩余空间不足时不运行命令，Attempt 结束删除工作区（失败的保留 3 天）。1b② 已实现：`python_execute` 在本 Attempt 的执行容器内运行（路径经环境变量给出，输出登记为成果）。C 档 P2 已于 2026-10-28 在 Mac mini（v2026.10.28-01）验收通过。阶段 3 已实现：执行容器为必需，删除开关、宿主执行回退与每次调用一个容器的 Python 路径，执行容器不可用时所有 Agent 运行在创建前明确失败。见[执行隔离方案](../design/execution-isolation-plan.md)。
+- **项目空间：** S0～S6 已实现（含双模式与 Agent 项目任务工具）；服务端/组件/P0 与部分 P1、本地真实 DSH 证据见验收目录与发布/PR 留证。OIDC/生产 P2 与部分 P1 旅程仍开放，决策背景见 [项目空间方案](../design/project-space-plan.md)。项目档案员是 `project-archive` 系统运行，经 Run/Attempt → Runtime Adapter → DSH 执行。
+- **平台内置 Skill：** 文件分析、HTML 页面、Office 文档三个内置 Skill 已达到代码级（P0 管理端冒烟与 P1 装配、覆盖、停用、团队空间复核）；真实 DSH 下的产出质量（验收目录 `BSK-P2`）与有无内置 Skill 的对比评测尚未执行。规则见[功能规则 5.5](feature-rules.md#55-平台内置-skill)，设计见[平台内置 Skill 方案](../design/builtin-skills-plan.md)。
 - **已交付功能的遗留项：** 团队空间、管理助手、Skill 安装、Python 执行和自动任务的未完成部分列在[功能规则](feature-rules.md)各节末尾。
 
 开发模式、自动化和上线前验证入口见 [开发与测试](development.md)；身份协议与生命周期见 [独立登录](../release/local-authentication.md) 或 [AI Hub 接入](../release/ai-hub-sso-integration.md)。

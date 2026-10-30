@@ -3,9 +3,12 @@ import { computed, ref, watch, onBeforeUnmount } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessageBox } from 'element-plus'
 import { workbenchApi } from '@/api/client'
+import PageHeader from '@/components/PageHeader.vue'
 import { useAuthStore } from '@/stores/auth'
 import { usePagedQuery } from '@/composables/usePagedQuery'
-import type { PersonalFile } from '@/types/domain'
+import ArtifactContentDialog from '@/components/ArtifactContentDialog.vue'
+import type { Artifact, PersonalFile } from '@/types/domain'
+import { personalFilePreview } from '@/utils/artifact-preview'
 import { fileRemovalNotice } from '@/utils/content-lifecycle'
 import { notifyActionFailure } from '@/utils/feedback'
 import { runGuardedAction } from '@/utils/action-guard'
@@ -47,6 +50,12 @@ function download(file: PersonalFile) {
     }
   })
 }
+// 执行隔离 2b-5：生成成果中解析成功的 Office/PDF 与图片可在对话框中预览。
+const previewOpen = ref(false), previewing = ref<Pick<Artifact, 'id' | 'version' | 'name' | 'type'> | null>(null)
+function openPreview(file: PersonalFile) {
+  previewing.value = personalFilePreview(file)
+  previewOpen.value = Boolean(previewing.value)
+}
 async function remove(file: PersonalFile) {
   try { await ElMessageBox.confirm(fileRemovalNotice, '移除文件？', { confirmButtonText: '移除文件', cancelButtonText: '取消' }) }
   catch { return }
@@ -57,8 +66,11 @@ async function remove(file: PersonalFile) {
 }
 </script>
 <template>
-  <section class="my-files-page panel">
-    <header><div><h1>我的文件</h1><p>个人材料、对话附件和生成成果集中查找；团队资料请进入相应团队。</p></div><el-button type="primary" :loading="uploading" @click="fileInput?.click()">上传材料</el-button></header>
+  <PageHeader title="我的文件">
+    <template #actions><el-button type="primary" :loading="uploading" @click="fileInput?.click()">上传材料</el-button></template>
+  </PageHeader>
+  <section class="my-files-page page-container">
+    <p class="my-files-intro">个人材料、对话附件和生成成果集中查找；团队资料请进入相应团队。</p>
     <input ref="fileInput" class="visually-hidden" type="file" aria-label="上传个人材料" accept=".pdf,.docx,.xlsx,.xls,.csv,.txt,.md" @change="upload" />
     <form class="file-filters" @submit.prevent="search">
       <label>搜索文件名称<input v-model="keyword" type="search" maxlength="200" placeholder="输入文件名" /></label>
@@ -74,18 +86,20 @@ async function remove(file: PersonalFile) {
           <span v-if="file.scanStatus !== 'clean'">文件安全检查未通过</span><span v-else-if="file.parseStatus === 'failed'">解析失败，原文件仍可下载</span><span v-else-if="file.parseStatus !== 'succeeded'">当前未提供可引用解析结果</span>
           <router-link v-if="file.sessionId && file.sourceSessionState === 'active'" :to="`/sessions/${file.sessionId}`">来源对话</router-link><span v-else-if="file.sourceSessionState === 'removed'">原对话已移除，文件独立保留</span>
         </div>
-        <div class="file-actions"><el-button v-if="file.canReference" @click="router.push({path:'/workbench',query:{file:file.id}})">引用到新对话</el-button><el-button v-if="file.canDownload" :disabled="busy === file.id" @click="download(file)">下载</el-button><el-button v-if="file.removable" :disabled="busy === file.id" @click="remove(file)">移除</el-button></div>
+        <div class="file-actions"><el-button v-if="personalFilePreview(file)" :aria-label="`预览 ${file.name}`" @click="openPreview(file)">预览</el-button><el-button v-if="file.canReference" @click="router.push({path:'/workbench',query:{file:file.id}})">引用到新对话</el-button><el-button v-if="file.canDownload" :disabled="busy === file.id" @click="download(file)">下载</el-button><el-button v-if="file.removable" :disabled="busy === file.id" @click="remove(file)">移除</el-button></div>
       </li>
     </ul>
     <el-button v-if="nextCursor" :loading="loading" @click="loadMore">加载更多</el-button>
+    <ArtifactContentDialog v-model:open="previewOpen" :artifact="previewing" />
   </section>
 </template>
 <style scoped>
-.my-files-page { padding: 24px; min-width: 0; }
-header, .file-filters, li { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
-h1 { margin: 0; font-size: var(--dsh-font-size-page-title); }
-header p, small, .file-copy>span { color: var(--dsh-color-muted); }
-.file-filters { justify-content: flex-start; flex-wrap: wrap; margin: 24px 0; }
+.my-files-page { min-width: 0; }
+.my-files-intro { margin: 0 0 16px; color: var(--dsh-color-muted); font-size: var(--dsh-font-size-caption); line-height: 1.6; }
+.visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.file-filters, li { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+small, .file-copy>span { color: var(--dsh-color-muted); }
+.file-filters { justify-content: flex-start; flex-wrap: wrap; margin: 0 0 20px; }
 label, .file-copy { display: flex; flex-direction: column; gap: 4px; }
 input, select { max-width: 100%; padding: 8px; border: 1px solid var(--dsh-color-border); border-radius: var(--dsh-radius-sm); background: var(--dsh-color-panel); color: inherit; }
 ul { padding: 0; list-style: none; }
@@ -93,5 +107,5 @@ li { padding: 16px 0; border-bottom: 1px solid var(--dsh-color-border); }
 .file-copy { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .file-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 @media(max-width: 700px) { li { align-items: flex-start; flex-direction: column; } }
-@media(max-width: 700px) { header { align-items: flex-start; flex-wrap: wrap; } .history-filters, .file-filters { gap: 12px; } }
+@media(max-width: 700px) { .history-filters, .file-filters { gap: 12px; } }
 </style>

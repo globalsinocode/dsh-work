@@ -4,10 +4,11 @@ import { assertRuntimeModelRequirements } from '../../runtime/execution-capabili
 import type { RuntimeManifest } from '../../runtime/runtime-types.ts'
 import { compileRuntimeManifest } from '../../runtime/manifest-compiler.ts'
 import { toManifestToolBinding } from '../../../domain/tool-binding.ts'
+import { builtinToolReference, executionToolNames, projectTaskToolNames } from '../../runtime/builtin-tools.ts'
 import type { RuntimeAuthorizationDecision } from '../../authorization/postgres-authorization-service.ts'
 import type { PreparedRuntimeFile } from '../../runtime/runtime-types.ts'
 import { authorizationDenied } from '../../../domain/authorization-errors.ts'
-import { BUILTIN_TOOL_VERSION, projectTaskToolNames } from '../../runtime/builtin-tools.ts'
+import { invalidRequest } from '../../../domain/request-errors.ts'
 import type { JsonObject, RunRecord } from '../run-types.ts'
 import type { AttemptBudget } from './attempt-budget.ts'
 import type { AttemptScheduler } from './attempt-scheduler.ts'
@@ -83,6 +84,7 @@ export class AttemptDispatcher {
           skills: [],
           skillInstructions: [],
           tools: [],
+          coveringSkills: [],
           runtimeTools: [],
           toolBindings: [],
           mcpConnections: [],
@@ -142,6 +144,45 @@ export class AttemptDispatcher {
       max_output_bytes: Math.min(agent.maxOutputBytes, 1024 * 1024, input.limits?.maxOutputBytes ?? Number.POSITIVE_INFINITY),
       max_tool_calls: Math.min(agent.maxToolCalls, input.limits?.maxToolCalls ?? Number.POSITIVE_INFINITY),
     }
+    // 平台内置 Skill 排在 Agent 固定与会话选择的 Skill 之后；被覆盖或紧急停用的记录在 Manifest 中。
+    // 内置 Skill 不经 Skill 授权或空间授权，执行前复核也不把它们当作附加 Skill（builtin-skills-plan 5.3）。
+    const builtin = this.deps.builtinSkills?.resolve({
+      disabled: runtimePolicy?.disabledBuiltinSkills ?? [],
+      covering: agent.coveringSkills,
+    }) ?? { skills: [], exclusions: [] }
+    const skillInstructions = [...agent.skillInstructions, ...builtin.skills]
+    const disabledTools = new Set(runtimePolicy?.disabledTools ?? [])
+    const toolIdOf = (reference: string) => {
+      const separator = reference.lastIndexOf('@')
+      return separator > 0 ? reference.slice(0, separator) : reference
+    }
+    // 内置工具按注册表装配，去掉 Runtime 配置紧急停用的工具。
+    // 项目任务工具按运行场景装配（S6），不进入 Agent 快照的默认 runtimeTools。
+    // bash 始终装配（执行容器为必需，执行隔离方案 4.9；不可用时 Runtime 拒绝运行）；本方法只服务员工侧 Agent 运行，
+    // 系统与管理运行（会话摘要、项目档案员、管理助手、Skill 安装与试运行）另行编译 Manifest。
+    const toolNames = [
+      ...agent.runtimeTools.map(toolIdOf),
+      ...executionToolNames(),
+      ...(skillInstructions.length ? ['activate_skill'] : []),
+      ...(delegationPolicy.allowedAgentVersionIds.length ? ['delegate_agent'] : []),
+      ...(this.deps.memory && input.purpose !== 'agent-routine' ? ['propose_memory'] : []),
+      ...(!input.purpose
+        ? projectTaskToolNames({
+            enabled: Boolean(this.deps.projectTasks) && agent.projectTasksEnabled === true,
+            mode: input.projectTaskToolMode ?? 'none',
+          })
+        : []),
+      ...agentDataToolRefs(agent).map(tool => tool.id),
+    ].filter(name => !disabledTools.has(name))
+    // 执行隔离 2b-4：有解析文本的输入照常挂文本；装配了 bash 时另挂原始文件。二进制成果没有解析文本，
+    // bash 被 Runtime 紧急停用时无法使用，在创建 Attempt 之前拒绝并说明原因。
+    const withBash = toolNames.includes('bash')
+    for (const file of preparedFiles) {
+      if (!file.mount && !(withBash && file.original)) {
+        throw invalidRequest(`“${file.sourceName}”需要运行命令的能力才能处理，本次运行不可用；请联系管理员确认 bash 未被停用`)
+      }
+    }
+    const originalMounts = withBash ? preparedFiles.flatMap(file => file.original ? [file.original] : []) : []
     const manifest: RuntimeManifest = {
       manifest_version: '1.0',
       ...(input.purpose ? { purpose: input.purpose } : {}),
@@ -158,7 +199,7 @@ export class AttemptDispatcher {
       ...(input.selectedSkillReference ? { selected_skill: input.selectedSkillReference } : {}),
       agent_configuration: {
         system_prompt: agent.systemPrompt,
-        skill_instructions: agent.skillInstructions.map(toRuntimeManifestSkill),
+        skill_instructions: skillInstructions.map(toRuntimeManifestSkill),
       },
       user_context: {
         user_id: input.userId,
@@ -177,19 +218,18 @@ export class AttemptDispatcher {
         network_policy: agent.mcpConnections?.length ? 'allowlist' : 'deny',
         write_policy: 'workspace_only',
       },
-      skills: agent.skills.map(toCapabilityReference),
-      tools: [
-        ...agent.runtimeTools.map(toCapabilityReference),
-        ...(agent.skillInstructions.length ? [{ id: 'activate_skill', version: '1.0.0' }] : []),
-        ...(delegationPolicy.allowedAgentVersionIds.length ? [{ id: 'delegate_agent', version: '1.0.0' }] : []),
-        ...(this.deps.memory && input.purpose !== 'agent-routine'
-          ? [{ id: 'propose_memory', version: '1.0.0' }] : []),
-        ...projectTaskToolNames({
-          enabled: Boolean(this.deps.projectTasks) && agent.projectTasksEnabled === true,
-          mode: input.projectTaskToolMode ?? 'none',
-        }).map(id => ({ id, version: BUILTIN_TOOL_VERSION })),
-        ...agentDataToolRefs(agent),
-      ],
+      skills: [...agent.skills, ...builtin.skills.map(skill => `${skill.id}@${skill.version}`)].map(toCapabilityReference),
+      ...(builtin.exclusions.length ? {
+        builtin_skill_exclusions: builtin.exclusions.map(item => ({
+          skill: item.skill,
+          reason: item.reason,
+          ...(item.coveredBy ? { covered_by: item.coveredBy } : {}),
+        })),
+      } : {}),
+      tools: [...new Set(toolNames)].map(name => {
+        const pinned = agent.runtimeTools.find(reference => toolIdOf(reference) === name)
+        return toCapabilityReference(pinned ?? builtinToolReference(name))
+      }),
       // B-03/I-04：Attempt 固定本次解析的平台绑定修订；执行复核据此验证当前授权。
       ...(agent.toolBindings.length ? { tool_bindings: agent.toolBindings.map(toManifestToolBinding) } : {}),
       ...(agent.mcpConnections?.length ? { mcp_connections: agent.mcpConnections } : {}),
@@ -225,8 +265,9 @@ export class AttemptDispatcher {
       model_route_id: route.routeId,
       input: {
         message: (input.message ?? input.prompt).trim(),
-        file_mounts: preparedFiles.map(file => file.mount),
+        file_mounts: preparedFiles.flatMap(file => file.mount ? [file.mount] : []),
         ...(attachments.length ? { attachments } : {}),
+        ...(originalMounts.length ? { original_mounts: originalMounts } : {}),
         ...(input.history?.length ? { conversation_history: input.history } : {}),
         ...(input.history?.length && input.conversationSummary ? { conversation_summary: input.conversationSummary } : {}),
       },
@@ -250,7 +291,7 @@ export class AttemptDispatcher {
       inputFiles: preparedFiles.map(file => ({
         fileId: file.fileId,
         extractionId: file.extractionId,
-        mountPath: file.mount.mount_path,
+        mountPath: file.mount?.mount_path ?? file.original!.mount_path,
       })),
     })
   }

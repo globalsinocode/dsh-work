@@ -3,6 +3,7 @@ import { defineStore } from 'pinia'
 import { ElMessage } from 'element-plus'
 
 import { WorkbenchApiError, workbenchApi } from '../api/client'
+import { unregisterPushBeforeLogout } from '../composables/useSystemNotifications'
 import type { UserProfile, UserRole, WorkbenchSession } from '../types/domain'
 
 export const roleLabels: Record<UserRole, string> = {
@@ -86,6 +87,7 @@ export const useAuthStore = defineStore('workbench-auth', () => {
   }
 
   async function logout() {
+    await unregisterPushBeforeLogout()
     if (identityProvider.value === 'local-password') {
       try {
         const response = await fetch('/auth/workbench/logout', { method: 'POST', credentials: 'same-origin' })

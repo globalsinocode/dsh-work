@@ -166,7 +166,7 @@ test('admin trial API forwards immutable scenarios and rejects malformed or unau
     const identity = await testApiAuthenticator(request, audience)
     return request.headers['x-test-employee'] === 'true' ? { ...identity, userId: 'U00001', permissions: [] } : identity
   } })
-  registerSkillRoutes(router, item.skills)
+  registerSkillRoutes(router, item.skills, async () => ({ skills: [], scenarios: [], disabledBuiltinSkills: [] }))
   const server = createServer((request, response) => { void router.handle(request, response) })
   server.listen(0, '127.0.0.1')
   await once(server, 'listening')

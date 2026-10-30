@@ -66,7 +66,7 @@
 
 涉及关键用户旅程、跨页面交互、身份权限或高风险回归的前端功能，采用 **Spec → Code → Verify → Test → Green**；纯文案、局部样式或已有组件单测足以覆盖的修改不强制新增 E2E。
 
-1. **Spec（定义验收）**：实现前先在验收目录对应分册（`e2e/catalog/`，索引与写法见 `e2e/TEST-CATALOG.md`）记录关键用户旅程；没有合适分册时新建分册并登记到索引。每次实施的运行结果写入 `e2e/catalog/verification-log.md`，不写进旅程条目。每条至少写明优先级、用户角色、运行层级、前置数据、操作步骤、可观察结果及对应 spec 文件，验收标准使用业务语言，不预设尚未成型的 DOM 选择器。
+1. **Spec（定义验收）**：实现前先在验收目录对应分册（`e2e/catalog/`，索引与写法见 `e2e/TEST-CATALOG.md`）记录关键用户旅程；没有合适分册时新建分册并登记到索引。每次实施的运行结果写入 PR/发布说明或仓库外受控证据，不写进旅程条目（约定见 `e2e/catalog/verification-log.md`）。每条至少写明优先级、用户角色、运行层级、前置数据、操作步骤、可观察结果及对应 spec 文件，验收标准使用业务语言，不预设尚未成型的 DOM 选择器。
 2. **Code（实现功能）**：复用现有应用壳层、组件、Design Token、API 与 DSH 执行链路；不要为了测试引入生产旁路、隐藏开关或第二套 Agent 执行逻辑。
 3. **Verify（浏览器预演）**：页面成型后，在与目标层级匹配且数据可识别的隔离环境中，用浏览器自动化完整走一遍旅程，检查真实交互、布局、可访问名称、加载/空/错误状态和响应式表现。预演用于发现 UX 与可测试性问题，不等同于 Playwright 已通过；若复用了现有服务，必须先确认其认证模式、数据源和 Runtime 与本次目标一致。
 4. **Test（固化测试）**：预演通过后再编写或更新 Playwright。优先使用 `getByRole`、`getByLabel`、稳定文本等用户可感知定位，仅在缺少稳定语义时增加 `data-testid`；使用条件断言等待，不使用任意固定延时。测试默认彼此隔离，不跨用例共享可变页面或业务状态；多角色场景使用独立 browser context / `storageState`，并显式准备和清理测试数据。
@@ -89,3 +89,12 @@ E2E 证据按层级区分，不相互替代：
 - DSH 不可用时明确报告不可用，禁止自动降级为直接调用模型的 Agent 路线。测试替身仅用于测试，不得成为生产备用执行引擎。
 
 详细职责及评审要求以架构总览的“Agent 执行引擎统一”章节为准；新增方案、代码与文档必须遵守该约束。
+
+## Cursor Cloud specific instructions
+
+Cloud Agent 的 `install` 会安装 PostgreSQL 17、按锁文件安装依赖，并安装 Playwright Chromium。`start` 用 `pg_ctlcluster 17 main start` 拉起数据库（`policy-rc.d` 会拒绝 `service postgresql start`），确保角色 `dsh_work` 和库 `dsh_work` 存在，并在端口空闲时于 tmux 会话 `dsh-dev` 执行 `pnpm dev:all`。
+
+- 员工端是 `http://localhost:4174/workbench`，管理端是 `http://localhost:4180/overview`，后端健康检查是 `http://127.0.0.1:4190/health`。开发日志在 `/tmp/dsh-dev.log`。
+- 根目录 `.env` 不入库。首次启动生成的管理员写在 `/var/lib/dsh-work/local-admin.json`（权限 600）。不要把口令写入仓库、日志或对话。
+- 集成测试读取 `.env` 的 `DSH_WORK_TEST_DATABASE_URL`（维护库 `postgres`）。不要把测试指到业务库 `dsh_work`。
+- 本环境不包含 DeepSeek Harness checkout 和模型凭据。服务会报告 DSH 不可用，同时继续提供登录、员工端和管理端。不要绕过 DSH 直接调用模型。

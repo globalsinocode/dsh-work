@@ -1,4 +1,5 @@
 /// <reference types="vite/client" />
+/// <reference types="vite-plugin-pwa/client" />
 
 declare const __DSH_WORK_RELEASE_VERSION__: string
 declare const __DSH_WORK_BUILD_COMMIT__: string

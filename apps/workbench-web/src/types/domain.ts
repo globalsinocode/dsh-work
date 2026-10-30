@@ -30,6 +30,12 @@ export interface RunStep {
   /** EX-01：工具调用步骤所属的调用；快照与实时事件按它合并为同一行。 */
   callId?: string
   duration?: string
+  /** EX-PROGRESS-01：步骤来源的运行事件类型（如 `run.started`、`tool.completed`）。 */
+  event?: string
+  /** 来源事件的服务端发生时间（ISO）；工具调用结果步骤为调用结束时间。 */
+  at?: string
+  /** 工具调用开始时间（ISO，取同一调用的 `tool.started`）；未收到开始事件时缺省。 */
+  startedAt?: string
 }
 
 export interface TaskSource {
@@ -44,10 +50,16 @@ export interface TaskSource {
   updatedAt?: string
 }
 
+/** Office/PDF 成果版本的解析文本预览（GET /artifacts/{id}/versions/{v}/text）。 */
+export type ArtifactTextPreview =
+  | { status: 'available'; type: 'xlsx' | 'docx' | 'pptx' | 'pdf'; text: string; pageCount: number | null; sheetCount: number | null; rowCount: number | null }
+  | { status: 'failed'; type: 'xlsx' | 'docx' | 'pptx' | 'pdf'; message: string }
+  | { status: 'pending'; type: 'xlsx' | 'docx' | 'pptx' | 'pdf' }
+
 export interface Artifact {
   id: string
   name: string
-  type: 'xlsx' | 'docx' | 'pdf' | 'markdown' | 'csv' | 'text' | 'html'
+  type: 'xlsx' | 'docx' | 'pptx' | 'pdf' | 'png' | 'jpg' | 'markdown' | 'csv' | 'text' | 'html'
   version: number
   size: string
   createdAt: string
@@ -56,6 +68,10 @@ export interface Artifact {
   /** The artifact version's file; with canReference it can be attached to the next message. */
   fileId?: string
   canReference?: boolean
+  /** Office/PDF 成果的解析文本预览状态（执行隔离 2b-5）；其他类型不返回。 */
+  textPreview?: 'available' | 'failed' | 'pending'
+  /** textPreview 为 failed 时的原因，如“PDF 无法读取”。 */
+  textPreviewError?: string
   summary: string
   /** 项目空间成果的来源：所属项目任务、承接 Agent 及版本、发起人；个人空间为 null。 */
   origin?: {
@@ -97,6 +113,8 @@ export interface TaskResultReceipt {
 export type TaskResultPendingKind =
   | 'answer_uncommitted'
   | 'artifact_registration_gap'
+  /** 执行隔离 2b-2：output 中的文件不合规，未登记为成果（回答下方列出文件与原因）。 */
+  | 'artifact_skipped'
   | 'no_deliverable'
   | 'no_verified_deliverable'
   | 'output_truncated'
@@ -174,6 +192,10 @@ export interface ChatMessage {
   runRequesterId?: string
   runRequesterName?: string
   agentName?: string
+  /** 用户消息随发送附带的输入文件名（上传附件与引用文件）；无文件时缺省。 */
+  attachments?: string[]
+  /** D38：该消息 @ 并登记了提醒的同事（用户 id）；没有时缺省。 */
+  mentionedUserIds?: string[]
 }
 
 /**
@@ -194,6 +216,10 @@ export interface SessionThreadMessage {
   runRequesterId: string | null
   runRequesterName: string | null
   agentName: string | null
+  /** 用户消息随发送附带的输入文件名；无文件时缺省。 */
+  attachments?: string[]
+  /** D38：该消息 @ 并登记了提醒的同事（用户 id）；没有时缺省。 */
+  mentionedUserIds?: string[]
 }
 
 export interface SessionThread {
@@ -218,6 +244,8 @@ export interface SessionThread {
     stoppedByName?: string | null
     createdAt: string
   }>
+  /** 本页消息所属各 Run 当前 Attempt 登记的成果（带 runId）；旧服务端缺省。 */
+  artifacts?: Artifact[]
   /** 还有更早的消息页时 true；用 messagesCursor 作 before 翻页。 */
   hasMoreMessages?: boolean
   messagesCursor?: string | null
@@ -250,10 +278,15 @@ export interface TaskRun {
   messages: ChatMessage[]
   steps: RunStep[]
   /**
-   * 客户端收到该 Run 最后一个运行事件的时刻（毫秒）；只用于“长时间无输出”提示，
-   * 不来自服务端。开始关注一个执行中的 Run 时以当时为起点。
+   * 个人会话详情会带回整段多轮消息：threadArtifacts 是这些消息所属各 Run
+   * 的成果合集，供气泡按 runId 挂到对应回复下。本轮核验仍只用 result.artifacts。
    */
-  lastActivityAt?: number
+  threadArtifacts?: Artifact[]
+  /**
+   * EX-PROGRESS-01：客户端时钟减服务端事件时间（毫秒），收到实时事件时更新。进行中步骤的
+   * 计时据此把服务端时间换算到本机，避免两边时钟不一致；只有快照时缺省，按 0 计。
+   */
+  clockOffsetMs?: number
   attachments: string[]
   skill?: Pick<WorkbenchSkill, 'id' | 'name' | 'version'>
   /**
@@ -268,6 +301,8 @@ export interface TaskRun {
     nextStep: string
     toolName: string
     dataScope: string
+    /** 发起人可在员工端允许/拒绝的持久化等待审批。 */
+    employeeResolvable?: boolean
   }
 }
 
@@ -854,6 +889,15 @@ export interface UserPreferences {
   updatedAt: string | null
 }
 
+export interface NotificationPreferences {
+  collabUnread: boolean
+  runFinished: boolean
+}
+
+export interface PushConfig {
+  vapidPublicKey: string
+}
+
 /** 协作模式对话列表的一行（S5c）：与某个 AI 同事的单聊或一个群组，而不是单个 Session。 */
 export interface ConversationTarget {
   type: 'agent' | 'group'
@@ -870,6 +914,8 @@ export interface ConversationTarget {
   unreadCount: number
   /** 群组已按空间静音：未读以弱化样式显示。 */
   muted: boolean
+  /** D38：群组中有 @ 本人的未读提醒（不受静音影响）；单聊恒为 false。 */
+  mentioned?: boolean
 }
 
 export interface AgentConversationSegment {
@@ -897,6 +943,9 @@ export type WorkspaceTimelineItem =
       kind: 'message'; id: string; at: string; sessionId: string; sessionTitle: string
       role: 'user' | 'assistant'; content: string; senderId: string | null; senderName: string | null
       agentName: string | null; runId: string | null; runRequesterName: string | null
+      attachments?: string[] | null
+      /** D38：该发言 @ 并登记了提醒的同事。 */
+      mentionedUserIds?: string[]
     }
   | {
       kind: 'run'; id: string; at: string; sessionId: string; sessionTitle: string; runId: string
@@ -972,6 +1021,36 @@ export interface WorkbenchSkill {
   updatedAt: string
 }
 
+export type WeknoraDirectoryAccount = 'none' | 'missing' | 'linked'
+
+export interface WeknoraIntegrationStatus {
+  configured: boolean
+  linked: boolean
+  source: 'directory' | 'bind' | null
+  canUnlink: boolean
+  directoryAccount: WeknoraDirectoryAccount
+}
+
+export interface WeknoraKnowledgeBaseSummary {
+  id: string
+  name: string
+  description?: string
+  documentCount?: number
+  updatedAt?: string
+}
+
+export interface WeknoraDocumentSummary {
+  id: string
+  title: string
+  updatedAt?: string
+}
+
+export interface WeknoraSearchHit {
+  documentId: string
+  title: string
+  snippet: string
+}
+
 /** AG-03 自动任务调度规则：manual 仅手动触发；daily/weekly 需 timeOfDay。 */
 export interface AgentRoutineResult {
   executionId: string
@@ -1007,6 +1086,20 @@ export interface AutomationInputTemplate {
 
 export type AutomationStatus = 'draft' | 'enabled' | 'paused' | 'disabled'
 
+/** 列表投影：最近一次执行摘要，状态口径与执行记录一致。 */
+export interface AutomationLastExecution {
+  id: string
+  kind: AutomationExecutionKind
+  plannedSlotUtc: string | null
+  missedFromUtc: string | null
+  missedToUtc: string | null
+  admissionStatus: AutomationAdmissionStatus
+  reasonCode: string | null
+  runStatus: string | null
+  resultOutcome: TaskResultOutcome | null
+  createdAt: string
+}
+
 export interface Automation {
   id: string
   name: string
@@ -1028,6 +1121,8 @@ export interface Automation {
   archivedBy: string | null
   createdAt: string
   updatedAt: string
+  /** 仅列表接口返回；从未执行为 null。 */
+  lastExecution?: AutomationLastExecution | null
 }
 
 export interface AutomationExecutionPage {
@@ -1106,4 +1201,12 @@ export interface PersonalFileQuery {
   query?: string
   cursor?: string
   limit?: number
+}
+
+/** D38：本人未读 @ 提醒，按项目空间与讨论汇总。 */
+export interface MentionSummary {
+  workspaceId: string
+  sessionId: string
+  count: number
+  latestAt: string
 }

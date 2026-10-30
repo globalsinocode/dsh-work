@@ -1,7 +1,6 @@
-import { computed, onBeforeUnmount, ref, type Ref } from 'vue'
+import { computed, type Ref } from 'vue'
 
 import type { TaskResultOutcome, TaskRun } from '@/types/domain'
-import { runQuietLabel, runQuietMs } from '@/utils/run-quiet'
 
 /**
  * I-06 结果外层展示：业务结论只看 result.outcome，不由 status === 'succeeded'
@@ -14,24 +13,10 @@ export const resultOutcomeLabels: Record<TaskResultOutcome, string> = {
   not_achieved: '目标未达成',
 }
 
-/** 一次执行（Run）的进行中展示：当前步骤、长时间无输出提示与是否已终结。 */
+/** 一次执行（Run）是否已终结；执行中的步骤与计时见 RunProgressCard（EX-PROGRESS-01）。 */
 export function useRunProgress(task: Ref<TaskRun | undefined>) {
-  // 最近一个进行中的步骤（EX-01 实时工具调用会排在“开始执行”之后）。
-  const currentStep = computed(() =>
-    [...(task.value?.steps ?? [])].reverse().find((step) => ['running', 'awaiting_approval'].includes(step.status)),
-  )
-  const currentStepLabel = computed(() => {
-    const step = currentStep.value
-    if (!step) return '正在准备回答'
-    return step.tool && step.status === 'running' ? `正在调用 ${step.tool}` : step.title
-  })
-  // EX-01：执行中长时间没有新事件时提示仍在运行。时钟每 5 秒走一次，只驱动这条提示。
-  const clock = ref(Date.now())
-  const clockTimer = setInterval(() => { clock.value = Date.now() }, 5000)
-  onBeforeUnmount(() => clearInterval(clockTimer))
-  const quietLabel = computed(() => runQuietLabel(runQuietMs(task.value, clock.value)))
   const isTerminalRun = computed(() =>
     Boolean(task.value && ['succeeded', 'failed', 'cancelled'].includes(task.value.status)))
 
-  return { currentStepLabel, quietLabel, isTerminalRun }
+  return { isTerminalRun }
 }

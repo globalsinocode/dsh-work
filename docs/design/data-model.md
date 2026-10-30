@@ -47,6 +47,10 @@ flowchart LR
 | `roles`、`user_roles`、`data_scope_grants` | 本地角色、用户角色、数据范围授权 | 独立于 AI Hub；过期角色不生效；任何变更由触发器递增本地授权版本，请求按当前版本重新计算 |
 | `system_settings` | 早期的租户级设置 | 当前代码未读写 |
 | `user_preferences` | 员工端界面偏好（迁移 0094） | 每个账号一行；`ui_mode` 为 `work` 或 `collab`，无记录时为工作模式；只影响界面，不改变权限 |
+| `push_subscriptions` | 手机工作台 Web Push 设备订阅（迁移 0111） | 以 `endpoint` 为主键；归属租户与用户；保存推送密钥材料，按用户索引 |
+| `notification_preferences` | 账号级通知开关（迁移 0111） | 每租户每用户一行；控制协作未读与 Run 完成等推送类别，跨设备一致 |
+| `user_weknora_links` | 员工与 WeKnora 用户的绑定（迁移 0110） | 每用户一行；来源为手动绑定或目录自动连接 |
+| `weknora_bind_states` | WeKnora 绑定一次性 state（迁移 0110） | `state` 为主键；到期后可清理 |
 
 ## 2. 执行身份
 
@@ -81,6 +85,7 @@ Task 创建时由触发器写入发起 Principal：员工请求为本人，系�
 | `workspace_notification_account_states` | 账号级通知汇总状态 | 与空间级已读位置配合 |
 | `workspace_object_gc_candidates` | 待回收的空间对象候选 | 逻辑移除后的延迟清理队列 |
 | `conversation_read_states` | 协作模式对话列表按对话对象（单聊的 AI 同事 / 群组）的已读位置（迁移 0096） | 按账号 + 对话对象唯一；已读时间只前进不回拨；与 `workspace_notification_states` 分开保存；迁移时已有对话对象记为已读 |
+| `message_mentions` | 群聊与共享讨论中 @ 同事的站内提醒（项目空间方案 D38，迁移 0114） | 按消息 + 接收人唯一，与消息同一事务写入；只登记发送时的现任成员且不含发送者；读取时重查成员身份；`read_at` 为本人已读时间，与对话对象已读位置和按空间静音分开 |
 
 ## 4. 会话、Task 与运行
 
@@ -140,7 +145,7 @@ flowchart LR
 
 | 表 | 作用 | 关键不变量 |
 | --- | --- | --- |
-| `skills`、`skill_versions` | Skill 与其版本 | 已发布版本不可修改（触发器）；文件夹正文经存储端口按内容寻址保存，数据库只存引用与文件索引 |
+| `skills`、`skill_versions` | Skill 与其版本 | 已发布版本不可修改（触发器）；文件夹正文经存储端口按内容寻址保存，数据库只存引用与文件索引；`skills.covered_builtin_scenarios` 是管理员设置的“覆盖内置场景”（Skill 级，不随版本固定）。平台内置 Skill 随代码发布，不在这两张表中 |
 | `skill_version_dependencies` | Skill 依赖 | 依赖精确版本，不能依赖自身；Skill 声明的内置工具（`tool_refs`）须在注册表中且引用它的 Agent 可装配 |
 | `skill_installations` | 管理端安装计划 | 每次安装 Run 一条；完成时必须指向已保存的版本 |
 | `skill_test_bindings` | 严格试运行与精确 Attempt 的绑定 | 不可修改（触发器）；绑定配置与 Runtime 指纹 |
@@ -171,14 +176,14 @@ flowchart LR
 | 表 | 作用 | 关键不变量 |
 | --- | --- | --- |
 | `model_providers`、`provider_models`、`model_routes` | Provider、模型与平台路由 | 只存凭据引用；路由只写入 Attempt 快照，实际模型由 DSH Profile 固定（仅记录）；没有可用路由时新运行被拒绝 |
-| `runtimes`、`runtime_configurations` | Runtime 与其配置 | 健康与调度状态分离；配置追加版本，包含内置工具紧急停用清单 `disabled_tools`（只接受 DSH 工具）；Runtime 不等于每次执行的 Worker |
+| `runtimes`、`runtime_configurations` | Runtime 与其配置 | 健康与调度状态分离；配置追加版本，包含内置工具紧急停用清单 `disabled_tools`（只接受 DSH 工具）与内置 Skill 紧急停用清单 `disabled_builtin_skills`；Runtime 不等于每次执行的 Worker |
 
 ## 9. 文件与成果
 
 | 表 | 作用 | 关键不变量 |
 | --- | --- | --- |
-| `file_objects`、`file_extractions` | 不可变文件对象与解析结果 | 存储键不用用户文件名；字节经存储端口保存 |
-| `run_input_files` | Attempt 的输入文件 | 每次 Attempt 固定原文件与解析版本，只读，执行前重新鉴权 |
+| `file_objects`、`file_extractions` | 不可变文件对象与解析结果 | 存储键不用用户文件名；字节经存储端口保存。`extractor_version`：上传与文本类成果为 `m4-basic-v1`（服务进程内解析），PDF/DOCX/XLSX/PPTX 成果为 `exec-office-v1`（一次性容器内解析，执行隔离 2b-3）；`detected_type` 含 `pptx`（迁移 0113） |
+| `run_input_files` | Attempt 的输入文件 | 每次 Attempt 固定原文件与解析版本，只读，执行前重新鉴权；只挂原始文件的二进制成果没有解析版本（`extraction_id` 为空，执行隔离 2b-4） |
 | `workspace_files`、`workspace_file_versions` | 团队共享文件的逻辑文件与版本 | 新版本不覆盖不可变对象；逻辑移除保留历史；历史 Run 仍指向实际使用的对象 |
 | `artifacts`、`artifact_versions` | 运行成果 | 新增版本，不覆盖旧文件；关联 Session 或 Task；下载检查空间、会话共享规则或 Task 所有人 |
 
@@ -256,6 +261,8 @@ Run 和 Attempt 的普通状态转换不能从终态回退。只有失败或取�
 - [持久化等待与审批](../../server/migrations/0061_persistent_wait_and_approval.sql)、[受控记忆](../../server/migrations/0062_controlled_memory.sql)、[执行身份](../../server/migrations/0064_execution_principals.sql)。
 - [Agent 数据平面](../../server/migrations/0072_agent_data_plane.sql)、[Agent 主动任务](../../server/migrations/0074_agent_owned_routines.sql)、[负责人错误码](../../server/migrations/0080_workspace_owner_errcode.sql)、[知识分段检索](../../server/migrations/0081_knowledge_chunks.sql)。
 - [文件解析附件](../../server/migrations/0083_file_extraction_attachments.sql)、[MCP 用户授权](../../server/migrations/0084_mcp_user_grants.sql)、[会话草稿](../../server/migrations/0085_session_drafts.sql)、[空间对象 GC](../../server/migrations/0086_workspace_object_gc.sql)、[空间通知](../../server/migrations/0087_workspace_notifications.sql)。
+- [WeKnora 用户绑定](../../server/migrations/0110_user_weknora_links.sql)：员工与 WeKnora 用户的绑定及一次性绑定 state。
+- [Web Push 订阅与通知偏好](../../server/migrations/0111_web_push.sql)：按设备 endpoint 存订阅，账号级通知开关跨设备一致。
 - [Agent 级岗位权限](../../server/migrations/0090_agent_level_access.sql)：可见角色复制到 Agent 级并立即生效，版本列保留以兼容历史读取。
 - [Agent 验证与发布](../../server/migrations/0091_agent_validations.sql)：待发布版本冻结、自定义测试问题与验证案例；与既有发布候选/试运行表并存。
 - [Agent 运行记录索引](../../server/migrations/0092_agent_run_history_index.sql)：详情页按 Task 的执行身份读取最近 Run。
