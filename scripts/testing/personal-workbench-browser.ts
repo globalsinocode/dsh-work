@@ -99,6 +99,7 @@ async function publishColleague(id: string, name: string, visibleRoleIds: string
     welcomeMessage: `你好，我是${name}（P1 合成）。`, examplePrompts: [`请${name}处理一件事`],
     systemPrompt: `你是${name}，只处理与本职相关、当前员工已经授权的工作。`,
     maxOutputBytes: 65536, maxToolCalls: 20, timeoutSeconds: 300, skills: [], changeSummary: 'P1 推荐夹具', actor: 'U00008',
+    dataScopes: ['workspace:authorized'],
     executionRoleIds: ['role-employee'], executionDataScopes: ['workspace:authorized'],
   })
   await fixture.db.client`update agent_versions set status = 'published' where tenant_id = ${testTenant} and id = ${created.version.id}`

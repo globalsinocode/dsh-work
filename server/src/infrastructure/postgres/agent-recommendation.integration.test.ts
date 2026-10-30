@@ -74,6 +74,7 @@ async function publishedAgent(name: string, options: { recommend?: boolean; visi
     name, description: `${name}：负责一类专门工作。`, owner: '平台治理', department: '平台治理',
     welcomeMessage: '', examplePrompts: [`请${name}处理一件事`], systemPrompt: `你是${name}，只处理与本职相关、当前员工已经授权的工作。`,
     maxOutputBytes: 65536, maxToolCalls: 20, timeoutSeconds: 300, skills: [],
+    dataScopes: ['workspace:authorized'],
     agentRecommendationEnabled: options.recommend === true,
     changeSummary: '推荐测试', actor: ADMIN,
     executionRoleIds: ['role-employee'], executionDataScopes: ['workspace:authorized'],
