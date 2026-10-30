@@ -248,7 +248,8 @@ async function scrollToBottom(behavior: 'auto' | 'smooth' = 'smooth') {
 }
 
 async function submit(payload: {
-  recommendationPrefill.value = '' prompt: string; files: File[]; workspaceId: string; mentions: string[]; confirm: () => void }) {
+  prompt: string; files: File[]; workspaceId: string; mentions: string[]; confirm: () => void }) {
+  recommendationPrefill.value = ''
   if (!canSend.value) return
   const references = referencedArtifacts.value.map(item => item.fileId)
   try {

@@ -234,7 +234,6 @@ function conversationPath(workspaceId: string, target: string) {
 }
 
 async function submitTask(payload: {
-  recommendationNotice.value = ''
   prompt: string
   files: File[]
   workspaceId: string
@@ -242,6 +241,7 @@ async function submitTask(payload: {
   confirm?: () => void
   release?: () => void
 }) {
+  recommendationNotice.value = ''
   if (composerPermissionPending.value || blockedReason.value) {
     if (blockedReason.value) ElMessage.warning(blockedReason.value)
     payload.release?.()

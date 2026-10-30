@@ -169,6 +169,7 @@ export interface AgentSpecConfiguration {
   tools: string[]
   webSearchEnabled?: boolean
   projectTasksEnabled?: boolean
+  agentRecommendationEnabled?: boolean
   timeoutSeconds: number
   data?: { state: boolean; collections: Array<Omit<AgentDataCollectionRequirement, 'schema'>> }
   maxToolCalls: number

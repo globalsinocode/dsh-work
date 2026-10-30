@@ -1047,7 +1047,6 @@ export class PostgresAgentService {
              av.timeout_seconds as "timeoutSeconds",
              av.web_search_enabled as "webSearchEnabled",
              av.project_tasks_enabled as "projectTasksEnabled",
-             av.agent_recommendation_enabled as "agentRecommendationEnabled",
              av.agent_spec as "agentSpec",
              av.binding_refs as "bindingRefs", av.status as "versionStatus",
              coalesce(av.agent_spec #> '{model,requirements}', '[]'::jsonb) as "modelRequirements",
