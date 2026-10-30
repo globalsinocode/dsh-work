@@ -50,6 +50,8 @@ interface AgentRow {
   department: string
   persistedStatus: PublishStatus
   activeVersionId: string | null
+  /** 已发布（在全员/授权角色可见）的活动版本号；有草稿时为 null 之外仍保留，用于区分「已上线且有草稿」。 */
+  activeVersion: string | null
   draftVersionId: string | null
   versionId: string
   version: string
@@ -1258,6 +1260,7 @@ export class PostgresAgentService {
       select a.id, av.name, av.description, av.welcome_message as "welcomeMessage",
              owner.display_name as owner, coalesce(owner.department_id, '未分配部门') as department,
              a.status as "persistedStatus", a.active_version_id as "activeVersionId",
+             active.version as "activeVersion",
              a.draft_version_id as "draftVersionId", av.id as "versionId", av.version,
              av.system_prompt as "systemPrompt", av.visible_role_ids as "roleIds",
              av.data_scopes as "dataScopes", av.example_prompts as "examplePrompts",
@@ -1272,6 +1275,8 @@ export class PostgresAgentService {
         join users owner on owner.tenant_id = a.tenant_id and owner.id = a.owner_user_id
         join agent_versions av on av.tenant_id = a.tenant_id
          and av.id = coalesce(a.draft_version_id, a.active_version_id)
+        left join agent_versions active on active.tenant_id = a.tenant_id
+         and active.id = a.active_version_id
        where a.tenant_id = ${tenantId} ${agentId ? this.database`and a.id = ${agentId}` : this.database``}
        order by a.updated_at desc
     `
@@ -1282,6 +1287,7 @@ export class PostgresAgentService {
       select a.id, av.name, av.description, av.welcome_message as "welcomeMessage",
              owner.display_name as owner, coalesce(owner.department_id, '未分配部门') as department,
              a.status as "persistedStatus", a.active_version_id as "activeVersionId",
+             active.version as "activeVersion",
              a.draft_version_id as "draftVersionId", av.id as "versionId", av.version,
              av.system_prompt as "systemPrompt", av.visible_role_ids as "roleIds",
              av.data_scopes as "dataScopes", av.example_prompts as "examplePrompts",
@@ -1296,6 +1302,8 @@ export class PostgresAgentService {
         join users owner on owner.tenant_id = a.tenant_id and owner.id = a.owner_user_id
         join agent_versions av on av.tenant_id = a.tenant_id
          and av.id = coalesce(a.draft_version_id, a.active_version_id)
+        left join agent_versions active on active.tenant_id = a.tenant_id
+         and active.id = a.active_version_id
        where a.tenant_id = ${tenantId} and a.id = ${agentId}
        for update of a, av
     `
@@ -1418,6 +1426,10 @@ function toAgentDefinition(row: AgentRow): AgentDefinition {
     // 管理状态优先于草稿外观：停用中的 Agent 即使有待发布草稿也显示「已停用」，
     // 否则停用被草稿掩盖且无法从列表重新启用。
     status: row.persistedStatus === 'disabled' ? 'disabled' : row.draftVersionId ? 'draft' : row.persistedStatus,
+    // 版本号是「工作版本」（有草稿时为草稿），活动版本必须单独给出，否则管理端会把
+    // 「已上线、同时有一份未发布草稿」的 Agent 显示成「当前版本 —／未发布」，
+    // 与员工端实际可见、可用的状态相反。
+    activeVersion: row.activeVersion,
     version: row.version,
     welcomeMessage: row.welcomeMessage,
     examplePrompts: row.examplePrompts,

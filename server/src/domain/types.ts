@@ -339,6 +339,11 @@ export interface AgentDefinition {
   allowWorkspaceJoin: boolean
   status: PublishStatus
   version: string
+  /**
+   * 已发布的活动版本号；从未发布时为 null。`version` 是工作版本（有草稿时为草稿），
+   * 管理端据此区分「已上线且有未发布草稿」与「从未发布」。
+   */
+  activeVersion?: string | null
   welcomeMessage: string
   examplePrompts: string[]
   systemPrompt: string
