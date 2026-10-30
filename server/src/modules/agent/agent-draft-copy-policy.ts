@@ -7,7 +7,7 @@ export const DRAFT_COPY_FIELDS = ['name', 'description', 'welcomeMessage', 'exam
 export const DRAFT_COPY_POLICY = 'draft-copy-v1' as const
 const protectedFields = ['owner', 'department', 'systemPrompt',
   'workInstructions', 'mcpScope', 'maxOutputBytes', 'maxToolCalls', 'timeoutSeconds', 'skills',
-  'webSearchEnabled', 'projectTasksEnabled'] as const
+  'webSearchEnabled', 'projectTasksEnabled', 'agentRecommendationEnabled'] as const
 
 type CopyBefore = Pick<AgentDefinition, 'id' | 'status' | typeof DRAFT_COPY_FIELDS[number] | typeof protectedFields[number]>
 type CopyAfter = Omit<UpdateAgentDraftInput, 'actor'>

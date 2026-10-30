@@ -316,7 +316,7 @@ test('personal Skill sessions use a compatible stable default Agent and reject a
   assert.equal(listed[0]?.id, 'agent-dsh-work-assistant', '默认 Agent 不应随最近更新时间漂移')
   assert.equal(
     await agents.resolveWorkbenchAgentVersion(undefined, 'U00001', undefined, ['skill-document@1.0.0']),
-    'agent-version-dsh-work-assistant-project-tasks-1',
+    'agent-version-dsh-work-assistant-agent-recommendation-1',
   )
   await assert.rejects(
     agents.resolveWorkbenchAgentVersion(agentId, 'U00001', undefined, ['skill-document@1.0.0']),

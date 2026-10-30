@@ -5,6 +5,8 @@ import { ElMessage } from 'element-plus'
 
 import ArtifactPreviewPanel from '@/components/conversation/ArtifactPreviewPanel.vue'
 import RunComposer from '@/components/conversation/RunComposer.vue'
+import { useOpenRecommendedAgent } from '@/composables/useOpenRecommendedAgent'
+import { takeRecommendationPrefill } from '@/utils/recommendation-prefill'
 import RunMessageList from '@/components/conversation/RunMessageList.vue'
 import { useMediaQuery } from '@/composables/useMediaQuery'
 import { useRunActions } from '@/composables/useRunActions'
@@ -16,6 +18,12 @@ import { useTaskStore } from '@/stores/tasks'
 import type { Artifact, AgentConversation, AgentConversationSegment, ChatMessage, TaskRun } from '@/types/domain'
 import { notifyActionFailure } from '@/utils/feedback'
 import '@/styles/conversation-thread.css'
+
+const openRecommendedAgent = useOpenRecommendedAgent()
+/** 推荐卡片跳转带来的问题：预填进输入框，不自动发送；发送后提示消失。 */
+const recommendationPrefill = ref('')
+/** 输入框只在挂载时读取初始内容：带入预填时换 key 重新挂载，发送时不重挂以免打断提交。 */
+const composerKey = ref(0)
 
 /**
  * 协作模式单聊（S5c，D26）：与一个 AI 同事的多段会话按时间连续显示，段首“话题 · 时间”。
@@ -239,7 +247,8 @@ async function scrollToBottom(behavior: 'auto' | 'smooth' = 'smooth') {
   if (target) target.scrollTo({ top: target.scrollHeight, behavior })
 }
 
-async function submit(payload: { prompt: string; files: File[]; workspaceId: string; mentions: string[]; confirm: () => void }) {
+async function submit(payload: {
+  recommendationPrefill.value = '' prompt: string; files: File[]; workspaceId: string; mentions: string[]; confirm: () => void }) {
   if (!canSend.value) return
   const references = referencedArtifacts.value.map(item => item.fileId)
   try {
@@ -266,7 +275,11 @@ async function submit(payload: { prompt: string; files: File[]; workspaceId: str
   }
 }
 
-watch(() => props.agentId, () => { void load() }, { immediate: true })
+watch(() => props.agentId, () => {
+  recommendationPrefill.value = takeRecommendationPrefill()
+  if (recommendationPrefill.value) composerKey.value += 1
+  void load()
+}, { immediate: true })
 watch(() => props.focusSessionId, (sessionId) => {
   if (sessionId && !loading.value) void focusSession(sessionId, generation)
 })
@@ -326,6 +339,7 @@ watch(() => [latestTask.value?.messages.length, latestTask.value?.status] as con
                 <span aria-hidden="true"></span>
               </p>
               <RunMessageList
+                @open-recommended-agent="openRecommendedAgent"
                 v-if="segmentTask(segment)"
                 :task="segmentTask(segment)!"
                 :is-own="isOwn"
@@ -356,6 +370,8 @@ watch(() => [latestTask.value?.messages.length, latestTask.value?.status] as con
         <div class="collab-agent-chat__dock-inner">
           <RunComposer
             v-if="canSend"
+            :key="`${props.agentId}-${composerKey}`"
+            :initial-prompt="recommendationPrefill"
             :referenced-artifacts="referencedArtifacts"
             :running="running && canOperate"
             :stopping="stopping"
@@ -365,6 +381,9 @@ watch(() => [latestTask.value?.messages.length, latestTask.value?.status] as con
             @stop="stopRun"
           >
             <template #notices>
+              <p v-if="recommendationPrefill" class="collab-agent-chat__notice" role="status" data-testid="recommendation-prefill-notice">
+                已带入你在 dsh-work 助手那里的问题，确认后再发送；原对话记录与附件不会带入。
+              </p>
               <p v-if="segments.length && !continueSessionId" class="collab-agent-chat__notice" data-testid="new-session-notice">
                 {{ agent?.name }} 已更新版本，发送后将开始新的对话。
               </p>

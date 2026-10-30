@@ -52,6 +52,8 @@ const toolVerbs: Record<string, string> = {
   todo_write: '更新待办清单',
   project_tasks_list: '查看项目任务',
   project_task_get: '查看项目任务',
+  list_colleague_agents: '查看可推荐的 AI 同事',
+  recommend_agents: '推荐 AI 同事',
 }
 
 /** 工具的易懂名称；未知工具显示原名。进行中加“正在”。 */

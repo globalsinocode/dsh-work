@@ -3,7 +3,7 @@ import { createPinia, setActivePinia } from 'pinia'
 import { flushPromises, mount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type { Artifact, ChatMessage, SessionThread, TaskResult, TaskRun } from '@/types/domain'
+import type { AgentRecommendation, Artifact, ChatMessage, SessionThread, TaskResult, TaskRun } from '@/types/domain'
 import ConversationMessageItem from './ConversationMessageItem.vue'
 import RunComposer from './RunComposer.vue'
 import RunMessageList from './RunMessageList.vue'
@@ -201,6 +201,43 @@ describe('RunMessageList', () => {
     expect(card().text()).toContain('预览中')
     await wrapper.setProps({ previewKey: 'artifact-old@2' })
     expect(card().attributes('aria-pressed')).toBe('false')
+  })
+
+  it('REC-01: recommendation cards sit under each run’s last reply; “去聊天” carries that run’s question, unavailable ones explain instead', async () => {
+    const recommendation = (overrides: Partial<AgentRecommendation>): AgentRecommendation => ({
+      id: 'rec-1', runId: 'run-1', agentId: 'agent-contract', name: '合同审查', description: '审查合同条款',
+      reason: '掌握公司的合同审查规则', available: true, ...overrides,
+    })
+    const wrapper = mount(RunMessageList, {
+      global,
+      props: {
+        task: run({
+          id: 'run-1',
+          messages: [
+            { id: 'u1', role: 'user', content: '先问一个通用问题', createdAt: '10:00', runId: 'run-old' },
+            { id: 'a1', role: 'assistant', content: '通用回答', createdAt: '10:01', runId: 'run-old' },
+            { id: 'u2', role: 'user', content: '这份合同的违约金合理吗？', createdAt: '10:02', runId: 'run-1' },
+            { id: 'a2', role: 'assistant', content: '先给出通用判断', createdAt: '10:03', runId: 'run-1' },
+          ],
+          recommendations: [
+            recommendation({}),
+            recommendation({ id: 'rec-2', agentId: 'agent-finance', name: '财务内控', reason: '能核对付款条款', available: false }),
+          ],
+        }),
+        isOwn: m => m.role === 'user',
+      },
+    })
+    const cards = wrapper.findAll('[data-testid="agent-recommendations"]')
+    expect(cards).toHaveLength(1)
+    expect(cards[0]!.text()).toContain('合同审查')
+    expect(cards[0]!.text()).toContain('推荐理由：掌握公司的合同审查规则')
+
+    await wrapper.get('[aria-label="去和合同审查聊天"]').trigger('click')
+    expect(wrapper.emitted('open-recommended-agent')).toEqual([[recommendation({}), '这份合同的违约金合理吗？']])
+
+    await wrapper.get('[aria-label="去和财务内控聊天"]').trigger('click')
+    expect(wrapper.emitted('open-recommended-agent')).toHaveLength(1)
+    expect(wrapper.text()).toContain('该 AI 同事暂不可用')
   })
 
   it('2b-5: every artifact opens the preview; failed or pending text is explained beside the card; images show a thumbnail', async () => {

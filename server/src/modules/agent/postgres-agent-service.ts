@@ -63,6 +63,7 @@ interface AgentRow {
   timeoutSeconds: number
   skills: string[]
   tools: string[]
+  agentRecommendationEnabled: boolean
   mcpScope: AgentMcpScope
   delegationPolicy: AgentDelegationPolicy
   updatedAt: Date
@@ -79,6 +80,7 @@ export type AgentFingerprintSource = Omit<Pick<AgentRow,
   | 'examplePrompts'
   | 'skills'
   | 'tools'
+  | 'agentRecommendationEnabled'
   | 'mcpScope'
   | 'delegationPolicy'
   | 'maxOutputBytes'
@@ -109,6 +111,7 @@ interface VersionRow {
   maxOutputBytes: number
   maxToolCalls: number
   timeoutSeconds: number
+  agentRecommendationEnabled: boolean
   skills: string[]
   tools: string[]
   mcpScope: AgentMcpScope
@@ -159,6 +162,7 @@ export interface RuntimeAgentSnapshot {
   stateEnabled?: boolean
   webSearchEnabled?: boolean
   projectTasksEnabled?: boolean
+  agentRecommendationEnabled?: boolean
   systemPrompt: string
   skills: string[]
   skillInstructions: RuntimeSkillConfiguration[]
@@ -338,6 +342,7 @@ export class PostgresAgentService {
              av.timeout_seconds as "timeoutSeconds", av.skill_refs as skills, av.tool_refs as tools,
              av.binding_refs as "bindingRefs", av.delegation_policy as "delegationPolicy",
              av.mcp_scope as "mcpScope",
+             av.agent_recommendation_enabled as "agentRecommendationEnabled",
              av.agent_spec as "agentSpec"
         from agent_versions av
         join users creator on creator.tenant_id = av.tenant_id and creator.id = av.created_by
@@ -406,7 +411,7 @@ export class PostgresAgentService {
             id, tenant_id, agent_id, version, name, description, welcome_message,
             example_prompts, system_prompt, visible_role_ids, data_scopes, max_output_bytes,
             max_tool_calls, timeout_seconds, skill_refs, tool_refs, web_search_enabled, project_tasks_enabled,
-            mcp_scope, delegation_policy, agent_spec, status, created_by, change_summary
+            agent_recommendation_enabled, mcp_scope, delegation_policy, agent_spec, status, created_by, change_summary
           ) values (
             ${versionId}, ${tenantId}, ${configuration.id}, ${version}, ${configuration.name},
             ${configuration.description}, ${configuration.welcomeMessage}, ${transaction.json(configuration.examplePrompts)},
@@ -414,6 +419,7 @@ export class PostgresAgentService {
             ${transaction.json(configuration.dataScopes)}, ${configuration.maxOutputBytes},
             ${configuration.maxToolCalls}, ${configuration.timeoutSeconds}, ${transaction.json(configuration.skills)},
             ${transaction.json(effectiveTools)}, ${configuration.webSearchEnabled}, ${configuration.projectTasksEnabled},
+            ${configuration.agentRecommendationEnabled},
             ${transaction.json(asJson(configuration.mcpScope))},
             ${transaction.json(asJson(configuration.delegationPolicy))},
             ${transaction.json(asJson(spec))}, 'draft', ${actor.id}, ${configuration.changeSummary}
@@ -537,6 +543,7 @@ export class PostgresAgentService {
                  skill_refs = ${transaction.json(configuration.skills)}, tool_refs = ${transaction.json(effectiveTools)},
                  web_search_enabled = ${configuration.webSearchEnabled},
                  project_tasks_enabled = ${configuration.projectTasksEnabled},
+                 agent_recommendation_enabled = ${configuration.agentRecommendationEnabled},
                  mcp_scope = ${transaction.json(asJson(configuration.mcpScope))},
                  delegation_policy = ${transaction.json(asJson(configuration.delegationPolicy))},
                  agent_spec = ${transaction.json(asJson(agentSpecFromConfiguration(configuration, locked.version, locked.agentSpec)))},
@@ -561,7 +568,7 @@ export class PostgresAgentService {
             id, tenant_id, agent_id, version, name, description, welcome_message,
             example_prompts, system_prompt, visible_role_ids, data_scopes, max_output_bytes,
             max_tool_calls, timeout_seconds, skill_refs, tool_refs, web_search_enabled, project_tasks_enabled,
-            mcp_scope, delegation_policy, agent_spec, status, created_by, source_version, change_summary
+            agent_recommendation_enabled, mcp_scope, delegation_policy, agent_spec, status, created_by, source_version, change_summary
           ) values (
             ${draftVersionId}, ${tenantId}, ${input.agentId}, ${newVersion},
             ${configuration.name}, ${configuration.description}, ${configuration.welcomeMessage},
@@ -570,6 +577,7 @@ export class PostgresAgentService {
             ${configuration.maxOutputBytes}, ${configuration.maxToolCalls}, ${configuration.timeoutSeconds},
             ${transaction.json(configuration.skills)}, ${transaction.json(effectiveTools)},
             ${configuration.webSearchEnabled}, ${configuration.projectTasksEnabled},
+            ${configuration.agentRecommendationEnabled},
             ${transaction.json(asJson(configuration.mcpScope))},
             ${transaction.json(asJson(configuration.delegationPolicy))},
             ${transaction.json(asJson(agentSpecFromConfiguration(configuration, newVersion, locked.agentSpec)))},
@@ -668,6 +676,7 @@ export class PostgresAgentService {
              av.system_prompt as "systemPrompt", av.max_output_bytes as "maxOutputBytes",
              av.max_tool_calls as "maxToolCalls",
              av.timeout_seconds as "timeoutSeconds", av.skill_refs as skills, av.tool_refs as tools,
+             av.agent_recommendation_enabled as "agentRecommendationEnabled",
              av.binding_refs as "bindingRefs", av.delegation_policy as "delegationPolicy"
         from agent_versions av
         join users creator on creator.tenant_id = av.tenant_id and creator.id = av.created_by
@@ -1031,12 +1040,14 @@ export class PostgresAgentService {
              ep.authorization_version as "principalAuthorizationVersion",
              av.name, av.description, av.welcome_message as "welcomeMessage",
              av.example_prompts as "examplePrompts", av.mcp_scope as "mcpScope",
+             av.agent_recommendation_enabled as "agentRecommendationEnabled",
              av.system_prompt as "systemPrompt", av.skill_refs as skills,
              av.tool_refs as tools, av.visible_role_ids as "roleIds", av.data_scopes as "dataScopes",
              av.max_output_bytes as "maxOutputBytes", av.max_tool_calls as "maxToolCalls",
              av.timeout_seconds as "timeoutSeconds",
              av.web_search_enabled as "webSearchEnabled",
              av.project_tasks_enabled as "projectTasksEnabled",
+             av.agent_recommendation_enabled as "agentRecommendationEnabled",
              av.agent_spec as "agentSpec",
              av.binding_refs as "bindingRefs", av.status as "versionStatus",
              coalesce(av.agent_spec #> '{model,requirements}', '[]'::jsonb) as "modelRequirements",
@@ -1255,6 +1266,7 @@ export class PostgresAgentService {
              av.max_output_bytes as "maxOutputBytes", av.max_tool_calls as "maxToolCalls",
              av.timeout_seconds as "timeoutSeconds",
              av.skill_refs as skills, av.tool_refs as tools, av.mcp_scope as "mcpScope",
+             av.agent_recommendation_enabled as "agentRecommendationEnabled",
              av.delegation_policy as "delegationPolicy",
              av.agent_spec as "agentSpec", a.updated_at as "updatedAt"
         from agents a
@@ -1278,6 +1290,7 @@ export class PostgresAgentService {
              av.max_output_bytes as "maxOutputBytes", av.max_tool_calls as "maxToolCalls",
              av.timeout_seconds as "timeoutSeconds",
              av.skill_refs as skills, av.tool_refs as tools, av.mcp_scope as "mcpScope",
+             av.agent_recommendation_enabled as "agentRecommendationEnabled",
              av.delegation_policy as "delegationPolicy",
              av.agent_spec as "agentSpec", a.updated_at as "updatedAt"
         from agents a
@@ -1374,6 +1387,7 @@ function normalizeConfiguration(
     tools: unique(input.tools ?? []),
     webSearchEnabled: input.webSearchEnabled ?? false,
     projectTasksEnabled: input.projectTasksEnabled ?? false,
+    agentRecommendationEnabled: input.agentRecommendationEnabled === true,
     mcpScope: normalizeAgentMcpScope(input.mcpScope),
     delegationPolicy: normalizeDelegationPolicy(input.delegationPolicy),
     changeSummary: input.changeSummary.trim() || '更新 Agent 配置',
@@ -1417,6 +1431,7 @@ function toAgentDefinition(row: AgentRow): AgentDefinition {
     tools: row.agentSpec?.capabilities.tools ?? row.tools,
     webSearchEnabled: row.agentSpec?.capabilities.webSearch ?? false,
     projectTasksEnabled: row.agentSpec?.capabilities.projectTasks ?? false,
+    agentRecommendationEnabled: row.agentRecommendationEnabled === true,
     mcpScope: normalizeAgentMcpScope(row.mcpScope),
     delegationPolicy: row.delegationPolicy,
     updatedAt: formatDateTime(row.updatedAt),
@@ -1450,6 +1465,7 @@ function toVersionRecord(row: VersionRow): AgentVersionRecord {
     tools: row.tools,
     webSearchEnabled: row.agentSpec?.capabilities.webSearch ?? false,
     projectTasksEnabled: row.agentSpec?.capabilities.projectTasks ?? false,
+    agentRecommendationEnabled: row.agentRecommendationEnabled === true,
     mcpScope: normalizeAgentMcpScope(row.mcpScope),
     delegationPolicy: row.delegationPolicy,
     ...(row.bindingRefs?.length ? { bindingRefs: row.bindingRefs } : {}),
@@ -1482,6 +1498,8 @@ export function configurationFingerprint(row: AgentFingerprintSource) {
     maxOutputBytes: row.maxOutputBytes,
     maxToolCalls: row.maxToolCalls,
     timeoutSeconds: row.timeoutSeconds,
+    // 推荐开关晚于既有证据加入：关闭时不进入指纹，升级不作废已有验证结果。
+    ...(row.agentRecommendationEnabled ? { agentRecommendationEnabled: true } : {}),
     ...((data?.state || data?.collections?.length) ? { data } : {}),
   })).digest('hex')
 }

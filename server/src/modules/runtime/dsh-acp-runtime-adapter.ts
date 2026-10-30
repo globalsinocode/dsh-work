@@ -182,6 +182,12 @@ export interface DshAcpRuntimeAdapterConfiguration {
     manifest: RuntimeManifest,
     signal: AbortSignal,
   ) => Promise<unknown>
+  /** 推荐方案 4.1：dsh-work 助手列出并推荐 AI 同事，只在员工个人对话中装配。 */
+  agentRecommendationTool?: (
+    name: 'list_colleague_agents' | 'recommend_agents',
+    input: Record<string, unknown>,
+    manifest: RuntimeManifest,
+  ) => Promise<unknown>
   recordPythonExecution?: (manifest: RuntimeManifest, skillId: string, entry: string, succeeded: boolean) => Promise<void>
   /**
    * 执行容器（执行隔离方案 1b）：DSH 的子进程经工具桥落到本 Attempt 的执行容器。生产启动总是配置
@@ -677,6 +683,12 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
         const invoke = this.configuration.invokeAgentData
         if (!invoke) throw dependencyUnavailable('Agent 数据平面不可用：未配置受控数据工具')
         registerPlatformTool(name as PlatformToolName, (input, signal) => invoke(name, input, record.manifest, signal))
+      }
+      for (const name of ['list_colleague_agents', 'recommend_agents'] as const) {
+        if (!record.manifest.tools.some(tool => tool.id === name)) continue
+        const handle = this.configuration.agentRecommendationTool
+        if (!handle) throw dependencyUnavailable('推荐 AI 同事不可用：未配置推荐服务')
+        registerPlatformTool(name, async input => handle(name, input, record.manifest))
       }
       const projectTaskNames = ['project_tasks_list', 'project_task_get', 'project_task_create', 'project_task_update'] as const
       for (const name of projectTaskNames) {
@@ -1510,6 +1522,15 @@ export function renderSystemPrompt(manifest: RuntimeManifest, options: { executi
       '向用户介绍能力或限制时，用日常工作中的说法讲能帮他做成什么事，例如“整理、总结文档”“处理 Excel 表格”“生成 Word、PDF 或 PPT 文件”“把文件转换成另一种格式”；不要列出工具名、Skill 标识与版本号，也不要使用 MCP、沙箱、工作区、output、命令、Python 包名等技术说法。限制同样用用户能理解的话说，例如“不能上网查资料”“不会改动你上传的原文件，修改后的内容作为新文件交给你”。用户明确问技术细节时再说明。',
     ] : []),
   ].join('\n'))
+  if (manifest.tools.some(tool => tool.id === 'recommend_agents')) {
+    sections.push([
+      '# 推荐 AI 同事（先于其他处理）',
+      '除你之外，员工还可以使用其他 AI 同事。收到业务问题或“该找谁”的问题时，第一步先调用 list_colleague_agents，在查找文件、要求补充数据、调用其他工具或作答之前完成，判断有没有职责与问题相符的同事。',
+      '有相符的同事时，优先用 recommend_agents 推荐 1～3 位，回复只用一两句话说明为什么建议交给该同事处理，不要自己展开解答（不给分析框架、步骤清单、长篇说明，也不要先向员工索要数据）。推荐会作为卡片显示在你的回复下方，员工点击即可与该同事开始新对话；对话不会转交。员工看了推荐后仍明确要求由你回答时，再正常回答。',
+      '没有职责相符的同事，或者是通用问题（写作、润色、翻译、常识、一般性解释）时，不推荐，直接回答。同一次对话中已经推荐过的同事不要重复推荐。推荐理由写该同事能做而你做不好的部分，不超过 120 个字；只依据 list_colleague_agents 返回的该同事说明与示例问题来写，不要声称它能读取哪些数据、连接哪些系统或具备说明之外的能力，说明里没有写的就不要说。只能推荐 list_colleague_agents 返回的同事，不要在回答中编造其他同事。',
+    ].join('\n'))
+  }
+
   if (manifest.timezone) {
     sections.push([
       '# 当前时间',

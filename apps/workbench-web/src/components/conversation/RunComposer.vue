@@ -16,6 +16,8 @@ withDefaults(defineProps<{
   filesRequireMention?: boolean
   showWorkspaceContext?: boolean
   placeholder?: string
+  /** 输入框初始内容（推荐卡片跳转时预填的问题）；只在挂载时读取。 */
+  initialPrompt?: string
 }>(), {
   referencedArtifacts: () => [],
   running: false,
@@ -24,6 +26,7 @@ withDefaults(defineProps<{
   filesRequireMention: false,
   showWorkspaceContext: false,
   placeholder: undefined,
+  initialPrompt: '',
 })
 
 const emit = defineEmits<{
@@ -60,6 +63,7 @@ const emit = defineEmits<{
     :mention-options="mentionOptions"
     :files-require-mention="filesRequireMention"
     :placeholder="placeholder"
+    :initial-prompt="initialPrompt"
     @open-files="emit('open-files')"
     @submit="emit('submit', $event)"
     @stop="emit('stop')"

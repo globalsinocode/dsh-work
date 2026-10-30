@@ -118,3 +118,16 @@ it('校验覆盖示例问题、MCP 选定与运行限制', () => {
   expect(validateAgentDraft({ ...form, mcpScope: { mode: 'selected', connectorIds: [] } }).mcpScope).toBeTruthy()
   expect(validateAgentDraft({ ...form, timeoutSeconds: 10 }).timeoutSeconds).toBeTruthy()
 })
+
+it('“可推荐其他 AI 同事”开关随草稿自动保存，读取时按 Agent 当前设置回显', async () => {
+  const content = useContentStore()
+  const save = vi.spyOn(content, 'updateAgentDraft').mockImplementation(async input => ({ ...agent, ...input, revision: 'rev-2' }))
+  expect(draftFormFromAgent({ ...agent, agentRecommendationEnabled: true }).agentRecommendationEnabled).toBe(true)
+  expect(draftFormFromAgent(agent).agentRecommendationEnabled).toBe(false)
+  const { editor } = mountEditor()
+  editor().form.agentRecommendationEnabled = true
+  await nextTick()
+  await vi.advanceTimersByTimeAsync(500)
+  await flushPromises()
+  expect(save.mock.calls[0]![0]).toMatchObject({ id: agent.id, agentRecommendationEnabled: true })
+})

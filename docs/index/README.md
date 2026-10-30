@@ -17,6 +17,7 @@
 | 移动端 H5 接入 | [移动端接入规范](../development/mobile-integration-guide.md) |
 | 待评审：钉钉工作通知、工作台免登与机器人对话 | [钉钉接入方案](../design/dingtalk-integration-plan.md) |
 | 平台内置 Skill（文件分析、HTML、Office 基线方法；代码级已实施，P2 待验收） | [平台内置 Skill 方案](../design/builtin-skills-plan.md) |
+| dsh-work 助手推荐 AI 同事（代码级已实施，P2 待验收） | [推荐 AI 同事方案](../design/agent-recommendation-plan.md) |
 | 平台基线真实验收（PF-07） | [PF-07 验收手册](../development/pf07-platform-acceptance.md) |
 | 进行中：执行观测、上下文延续与性能 | [Runtime 执行架构渐进优化方案](../design/runtime-execution-optimization-plan.md) |
 | 项目空间产品决策与切片背景（S0～S6 已实现；现行规则以功能规则为准，P2/OIDC 与部分 P1 旅程仍开放） | [项目空间方案](../design/project-space-plan.md) |

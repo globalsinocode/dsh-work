@@ -117,7 +117,7 @@ flowchart LR
 
 | 表 | 作用 | 关键不变量 |
 | --- | --- | --- |
-| `agents`、`agent_versions` | Agent 与其版本 | 版本状态为草稿、待发布（`candidate`，验证时原地冻结）、已发布；待发布与已发布版本内容不可修改（触发器，待发布只能改为已发布）；版本记录精确的 Skill 引用与联网搜索开关 `web_search_enabled`（内置工具随代码发布，不在版本中保存），不含可见角色或数据范围；可见角色 `visible_role_ids` 属于 Agent，岗位角色与数据范围授予执行身份，都立即生效；新建 Agent 自动生成执行身份与数据平面安装记录 |
+| `agents`、`agent_versions` | Agent 与其版本 | 版本状态为草稿、待发布（`candidate`，验证时原地冻结）、已发布；待发布与已发布版本内容不可修改（触发器，待发布只能改为已发布）；版本记录精确的 Skill 引用与联网搜索开关 `web_search_enabled`、项目任务管理开关 `project_tasks_enabled`、推荐 AI 同事开关 `agent_recommendation_enabled`（内置工具随代码发布，不在版本中保存），不含可见角色或数据范围；可见角色 `visible_role_ids` 属于 Agent，岗位角色与数据范围授予执行身份，都立即生效；新建 Agent 自动生成执行身份与数据平面安装记录 |
 | `agent_test_cases` | Agent 的自定义测试问题 | 属于 Agent 而非版本，跨版本复用；每个 Agent 最多 20 条，按位置唯一 |
 | `agent_validations` | 一次验证 | 绑定一个冻结的待发布版本（`candidate`）；每个 Agent 只有一个有效验证（`running`/`completed`），开始新验证时旧验证标为 `superseded`；发布后标为 `published` |
 | `agent_validation_cases` | 验证案例及结果 | 开始验证时快照示例问题、主动任务输入与自定义问题；记录 Run/Attempt、运行次数、三项机器检查与判定；判为不通过必须有原因；服务重启时未完成的案例标为中断 |
@@ -150,6 +150,7 @@ flowchart LR
 | `skill_installations` | 管理端安装计划 | 每次安装 Run 一条；完成时必须指向已保存的版本 |
 | `skill_test_bindings` | 严格试运行与精确 Attempt 的绑定 | 不可修改（触发器）；绑定配置与 Runtime 指纹 |
 | `skill_runtime_activations`、`skill_python_executions` | Attempt 内的 Skill 激活与 Python 执行记录 | 作为试运行证据，按 Attempt 隔离 |
+| `agent_recommendations` | Attempt 内推荐的 AI 同事（推荐 AI 同事方案） | 关联 Run、Attempt、发起员工与被推荐的 Agent；只保存位置与限长的推荐理由，名称与说明读取时取当前启用版本；会话详情只显示各 Run 当前 Attempt 的记录，同一 Attempt 再次推荐整组替换 |
 | `skill_release_records` | 发布、启用、停用、回滚记录 | 只追加 |
 | `skill_test_runs` | 早期的测试记录 | 只保留历史 |
 

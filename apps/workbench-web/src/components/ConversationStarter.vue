@@ -19,6 +19,7 @@ import { useTaskStore } from '@/stores/tasks'
 import type { WorkbenchAgent, WorkbenchSkill, WorkspaceFile, WorkspaceFileProjection } from '@/types/domain'
 import { notifyActionFailure } from '@/utils/feedback'
 import { splitMentions, type MentionOption } from '@/utils/mentions'
+import { takeRecommendationPrefill } from '@/utils/recommendation-prefill'
 
 const props = withDefaults(
   defineProps<{
@@ -119,6 +120,8 @@ const referencedWorkspaceFileIds = ref<string[]>([])
 const selectedAgentId = ref('')
 const selectedAgentVersionId = ref('')
 const selectedSkillId = ref('')
+/** 推荐卡片跳转（推荐方案 4.3）：预填问题时的提示；目标同事已不可用时提示且不选中。 */
+const recommendationNotice = ref<'' | 'prefilled' | 'unavailable'>('')
 const selectedSkillVersionId = ref('')
 const mcpAccessBlocked = ref<Array<{ connectorId: string; name: string }>>([])
 const mcpAccessOmitted = ref<Array<{ connectorId: string; name: string }>>([])
@@ -231,6 +234,7 @@ function conversationPath(workspaceId: string, target: string) {
 }
 
 async function submitTask(payload: {
+  recommendationNotice.value = ''
   prompt: string
   files: File[]
   workspaceId: string
@@ -347,25 +351,33 @@ async function refreshMcpAccess(agentId: string) {
 function syncAgentFromRoute() {
   if (props.workspaceLocked) {
     selectedAgentId.value = ''
+    selectedAgentVersionId.value = ''
     mcpAccessBlocked.value = []
     mcpAccessOmitted.value = []
+    recommendationNotice.value = ''
     return
   }
   const agentId = typeof route.query.agent === 'string' ? route.query.agent : ''
   const agentVersionId = typeof route.query.agentVersion === 'string' ? route.query.agentVersion : ''
-  const matched = contentStore.agents.find(agent => agent.id === agentId && agent.versionId === agentVersionId)
-  selectedAgentId.value = matched ? agentId : ''
-  selectedAgentVersionId.value = matched ? agentVersionId : ''
+  // 推荐跳转只带 agent id；有 agentVersion 时精确匹配，否则取该 Agent 当前可见版本。
+  const matched = agentVersionId
+    ? contentStore.agents.find(agent => agent.id === agentId && agent.versionId === agentVersionId)
+    : contentStore.agents.find(agent => agent.id === agentId)
+  selectedAgentId.value = matched ? matched.id : ''
+  selectedAgentVersionId.value = matched ? matched.versionId : ''
   void refreshMcpAccess(selectedAgentId.value)
   const agent = selectedAgent.value
+  const prefill = takeRecommendationPrefill()
+  recommendationNotice.value = prefill ? (agent ? 'prefilled' : 'unavailable') : ''
   if (agent) {
     selectedTask.value = ''
-    presetPrompt.value = agent.examplePrompts[0] ?? ''
+    presetPrompt.value = prefill || (agent.examplePrompts[0] ?? '')
     focusComposer()
   }
 }
 
 function clearSelectedAgent() {
+  recommendationNotice.value = ''
   selectedAgentId.value = ''
   selectedAgentVersionId.value = ''
   const query = { ...route.query }
@@ -520,6 +532,12 @@ defineExpose({ useWorkspaceFile, focusComposer, submitWorkspaceTask: submitTask 
           @workspace-file-selected="onWorkspaceFileSelected"
           @submit="onTeamStageSubmit"
         />
+        <p v-if="recommendationNotice === 'prefilled'" class="recommendation-notice" role="status" data-testid="recommendation-prefill-notice">
+          已带入你在 dsh-work 助手那里的问题，确认后再发送；原对话记录与附件不会带入。
+        </p>
+        <p v-else-if="recommendationNotice === 'unavailable'" class="recommendation-notice recommendation-notice--blocked" role="alert">
+          推荐的 AI 同事暂不可用：你已没有使用权限，或它已停用。
+        </p>
         <TaskComposer
           v-else-if="composerReady"
           ref="personalComposerRef"
@@ -553,6 +571,8 @@ defineExpose({ useWorkspaceFile, focusComposer, submitWorkspaceTask: submitTask 
 </template>
 
 <style scoped>
+.recommendation-notice { width: 100%; max-width: 760px; box-sizing: border-box; margin: 0 auto 10px; padding: 8px 12px; border-radius: var(--dsh-radius-sm); background: var(--dsh-color-brand-soft); color: var(--dsh-color-brand-dark); font-size: var(--dsh-font-size-badge); line-height: 1.6; }
+.recommendation-notice--blocked { background: var(--dsh-color-warning-soft); color: var(--dsh-color-warning); }
 .personal-capability-actions { display: flex; justify-content: center; gap: 12px; margin-bottom: 10px; }
 .conversation-starter {
   min-height: 100vh;

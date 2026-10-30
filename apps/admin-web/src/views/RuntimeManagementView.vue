@@ -101,6 +101,7 @@ function assemblyLabel(tool: BuiltinTool) {
     purpose: '管理运行专用',
     workspace: '项目空间运行装配',
     'execution-container': '执行容器可用时装配',
+    'personal-conversation': '个人对话装配（Agent 开启后）',
   }[tool.assembly]
 }
 

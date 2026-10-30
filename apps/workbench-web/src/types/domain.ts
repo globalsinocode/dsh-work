@@ -170,6 +170,17 @@ export interface TaskResult {
 }
 
 /** Run 失败的结构化错误（I-06 起收敛进 TaskResult.error）。 */
+/** 推荐卡片：名称与说明取同事当前启用版本；available 是查看时该同事是否仍对本人可用。 */
+export interface AgentRecommendation {
+  id: string
+  runId: string
+  agentId: string
+  name: string
+  description: string
+  reason: string
+  available: boolean
+}
+
 export interface TaskRunError {
   code: string
   message: string
@@ -282,6 +293,8 @@ export interface TaskRun {
    * 的成果合集，供气泡按 runId 挂到对应回复下。本轮核验仍只用 result.artifacts。
    */
   threadArtifacts?: Artifact[]
+  /** 推荐 AI 同事：个人会话中各 Run 当前 Attempt 的推荐卡片，按 runId 挂到该 Run 的回复下。 */
+  recommendations?: AgentRecommendation[]
   /**
    * EX-PROGRESS-01：客户端时钟减服务端事件时间（毫秒），收到实时事件时更新。进行中步骤的
    * 计时据此把服务端时间换算到本机，避免两边时钟不一致；只有快照时缺省，按 0 计。

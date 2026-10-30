@@ -162,6 +162,33 @@ export const platformToolContracts = {
     outputSchema: objectOutput,
     effect: 'write', retryPolicy: 'never', concurrencyPolicy: 'serialized', timeoutMs: 30_000,
   }),
+  // 推荐 AI 同事（推荐方案 4.1）：目录只读可重试；推荐写入不重试，同一 Attempt 再次调用替换上一组。
+  list_colleague_agents: contract({
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    outputSchema: objectOutput,
+    effect: 'read', retryPolicy: 'safe', concurrencyPolicy: 'concurrent', timeoutMs: 30_000,
+  }),
+  recommend_agents: contract({
+    inputSchema: {
+      type: 'object', additionalProperties: false,
+      properties: {
+        recommendations: {
+          type: 'array', minItems: 1, maxItems: 3,
+          items: {
+            type: 'object', additionalProperties: false,
+            properties: {
+              agentId: { type: 'string', minLength: 1, maxLength: 160 },
+              reason: { type: 'string', minLength: 1, maxLength: 120 },
+            },
+            required: ['agentId', 'reason'],
+          },
+        },
+      },
+      required: ['recommendations'],
+    },
+    outputSchema: objectOutput,
+    effect: 'write', retryPolicy: 'never', concurrencyPolicy: 'serialized', timeoutMs: 30_000,
+  }),
   propose_memory: contract({
     inputSchema: {
       type: 'object', additionalProperties: false,
@@ -201,8 +228,14 @@ export function platformToolsForPurpose(purpose: AdminRunPurpose): RuntimeManife
     .map(([id]) => ({ id, version: '1.0.0' }))
 }
 
-/** 项目空间 S6 的任务工具只用于员工在团队空间发起的运行，不进入任何管理或系统运行。 */
-const projectTaskTools = new Set<string>(['project_tasks_list', 'project_task_get', 'project_task_create', 'project_task_update'])
+/**
+ * 项目空间 S6 的任务工具只用于员工在团队空间发起的运行，推荐工具只用于员工个人对话；
+ * 二者都不进入任何管理或系统运行。
+ */
+const projectTaskTools = new Set<string>([
+  'project_tasks_list', 'project_task_get', 'project_task_create', 'project_task_update',
+  'list_colleague_agents', 'recommend_agents',
+])
 
 export function assertPlatformToolPurpose(manifest: Pick<RuntimeManifest, 'purpose' | 'tools'>): void {
   for (const tool of manifest.tools) {

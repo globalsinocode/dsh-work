@@ -463,6 +463,7 @@ export class RunOrchestrationService {
         projectTaskToolMode: session.workspaceType === 'team'
           ? (input.scheduled ? 'read' : 'read-write')
           : 'none',
+        personalConversation: session.workspaceType === 'personal' && !input.scheduled,
       })
     })
     await this.deps.operations?.appendAudit(input.userId, 'run.create', run.id, 'success', `trace-${run.id}`, '员工创建真实 Run')
@@ -702,6 +703,7 @@ export class RunOrchestrationService {
           conversationSummary: context.summary,
           // 重试由人发起：团队空间与原运行一样装配项目任务工具（S6）。
           projectTaskToolMode: workspaceType === 'team' ? 'read-write' : 'none',
+          personalConversation: workspaceType === 'personal',
         })
       })
       await this.deps.operations?.appendAudit(userId, 'run.retry', retried.id, 'success', `trace-${retried.id}`, `员工重新发起共享运行（来源 ${run.id}）`)
@@ -729,6 +731,7 @@ export class RunOrchestrationService {
         ? manifestLimitsForRetry(lastAttempt.manifest as unknown as RuntimeManifest)
         : undefined,
       projectTaskToolMode: workspaceType === 'team' ? 'read-write' : 'none',
+      personalConversation: workspaceType === 'personal',
     })
     await this.deps.operations?.appendAudit(userId, 'run.retry', runId, 'success', `trace-${runId}`, '员工创建新的不可变 Attempt')
     return this.deps.runs.getRun(tenantId, run.id)
