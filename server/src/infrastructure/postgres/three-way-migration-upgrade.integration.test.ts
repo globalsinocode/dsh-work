@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { copyFile, mkdtemp, readdir, rm } from 'node:fs/promises'
+import { copyFile, mkdtemp, readdir, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { after, before, test } from 'node:test'
@@ -88,6 +88,31 @@ test('database stopped at 0084 upgrades through hardening and tonycc tail', asyn
       select version from schema_migrations order by version desc limit 1
     `
     assert.equal(tail?.version, '0116_agent_recommendation.sql')
+    await assertGovernanceSurfaces(throwaway.client)
+  } finally {
+    await throwaway.dispose()
+    await rm(baselineDir, { recursive: true, force: true })
+  }
+})
+
+test('legacy 0110_web_push record upgrades through 0111 without recreating tables', async () => {
+  const baselineDir = await mkdtemp(join(tmpdir(), 'dsh-migrations-0109-legacy-push-'))
+  const throwaway = await createThrowawayDatabase({
+    namePrefix: 'dsh_work_three_way_legacy_push',
+    maxConnections: 4,
+    migrate: false,
+  })
+  try {
+    await copyMigrationsUpTo('0109_agent_principal_role_backfill.sql', baselineDir)
+    await runMigrations(throwaway.client, baselineDir)
+    const webPushSql = await readFile(resolve(migrationsDirectory, '0111_web_push.sql'), 'utf8')
+    await throwaway.client.unsafe(webPushSql)
+    await throwaway.client`insert into schema_migrations (version) values ('0110_web_push.sql')`
+    await runMigrations(throwaway.client, migrationsDirectory)
+    const [webPush] = await throwaway.client<{ version: string }[]>`
+      select version from schema_migrations where version = '0111_web_push.sql'
+    `
+    assert.ok(webPush?.version)
     await assertGovernanceSurfaces(throwaway.client)
   } finally {
     await throwaway.dispose()

@@ -7,6 +7,8 @@ import { upgradePreflightChecks } from './team-workspace-upgrade-baseline.ts'
 import { stateConflict } from '../../domain/request-errors.ts'
 
 const migrationPattern = /^\d{4}_[a-z0-9_]+\.sql$/
+const webPushMigrationVersion = '0111_web_push.sql'
+const legacyWebPushMigrationVersion = '0110_web_push.sql'
 
 export interface AppliedMigration {
   version: string
@@ -35,6 +37,8 @@ export async function runMigrations(
     `)
     await transaction.unsafe('alter table schema_migrations add column if not exists checksum text')
   })
+
+  await reconcileRenamedWebPushMigration(database, migrationsDirectory)
 
   const files = (await readdir(migrationsDirectory))
     .filter((file) => migrationPattern.test(file))
@@ -69,6 +73,53 @@ export async function runMigrations(
   }
 
   return results
+}
+
+/**
+ * Web Push 曾以 `0110_web_push.sql` 发布，后与 WeKnora 迁移撞号并重编号为 `0111_web_push.sql`。
+ * 旧库可能仍保留 orphan 记录或仅有表结构，需在执行 0111 前补写 schema_migrations。
+ */
+async function reconcileRenamedWebPushMigration(
+  database: DatabaseClient,
+  migrationsDirectory: string,
+) {
+  const [alreadyApplied] = await database`select 1 from schema_migrations where version = ${webPushMigrationVersion}`
+  if (alreadyApplied) return
+
+  const [legacyApplied] = await database`select 1 from schema_migrations where version = ${legacyWebPushMigrationVersion}`
+  if (legacyApplied) {
+    await recordWebPushMigration(database, migrationsDirectory)
+    return
+  }
+
+  const [pushExists] = await database<{ exists: boolean }[]>`
+    select exists (
+      select 1 from information_schema.tables
+       where table_schema = 'public' and table_name = 'push_subscriptions'
+    ) as exists
+  `
+  if (!pushExists?.exists) return
+
+  const [prefsExists] = await database<{ exists: boolean }[]>`
+    select exists (
+      select 1 from information_schema.tables
+       where table_schema = 'public' and table_name = 'notification_preferences'
+    ) as exists
+  `
+  if (!prefsExists?.exists) return
+
+  await recordWebPushMigration(database, migrationsDirectory)
+}
+
+async function recordWebPushMigration(database: DatabaseClient, migrationsDirectory: string) {
+  const sqlText = await readFile(resolve(migrationsDirectory, webPushMigrationVersion), 'utf8')
+  const checksum = migrationChecksum(sqlText)
+  await database.begin(async (transaction) => {
+    await transaction`select pg_advisory_xact_lock(${migrationLockKey})`
+    const [concurrent] = await transaction`select 1 from schema_migrations where version = ${webPushMigrationVersion}`
+    if (concurrent) return
+    await transaction`insert into schema_migrations (version, checksum) values (${webPushMigrationVersion}, ${checksum})`
+  })
 }
 
 /**
