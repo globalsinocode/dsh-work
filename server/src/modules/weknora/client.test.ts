@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import { after, before, test } from 'node:test'
 
+import { RequestError } from '../../domain/request-errors.ts'
 import {
   WeknoraAccountNotProvisionedError,
   WeknoraClient,
@@ -40,6 +41,11 @@ before(async () => {
       if (url.pathname === '/api/v1/integrations/dsh-work/bind-codes/exchange') {
         response.writeHead(200, { 'Content-Type': 'application/json' })
         response.end(JSON.stringify({ user_id: 'wk-bind' }))
+        return
+      }
+      if (url.pathname === '/api/v1/integrations/dsh-work/bind-codes' && request.method === 'POST') {
+        response.writeHead(200, { 'Content-Type': 'application/json' })
+        response.end(JSON.stringify({ url: 'https://kb.example/bind' }))
         return
       }
       if (url.pathname === '/api/v1/knowledge-bases' && request.headers.authorization === 'Bearer user-token') {
@@ -98,4 +104,18 @@ test('listKnowledgeBases uses user token and maps camelCase fields', async () =>
   const session = await client.exchangeSession({ subject: 'ok' })
   const list = await client.listKnowledgeBases(session.accessToken)
   assert.deepEqual(list, [{ id: 'kb-1', name: '手册', description: '说明' }])
+})
+
+test('startBind returns bind url from WeKnora', async () => {
+  const client = new WeknoraClient({ ...config, baseUrl })
+  const started = await client.startBind('http://cb', 'state-1')
+  assert.equal(started.url, 'https://kb.example/bind')
+})
+
+test('startBind maps network failure to weknora_unavailable', async () => {
+  const client = new WeknoraClient({ ...config, baseUrl: 'http://127.0.0.1:1' })
+  await assert.rejects(
+    () => client.startBind('http://cb', 'state-1'),
+    error => error instanceof RequestError && error.code === 'weknora_unavailable',
+  )
 })

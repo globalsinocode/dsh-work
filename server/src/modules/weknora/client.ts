@@ -183,7 +183,7 @@ export class WeknoraClient {
   }
 
   private integrationFetch(path: string, init: RequestInit) {
-    return this.fetchImpl(`${this.config.baseUrl}${path}`, {
+    return this.safeFetch(`${this.config.baseUrl}${path}`, {
       ...init,
       headers: {
         Authorization: `Bearer ${this.config.integrationSecret}`,
@@ -194,7 +194,7 @@ export class WeknoraClient {
   }
 
   private userFetch(path: string, accessToken: string, init: RequestInit = {}) {
-    return this.fetchImpl(`${this.config.baseUrl}${path}`, {
+    return this.safeFetch(`${this.config.baseUrl}${path}`, {
       ...init,
       headers: {
         Authorization: `Bearer ${accessToken}`,
@@ -203,6 +203,14 @@ export class WeknoraClient {
         ...(init.headers ?? {}),
       },
     })
+  }
+
+  private async safeFetch(url: string, init: RequestInit): Promise<Response> {
+    try {
+      return await this.fetchImpl(url, init)
+    } catch {
+      throw new RequestError(503, 'weknora_unavailable', '知识库暂时无法访问')
+    }
   }
 
   private async integrationFailure(response: Response) {

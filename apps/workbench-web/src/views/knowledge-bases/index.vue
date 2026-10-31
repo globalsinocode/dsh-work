@@ -4,7 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { Refresh } from '@element-plus/icons-vue'
 
 import KnowledgeBindPanel from '@/components/knowledge-bind-panel/knowledge-bind-panel.vue'
-import { workbenchApi } from '@/api/client'
+import { WorkbenchApiError, workbenchApi } from '@/api/client'
 import type { WeknoraIntegrationStatus, WeknoraKnowledgeBaseSummary } from '@/types/domain'
 
 const route = useRoute()
@@ -13,6 +13,8 @@ const loading = ref(true)
 const errorMessage = ref('')
 const status = ref<WeknoraIntegrationStatus | null>(null)
 const list = ref<WeknoraKnowledgeBaseSummary[]>([])
+const bindLoading = ref(false)
+const bindErrorMessage = ref('')
 
 const bindFailed = computed(() => route.query.bind === 'failed')
 const showUnconfigured = computed(() => status.value && !status.value.configured)
@@ -38,8 +40,18 @@ async function loadPage() {
 }
 
 async function startBind() {
-  const { url } = await workbenchApi.startWeknoraBind()
-  window.location.assign(url)
+  bindLoading.value = true
+  bindErrorMessage.value = ''
+  try {
+    const { url } = await workbenchApi.startWeknoraBind()
+    window.location.assign(url)
+  } catch (error) {
+    bindErrorMessage.value = error instanceof WorkbenchApiError || error instanceof Error
+      ? error.message
+      : '连接暂时无法开始，请稍后重试'
+  } finally {
+    bindLoading.value = false
+  }
 }
 
 function openKnowledgeBase(kbId: string) {
@@ -82,6 +94,8 @@ watch(() => route.query.bind, () => { if (route.path === '/knowledge') void load
       v-else-if="showBind"
       :directory-account="status!.directoryAccount === 'missing' ? 'missing' : 'none'"
       :bind-failed="bindFailed"
+      :loading="bindLoading"
+      :error-message="bindErrorMessage"
       @bind="startBind"
     />
 
