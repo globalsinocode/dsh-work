@@ -15,6 +15,7 @@ import {
   Key,
   Menu,
   Monitor,
+  MoreFilled,
   Notebook,
   PieChart,
   SwitchButton,
@@ -161,8 +162,11 @@ watch(
     <button v-if="mobileOpen" class="sidebar-scrim" type="button" aria-label="关闭导航" @click="mobileOpen = false"></button>
     <aside class="admin-sidebar" :class="{ 'admin-sidebar--mobile-open': mobileOpen }">
       <div class="admin-sidebar__logo">
-        <AppLogo dark />
-        <span class="brand-context">管理平台</span>
+        <AppLogo dark>
+          <template #badge>
+            <span class="brand-context">管理平台</span>
+          </template>
+        </AppLogo>
       </div>
       <nav class="admin-sidebar__nav" aria-label="管理后台主导航">
         <section v-for="group in visibleNavigationGroups" :key="group.label" class="admin-nav-group">
@@ -204,6 +208,26 @@ watch(
           </div>
         </section>
       </nav>
+      <div class="admin-sidebar__footer">
+        <el-dropdown trigger="click" placement="top-start" @command="onRoleCommand">
+          <button class="admin-profile-button" type="button">
+            <span class="admin-profile-button__avatar">{{ avatarText }}</span>
+            <span class="admin-profile-button__copy">
+              <strong>{{ userName }}</strong>
+              <small>{{ roleLabel }}</small>
+            </span>
+            <el-icon><MoreFilled /></el-icon>
+          </button>
+          <template #dropdown>
+            <el-dropdown-menu class="role-menu">
+              <div class="role-menu__heading">用户中心</div>
+              <el-dropdown-item command="about"><el-icon><InfoFilled /></el-icon>关于 dsh-work</el-dropdown-item>
+              <el-dropdown-item command="workbench"><el-icon><Grid /></el-icon>返回员工工作台</el-dropdown-item>
+              <el-dropdown-item v-if="canLogout" divided command="logout"><el-icon><SwitchButton /></el-icon>退出登录</el-dropdown-item>
+            </el-dropdown-menu>
+          </template>
+        </el-dropdown>
+      </div>
     </aside>
 
     <div class="admin-shell__body">
@@ -215,22 +239,6 @@ watch(
             <small v-if="routeSubtitle" class="admin-topbar__subtitle">{{ routeSubtitle }}</small>
           </div>
         </div>
-        <div class="admin-topbar__actions">
-          <el-dropdown trigger="click" placement="bottom-end" @command="onRoleCommand">
-            <button class="header-user-button" type="button">
-              <span class="header-user-button__avatar">{{ avatarText }}</span>
-              <span class="header-user-button__copy"><strong>{{ userName }}</strong><small>{{ roleLabel }}</small></span>
-              <span class="header-user-button__chevron" aria-hidden="true">⌄</span>
-            </button>
-            <template #dropdown>
-              <el-dropdown-menu>
-                <el-dropdown-item command="about"><el-icon><InfoFilled /></el-icon>关于 dsh-work</el-dropdown-item>
-                <el-dropdown-item command="workbench"><el-icon><Grid /></el-icon>返回员工工作台</el-dropdown-item>
-                <el-dropdown-item v-if="canLogout" divided command="logout"><el-icon><SwitchButton /></el-icon>退出登录</el-dropdown-item>
-              </el-dropdown-menu>
-            </template>
-          </el-dropdown>
-        </div>
       </header>
       <main class="admin-main"><slot /></main>
     </div>
@@ -240,17 +248,15 @@ watch(
 <style scoped>
 .admin-shell { min-height: 100vh; background: var(--color-bg-page); }
 .admin-sidebar { position: fixed; z-index: 30; inset: 0 auto 0 0; display: flex; width: var(--dsh-sidebar-width); flex-direction: column; overflow: hidden; border-right: 1px solid var(--color-border); background: var(--color-bg-base); }
-.admin-sidebar__logo { display: flex; min-height: 68px; align-items: center; justify-content: space-between; gap: 10px; padding: 15px 18px; border-bottom: 1px solid var(--color-bg-subtle); }
-.admin-sidebar__logo :deep(.logo__text strong) { font-size: var(--font-size-header); }
-.admin-sidebar__logo :deep(.logo__text span) { font-size: var(--font-size-micro); }
-.brand-context { flex: 0 0 auto; padding: 3px 7px; border: 1px solid var(--color-border); border-radius: var(--radius-tag); color: var(--color-text-muted); font-size: var(--font-size-badge); }
+.admin-sidebar__logo { display: flex; min-height: 64px; align-items: center; padding: 12px 16px 12px 20px; border-bottom: 1px solid var(--color-bg-subtle); }
+.brand-context { flex: 0 0 auto; padding: 2px 7px; border-radius: 999px; color: var(--color-text-muted); background: var(--color-bg-subtle); font-size: var(--font-size-micro); line-height: 1.4; }
 .admin-sidebar__nav { min-height: 0; flex: 1; padding: 12px 0; overflow: auto; }
 .admin-nav-group { margin-bottom: 4px; }
 .admin-conversation-item > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .admin-conversation-note { margin: calc(var(--spacing-card) / 2) var(--spacing-section); color: var(--color-text-muted); font-size: var(--font-size-badge); }
 .admin-nav-group__label { display: flex; width: 100%; align-items: center; justify-content: space-between; padding: 8px 20px 4px; border: 0; color: var(--color-text-muted); background: transparent; cursor: pointer; font-size: var(--font-size-badge); font-weight: var(--font-weight-title); letter-spacing: .04em; text-transform: uppercase; }
 .admin-nav-group__label:hover { color: var(--color-text-secondary); }
-.admin-nav-group__label:focus-visible, .admin-nav-item:focus-visible, .header-user-button:focus-visible { outline: 2px solid var(--color-primary); outline-offset: -2px; }
+.admin-nav-group__label:focus-visible, .admin-nav-item:focus-visible, .admin-profile-button:focus-visible { outline: 2px solid var(--color-primary); outline-offset: -2px; }
 .admin-nav-group__label .el-icon { transition: transform 150ms ease; }
 .admin-nav-group__label .el-icon.is-open { transform: rotate(90deg); }
 .admin-nav-group__items { padding-top: 2px; }
@@ -258,20 +264,21 @@ watch(
 .admin-nav-item:hover { color: var(--color-text-primary); background: var(--color-bg-subtle); }
 .admin-nav-item--active { color: var(--color-primary); background: var(--color-primary-light); font-weight: var(--font-weight-badge); }
 .admin-nav-item .el-icon { width: 18px; flex: 0 0 auto; font-size: var(--font-size-header); }
+.admin-sidebar__footer { display: flex; align-items: center; padding: 9px 9px 11px; border-top: 1px solid var(--color-border); }
+.admin-sidebar__footer > :deep(.el-dropdown) { min-width: 0; flex: 1; }
+.admin-profile-button { display: flex; align-items: center; width: 100%; min-height: 48px; gap: 10px; padding: 6px 8px; border: 0; border-radius: var(--dsh-radius-sm); color: var(--color-text-primary); background: transparent; cursor: pointer; text-align: left; }
+.admin-profile-button:hover { background: var(--color-bg-subtle); }
+.admin-profile-button__avatar { display: grid; width: 30px; height: 30px; flex: 0 0 auto; place-items: center; border-radius: var(--radius-tag); color: var(--color-primary); background: var(--color-primary-light); font-size: var(--font-size-caption); font-weight: var(--font-weight-title); }
+.admin-profile-button__copy { display: flex; min-width: 0; flex: 1; flex-direction: column; }
+.admin-profile-button__copy strong { overflow: hidden; font-size: var(--font-size-caption); font-weight: var(--font-weight-title); text-overflow: ellipsis; white-space: nowrap; }
+.admin-profile-button__copy small { margin-top: 2px; color: var(--color-text-muted); font-size: var(--font-size-micro); }
+.admin-profile-button > .el-icon { flex: 0 0 auto; color: var(--color-text-muted); font-size: var(--font-size-caption); }
 .admin-shell__body { min-width: 0; min-height: 100vh; margin-left: var(--dsh-sidebar-width); }
 .admin-topbar { position: sticky; z-index: 20; top: 0; display: flex; min-height: var(--dsh-topbar-height); align-items: center; justify-content: space-between; gap: 18px; padding: 0 20px; border-bottom: 1px solid var(--color-border); background: var(--color-bg-base); }
-.admin-topbar__context, .admin-topbar__actions { display: flex; align-items: center; gap: 10px; }
-.admin-topbar__context { min-width: 0; }
+.admin-topbar__context { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .admin-topbar__copy { display: flex; min-width: 0; align-items: baseline; gap: 10px; }
 .admin-topbar__context strong { color: var(--color-text-heading); font-size: var(--font-size-header); font-weight: var(--font-weight-heading); }
 .admin-topbar__subtitle { max-width: min(760px, 62vw); overflow: hidden; color: var(--color-text-muted); font-size: var(--font-size-micro); font-weight: var(--font-weight-body); text-overflow: ellipsis; white-space: nowrap; }
-.header-user-button { display: flex; min-width: 0; align-items: center; gap: 8px; padding: 3px 7px; border: 0; border-radius: var(--radius-tag); color: var(--color-text-primary); background: transparent; cursor: pointer; text-align: left; }
-.header-user-button:hover { background: var(--color-bg-subtle); }
-.header-user-button__avatar { display: grid; width: 28px; height: 28px; flex: 0 0 auto; place-items: center; border-radius: 50%; color: var(--color-text-primary); background: var(--color-bg-subtle); font-size: var(--font-size-caption); font-weight: var(--font-weight-title); }
-.header-user-button__copy { display: flex; min-width: 0; flex-direction: column; }
-.header-user-button__copy strong { max-width: 120px; overflow: hidden; font-size: var(--font-size-body); font-weight: var(--font-weight-badge); text-overflow: ellipsis; white-space: nowrap; }
-.header-user-button__copy small { margin-top: 1px; color: var(--color-text-muted); font-size: var(--font-size-micro); }
-.header-user-button__chevron { color: var(--color-text-muted); font-size: var(--font-size-caption); }
 .admin-main { min-height: calc(100vh - var(--dsh-topbar-height)); padding: 10px 14px 18px; background: var(--color-bg-page); }
 .mobile-menu { display: none; }
 .sidebar-scrim { position: fixed; z-index: 25; inset: 0; display: none; border: 0; background: rgb(5 12 24 / 52%); }

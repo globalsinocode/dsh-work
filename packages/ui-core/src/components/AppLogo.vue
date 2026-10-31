@@ -12,7 +12,10 @@ defineProps<{
       <span class="logo__mark-line"></span>
     </div>
     <div v-if="!compact" class="logo__text">
-      <strong>dsh-work</strong>
+      <div class="logo__title-row">
+        <strong>dsh-work</strong>
+        <slot name="badge" />
+      </div>
       <span>企业 Agent 工作空间</span>
     </div>
   </div>
@@ -22,7 +25,7 @@ defineProps<{
 .logo {
   display: inline-flex;
   align-items: center;
-  gap: 11px;
+  gap: 9px;
   min-width: 0;
 }
 
@@ -80,6 +83,14 @@ defineProps<{
   display: flex;
   min-width: 0;
   flex-direction: column;
+}
+
+.logo__title-row {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: 6px;
+  white-space: nowrap;
 }
 
 .logo__text strong {

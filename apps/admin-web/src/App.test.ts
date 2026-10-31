@@ -90,9 +90,9 @@ describe('global management conversation history', () => {
     }
   })
 
-  it('opens the about page from the authenticated user dropdown', async () => {
+  it('opens the about page from the sidebar footer user menu', async () => {
     const { wrapper, router } = await render()
-    await wrapper.get('.header-user-button').trigger('click')
+    await wrapper.get('.admin-profile-button').trigger('click')
 
     const aboutItem = [...document.body.querySelectorAll('.el-dropdown-menu__item')]
       .find(item => item.textContent?.includes('关于 dsh-work'))
