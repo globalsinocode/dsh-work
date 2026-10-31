@@ -55,6 +55,19 @@ test('a Skill only users may invoke does not cover, while a same-name installed 
   assert.deepEqual(sameName.exclusions, [{ skill: `${html.id}@${html.version}`, reason: 'covered', coveredBy: 'skill-b@1.0.0' }])
 })
 
+test('CRLF line endings still match versions.lock.json', () => {
+  const copy = mkdtempSync(join(tmpdir(), 'builtin-skills-crlf-'))
+  try {
+    cpSync(root, copy, { recursive: true })
+    const path = join(copy, 'dsh-work-file-analysis', 'SKILL.md')
+    const lf = readFileSync(path, 'utf8').replace(/\r\n/g, '\n')
+    writeFileSync(path, lf.replace(/\n/g, '\r\n'))
+    assert.doesNotThrow(() => loadBuiltinSkillCatalog(copy))
+  } finally {
+    rmSync(copy, { recursive: true, force: true })
+  }
+})
+
 test('changing a built-in Skill without bumping its version fails to load', () => {
   const copy = mkdtempSync(join(tmpdir(), 'builtin-skills-'))
   try {

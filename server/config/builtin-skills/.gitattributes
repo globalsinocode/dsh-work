@@ -1,0 +1,2 @@
+# 内置 Skill 摘要按仓库内 LF 字节计算；Windows 默认 CRLF 会导致启动校验失败。
+* text eol=lf

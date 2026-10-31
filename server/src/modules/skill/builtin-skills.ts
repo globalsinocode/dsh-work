@@ -176,13 +176,18 @@ export function loadBuiltinSkillCatalog(root: string): BuiltinSkillCatalog {
   return new BuiltinSkillCatalog(definitions.map(definition => loadBuiltinSkill(root, definition, lock)))
 }
 
+/** 与 versions.lock.json 一致：按 LF 文本计算摘要。 */
+function normalizeBuiltinSkillText(value: string): string {
+  return value.replace(/\r\n/g, '\n').replace(/\r/g, '\n')
+}
+
 function loadBuiltinSkill(root: string, definition: { id: string; scenario: BuiltinSkillScenario }, lock: Record<string, Record<string, string>>): BuiltinSkill {
   const directory = join(root, definition.id)
   const fail = (message: string): never => { throw new Error(`内置 Skill ${definition.id} 无效：${message}`) }
   const files = listFiles(directory).map(path => {
     try { assertPackagePath(path) } catch { fail(`不安全的文件路径：${path}`) }
     if (!allowedExtensions.test(path)) fail(`不允许的文件类型：${path}`)
-    const content = readFileSync(join(directory, path), 'utf8')
+    const content = normalizeBuiltinSkillText(readFileSync(join(directory, path), 'utf8'))
     return { path, content, sha256: hash(content), size: Buffer.byteLength(content) }
   })
   if (files.length > MAX_SKILL_FILES) fail(`最多 ${MAX_SKILL_FILES} 个文件`)
