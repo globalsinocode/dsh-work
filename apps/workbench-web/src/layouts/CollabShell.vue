@@ -11,12 +11,14 @@ import {
   Monitor,
   Reading,
   Setting,
+  Switch,
   SwitchButton,
   UserFilled,
 } from '@element-plus/icons-vue'
 
 import { AppLogo } from '@dsh-work/ui-core'
 import ModeSwitchMenu from '@/components/ModeSwitchMenu.vue'
+import { useModeSwitch } from '@/composables/useModeSwitch'
 import { useWorkbenchBootstrap } from '@/composables/useWorkbenchBootstrap'
 import { roleLabels, useAuthStore } from '@/stores/auth'
 import { useCollabConversationStore } from '@/stores/collab-conversations'
@@ -26,6 +28,7 @@ const route = useRoute()
 const router = useRouter()
 const authStore = useAuthStore()
 const conversations = useCollabConversationStore()
+const { switchLabel, switchMode } = useModeSwitch()
 
 const navigation = [
   { label: '对话', path: '/c/chats', icon: ChatDotRound },
@@ -61,7 +64,8 @@ function siblingApplicationUrl(configured: string | undefined, port: string) {
 
 function onAccountCommand(command: string | number | object) {
   const value = String(command)
-  if (value === 'admin') openAdmin()
+  if (value === 'switch-mode') void switchMode()
+  else if (value === 'admin') openAdmin()
   else if (value === 'logout') authStore.logout()
   else if (value.startsWith('/')) navigate(value)
 }
@@ -127,6 +131,10 @@ onMounted(() => {
               <el-dropdown-item command="/knowledge">
                 <el-icon><Reading /></el-icon>
                 知识库
+              </el-dropdown-item>
+              <el-dropdown-item divided command="switch-mode">
+                <el-icon><Switch /></el-icon>
+                {{ switchLabel }}
               </el-dropdown-item>
               <el-dropdown-item v-if="authStore.canAccessAdmin" divided command="admin">
                 <el-icon><Monitor /></el-icon>

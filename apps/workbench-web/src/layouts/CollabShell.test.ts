@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { workbenchApi } from '@/api/client'
 import { useAuthStore } from '@/stores/auth'
+import { useUiModeStore } from '@/stores/ui-mode'
 import CollabShell from './CollabShell.vue'
 
 vi.mock('@/api/client', () => ({
@@ -14,12 +15,14 @@ vi.mock('@/api/client', () => ({
     listTasks: vi.fn(),
     listSessions: vi.fn(),
     getWorkspaces: vi.fn(),
+    getPreferences: vi.fn(),
+    updatePreferences: vi.fn(),
   },
 }))
 
 afterEach(() => vi.restoreAllMocks())
 
-async function setup(role: 'employee' | 'platform_admin', path = '/c/chats') {
+async function setup(role: 'employee' | 'platform_admin', path = '/c/chats', mode: 'work' | 'collab' = 'collab') {
   vi.mocked(workbenchApi.getSession).mockResolvedValue({
     user: { id: 'U00001', name: '林岚', title: '', department: '', avatarText: '林', role, dataScopes: [] },
     identityProvider: 'prototype-sso',
@@ -27,6 +30,7 @@ async function setup(role: 'employee' | 'platform_admin', path = '/c/chats') {
   } as never)
   const pinia = createPinia()
   setActivePinia(pinia)
+  useUiModeStore().mode = mode
   await useAuthStore().load()
   const page = { template: '<div>页面</div>' }
   const router = createRouter({
@@ -98,5 +102,15 @@ describe('CollabShell', () => {
     const { wrapper } = await setup('platform_admin')
     expect(wrapper.get('.menu').text()).toContain('打开管理后台')
     wrapper.unmount()
+  })
+
+  it('offers the opposite mode in the account menu of either mode', async () => {
+    const { wrapper } = await setup('employee', '/c/chats', 'collab')
+    expect(wrapper.get('.menu').text()).toContain('切换至工作模式')
+    wrapper.unmount()
+
+    const workShell = await setup('employee', '/c/chats', 'work')
+    expect(workShell.wrapper.get('.menu').text()).toContain('切换至协作模式')
+    workShell.wrapper.unmount()
   })
 })

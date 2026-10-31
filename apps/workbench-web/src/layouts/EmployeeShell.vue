@@ -16,6 +16,7 @@ import {
   Reading,
   Setting,
   Share,
+  Switch,
   SwitchButton,
   UserFilled,
 } from '@element-plus/icons-vue'
@@ -27,6 +28,7 @@ import { useNotificationStore } from '@/stores/notifications'
 import { useTaskStore } from '@/stores/tasks'
 import ModeSwitchMenu from '@/components/ModeSwitchMenu.vue'
 import NotificationInbox from '@/components/NotificationInbox.vue'
+import { useModeSwitch } from '@/composables/useModeSwitch'
 import type { TaskRun } from '@/types/domain'
 import { isTaskInArchivedWorkspace } from '@/utils/archived-workspaces'
 import { conversationRemovalNotice } from '@/utils/content-lifecycle'
@@ -47,6 +49,7 @@ const contentStore = useContentStore()
 
 const mobileOpen = ref(false)
 const deletingSessionId = ref<string>()
+const { switchLabel, switchMode } = useModeSwitch()
 
 const navigation = [
   { label: '新对话', path: '/workbench', icon: HomeFilled },
@@ -83,6 +86,7 @@ function siblingApplicationUrl(configured: string | undefined, port: string) {
 function onAccountCommand(command: string | number | object) {
   const value = String(command)
   if (value === 'user-center') navigate('/settings')
+  if (value === 'switch-mode') void switchMode()
   if (value === 'admin') openAdmin()
   if (value === 'logout') authStore.logout()
 }
@@ -280,7 +284,6 @@ onBeforeUnmount(() => {
       </section>
 
       <div class="employee-sidebar__footer">
-        <NotificationInbox />
         <el-dropdown trigger="click" placement="top-start" @command="onAccountCommand">
           <button class="profile-button" type="button" aria-label="打开用户中心">
             <span class="profile-button__avatar">{{ authStore.user.avatarText }}</span>
@@ -297,6 +300,10 @@ onBeforeUnmount(() => {
                 <el-icon><Setting /></el-icon>
                 个人资料与设置
               </el-dropdown-item>
+              <el-dropdown-item command="switch-mode">
+                <el-icon><Switch /></el-icon>
+                {{ switchLabel }}
+              </el-dropdown-item>
               <el-dropdown-item v-if="authStore.canAccessAdmin" divided command="admin">
                 <el-icon><Monitor /></el-icon>
                 打开管理后台
@@ -308,6 +315,7 @@ onBeforeUnmount(() => {
             </el-dropdown-menu>
           </template>
         </el-dropdown>
+        <NotificationInbox />
       </div>
     </aside>
 
@@ -349,7 +357,8 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   min-height: 64px;
-  padding: 14px 15px 12px 18px;
+  /* 左内边距 17px + 模式菜单按钮的 2px 内边距 = logo 图标起点 19px，与下方导航图标左对齐。 */
+  padding: 14px 15px 12px 17px;
 }
 
 .new-conversation-button {
@@ -476,7 +485,19 @@ onBeforeUnmount(() => {
 .recent-conversation:hover .recent-conversation__menu,
 .recent-conversation:focus-within .recent-conversation__menu { opacity: 1; pointer-events: auto; }
 
-.employee-sidebar__footer { padding: 9px 9px 11px; border-top: 1px solid #e3e3e0; }
+.employee-sidebar__footer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 9px 11px;
+  border-top: 1px solid #e3e3e0;
+}
+
+.employee-sidebar__footer > :deep(.el-dropdown) {
+  min-width: 0;
+  flex: 1;
+}
+
 .profile-button { display: flex; align-items: center; width: 100%; min-height: 48px; gap: 10px; padding: 6px 8px; border: 0; border-radius: 9px; color: #272825; background: transparent; cursor: pointer; text-align: left; }
 .profile-button:hover { background: #e7e7e4; }
 .profile-button__avatar { display: grid; width: 31px; height: 31px; flex: 0 0 auto; place-items: center; border-radius: 9px; color: #124d3f; background: #bcebdc; font-size: var(--dsh-font-size-body); font-weight: 700; }
