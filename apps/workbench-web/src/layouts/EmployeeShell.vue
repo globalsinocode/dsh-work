@@ -300,11 +300,11 @@ onBeforeUnmount(() => {
                 <el-icon><Setting /></el-icon>
                 个人资料与设置
               </el-dropdown-item>
-              <el-dropdown-item command="switch-mode">
+              <el-dropdown-item divided command="switch-mode">
                 <el-icon><Switch /></el-icon>
                 {{ switchLabel }}
               </el-dropdown-item>
-              <el-dropdown-item v-if="authStore.canAccessAdmin" divided command="admin">
+              <el-dropdown-item v-if="authStore.canAccessAdmin" command="admin">
                 <el-icon><Monitor /></el-icon>
                 打开管理后台
               </el-dropdown-item>

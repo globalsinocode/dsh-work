@@ -24,9 +24,9 @@ vi.mock('@/api/client', () => ({
 
 afterEach(() => vi.restoreAllMocks())
 
-async function setup(mode: 'work' | 'collab' = 'work') {
+async function setup(mode: 'work' | 'collab' = 'work', role: 'employee' | 'platform_admin' = 'employee') {
   vi.mocked(workbenchApi.getSession).mockResolvedValue({
-    user: { id: 'U00001', name: '林岚', title: '', department: '', avatarText: '林', role: 'employee', dataScopes: [] },
+    user: { id: 'U00001', name: '林岚', title: '', department: '', avatarText: '林', role, dataScopes: [] },
     identityProvider: 'prototype-sso',
     apiAudience: 'workbench',
   } as never)
@@ -75,5 +75,13 @@ describe('EmployeeShell', () => {
     const collabShell = await setup('collab')
     expect(collabShell.wrapper.get('.menu').text()).toContain('切换至工作模式')
     collabShell.wrapper.unmount()
+  })
+
+  it('groups the mode switch above the admin entry, outside the user-center section', async () => {
+    const { wrapper } = await setup('work', 'platform_admin')
+    const text = wrapper.get('.menu').text()
+    expect(text.indexOf('个人资料与设置')).toBeLessThan(text.indexOf('切换至协作模式'))
+    expect(text.indexOf('切换至协作模式')).toBeLessThan(text.indexOf('打开管理后台'))
+    wrapper.unmount()
   })
 })

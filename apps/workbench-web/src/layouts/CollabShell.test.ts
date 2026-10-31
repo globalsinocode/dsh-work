@@ -100,7 +100,10 @@ describe('CollabShell', () => {
 
   it('shows the admin entry for admin roles', async () => {
     const { wrapper } = await setup('platform_admin')
-    expect(wrapper.get('.menu').text()).toContain('打开管理后台')
+    const text = wrapper.get('.menu').text()
+    expect(text).toContain('打开管理后台')
+    // 切换模式与打开管理后台同组，且在其上方。
+    expect(text.indexOf('切换至工作模式')).toBeLessThan(text.indexOf('打开管理后台'))
     wrapper.unmount()
   })
 
