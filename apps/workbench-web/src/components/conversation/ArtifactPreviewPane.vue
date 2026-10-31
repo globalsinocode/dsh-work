@@ -1,23 +1,29 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { Close, Download, FullScreen, ScaleToOriginal } from '@element-plus/icons-vue'
 
 import ArtifactPreviewBody from '@/components/ArtifactPreviewBody.vue'
-import type { Artifact } from '@/types/domain'
-import { isOfficeArtifact } from '@/utils/artifact-preview'
+import { isOfficeArtifact, type ArtifactPreviewTarget } from '@/utils/artifact-preview'
 import { downloadArtifactFile } from '@/utils/feedback'
 
-/** 对话右栏的成果预览内容：一行标题栏（文件名与版本、下载、全屏、关闭），HTML 只看渲染结果，正文复用 ArtifactPreviewBody。摆放见 ArtifactPreviewPanel。 */
+/** 成果预览侧栏的内容：一行标题栏（文件名与版本、HTML 渲染/源代码切换、下载、全屏、关闭），正文复用 ArtifactPreviewBody。摆放见 ArtifactPreviewPanel。 */
 const props = withDefaults(defineProps<{
-  artifact: Artifact
+  artifact: ArtifactPreviewTarget
   /** 是否提供全屏展开；已经全屏的手机宽度不提供。 */
   canExpand?: boolean
   expanded?: boolean
 }>(), { canExpand: false, expanded: false })
 const emit = defineEmits<{ close: []; 'toggle-expand': [] }>()
 
-const meta = computed(() =>
-  `V${props.artifact.version} · ${props.artifact.size}${isOfficeArtifact(props.artifact.type) && props.artifact.textPreview === 'available' ? ' · 解析文本' : ''}`)
+const meta = computed(() => {
+  const parts = [`V${props.artifact.version}`]
+  if (props.artifact.size) parts.push(props.artifact.size)
+  if (isOfficeArtifact(props.artifact.type) && props.artifact.textPreview === 'available') parts.push('解析文本')
+  return parts.join(' · ')
+})
+
+/** HTML 成果看渲染结果还是源代码；正文按它切换 iframe 与源代码，切到别的成果由正文复位。 */
+const htmlView = ref<'preview' | 'source'>('preview')
 </script>
 
 <template>
@@ -28,6 +34,16 @@ const meta = computed(() =>
         <strong :title="artifact.name">{{ artifact.name }}</strong>
         <small>{{ meta }}</small>
       </div>
+      <el-radio-group
+        v-if="artifact.type === 'html'"
+        v-model="htmlView"
+        class="artifact-pane__view-toggle"
+        size="small"
+        aria-label="预览方式"
+      >
+        <el-radio-button value="preview">渲染预览</el-radio-button>
+        <el-radio-button value="source">源代码</el-radio-button>
+      </el-radio-group>
       <button
         type="button"
         class="artifact-pane__action"
@@ -54,7 +70,7 @@ const meta = computed(() =>
     </header>
 
     <div class="artifact-pane__body">
-      <ArtifactPreviewBody :artifact="artifact" active text-layout="tabs" />
+      <ArtifactPreviewBody v-model:html-view="htmlView" :artifact="artifact" active text-layout="tabs" />
     </div>
   </div>
 </template>
@@ -104,6 +120,10 @@ const meta = computed(() =>
   color: var(--dsh-color-muted);
   font-size: var(--dsh-font-size-badge);
   white-space: nowrap;
+}
+
+.artifact-pane__view-toggle {
+  flex: 0 0 auto;
 }
 
 .artifact-pane__action {

@@ -6,17 +6,17 @@ import { workbenchApi } from '@/api/client'
 import ArtifactTextView from '@/components/ArtifactTextView.vue'
 import { useArtifactImage } from '@/composables/useArtifactImage'
 import type { Artifact, ArtifactTextPreview } from '@/types/domain'
-import { artifactBodyKind, isOfficeArtifact } from '@/utils/artifact-preview'
+import { artifactBodyKind, isOfficeArtifact, parseCsvPreview } from '@/utils/artifact-preview'
 import { notifyActionFailure } from '@/utils/feedback'
 
 /**
- * 成果预览的正文，供 HTML 预览对话框、成果预览对话框与对话右栏共用：
+ * 成果预览的正文，供成果预览侧栏（ArtifactPreviewPane）共用：
  * - HTML：鉴权下载取回后交给 `sandbox="allow-scripts"` 的 iframe。沙箱不给 `allow-same-origin`，
  *   渲染文档处于 opaque origin——内联脚本可以执行（交互式看板/图表需要），但无法访问工作台 DOM、
  *   Cookie、Storage，也不能顶层跳转或弹窗。再注入 `<meta>` CSP（srcdoc 文档拿不到 HTTP 头）：
  *   只允许内联脚本/样式与 data: 图片，`connect-src` 随 `default-src 'none'` 关闭，脚本无法外发数据。
  * - Office/PDF：只显示解析文本（执行隔离 2b-5），不在工作台中渲染原文件。
- * - Markdown/文本/CSV：读该版本原文；图片：鉴权下载后以本地 object URL 显示。
+ * - Markdown/文本：读该版本原文；CSV 读原文后按表格展示；图片：鉴权下载后以本地 object URL 显示。
  *
  * `active` 为假时不发请求；切换成果、关闭或卸载都作废在途请求，晚到的旧响应不写进当前预览。
  */
@@ -44,6 +44,7 @@ const htmlView = defineModel<'preview' | 'source'>('htmlView', { default: 'previ
 
 const kind = computed(() => props.artifact ? artifactBodyKind(props.artifact.type) : null)
 const officeType = computed(() => props.artifact && isOfficeArtifact(props.artifact.type) ? props.artifact.type : null)
+const csvPreview = computed(() => props.artifact?.type === 'csv' ? parseCsvPreview(content.value) : null)
 
 /** html/raw 的原文与 Office/PDF 的解析结果；图片由 useArtifactImage 管。 */
 const content = ref('')
@@ -143,7 +144,25 @@ const showError = computed(() => kind.value === 'image' ? image.error.value : er
 
     <template v-else-if="kind === 'raw' && active">
       <p v-if="!content.trim()" class="artifact-preview-body__status" data-testid="artifact-preview-empty">这个文件没有可显示的内容，可下载原文件核对</p>
-      <pre v-else-if="artifact?.type === 'csv'" class="artifact-preview-body__plain">{{ content }}</pre>
+      <template v-else-if="csvPreview">
+        <p v-if="csvPreview.truncated" data-testid="artifact-preview-csv-notice" class="artifact-preview-body__notice">
+          仅显示前 500 行，完整内容请下载
+        </p>
+        <div class="artifact-preview-body__csv-wrap">
+          <table data-testid="artifact-preview-csv" class="artifact-preview-body__csv">
+            <thead>
+              <tr>
+                <th v-for="(header, index) in csvPreview.headers" :key="`h-${index}`">{{ header }}</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="(row, rowIndex) in csvPreview.rows" :key="`r-${rowIndex}`">
+                <td v-for="(cell, cellIndex) in row" :key="`c-${rowIndex}-${cellIndex}`">{{ cell }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </template>
       <AssistantMessageContent v-else :text="content" />
     </template>
 
@@ -178,8 +197,7 @@ const showError = computed(() => kind.value === 'image' ? image.error.value : er
   background: #fff;
 }
 
-.artifact-preview-body__source,
-.artifact-preview-body__plain {
+.artifact-preview-body__source {
   overflow: auto;
   margin: 0;
   padding: 12px;
@@ -190,6 +208,49 @@ const showError = computed(() => kind.value === 'image' ? image.error.value : er
   line-height: 1.6;
   white-space: pre-wrap;
   word-break: break-all;
+}
+
+.artifact-preview-body__notice {
+  margin: 0 0 10px;
+  color: var(--dsh-color-muted);
+  font-size: var(--dsh-font-size-micro);
+  line-height: 1.5;
+}
+
+.artifact-preview-body__csv-wrap {
+  overflow: auto;
+  border: 1px solid var(--dsh-color-border);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.artifact-preview-body__csv {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--dsh-font-size-body);
+}
+
+.artifact-preview-body__csv th,
+.artifact-preview-body__csv td {
+  padding: 8px 10px;
+  border: 1px solid var(--dsh-color-border);
+  text-align: left;
+  vertical-align: top;
+}
+
+.artifact-preview-body__csv th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: #f7f8fa;
+  color: var(--dsh-color-ink);
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.artifact-preview-body__csv td {
+  color: var(--dsh-color-text);
+  white-space: nowrap;
 }
 
 .artifact-preview-body__source {

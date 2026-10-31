@@ -6,7 +6,7 @@ import { workbenchApi } from '@/api/client'
 import PageHeader from '@/components/PageHeader.vue'
 import { useAuthStore } from '@/stores/auth'
 import { usePagedQuery } from '@/composables/usePagedQuery'
-import ArtifactContentDialog from '@/components/ArtifactContentDialog.vue'
+import ArtifactPreviewPanel from '@/components/conversation/ArtifactPreviewPanel.vue'
 import type { Artifact, PersonalFile } from '@/types/domain'
 import { personalFilePreview } from '@/utils/artifact-preview'
 import { fileRemovalNotice } from '@/utils/content-lifecycle'
@@ -50,11 +50,10 @@ function download(file: PersonalFile) {
     }
   })
 }
-// 执行隔离 2b-5：生成成果中解析成功的 Office/PDF 与图片可在对话框中预览。
-const previewOpen = ref(false), previewing = ref<Pick<Artifact, 'id' | 'version' | 'name' | 'type'> | null>(null)
+// 执行隔离 2b-5：生成成果中解析成功的 Office/PDF 与图片可在预览侧栏中查看。
+const previewing = ref<Pick<Artifact, 'id' | 'version' | 'name' | 'type'> | null>(null)
 function openPreview(file: PersonalFile) {
   previewing.value = personalFilePreview(file)
-  previewOpen.value = Boolean(previewing.value)
 }
 async function remove(file: PersonalFile) {
   try { await ElMessageBox.confirm(fileRemovalNotice, '移除文件？', { confirmButtonText: '移除文件', cancelButtonText: '取消' }) }
@@ -90,7 +89,7 @@ async function remove(file: PersonalFile) {
       </li>
     </ul>
     <el-button v-if="nextCursor" :loading="loading" @click="loadMore">加载更多</el-button>
-    <ArtifactContentDialog v-model:open="previewOpen" :artifact="previewing" />
+    <ArtifactPreviewPanel :artifact="previewing" :docked="false" @close="previewing = null" />
   </section>
 </template>
 <style scoped>

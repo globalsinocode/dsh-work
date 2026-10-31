@@ -29,6 +29,13 @@ export function artifactPreview(artifact: Pick<Artifact, 'type' | 'textPreview' 
 /** 预览正文的取法：html 沙箱渲染原文，text 为 Office/PDF 解析文本，raw 为 Markdown/文本/CSV 原文，image 为原图。 */
 export type ArtifactBodyKind = 'html' | 'text' | 'raw' | 'image'
 
+/**
+ * 预览侧栏需要的最小成果信息：对话与成果库里是完整成果；“我的文件”列表只有
+ * id、版本、名称与类型（personalFilePreview），大小与解析状态可有可无。
+ */
+export type ArtifactPreviewTarget = Pick<Artifact, 'id' | 'version' | 'name' | 'type'>
+  & Partial<Pick<Artifact, 'size' | 'textPreview'>>
+
 export function artifactBodyKind(type: Artifact['type']): ArtifactBodyKind {
   if (type === 'html') return 'html'
   if (isImageArtifact(type)) return 'image'
@@ -41,7 +48,7 @@ const PERSONAL_FILE_TYPES: Record<string, Artifact['type']> = {
 }
 
 /**
- * “我的文件”中可以预览的生成成果：解析成功的 Office/PDF 与图片。返回预览对话框需要的成果版本；
+ * “我的文件”中可以预览的生成成果：解析成功的 Office/PDF 与图片。返回预览侧栏需要的成果版本；
  * 解析失败或尚未解析的，列表本身已有说明，不提供“预览”。
  */
 export function personalFilePreview(file: PersonalFile): Pick<Artifact, 'id' | 'version' | 'name' | 'type'> | null {

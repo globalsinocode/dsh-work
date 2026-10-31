@@ -4,7 +4,7 @@ import { Files, Search } from '@element-plus/icons-vue'
 
 import { ArtifactCard } from '@dsh-work/ui-core'
 import { useContentStore } from '@/stores/content'
-import ArtifactPreviewDialog from '@/components/ArtifactPreviewDialog.vue'
+import ArtifactPreviewPanel from '@/components/conversation/ArtifactPreviewPanel.vue'
 import PageHeader from '@/components/PageHeader.vue'
 import type { Artifact } from '@/types/domain'
 import { downloadArtifactFile } from '@/utils/feedback'
@@ -12,7 +12,6 @@ import { downloadArtifactFile } from '@/utils/feedback'
 const contentStore = useContentStore()
 const query = ref('')
 const typeFilter = ref('all')
-const previewOpen = ref(false)
 const previewArtifact = ref<Artifact | null>(null)
 
 const filteredArtifacts = computed(() => {
@@ -30,7 +29,6 @@ function download(item: Artifact) {
 
 function preview(item: Artifact) {
   previewArtifact.value = item
-  previewOpen.value = true
 }
 
 onMounted(() => contentStore.refresh())
@@ -80,10 +78,10 @@ onMounted(() => contentStore.refresh())
       <el-button @click="query = ''; typeFilter = 'all'">清除筛选</el-button>
     </el-empty>
 
-    <ArtifactPreviewDialog
-      v-if="previewArtifact"
-      v-model:open="previewOpen"
+    <ArtifactPreviewPanel
       :artifact="previewArtifact"
+      :docked="false"
+      @close="previewArtifact = null"
     />
   </div>
 </template>

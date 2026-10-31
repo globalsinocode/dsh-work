@@ -3,16 +3,17 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue'
 
 import ArtifactPreviewPane from './ArtifactPreviewPane.vue'
 import { useMediaQuery } from '@/composables/useMediaQuery'
-import type { Artifact } from '@/types/domain'
+import type { ArtifactPreviewTarget } from '@/utils/artifact-preview'
 
 /**
- * 对话中点击成果后的预览右栏（EX-ARTIFACT-08）。`docked` 时作为与对话并排的一栏，由宿主留出宽度；
- * 否则（窄屏、项目空间内嵌）覆盖在对话上的抽屉，手机宽度全屏。是否并排由宿主按自身布局判定。
+ * 成果预览侧栏（EX-ARTIFACT-08）：所有文件预览统一走这里，不再用对话框。
+ * `docked` 时作为与页面内容并排的一栏，由宿主留出宽度；否则（窄屏、列表页、
+ * 项目空间内嵌）覆盖在页面上的抽屉，手机宽度全屏。是否并排由宿主按自身布局判定。
  * 右栏与抽屉都可全屏展开，Esc 先退出全屏；关闭预览后复原。全屏的右栏按对话框处理：焦点留在预览内，
- * 不会落到被遮住的对话上（抽屉本身是对话框，由 el-drawer 负责）。
+ * 不会落到被遮住的页面上（抽屉本身是对话框，由 el-drawer 负责）。
  */
 const props = withDefaults(defineProps<{
-  artifact: Artifact | null
+  artifact: ArtifactPreviewTarget | null
   docked: boolean
   /** 不超过此宽度时抽屉全屏；跟随宿主页面已有的手机断点。 */
   fullscreenMaxWidth?: number
@@ -23,7 +24,7 @@ const fullscreen = useMediaQuery(`(max-width: ${props.fullscreenMaxWidth}px)`)
 const label = computed(() => props.artifact ? `成果预览：${props.artifact.name}` : '成果预览')
 const expanded = ref(false)
 /** 抽屉收起动画期间仍显示刚关闭的成果，不闪成空白。 */
-const drawerArtifact = ref<Artifact | null>(props.artifact)
+const drawerArtifact = ref<ArtifactPreviewTarget | null>(props.artifact)
 watch(() => props.artifact, (artifact) => {
   if (artifact) drawerArtifact.value = artifact
   else expanded.value = false

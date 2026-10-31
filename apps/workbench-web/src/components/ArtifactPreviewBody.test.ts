@@ -43,11 +43,14 @@ describe('ArtifactPreviewBody', () => {
     expect(wrapper.get('[data-testid="artifact-preview-empty"]').text()).toContain('没有可显示的内容')
   })
 
-  it('shows CSV as plain text without markdown rendering', async () => {
+  it('shows CSV as a table without markdown rendering', async () => {
     downloadArtifact.mockResolvedValue(new Blob(['区域,收入\n华东,1200']))
     const wrapper = mountBody({ ...memo, type: 'csv', name: '营收.csv' })
     await flushPromises()
-    expect(wrapper.get('.artifact-preview-body__plain').text()).toBe('区域,收入\n华东,1200')
+    const table = wrapper.get('[data-testid="artifact-preview-csv"]')
+    expect(table.findAll('th').map(cell => cell.text())).toEqual(['区域', '收入'])
+    expect(table.findAll('td').map(cell => cell.text())).toEqual(['华东', '1200'])
+    expect(wrapper.find('[data-testid="artifact-preview-csv-notice"]').exists()).toBe(false)
   })
 
   it('reports a failed load, notifies once and retries on request', async () => {

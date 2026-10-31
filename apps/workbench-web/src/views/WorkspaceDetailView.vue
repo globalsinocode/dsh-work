@@ -31,9 +31,8 @@ import type {
   WorkspaceUsageRange,
   WorkspaceUsageTotals,
 } from '@/types/domain'
-import ArtifactContentDialog from '@/components/ArtifactContentDialog.vue'
-import ArtifactPreviewDialog from '@/components/ArtifactPreviewDialog.vue'
 import { artifactPreview } from '@/utils/artifact-preview'
+import ArtifactPreviewPanel from '@/components/conversation/ArtifactPreviewPanel.vue'
 import ConversationStarter from '@/components/ConversationStarter.vue'
 import ProjectBriefCard from '@/components/ProjectBriefCard.vue'
 import ProjectArchivePanel from '@/components/ProjectArchivePanel.vue'
@@ -135,8 +134,7 @@ const memberDialogOpen = ref(false)
 const agentDialogOpen = ref(false)
 const addMembersDialogOpen = ref(false)
 const settingsDialogOpen = ref(false)
-/** HTML 成果预览：读取轨，归档空间与个人空间同样可预览（与下载同口径）。 */
-const previewOpen = ref(false)
+/** 成果预览侧栏：读取轨，归档空间与个人空间同样可预览（与下载同口径）。 */
 const previewArtifact = ref<Artifact | null>(null)
 
 /** 摘要固定取最新 3 条；抽屉分页 20 条（design §2.9 / TW-08）。 */
@@ -609,7 +607,6 @@ function artifactOrigin(item: Artifact): string | undefined {
 
 function openArtifactPreview(item: Artifact) {
   previewArtifact.value = item
-  previewOpen.value = true
 }
 
 watch(
@@ -1656,15 +1653,10 @@ const chatScope = computed(() => ({
     </template>
 
     <!-- 成果预览属读取轨，个人空间与归档空间同样可用，因此不放在 isTeam 分支里。 -->
-    <ArtifactPreviewDialog
-      v-if="previewArtifact?.type === 'html'"
-      v-model:open="previewOpen"
+    <ArtifactPreviewPanel
       :artifact="previewArtifact"
-    />
-    <ArtifactContentDialog
-      v-else-if="previewArtifact"
-      v-model:open="previewOpen"
-      :artifact="previewArtifact"
+      :docked="false"
+      @close="previewArtifact = null"
     />
   </div>
 </template>

@@ -25,7 +25,6 @@ import { useContentStore } from '@/stores/content'
 import { useTaskStore } from '@/stores/tasks'
 import type { AgentRecommendation, Artifact, ChatMessage, ProjectTask, ProjectTaskEvent, SessionThread, SessionThreadMessage, TaskResultOutcome, TaskRun, TaskSource, TeamMemberRole, WorkspaceAgentMember } from '@/types/domain'
 import { TaskComposer } from '@dsh-work/workbench-components'
-import ArtifactPreviewDialog from '@/components/ArtifactPreviewDialog.vue'
 import { runGuardedAction } from '@/utils/action-guard'
 import { downloadArtifactFile, notifyActionFailure } from '@/utils/feedback'
 import { exportConversation } from '@/utils/conversation-export'
@@ -57,7 +56,6 @@ const authStore = useAuthStore()
 const contentStore = useContentStore()
 
 const detailsOpen = ref(false)
-const previewOpen = ref(false)
 const previewArtifact = ref<Artifact | null>(null)
 const conversationScroll = ref<HTMLElement>()
 const showJumpToLatest = ref(false)
@@ -103,24 +101,13 @@ const routeTargetId = computed(() =>
 const wideForPreview = useMediaQuery('(min-width: 1280px)', true)
 const previewDocked = computed(() => wideForPreview.value && !isEmbeddedInWorkspace.value)
 const previewKey = computed(() => previewArtifact.value ? `${previewArtifact.value.id}@${previewArtifact.value.version}` : null)
-/**
- * HTML / Markdown / CSV 仍走成果预览对话框（源代码切换与表格）。
- * PDF 与纯文本走右栏：PDF 只展示解析文本或失败原因，文本展示该版本原文（EX-ARTIFACT-08）。
- */
-const DIALOG_PREVIEW_TYPES = new Set<Artifact['type']>(['html', 'markdown', 'csv'])
+/** 所有成果类型统一走右栏：HTML 有源代码切换，CSV 按表格展示，PDF/Office 只展示解析文本（EX-ARTIFACT-08）。 */
 function openPreview(artifact: Artifact) {
   detailsOpen.value = false
   previewArtifact.value = artifact
-  previewOpen.value = DIALOG_PREVIEW_TYPES.has(artifact.type)
 }
-const panelArtifact = computed(() => {
-  const artifact = previewArtifact.value
-  if (!artifact || previewOpen.value || DIALOG_PREVIEW_TYPES.has(artifact.type)) return null
-  return artifact
-})
 function closePreview() {
   previewArtifact.value = null
-  previewOpen.value = false
 }
 watch(detailsOpen, (open) => { if (open) closePreview() })
 
@@ -249,7 +236,6 @@ watch(currentSessionId, (sessionId) => {
   if (!sessionId) return
   if (previewSessionId && sessionId !== previewSessionId) {
     previewArtifact.value = null
-    previewOpen.value = false
   }
   previewSessionId = sessionId
 }, { immediate: true })
@@ -1462,7 +1448,7 @@ watch(
     :class="{
       'conversation-page--embedded': isEmbeddedInWorkspace,
       'conversation-page--task': inTaskConversation,
-      'conversation-page--previewing': Boolean(task && panelArtifact && previewDocked),
+      'conversation-page--previewing': Boolean(task && previewArtifact && previewDocked),
     }"
   >
     <div v-if="(taskStore.loading || targetLoading) && !task && !sessionThread && !threadMissing" class="conversation-state">
@@ -1756,7 +1742,7 @@ watch(
       <ArtifactPreviewPanel
         v-if="inTaskConversation"
         class="conversation-preview"
-        :artifact="panelArtifact"
+        :artifact="previewArtifact"
         :docked="previewDocked"
         @close="closePreview"
       />
@@ -2191,17 +2177,12 @@ watch(
 
       <ArtifactPreviewPanel
         class="conversation-preview"
-        :artifact="panelArtifact"
+        :artifact="previewArtifact"
         :docked="previewDocked"
         @close="closePreview"
       />
 
     </template>
-    <ArtifactPreviewDialog
-      v-if="previewOpen && previewArtifact"
-      v-model:open="previewOpen"
-      :artifact="previewArtifact"
-    />
   </div>
 </template>
 

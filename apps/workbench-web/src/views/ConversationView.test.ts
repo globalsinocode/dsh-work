@@ -873,9 +873,9 @@ describe('ConversationView 归档只读态（design §2.7 / AC-23）', () => {
     await wrapper.get('[data-testid="preview-artifact-artifact-1"]').trigger('click')
     await flushPromises()
 
-    expect(wrapper.text()).toContain('成果预览')
     expect(wrapper.text()).toContain('周报.md')
-    expect(wrapper.get('[data-testid="artifact-preview-markdown"]').text()).toContain('周报')
+    const previewPanel = wrapper.get('[aria-label="成果预览：周报.md"]')
+    expect(previewPanel.text()).toContain('周报')
     expect(downloadArtifact).toHaveBeenCalledTimes(1)
     expect(downloadArtifact).toHaveBeenCalledWith('artifact-1', 1)
 
