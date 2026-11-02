@@ -57,16 +57,21 @@ test('P1: Office artifacts and images preview in the conversation side panel and
   await imagePanel.getByRole('button', { name: '关闭成果预览' }).click()
   await expect(imagePanel).toHaveCount(0)
 
-  // 我的文件：解析成功的表格与图片提供“预览”，解析失败的 PDF 不提供。
+  // 我的文件：解析成功的表格与图片提供“预览”，在侧栏抽屉中查看；解析失败的 PDF 不提供。
   await page.goto('/files?source=artifact')
   await expect(page.getByRole('button', { name: '预览 季度经营报告.pdf' })).toHaveCount(0)
   await page.getByRole('button', { name: '预览 华东营收.xlsx' }).first().click()
-  const filesDialog = page.getByRole('dialog', { name: /成果预览/ })
-  await expect(filesDialog.getByText('工作表：营收')).toBeVisible()
-  await expect(filesDialog.getByText('工作表：明细')).toBeVisible()
-  await expect(filesDialog.getByRole('cell', { name: '7月' })).toBeVisible()
-  await filesDialog.getByRole('button', { name: '关闭成果预览' }).click()
-  await expect(filesDialog).toBeHidden()
+  const filesDrawer = page.getByRole('dialog', { name: '成果预览：华东营收.xlsx' })
+  await expect(filesDrawer.getByRole('button', { name: '营收' })).toHaveAttribute('aria-pressed', 'true')
+  await expect(filesDrawer.getByRole('region', { name: '工作表 营收' })).toBeVisible()
+  await expect(filesDrawer.getByRole('cell', { name: '华东', exact: true })).toBeVisible()
+  await expect(filesDrawer.getByRole('cell', { name: '7月' })).toHaveCount(0)
+  await filesDrawer.getByRole('button', { name: '明细' }).click()
+  await expect(filesDrawer.getByRole('button', { name: '明细' })).toHaveAttribute('aria-pressed', 'true')
+  await expect(filesDrawer.getByRole('region', { name: '工作表 明细' })).toBeVisible()
+  await expect(filesDrawer.getByRole('cell', { name: '7月' })).toBeVisible()
+  await filesDrawer.getByRole('button', { name: '关闭成果预览' }).click()
+  await expect(filesDrawer).toBeHidden()
 })
 
 test('P1: the preview gives way to 对话详情 and becomes a drawer on narrow screens', async ({ page }) => {
