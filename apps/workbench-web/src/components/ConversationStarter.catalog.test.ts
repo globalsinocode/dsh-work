@@ -34,6 +34,7 @@ describe('ConversationStarter 员工目录预选', () => {
     const wrapper = mount(ConversationStarter, { global: { plugins: [pinia, ElementPlus] } })
     await flushPromises()
 
+    expect(wrapper.get('.workbench-welcome__copy').text()).toContain('告诉我分析主题和时间范围。')
     const composer = wrapper.findComponent(TaskComposer)
     expect(composer.props('selectedAgentName')).toBe('经营分析同事')
     expect(composer.get('[aria-label="已选择 AI 同事"]').text()).toContain('经营分析同事')

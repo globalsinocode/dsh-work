@@ -299,7 +299,7 @@
 
 ### 5.6 员工经 Skill 创建专家新建 Skill
 
-设计与原型见 [Skill 创建专家方案](../design/skill-creator-plan.md)。已实施：Agent 版本开关、草稿保存与员工提交、管理员审核与发布（代码级 P1：`SKC-01`、`SKC-02`、`SKC-03`）、Skill 广场“创建 Skill”入口。Skill 创建专家的定义（SOUL.md、说明与验证问题，方案 5.1、5.2）已写好，由平台管理员在管理端创建、验证并发布，不随代码预置，目前尚未发布。经 dsh-work 助手推荐进入已有 P1 浏览器旅程（`SKC-01` 第 1 步）；真实 DSH 中助手是否据此推荐，以及整体真实验收（`SKC-P2`）尚未完成。
+设计与原型见 [Skill 创建专家方案](../design/skill-creator-plan.md)。已实施：Agent 版本开关、草稿保存与员工提交、管理员审核与发布（代码级 P1：`SKC-01`、`SKC-02`、`SKC-03`）、Skill 广场“创建 Skill”入口。Skill 创建专家的定义（SOUL.md、说明与验证问题，方案 5.1、5.2）已写好，由平台管理员在管理端创建、验证并发布，不随代码预置；2026-11-02 已在本机开发环境发布并完成真实 DSH 验收（`SKC-P2`，含 dsh-work 助手据说明推荐），受控生产环境需在该环境管理端另行创建与发布。
 
 - Agent 版本开关“可创建 Skill”（`skill_creation_enabled`，默认关闭；关闭时不进入定义与验证指纹）。开启后，只在个人空间中由员工发起的交互运行装配 `list_available_skills` 与 `skill_draft_save`；`bash` 被 Runtime 停用时不装配保存工具（草稿目录只能经执行容器中的 `bash` 写出）。团队空间、定时与主动任务、发布试运行、系统与管理运行不装配，Skill 不能声明。
 - `list_available_skills` 只返回发起员工在 Skill 广场可选用的已发布 Skill（按 5.3 的可见范围）与平台内置 Skill。

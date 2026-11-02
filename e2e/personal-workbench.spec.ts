@@ -119,6 +119,7 @@ test('SKC-04: Skill plaza opens a new chat with the Skill creator, nothing prefi
   await page.getByRole('button', { name: '创建 Skill' }).click()
   await expect(page).toHaveURL(/\/workbench\?agent=skill-creator$/)
   await expect(page.getByLabel('已选择 AI 同事', { exact: true })).toContainText('Skill 创建专家')
+  await expect(page.getByText('你好，我可以帮你把常用的工作方法做成 Skill', { exact: false })).toBeVisible()
   await expect(page.getByLabel('对话输入')).toHaveValue('')
 })
 

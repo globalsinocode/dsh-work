@@ -132,6 +132,10 @@ const selectedSkill = computed<WorkbenchSkill | undefined>(() =>
 const selectedAgent = computed<WorkbenchAgent | undefined>(() =>
   contentStore.agents.find(agent => agent.id === selectedAgentId.value),
 )
+/** 已选中 AI 同事时显示它的欢迎语（SKC-04），与 B 模式单聊一致。 */
+const welcomeText = computed(() =>
+  selectedAgent.value?.welcomeMessage || selectedAgent.value?.description || '整理文档、查询制度、分析文件并形成可交付报告',
+)
 /**
  * 唯一可发起 Agent 的自动预选（TW-02「只有一个可用 Agent 时可默认选中」）：
  * 身份由预选横幅明确展示；多个可发起成员时不预选，由用户在输入区 @ 选择。
@@ -365,7 +369,7 @@ defineExpose({ useWorkspaceFile })
       <section class="workbench-welcome" aria-labelledby="conversation-starter-title">
         <div class="workbench-welcome__copy">
           <h1 id="conversation-starter-title">{{ title }}</h1>
-          <p>整理文档、查询制度、分析文件并形成可交付报告</p>
+          <p>{{ welcomeText }}</p>
         </div>
 
         <p

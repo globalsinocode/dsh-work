@@ -585,6 +585,9 @@ describe('DSH ACP Runtime Adapter', () => {
     const prompt = renderSystemPrompt(input)
     assert.match(prompt, /# 保存 Skill 草稿[\s\S]*先调用 list_available_skills/)
     assert.match(prompt, /用 bash 在工作区新建目录写这些文件[\s\S]*不要放在 output\/、input\/ 或 skills\/ 下/)
+    assert.match(prompt, /试运行不提供业务输入文件[\s\S]*完全没有提供输入时[\s\S]*改用写在脚本里的一小份内置样例运行[\s\S]*以退出码 0 结束/)
+    assert.match(prompt, /指定了输入文件却找不到或读不了时，要报出明确错误并以非 0 退出码结束，不能改跑样例/)
+    assert.match(prompt, /用示例输入和不给输入文件各运行一次，两次都跑通再保存/)
     assert.match(prompt, /你不能替员工提交，也不要说已经提交或已经发布/)
     assert.doesNotMatch(renderSystemPrompt(manifest('run-plain', 'attempt-plain')), /# 保存 Skill 草稿/)
     const result = await (await adapter.execute(input)).done
