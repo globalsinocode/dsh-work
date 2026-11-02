@@ -5,6 +5,7 @@ import { useCollabConversationStore } from '@/stores/collab-conversations'
 import { useContentStore } from '@/stores/content'
 import { useTaskStore } from '@/stores/tasks'
 import { notifyActionFailure } from '@/utils/feedback'
+import { useAgentCatalogSync } from './useAgentCatalogSync'
 
 /**
  * 员工端壳层共用的启动加载：两种模式的壳层（EmployeeShell / CollabShell）读取同一份
@@ -15,6 +16,10 @@ export function useWorkbenchBootstrap() {
   const taskStore = useTaskStore()
   const contentStore = useContentStore()
   const collabConversations = useCollabConversationStore()
+
+  // 管理端停用 Agent 后，已打开的页面不能继续展示它：壳层在窗口聚焦/重新可见
+  // 以及停留期间定期静默复核目录；已选中的 Agent 由 ConversationStarter 自行清空。
+  useAgentCatalogSync(() => contentStore.refreshAgents())
 
   watch(() => authStore.user.id, (id, previous) => {
     if (previous && id !== previous) { taskStore.reset(); contentStore.reset(); collabConversations.reset() }

@@ -18,6 +18,7 @@ import { assertDshToolApprovalPolicy, dshBuiltInToolCatalog, defaultAgentDshTool
 import { isDefaultRunLocalAgentTool } from '../../domain/tool-category.ts'
 import { normalizeBearerToken, PostgresEncryptedCredentialStore } from './postgres-encrypted-credential-store.ts'
 import { normalizeAgentMcpScope } from './agent-mcp-scope.ts'
+import { describeUnavailableMcpConnectors, MCP_CONNECTOR_UNAVAILABLE_SUGGESTION } from './mcp-connector-labels.ts'
 import type { McpUserGrantService, McpOAuthProbeRegistrationInput } from './mcp-user-grant-service.ts'
 import { probeFingerprint } from './mcp-user-grant-service.ts'
 import { RequestError, accessDenied, dependencyUnavailable, invalidRequest, notFound, stateConflict } from '../../domain/request-errors.ts'
@@ -1255,7 +1256,13 @@ export class PostgresToolConnectorService {
       : rows
     if (scope.mode === 'selected' && scopedRows.length !== scope.connectorIds.length) {
       const available = new Set(scopedRows.map(row => row.connector_id))
-      throw authorizationDenied(`已选 MCP Connector 不可用或已变化：${scope.connectorIds.filter(id => !available.has(id)).join('、')}`)
+      const missing = scope.connectorIds.filter(id => !available.has(id))
+      const labels = await describeUnavailableMcpConnectors(this.database, tenantId, missing)
+      throw authorizationDenied(`已选 MCP Connector 不可用或已变化：${labels}`, {
+        status: 403,
+        code: 'authorization_denied',
+        suggestion: MCP_CONNECTOR_UNAVAILABLE_SUGGESTION,
+      })
     }
     return scopedRows.map(row => {
       if (row.auth_type === 'bearer' && (row.credentialStatus !== 'configured'

@@ -90,6 +90,7 @@ const referenceName = ref('')
 const blockedReason = computed(() => {
   if (referenceLoading.value) return '正在检查引用文件权限'
   if (referenceError.value) return referenceError.value
+  if (mcpAccessUnavailable.value) return mcpAccessUnavailable.value
   if (mcpAccessBlocked.value.length) {
     return `需要先完成外部连接授权：${mcpAccessBlocked.value.map(item => item.name).join('、')}`
   }
@@ -125,6 +126,8 @@ const recommendationNotice = ref<'' | 'prefilled' | 'unavailable'>('')
 const selectedSkillVersionId = ref('')
 const mcpAccessBlocked = ref<Array<{ connectorId: string; name: string }>>([])
 const mcpAccessOmitted = ref<Array<{ connectorId: string; name: string }>>([])
+/** 选定的 MCP Connector 已停用/变化时，服务端拒绝执行；把原因显示在输入区而不是等发送回报错。 */
+const mcpAccessUnavailable = ref('')
 
 // Global tasks are implicit personal tasks. Only an explicit locked origin
 // carries a workspace; never infer it from the order of a cached space list.
@@ -291,8 +294,27 @@ async function submitTask(payload: {
   } catch (error) {
     payload.release?.()
     if (await handleSelectedVersionConflict(error)) return
+    if (handleUnavailableAgent(error)) return
     notifyActionFailure('创建对话', props.workspaceLocked ? `工作空间“${props.workspaceName}”` : '新对话', error, '检查 Agent、工作空间、附件和输入内容后重新提交。')
   }
+}
+
+/**
+ * 目录刷新有延迟时，已停用的 Agent 仍可能短暂留在选择里。服务端在创建对话时以
+ * 「Agent 不存在或当前用户不可用」拒绝，这里把本地选择一并清掉并刷新目录，避免
+ * 用户反复提交一个已下线的 Agent。
+ */
+function handleUnavailableAgent(error: unknown) {
+  if (!selectedAgentId.value) return false
+  const message = error instanceof Error ? error.message : ''
+  if (!message.includes('Agent 不存在或当前用户不可用')) return false
+  ElMessage.warning('所选 AI 同事已停用或不再对你可见，请重新选择')
+  clearSelectedAgent()
+  mcpAccessBlocked.value = []
+  mcpAccessOmitted.value = []
+  mcpAccessUnavailable.value = ''
+  void contentStore.refreshAgents().catch(() => undefined)
+  return true
 }
 
 async function handleSelectedVersionConflict(error: unknown) {
@@ -337,14 +359,22 @@ function syncSkillFromRoute() {
 async function refreshMcpAccess(agentId: string) {
   mcpAccessBlocked.value = []
   mcpAccessOmitted.value = []
+  mcpAccessUnavailable.value = ''
   if (!agentId || props.workspaceLocked) return
   try {
     const access = await workbenchApi.getAgentMcpAccess(agentId)
     mcpAccessBlocked.value = access.blocked
     mcpAccessOmitted.value = access.omitted
-  } catch {
+  } catch (error) {
     mcpAccessBlocked.value = []
     mcpAccessOmitted.value = []
+    // 连接器被停用/能力变化不是账号权限问题：把服务端的原因与建议原样显示，
+    // 避免员工按通用 403 提示去改角色或数据范围。
+    const message = error instanceof Error ? error.message : ''
+    if (message.includes('MCP Connector 不可用')) {
+      const suggestion = (error as { suggestion?: string } | null)?.suggestion
+      mcpAccessUnavailable.value = suggestion ? `${message}。${suggestion}` : message
+    }
   }
 }
 
@@ -354,6 +384,7 @@ function syncAgentFromRoute() {
     selectedAgentVersionId.value = ''
     mcpAccessBlocked.value = []
     mcpAccessOmitted.value = []
+    mcpAccessUnavailable.value = ''
     recommendationNotice.value = ''
     return
   }
@@ -385,6 +416,21 @@ function clearSelectedAgent() {
   delete query.agentVersion
   void router.replace({ query })
 }
+
+// 目录复核后，已停用/失去可见性的 Agent 不能继续留在已选状态：否则输入区仍显示它，
+// 直到提交才报错。清空选择并提示，避免「停用了还显示」的残影。
+watch(() => contentStore.agents, agents => {
+  if (!selectedAgentId.value) return
+  const stillVisible = agents.some(agent =>
+    agent.id === selectedAgentId.value && agent.versionId === selectedAgentVersionId.value,
+  )
+  if (stillVisible) return
+  ElMessage.warning('所选 AI 同事已停用或版本已更新，请重新选择')
+  clearSelectedAgent()
+  mcpAccessBlocked.value = []
+  mcpAccessOmitted.value = []
+  mcpAccessUnavailable.value = ''
+})
 
 function clearSelectedSkill() {
   selectedSkillId.value = ''

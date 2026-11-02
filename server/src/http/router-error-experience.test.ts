@@ -5,6 +5,7 @@ import type { RequestIdentity } from '../modules/identity/types.ts'
 import { ModelCapabilityMismatchError } from '../modules/model/model-governance-service.ts'
 import { ExecutionCapabilityUnavailableError } from '../modules/runtime/execution-capabilities.ts'
 import { authorizationDenied } from '../domain/authorization-errors.ts'
+import { MCP_CONNECTOR_UNAVAILABLE_SUGGESTION } from '../modules/tool/mcp-connector-labels.ts'
 import { accessDenied, dependencyTimeout, invalidRequest, notFound, stateConflict, dependencyUnavailable } from '../domain/request-errors.ts'
 import { assertApiRouteAccess, classifyHttpError, readJsonBody } from './router.ts'
 
@@ -61,6 +62,21 @@ test('each request error category keeps its status, code, message and next step'
     assert.equal(result.error.message, error.message)
     assert.match(result.error.suggestion, suggestion)
   }
+})
+
+test('a connector denial keeps its connector-specific next step instead of role/data-scope advice', () => {
+  const result = classifyHttpError(
+    authorizationDenied('已选 MCP Connector 不可用或已变化：WK知识库-开发知识库（connector-mcp-d79be18a）', {
+      status: 403,
+      code: 'authorization_denied',
+      suggestion: MCP_CONNECTOR_UNAVAILABLE_SUGGESTION,
+    }),
+    '/api/workbench/v1/sessions',
+  )
+  assert.equal(result.status, 403)
+  assert.equal(result.error.code, 'authorization_denied')
+  assert.match(result.error.suggestion, /MCP Connector/)
+  assert.doesNotMatch(result.error.suggestion, /角色与数据范围/)
 })
 
 test('permission and validation failures preserve safe causes and actionable guidance', () => {

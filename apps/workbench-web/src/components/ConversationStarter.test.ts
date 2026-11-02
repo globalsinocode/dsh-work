@@ -1,4 +1,4 @@
-import ElementPlus from 'element-plus'
+import ElementPlus, { ElMessage } from 'element-plus'
 import { createPinia, setActivePinia } from 'pinia'
 import { flushPromises, mount } from '@vue/test-utils'
 import { describe, expect, it, vi } from 'vitest'
@@ -10,9 +10,10 @@ import type { Workspace, WorkspaceFile } from '@/types/domain'
 import ConversationStarter from './ConversationStarter.vue'
 
 const router = vi.hoisted(() => ({ push: vi.fn(), replace: vi.fn() }))
-const apiMocks = vi.hoisted(() => ({ createSession: vi.fn(), postSessionMessage: vi.fn() }))
+const routeState = vi.hoisted(() => ({ query: {} as Record<string, string> }))
+const apiMocks = vi.hoisted(() => ({ createSession: vi.fn(), postSessionMessage: vi.fn(), getAgentMcpAccess: vi.fn() }))
 
-vi.mock('vue-router', () => ({ useRouter: () => router, useRoute: () => ({ query: {} }) }))
+vi.mock('vue-router', () => ({ useRouter: () => router, useRoute: () => ({ query: routeState.query }) }))
 vi.mock('@/api/client', async (importOriginal) => {
   const mod = await importOriginal<typeof import('@/api/client')>()
   return {
@@ -21,6 +22,7 @@ vi.mock('@/api/client', async (importOriginal) => {
       ...mod.workbenchApi,
       createSession: apiMocks.createSession,
       postSessionMessage: apiMocks.postSessionMessage,
+      getAgentMcpAccess: apiMocks.getAgentMcpAccess,
     },
   }
 })
@@ -545,5 +547,109 @@ describe('ConversationStarter', () => {
     expect(offered).toEqual([])
     expect(composer.props('showWorkspaceContext')).toBe(false)
     expect(offered).not.toContain('ws-archived')
+  })
+
+  it('explains a disabled MCP connector in the composer instead of sending the user to role settings', async () => {
+    routeState.query = { agent: 'agent-webkora', agentVersion: 'agent-version-webkora' }
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    const contentStore = useContentStore(pinia)
+    contentStore.initialized = true
+    contentStore.agents = [{
+      id: 'agent-webkora',
+      versionId: 'agent-version-webkora',
+      versionReference: 'agent-webkora@0.1.0',
+      name: 'WebKora-知识库智能体',
+      description: '基于 WK 知识库回答问题。',
+      welcomeMessage: '',
+      version: '0.1.0',
+      publishedAt: '2026-10-23T00:00:00.000Z',
+      examplePrompts: [],
+    }]
+    vi.spyOn(contentStore, 'load').mockResolvedValue(undefined)
+    vi.spyOn(contentStore, 'refreshSkills').mockResolvedValue([])
+    apiMocks.getAgentMcpAccess.mockRejectedValueOnce(Object.assign(
+      new Error('已选 MCP Connector 不可用或已变化：WK知识库-开发知识库（connector-mcp-d79be18a）'),
+      { suggestion: '请联系管理员恢复该 AI 同事依赖的 MCP Connector（检查启用状态、端点与凭据）；恢复前请改用不依赖该连接器的 AI 同事。' },
+    ))
+
+    const wrapper = mount(ConversationStarter, { global: { plugins: [pinia, ElementPlus] } })
+    await flushPromises()
+
+    const blocked = wrapper.find('[data-testid="composer-blocked"]')
+    expect(blocked.exists()).toBe(true)
+    expect(blocked.text()).toContain('WK知识库-开发知识库')
+    expect(blocked.text()).toContain('恢复该 AI 同事依赖的 MCP Connector')
+    expect(blocked.text()).not.toContain('配置角色与数据范围')
+  })
+
+  it('clears a selected agent as soon as a catalog refresh removes it', async () => {
+    routeState.query = { agent: 'agent-1', agentVersion: 'agent-version-v1' }
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    const contentStore = useContentStore(pinia)
+    contentStore.initialized = true
+    contentStore.agents = [{
+      id: 'agent-1',
+      versionId: 'agent-version-v1',
+      versionReference: 'agent-1@1.0.0',
+      name: '库存同事',
+      description: '',
+      welcomeMessage: '',
+      version: '1.0.0',
+      publishedAt: '2026-09-23T00:00:00.000Z',
+      examplePrompts: [],
+    }]
+    vi.spyOn(contentStore, 'load').mockResolvedValue(undefined)
+    vi.spyOn(contentStore, 'refreshSkills').mockResolvedValue([])
+    const warn = vi.spyOn(ElMessage, 'warning').mockReturnValue({} as never)
+
+    const wrapper = mount(ConversationStarter, { global: { plugins: [pinia, ElementPlus] } })
+    await flushPromises()
+    expect(wrapper.findComponent(TaskComposer).props('selectedAgentName')).toBe('库存同事')
+
+    // 管理端停用后，壳层的目录复核把它从列表移除。
+    contentStore.agents = []
+    await flushPromises()
+
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('已停用'))
+    expect(wrapper.findComponent(TaskComposer).props('selectedAgentName')).toBe('')
+    expect(router.replace).toHaveBeenCalledWith({ query: {} })
+  })
+
+  it('turns an action-time agent rejection into a cleared selection instead of a dead-end retry', async () => {
+    routeState.query = { agent: 'agent-1', agentVersion: 'agent-version-v1' }
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    const contentStore = useContentStore(pinia)
+    contentStore.initialized = true
+    contentStore.agents = [{
+      id: 'agent-1',
+      versionId: 'agent-version-v1',
+      versionReference: 'agent-1@1.0.0',
+      name: '库存同事',
+      description: '',
+      welcomeMessage: '',
+      version: '1.0.0',
+      publishedAt: '2026-09-23T00:00:00.000Z',
+      examplePrompts: [],
+    }]
+    vi.spyOn(contentStore, 'load').mockResolvedValue(undefined)
+    vi.spyOn(contentStore, 'refreshSkills').mockResolvedValue([])
+    vi.spyOn(contentStore, 'refreshAgents').mockResolvedValue([])
+    const warn = vi.spyOn(ElMessage, 'warning').mockReturnValue({} as never)
+    const taskStore = useTaskStore(pinia)
+    vi.spyOn(taskStore, 'createTask').mockRejectedValue(new Error('Agent 不存在或当前用户不可用'))
+
+    const wrapper = mount(ConversationStarter, { global: { plugins: [pinia, ElementPlus] } })
+    await flushPromises()
+    wrapper.findComponent(TaskComposer).vm.$emit('submit', {
+      prompt: '帮我看一下库存', files: [], workspaceId: '', mentions: [],
+    })
+    await flushPromises()
+
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('已停用'))
+    expect(wrapper.findComponent(TaskComposer).props('selectedAgentName')).toBe('')
+    expect(contentStore.refreshAgents).toHaveBeenCalled()
   })
 })

@@ -7,6 +7,7 @@ import { authorizationDenied } from '../../domain/authorization-errors.ts'
 import { RequestError, invalidRequest, notFound, stateConflict } from '../../domain/request-errors.ts'
 import { MAX_MCP_CONNECTIONS_PER_ATTEMPT, type AgentRuntimePort, type McpConnectionSnapshot, type McpRuntimeConnection, type RuntimeManifest } from '../runtime/runtime-types.ts'
 import { normalizeAgentMcpScope } from './agent-mcp-scope.ts'
+import { describeUnavailableMcpConnectors, MCP_CONNECTOR_UNAVAILABLE_SUGGESTION } from './mcp-connector-labels.ts'
 import { mcpCapabilityDigest, mergeMcpCapabilities, normalizeMcpCapabilities, pendingMcpCapabilities, type McpCapability } from './mcp-capabilities.ts'
 import { normalizeBearerToken, type PostgresEncryptedCredentialStore } from './postgres-encrypted-credential-store.ts'
 import { requirePlatformAdminActor } from '../authorization/platform-admin-actor.ts'
@@ -451,7 +452,13 @@ export class PostgresMcpConnectorService implements McpScopePort {
     const usable = rows.filter(isUsable)
     if (scope.mode === 'selected' && usable.length !== scope.connectorIds.length) {
       const available = new Set(usable.map(row => row.connectorId))
-      throw authorizationDenied(`已选 MCP Connector 不可用：${scope.connectorIds.filter(id => !available.has(id)).join('、')}`)
+      const missing = scope.connectorIds.filter(id => !available.has(id))
+      const labels = await describeUnavailableMcpConnectors(this.database, tenantId, missing)
+      throw authorizationDenied(`已选 MCP Connector 不可用：${labels}`, {
+        status: 403,
+        code: 'authorization_denied',
+        suggestion: MCP_CONNECTOR_UNAVAILABLE_SUGGESTION,
+      })
     }
     return usable.map(row => {
       assertRuntimeCredential(row)

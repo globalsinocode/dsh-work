@@ -353,3 +353,21 @@ function makeReconciliationItem() {
     inferenceNote: '仅提示不自动回填。',
   }
 }
+
+describe('admin content store Agent catalog revalidation', () => {
+  it('refreshes only the Agent catalog and versions', async () => {
+    setActivePinia(createPinia())
+    vi.clearAllMocks()
+    api.getAgents.mockResolvedValue([{ id: 'agent-1', name: '库存同事' }])
+    api.getAgentVersions.mockResolvedValue([{ id: 'agent-version-v1' }])
+    const { useContentStore } = await import('./content')
+    const store = useContentStore()
+
+    await store.refreshAgents()
+
+    expect(store.agents).toEqual([{ id: 'agent-1', name: '库存同事' }])
+    expect(store.agentVersions).toEqual([{ id: 'agent-version-v1' }])
+    expect(api.getTasks).not.toHaveBeenCalled()
+    expect(api.getSkills).not.toHaveBeenCalled()
+  })
+})

@@ -148,6 +148,16 @@ export const useContentStore = defineStore('admin-content', () => {
     auditInitialized.value = true
   }
 
+  /** 只刷新 Agent 目录与版本（管理端停留期间复核用），不动其他管理数据。 */
+  async function refreshAgents() {
+    const [agentData, agentVersionData] = await Promise.all([
+      adminApi.getAgents(),
+      adminApi.getAgentVersions(),
+    ])
+    agents.value = agentData
+    agentVersions.value = agentVersionData
+  }
+
   async function setAgentStatus(
     agentId: string,
     status: 'published' | 'disabled',
@@ -412,6 +422,7 @@ export const useContentStore = defineStore('admin-content', () => {
     error,
     initialized,
     load,
+    refreshAgents,
     createAgentDraft,
     updateAgentDraft,
     setAgentStatus,

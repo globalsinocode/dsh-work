@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Search, View } from '@element-plus/icons-vue'
 import { useRouter } from 'vue-router'
@@ -78,8 +78,38 @@ async function changeAvailability(agent: AgentDefinition) {
   }
 }
 
+let catalogTimer: ReturnType<typeof setInterval> | undefined
+let lastCatalogRefreshAt = 0
+
+/** 管理端停留期间复核 Agent 目录：其他管理员或运维改过状态后，列表不会一直停在旧值。 */
+async function revalidateCatalog() {
+  if (document.visibilityState === 'hidden') return
+  const now = Date.now()
+  if (now - lastCatalogRefreshAt < 5_000) return
+  lastCatalogRefreshAt = now
+  try {
+    await contentStore.refreshAgents()
+  } catch {
+    // 复核失败保留原列表；用户仍可手动刷新页面。
+  }
+}
+
+function onVisibilityChange() {
+  if (document.visibilityState === 'visible') void revalidateCatalog()
+}
+
 onMounted(async () => {
+  window.addEventListener('focus', revalidateCatalog)
+  document.addEventListener('visibilitychange', onVisibilityChange)
+  catalogTimer = setInterval(() => void revalidateCatalog(), 60_000)
   await contentStore.load()
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('focus', revalidateCatalog)
+  document.removeEventListener('visibilitychange', onVisibilityChange)
+  if (catalogTimer) clearInterval(catalogTimer)
+  catalogTimer = undefined
 })
 </script>
 
