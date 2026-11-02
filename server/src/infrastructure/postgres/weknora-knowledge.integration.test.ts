@@ -6,7 +6,7 @@ import { PostgresAgentService } from '../../modules/agent/postgres-agent-service
 import { PostgresOperationsService } from '../../modules/admin/application/postgres-operations-service.ts'
 import { PostgresAuthorizationService } from '../../modules/authorization/postgres-authorization-service.ts'
 import { PostgresKnowledgeConnection } from '../../modules/knowledge/knowledge-connection.ts'
-import { WeKnoraKnowledgeProvider } from '../../modules/knowledge/weknora-knowledge-provider.ts'
+import { minimumRelevanceScore, WeKnoraKnowledgeProvider } from '../../modules/knowledge/weknora-knowledge-provider.ts'
 import { ModelGovernanceService } from '../../modules/model/model-governance-service.ts'
 import { PostgresModelGovernanceRepository } from '../../modules/model/postgres-model-governance-repository.ts'
 import { PostgresRunRepository } from '../../modules/run/postgres-run-repository.ts'
@@ -244,6 +244,19 @@ test('超长分段按码点截断后不超过 4000 字（4.5）', async () => {
   assert.ok(excerpt.length <= 4000)
   // 第一个表情放得下，第二个会超出：整体截掉，不留下半个代理对。
   assert.equal(excerpt, `${'库'.repeat(3997)}😀…`)
+})
+
+test('最低相关度：恰好等于门槛的保留，低于门槛的丢弃（4.4 第 1 步）', async () => {
+  double.documents.push(
+    { id: 'doc-edge', knowledgeBaseId: 'kb-ext-supply', title: '门槛文档', fileName: 'edge.pdf', updatedAt: '2026-05-01T00:00:00Z' },
+    { id: 'doc-below', knowledgeBaseId: 'kb-ext-supply', title: '低分文档', fileName: 'below.pdf', updatedAt: '2026-04-01T00:00:00Z' },
+  )
+  double.chunks = [
+    { id: 'edge', knowledgeId: 'doc-edge', content: '门槛上的分段。', score: minimumRelevanceScore },
+    { id: 'below', knowledgeId: 'doc-below', content: '门槛下的分段。', score: minimumRelevanceScore - 0.01 },
+  ]
+  const result = await ask(await session(['kb-supply']), '门槛？')
+  assert.deepEqual(result.manifest.knowledge_context.map(document => document.documentId), ['weknora:doc-edge'])
 })
 
 test('单篇文档元数据缺失只丢弃该篇，由后面的候选补上（4.4）', async () => {

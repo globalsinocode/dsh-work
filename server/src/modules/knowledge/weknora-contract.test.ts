@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { test } from 'node:test'
 
 import { WeKnoraClient } from './weknora-client.ts'
+import { minimumRelevanceScore } from './weknora-knowledge-provider.ts'
 
 /**
  * 真实 WeKnora 接口契约（weknora-knowledge-plan 4.1、第 12 节 P2）：确认 4.3～4.6 依赖的接口和字段在
@@ -42,6 +43,45 @@ test('WeKnora 新建知识库、检索、文档元数据与删除接口符合平
     await client.previewDocument(uploaded.id)
     await client.reparseDocument(uploaded.id)
     await client.deleteDocument(uploaded.id)
+  } finally {
+    await client.deleteKnowledgeBase(created.id)
+  }
+})
+
+test('最低相关度：命中文档高于门槛，无关提问低于门槛', { skip: !configured && '未配置 WEKNORA_CONTRACT_*', timeout: 180_000 }, async () => {
+  const client = new WeKnoraClient({ baseUrl: baseUrl!, apiKey: apiKey!, timeoutMs: 15000 })
+  const created = await client.createKnowledgeBase({
+    name: `dsh-work 相关度校准 ${randomUUID().slice(0, 8)}`,
+    description: '由 dsh-work 契约测试创建，测试结束即删除',
+    embeddingModelId: embeddingModelId!,
+  })
+  try {
+    const documents: Record<string, string> = {
+      '库存管理规范.txt': '安全库存按最近三十天日均用量的七倍设定。计划组每周一复核安全库存，低于安全库存时触发补货申请。呆滞物料指超过一百八十天没有出库的物料，每季度清理一次。',
+      '差旅报销制度.txt': '员工出差住宿标准：一线城市每晚不超过六百元，其他城市不超过四百元。报销须在出差结束后十五个工作日内提交，附发票和行程单。',
+      '请假与考勤.txt': '年假按工龄计算：满一年不满十年五天。请假三天以内由直属主管审批，三天以上还需人事部审批。',
+    }
+    for (const [fileName, text] of Object.entries(documents)) {
+      await client.uploadDocument(created.id, { fileName, mimeType: 'text/plain', bytes: Buffer.from(text) })
+    }
+    // 等待解析完成（嵌入模型须可达，否则解析失败、检索为空）。
+    for (let attempt = 0; ; attempt++) {
+      const { items } = await client.listDocuments(created.id, { page: 1, pageSize: 20 })
+      assert.ok(!items.some(item => item.parseStatus === 'failed'), '文档解析失败：检查嵌入模型配置与 WeKnora 出站限制')
+      if (items.length === 3 && items.every(item => item.parseStatus === 'completed')) break
+      assert.ok(attempt < 120, '文档在 120 秒内没有解析完成')
+      await new Promise(resolve => setTimeout(resolve, 1000))
+    }
+    const search = (query: string) => client.search({ query, knowledgeBaseIds: [created.id], matchCount: 10 })
+    for (const [query, expected] of [['安全库存怎么定', '库存管理规范.txt'], ['出差住宿可以报多少钱', '差旅报销制度.txt'], ['请假超过三天谁审批', '请假与考勤.txt']]) {
+      const [top] = (await search(query!)).sort((a, b) => b.score - a.score)
+      assert.equal(top?.knowledge_filename || top?.knowledge_title, expected, `“${query}”的最高分应来自目标文档`)
+      assert.ok(top!.score >= minimumRelevanceScore, `“${query}”命中分 ${top!.score} 低于门槛 ${minimumRelevanceScore}`)
+    }
+    for (const query of ['今天北京天气怎么样', '用 Python 写一个快速排序', '公司年会在哪里办']) {
+      const above = (await search(query)).filter(result => result.score >= minimumRelevanceScore)
+      assert.deepEqual(above.map(result => result.score), [], `无关提问“${query}”不应有高于门槛的分段`)
+    }
   } finally {
     await client.deleteKnowledgeBase(created.id)
   }

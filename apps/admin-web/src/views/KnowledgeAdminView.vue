@@ -181,9 +181,13 @@ async function removeBase(base: KnowledgeAdminBase) {
 // —— 连接配置 ——
 const connectionForm = reactive({ baseUrl: '', apiKey: '', editingKey: false, credentialExpiresAt: '', embeddingModelId: '', enabled: true })
 const testResult = ref<{ ok: boolean; reason: string | null } | null>(null)
+/** 与服务端规范化一致：去掉末尾斜杠与 /api/v1（WeKnora 文档常带），比较时两边同样处理。 */
+function comparableBaseUrl(value: string) {
+  return value.trim().replace(/\/+$/, '').replace(/(\/api\/v1)+\/*$/i, '').replace(/\/+$/, '')
+}
 /** 已保存的 Key 只发往已保存的地址：改了地址就必须重新填写 Key。 */
 const addressChanged = computed(() => Boolean(connection.value?.configured)
-  && connectionForm.baseUrl.trim().replace(/\/+$/, '') !== (connection.value?.baseUrl ?? ''))
+  && comparableBaseUrl(connectionForm.baseUrl) !== comparableBaseUrl(connection.value?.baseUrl ?? ''))
 watch(addressChanged, changed => { if (changed) connectionForm.editingKey = true })
 const modelChanged = computed(() => Boolean(connection.value?.configured)
   && (connectionForm.embeddingModelId.trim() || null) !== (connection.value?.embeddingModelId ?? null))
@@ -201,10 +205,15 @@ function resetConnectionForm() {
 }
 async function testConnection() {
   testResult.value = null
-  const result = await run(() => adminApi.testKnowledgeConnection({
-    baseUrl: connectionForm.baseUrl.trim() || undefined,
-    apiKey: connectionForm.editingKey ? connectionForm.apiKey.trim() || undefined : undefined,
-  }), '测试已完成')
+  const apiKey = connectionForm.editingKey ? connectionForm.apiKey.trim() || undefined : undefined
+  const testsSaved = !apiKey && !addressChanged.value
+  const result = await run(async () => {
+    const tested = await adminApi.testKnowledgeConnection({ baseUrl: connectionForm.baseUrl.trim() || undefined, apiKey })
+    // 测试已保存的连接成功时服务端记录成功时间：在同一操作内刷新概览，“暂不可用”提示随之消失，
+    // 刷新期间保存按钮仍不可用，避免旧概览覆盖刚保存的配置。
+    if (tested.ok && testsSaved) overview.value = await adminApi.getKnowledgeOverview().catch(() => overview.value)
+    return tested
+  }, '测试已完成')
   if (result) testResult.value = result
 }
 async function saveConnection() {

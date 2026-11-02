@@ -1,7 +1,7 @@
 import type { DatabaseClient } from '../../infrastructure/postgres/database.ts'
 import type { PostgresEncryptedCredentialStore } from '../tool/postgres-encrypted-credential-store.ts'
 import { invalidRequest } from '../../domain/request-errors.ts'
-import { WeKnoraClient } from './weknora-client.ts'
+import { WeKnoraClient, weknoraServiceRoot } from './weknora-client.ts'
 
 const tenantId = 'tenant-dsh-work'
 export const knowledgeConnectionId = 'knowledge-connection-weknora'
@@ -100,15 +100,16 @@ export class PostgresKnowledgeConnection {
     const row = await this.row()
     const baseUrl = input.baseUrl ?? row?.baseUrl
     if (!baseUrl) return { reason: 'not_configured' }
-    if (!input.apiKey && row && baseUrl !== row.baseUrl) return { reason: 'api_key_required' }
+    if (!input.apiKey && row && !sameBaseUrl(baseUrl, row.baseUrl)) return { reason: 'api_key_required' }
     const apiKey = input.apiKey ?? (row ? await this.apiKey(row) : undefined)
     if (!apiKey) return { reason: 'not_configured' }
     return { client: new WeKnoraClient({ baseUrl, apiKey, timeoutMs: this.bootstrap?.timeoutMs, fetch: this.bootstrap?.fetch }) }
   }
 
-  /** 已保存的地址；用于判断更换地址时是否填写了新 Key。 */
+  /** 已保存的地址（规范化后，规则调整前保存的旧格式与现行格式可直接比较）；用于判断测试的是否是已保存的连接。 */
   async savedBaseUrl(): Promise<string | undefined> {
-    return (await this.row())?.baseUrl
+    const saved = (await this.row())?.baseUrl
+    return saved === undefined ? undefined : comparableBaseUrl(saved)
   }
 
   private async row(): Promise<ConnectionRow | undefined> {
@@ -133,7 +134,7 @@ export class PostgresKnowledgeConnection {
   }
 }
 
-/** 规范化 WeKnora 地址：只允许 http/https，不能带账号或密码，去掉末尾斜杠。 */
+/** 规范化 WeKnora 地址：只允许 http/https，不能带账号或密码，去掉末尾斜杠和 WeKnora 文档常带的 /api/v1。 */
 export function normalizeBaseUrl(value: string): string {
   let url: URL
   try {
@@ -143,7 +144,8 @@ export function normalizeBaseUrl(value: string): string {
   }
   if (url.protocol !== 'http:' && url.protocol !== 'https:') throw invalidRequest('WeKnora 地址必须以 http 或 https 开头')
   if (url.username || url.password) throw invalidRequest('WeKnora 地址不能包含账号或密码')
-  return url.toString().replace(/\/+$/, '')
+  if (url.search || url.hash) throw invalidRequest('WeKnora 地址不能包含查询参数或锚点')
+  return weknoraServiceRoot(url.toString())
 }
 
 /** API Key 去掉首尾空白；中间含空白时视为填写错误（HTTP 头不能携带），返回 400。 */
@@ -151,4 +153,17 @@ export function normalizeApiKey(value: string | undefined): string | undefined {
   const apiKey = value?.trim() || undefined
   if (apiKey && /\s/.test(apiKey)) throw invalidRequest('API Key 不能包含空格或换行')
   return apiKey
+}
+
+/** 规范化后比较，避免规则调整前保存的地址（如带 /api/v1）被当成“更换了地址”。 */
+export function sameBaseUrl(left: string, right: string): boolean {
+  return comparableBaseUrl(left) === comparableBaseUrl(right)
+}
+
+function comparableBaseUrl(value: string): string {
+  try {
+    return normalizeBaseUrl(value)
+  } catch {
+    return value
+  }
 }

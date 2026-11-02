@@ -1,7 +1,7 @@
 # 企业知识库接入 WeKnora 方案
 
-**状态：** 实施中：WK-S1（检索链路）、WK-S2（员工端）、WK-S3（管理端）已达到代码级；WK-S4（真实环境验收）未实施，一期全部交付前生产不切换。<br>
-**更新日期：** 2026-11-01<br>
+**状态：** 一期已实施：WK-S1（检索链路）、WK-S2（员工端）、WK-S3（管理端）已合入；WK-S4 已于 2026-11-02 在本机 WeKnora v0.9.0 完成真实环境验收（结果见 WK-S4 PR）。生产切换前在受控环境按发布流程复核重排序配置与最低相关度。<br>
+**更新日期：** 2026-11-02<br>
 **依据：** 现有知识模块（迁移 0008、0081；`server/src/modules/knowledge/`）、执行链路（`attempt-dispatcher.ts`、`manifest-compiler.ts`、`dsh-acp-runtime-adapter.ts`、`run-event-recorder.ts`）、[组织架构方案](org-structure-plan.md)、[功能规则](../development/feature-rules.md)；WeKnora v0.9.0（2026-10-29，MIT）公开文档与源码（`website-docs/04-api/`、`internal/types/search.go`、`internal/middleware/auth.go`）。
 
 ## 1. 现状与目标
@@ -335,10 +335,10 @@ WK-S1 删除原有模块后，在 WK-S2 交付前没有任何执行能检索企�
 
 - WeKnora `knowledge-search` 检索流程内部是否还有额外过滤：目前只确认了它按 API Key 校验知识库，未逐行读完检索实现。WK-S1 契约测试中实测。
 - 不设白名单、带 `manage_kbs` 的 API Key 能否完成 4.6 中全部接口（尤其是预览、下载这类“更严格权限”的接口）。WK-S1 中实测；不足时再评估是否需要全权限 Key。
-- WeKnora 知识 ID 的实际格式是否满足平台 ID 格式（4.5），WK-S1 中确认；不满足时改为对外部 ID 做哈希。
-- v0.9.0 新建知识库时指定嵌入模型的方式（`POST /knowledge-bases` 直接传模型 ID，或建库后调用初始化接口），以及建库后能否更换嵌入模型；一次检索中的知识库使用不同嵌入模型时是否报错或结果失真（若不支持，检索只传与当前模型一致的知识库）。WK-S1 契约测试中确认。
+- WeKnora 知识 ID 的实际格式是否满足平台 ID 格式（4.5）。**已确认（2026-11-02，本机 v0.9.0）：** 知识库与文档 ID 均为 UUID，满足格式。
+- v0.9.0 新建知识库时指定嵌入模型的方式（**已确认：** `POST /knowledge-bases` 直接传 `embedding_model_id` 即可，返回 201），以及建库后能否更换嵌入模型；一次检索中的知识库使用不同嵌入模型时是否报错或结果失真（若不支持，检索只传与当前模型一致的知识库）。WK-S1 契约测试中确认。
 - 知识库级与工作空间级的重排序配置如何叠加，新建知识库是否需要显式开启重排序，WK-S1 契约测试中确认。
-- 最低相关度暂定 0.2（`weknora-knowledge-provider.ts`）。WeKnora 混合检索的向量阈值默认 0.15，未配置重排序时分值可能普遍偏低、导致什么都不注入；接入真实 WeKnora 后按实际分值校准。
-- 单篇文档读取（`GET /knowledge/{id}`）与预览（`…/preview`）的 API Key 能力在 v0.9.0 文档中未声明，WeKnora 对未声明的接口一律返回 403。WK-S2 的文档归属校验已改用批量元数据接口（确认只需 retrieve）；预览接口在真实环境契约测试中确认，不支持时改为只提供下载。
-- `GET /knowledge-bases` 的 `page_size` 上限、解析状态 `pending`/`finalizing` 与员工端“解析中”筛选的对应（目前只按 `processing` 筛选），在 WK-S4 契约测试中确认。
+- 最低相关度。**已校准（2026-11-02，本机 v0.9.0、在线嵌入模型、未配置重排序）：** 命中文档 0.56～0.83，无关提问最高 0.36，相关提问中非目标文档最高 0.45，门槛由 0.2 调为 0.5。契约测试“最低相关度”用例在升级 WeKnora、更换嵌入模型或启用重排序后复核（重排序会改变分值范围）。
+- 单篇文档读取（`GET /knowledge/{id}`）与预览（`…/preview`）的 API Key 能力在 v0.9.0 文档中未声明，WeKnora 对未声明的接口一律返回 403。WK-S2 的文档归属校验已改用批量元数据接口（确认只需 retrieve）；预览接口在真实环境契约测试中确认，不支持时改为只提供下载。**已确认：** 只有 `retrieve`、`ingest`、`manage_kbs` 能力的 Key 可以调用预览、下载、改标题、重新解析与删除文档。
+- `GET /knowledge-bases` 的 `page_size` 上限、解析状态 `pending`/`finalizing` 与员工端“解析中”筛选的对应（目前只按 `processing` 筛选），在 WK-S4 契约测试中确认。**实测：** 文档状态依次为 `pending` → `processing` → `completed`（或 `failed`），`pending` 会持续数秒，员工端“解析中”筛选应同时包含 `pending`（未修改）；`finalizing` 与 `page_size` 上限未观察到。
 - 业务接口没有全局限流，平台侧是否需要并发上限，在 P2 压测后决定。

@@ -12,9 +12,10 @@ const maxContextDocuments = 3
 const searchMatchCount = 10
 /**
  * WeKnora 分值在 0～1 之间（重排序或混合检索）。低于该值的分段不注入，避免每次都带上弱相关内容
- * （4.4 第 1 步）；数值在接入真实 WeKnora 的契约测试中校准。
+ * （4.4 第 1 步）。2026-11-02 在 WeKnora v0.9.0、未配置重排序时校准：命中文档 0.56～0.83，无关提问最高
+ * 0.36，相关提问中非目标文档最高 0.45；契约测试中的“最低相关度”用例在升级或更换模型后复核。
  */
-export const minimumRelevanceScore = 0.2
+export const minimumRelevanceScore = 0.5
 const maxExcerptLength = 4000
 const maxSkippedBases = 20
 const documentIdPattern = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/

@@ -61,6 +61,7 @@ pnpm test:e2e
 | 故障与恢复 | `pnpm test:m5:faults`、`pnpm test:m5:faults:integration` |
 | 容量 | `pnpm test:m5:capacity:integration` |
 | 执行容器（真实 Docker 与真实 DSH，opt-in，不进 CI） | `DSH_WORK_EXECUTION_E2E_IMAGE=<执行镜像引用> pnpm --filter @dsh-work/server test:execution-container:e2e`；需要 `DSH_RUNTIME_HOME`、本机 Docker 与 `DSH_WORK_TEST_DATABASE_URL`，镜像用[执行镜像工作流](../../.github/workflows/execution-image.yml)产出的引用（先按摘要拉取）。其中成果解析用例（2b-3）只需要镜像与 Docker。DSH 要求 Node 22.19+ 或 24+，更低版本会在建会话时报 `no adapter registered for provider` |
+| 企业知识库（WeKnora） | 测试替身覆盖的单元与集成测试随 `pnpm test:unit`、`pnpm test:integration` 运行。真实 WeKnora 契约测试（opt-in，不进 CI，升级 WeKnora、更换嵌入模型或启用重排序前必须跑）：在 `.env` 配置 `WEKNORA_CONTRACT_URL`、`WEKNORA_CONTRACT_API_KEY`（能力 `retrieve`、`ingest`、`manage_kbs`）、`WEKNORA_CONTRACT_EMBEDDING_MODEL_ID` 后执行 `cd server && node --env-file-if-exists=../.env --experimental-strip-types --test src/modules/knowledge/weknora-contract.test.ts`，含最低相关度校准用例。本机代理若把外部域名解析到 198.18.0.0/15 等虚拟 IP，WeKnora 的 SSRF 检查会拦截在线嵌入模型、文档解析失败，须把模型主机加入 WeKnora 的 `SSRF_WHITELIST` |
 | 浏览器冒烟 | `pnpm exec playwright install chromium`、`pnpm test:e2e` |
 | Agent 验证与发布（冻结、后台并行验证、判定、发布、回滚、重启收敛与车道容量；隔离 PostgreSQL） | `pnpm test:agent-release:integration` |
 | Agent 独立执行身份 P1 浏览器集成 | `pnpm test:e2e:agent-principal`（专用可丢弃 PostgreSQL 与受控服务，不并入 P0 冒烟） |

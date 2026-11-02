@@ -145,11 +145,11 @@ test('KB-ADM-01 连接配置：API Key 加密保存、只返回末四位，测�
   assert.ok(tested.lastSuccessAt > tested.lastFailureAt)
 
   const saved = await ok('PUT', `${adminBase}/connection`, {
-    baseUrl: `${doubleUrl}/`, apiKey: double.apiKey, credentialExpiresAt: '2027-05-01T00:00:00Z', embeddingModelId: 'embed-2', enabled: true,
+    baseUrl: `${doubleUrl}/api/v1/`, apiKey: double.apiKey, credentialExpiresAt: '2027-05-01T00:00:00Z', embeddingModelId: 'embed-2', enabled: true,
   })
   assert.equal(saved.connection.credentialSource, 'admin')
   assert.equal(saved.connection.credentialHint, double.apiKey.slice(-4))
-  assert.equal(saved.connection.baseUrl, doubleUrl, '去掉末尾斜杠')
+  assert.equal(saved.connection.baseUrl, doubleUrl, '去掉末尾斜杠与 /api/v1')
   assert.equal(saved.connection.embeddingModelId, 'embed-2')
   assert.equal(saved.connection.lastFailureAt, null, '换了 Key 后清除旧的失败记录')
   const overviewText = (await api(ADMIN, 'GET', adminBase)).text
@@ -168,6 +168,7 @@ test('KB-ADM-01 连接配置：API Key 加密保存、只返回末四位，测�
   assert.equal((await api(ADMIN, 'PUT', `${adminBase}/connection`, { baseUrl: doubleUrl, apiKey: 'key with\nnewline', enabled: true })).status, 422)
 
   assert.equal((await api(ADMIN, 'PUT', `${adminBase}/connection`, { baseUrl: 'ftp://weknora', enabled: true })).status, 422)
+  assert.equal((await api(ADMIN, 'PUT', `${adminBase}/connection`, { baseUrl: `${doubleUrl}/api/v1?x=1`, enabled: true })).status, 422, '地址不能带查询参数')
   assert.equal((await api(READER, 'PUT', `${adminBase}/connection`, { baseUrl: doubleUrl, enabled: true })).status, 403)
   assert.equal((await api(READER, 'GET', adminBase)).status, 200)
 
@@ -177,6 +178,11 @@ test('KB-ADM-01 连接配置：API Key 加密保存、只返回末四位，测�
   assert.equal((await ok('GET', '/api/workbench/v1/knowledge/status', undefined, EMPLOYEE)).enabled, false)
   await ok('PUT', `${adminBase}/connection`, { baseUrl: doubleUrl, embeddingModelId: 'embed-2', enabled: true })
   assert.equal((await ok('GET', '/api/workbench/v1/knowledge/status', undefined, EMPLOYEE)).enabled, true)
+
+  // 规则调整前保存的地址（带 /api/v1）：规范化后相同，不算更换地址，不要求重填 Key。
+  await database`update external_knowledge_connections set base_url = ${`${doubleUrl}/api/v1`}`
+  assert.deepEqual(await ok('POST', `${adminBase}/connection/test`, { baseUrl: doubleUrl }), { ok: true, reason: null })
+  assert.equal((await ok('PUT', `${adminBase}/connection`, { baseUrl: doubleUrl, embeddingModelId: 'embed-2', enabled: true })).connection.baseUrl, doubleUrl)
 
   // 未配置凭据主密钥时不能保存 API Key。
   const withoutMasterKey = new PostgresKnowledgeAdminService(database, new PostgresOperationsService(database), connection)
@@ -189,7 +195,7 @@ test('KB-ADM-01 连接配置：API Key 加密保存、只返回末四位，测�
     select count(*)::int as count, count(*) filter (where safe_context::text like ${`%${double.apiKey}%`})::int as leaked
       from audit_events where tenant_id = ${tenantId} and action = 'knowledge.connection.update'
   `
-  assert.equal(audit?.count, 6)
+  assert.equal(audit?.count, 7)
   assert.equal(audit?.leaked, 0, '审计不含 API Key')
 })
 

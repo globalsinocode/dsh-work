@@ -83,6 +83,21 @@ export const weknoraSearchTimeoutMs = 5000
 const managementTimeoutMs = 15000
 const uploadTimeoutMs = 120000
 
+/**
+ * WeKnora 服务根地址：去掉末尾斜杠与 `/api/v1`（WeKnora 文档给出的地址常带这一段，客户端自己拼接）。
+ * 按路径处理，大小写不敏感，重复出现也一并去掉；无法解析的地址按字符串处理。
+ */
+export function weknoraServiceRoot(value: string): string {
+  const strip = (path: string) => path.replace(/(\/api\/v1)+\/*$/i, '').replace(/\/+$/, '')
+  try {
+    const url = new URL(value.trim())
+    url.pathname = strip(url.pathname.replace(/\/+$/, '')) || '/'
+    return url.toString().replace(/\/+$/, '')
+  } catch {
+    return strip(value.trim().replace(/\/+$/, ''))
+  }
+}
+
 export class WeKnoraClient {
   private readonly baseUrl: string
   private readonly apiKey: string
@@ -90,7 +105,7 @@ export class WeKnoraClient {
   private readonly fetchImpl: typeof fetch
 
   constructor(config: WeKnoraClientConfig) {
-    this.baseUrl = config.baseUrl.replace(/\/+$/, '')
+    this.baseUrl = weknoraServiceRoot(config.baseUrl)
     this.apiKey = config.apiKey
     this.timeoutMs = config.timeoutMs ?? weknoraSearchTimeoutMs
     this.fetchImpl = config.fetch ?? fetch

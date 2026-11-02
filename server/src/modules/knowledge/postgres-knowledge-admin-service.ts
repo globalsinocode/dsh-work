@@ -5,7 +5,7 @@ import type { AuditTrail } from '../../domain/audit-trail.ts'
 import { dependencyUnavailable, invalidRequest, notFound, RequestError, stateConflict } from '../../domain/request-errors.ts'
 import { requirePlatformAdminActor } from '../authorization/platform-admin-actor.ts'
 import type { PostgresEncryptedCredentialStore } from '../tool/postgres-encrypted-credential-store.ts'
-import { knowledgeCredentialRefId, normalizeApiKey, normalizeBaseUrl, type PostgresKnowledgeConnection } from './knowledge-connection.ts'
+import { knowledgeCredentialRefId, normalizeApiKey, normalizeBaseUrl, sameBaseUrl, type PostgresKnowledgeConnection } from './knowledge-connection.ts'
 import { WeKnoraRequestError, WeKnoraUnavailableError, type WeKnoraClient } from './weknora-client.ts'
 
 const tenantId = 'tenant-dsh-work'
@@ -148,7 +148,7 @@ export class PostgresKnowledgeAdminService {
     const existing = await this.row()
     if (!existing && !apiKey) throw invalidRequest('首次配置须填写 API Key')
     // 已保存的 Key 只发往已保存的地址：更换地址必须同时填写 Key，避免把 Key 带到新主机。
-    if (existing && !apiKey && baseUrl !== existing.baseUrl) throw invalidRequest('更换 WeKnora 地址时须重新填写 API Key')
+    if (existing && !apiKey && !sameBaseUrl(baseUrl, existing.baseUrl)) throw invalidRequest('更换 WeKnora 地址时须重新填写 API Key')
     if (apiKey && !this.credentials) throw stateConflict('服务未配置 DSH_CREDENTIAL_MASTER_KEY，不能保存 API Key')
     await this.database.begin(async transaction => {
       if (apiKey) {
@@ -171,7 +171,7 @@ export class PostgresKnowledgeAdminService {
       // 未填写到期时间时：沿用原 Key 的到期时间；换了新 Key 则不再沿用（旧 Key 的到期时间不属于新 Key）。
       const credentialExpiresAt = input.credentialExpiresAt === undefined ? (apiKey ? null : existing?.credentialExpiresAt ?? null) : expiresAt
       // 换了 Key 或地址后，旧连接的失败记录不再代表当前状态。
-      const connectionChanged = Boolean(apiKey) || baseUrl !== existing?.baseUrl
+      const connectionChanged = Boolean(apiKey) || !existing || !sameBaseUrl(baseUrl, existing.baseUrl)
       await transaction`
         insert into external_knowledge_connections (
           id, tenant_id, base_url, credential_ref, credential_hint, credential_expires_at, embedding_model_id, status, updated_by
@@ -203,7 +203,7 @@ export class PostgresKnowledgeAdminService {
     try {
       await probe.client.listKnowledgeBases()
       // 测的是已保存的连接时记一次成功，“暂不可用”提示随之消失，不必等下一次检索。
-      if (!apiKey && (!baseUrl || baseUrl === await this.connection.savedBaseUrl())) {
+      if (!apiKey && (!baseUrl || sameBaseUrl(baseUrl, await this.connection.savedBaseUrl() ?? ''))) {
         await this.database`
           update external_knowledge_connections set last_success_at = now()
            where tenant_id = ${tenantId} and id = ${this.connection.connectionId}

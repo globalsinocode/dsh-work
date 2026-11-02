@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { after, before, beforeEach, test } from 'node:test'
 
 import { WeKnoraDouble } from '../../testing/weknora-double.ts'
-import { WeKnoraClient, WeKnoraRequestError, WeKnoraUnavailableError } from './weknora-client.ts'
+import { weknoraServiceRoot, WeKnoraClient, WeKnoraRequestError, WeKnoraUnavailableError } from './weknora-client.ts'
 
 const double = new WeKnoraDouble()
 let baseUrl = ''
@@ -27,6 +27,20 @@ test('检索只调用 knowledge-search，带 API Key，不传 rerank（4.3）', 
   assert.equal(request?.path, '/api/v1/knowledge-search')
   assert.equal(request?.apiKey, double.apiKey)
   assert.deepEqual(request?.body, { query: '安全库存', knowledge_base_ids: ['kb-1'], match_count: 10 })
+})
+
+test('地址带 /api/v1（WeKnora 文档的写法）时不重复拼接', async () => {
+  double.requests.length = 0
+  await new WeKnoraClient({ baseUrl: `${baseUrl}/api/v1/`, apiKey: double.apiKey }).search({ query: 'q', knowledgeBaseIds: ['kb-1'], matchCount: 1 })
+  assert.equal(double.requests.at(-1)?.path, '/api/v1/knowledge-search')
+})
+
+test('服务根地址：按路径去掉 /api/v1，大小写与重复都处理，保留子路径', () => {
+  assert.equal(weknoraServiceRoot('http://host:8081/api/v1/'), 'http://host:8081')
+  assert.equal(weknoraServiceRoot('http://host/API/V1'), 'http://host')
+  assert.equal(weknoraServiceRoot('http://host/api/v1/api/v1'), 'http://host')
+  assert.equal(weknoraServiceRoot('http://host/weknora/api/v1'), 'http://host/weknora')
+  assert.equal(weknoraServiceRoot('http://host/weknora/'), 'http://host/weknora')
 })
 
 test('文档元数据批量读取 updated_at 与所属知识库', async () => {
