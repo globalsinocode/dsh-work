@@ -12,45 +12,38 @@
 
 ## 分支与合入约定
 
-**方向**：所有代码修改只在 `dev` 上进行。`main` 只指向 `dev` 历史上已经可以上线的那个提交，发版时快进过去，不另建 release 分支。
+**方向**：`main` 是唯一的开发与发布分支。所有代码修改直接在 `main` 上进行；`dev` 不再使用，仅保留历史，不要向它提交。
 
-1. **提交前先对齐 `dev`**（不允许在落后状态直接提交）：
-
-   ```bash
-   git switch dev
-   git fetch origin
-   git merge --ff-only origin/dev
-   ```
-
-   不能快进说明本地与远端分叉：改为 `git merge origin/dev`，冲突在本地解决完再提交。不提交带冲突标记的文件。
-
-2. **只有 `main` 含有 `dev` 没有的提交时，才把 `main` 合并进 `dev` 一次**：
-
-   ```bash
-   git fetch origin
-   git merge-base --is-ancestor origin/main HEAD || git merge origin/main
-   ```
-
-   正常快进发版之后，`main` 一直是 `dev` 的祖先，这条检查应当直接通过，不必每次提交都合并 `main`。真的要合并时，冲突在本地解决，跑类型检查与相关单测后再继续。不在 `main` 上直接改功能。
-
-3. **发版时把 `main` 快进到 `dev`**：
+1. **提交前先同步 `main`**（不允许在落后状态直接提交）：
 
    ```bash
    git switch main
-   git merge --ff-only origin/main
-   git merge --ff-only dev
+   git fetch origin
+   git pull --no-rebase origin main
    ```
 
-   快进前在 `dev` 上跑完类型检查、相关单测与必要的 E2E。发布以 `main` 上的提交打 tag。快进不产生新提交，发版后不用把 `main` 再合回 `dev`。`dev` 顶端就是要上线的内容；未完成的改动不要留在顶端。
+   不能快进说明本地与远端分叉：改用 `git merge origin/main`，冲突在本地解决完再提交。本地有未提交改动、同步会覆盖时，先 `git stash -u`，同步后 `git stash pop` 再解决冲突；不要 rebase、不要 force push，不提交带冲突标记的文件。
+
+2. **直接在 `main` 上提交和推送**：
+
+   ```bash
+   git add <相关文件>
+   git commit
+   git push origin main
+   ```
+
+   推送后 CI 以 `main` 为入口运行。不要先把改动提交到 `dev` 再合并，也不要求先开 PR。
+
+3. **发版在 `main` 上进行**：确认 `main` 与 `origin/main` 一致、目标提交的 CI 四个 Job 全部成功后，在 `main` 提交 `chore(release): 将 releaseVersion 升到 YYYY.MM.DD-NN`；该提交的 CI 通过后再以 `main` 上的提交打 tag、创建 Release。发版不产生额外的合并提交。
 
 4. **保持 git 视图清晰**：
 
    - 一次提交只做一件事，提交信息写清「为什么」，不混入无关改动；
-   - 发版提交单独一条：`chore(release): 将 releaseVersion 升到 YYYY.MM.DD-NN`，先落在 `dev`，再随快进进入 `main`；
-   - 同一改动不要做成两份等价提交（cherry-pick 只用于修复历史遗留分叉，不作为常规流程）；
-   - 临时分支合并进 `dev` 后删除，长期只保留 `dev` 与 `main`。共享的 `dev` / `main` 不要 rebase、不要 force push。
+   - 发版提交单独一条，直接落在 `main`；
+   - 同一改动不要做成两份等价提交；
+   - 临时分支用完删除，长期只保留 `main`；`dev` 仅保留历史。共享的 `main` 不要 rebase、不要 force push。
 
-5. **紧急修复**：`dev` 顶端可以上线时，修复直接落在 `dev`，再快进 `main`。已上线版本要修、而 `dev` 上已有不能上线的提交时，从当前 `main` 拉一个短修复分支，修完后快进 `main` 并打 tag，再合并回 `dev` 一次，然后删除该分支。
+5. **紧急修复**：同样先同步 `main`，修复直接提交到 `main`，按发版流程跑 CI 并打 tag；不再从 `main` 拉短修复分支或绕回 `dev`。
 
 ## 本轮安全修复边界
 

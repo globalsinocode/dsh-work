@@ -64,7 +64,7 @@ TypeScript 文件分组，组间空一行：
 
 ## 5. Git 提交
 
-仓库根目录约定（如 `AGENTS.md`）优先于本节。本仓库已有更细约定：日常只在 `dev` 提交，发版时用 `git merge --no-ff dev` 把 `dev` 合并进 `main`，不要改成下面的快进发版。下面的快进步骤只用于没有这类约定的仓库。不使用 release 分支。没有 `dev` 时不要擅自新建。
+仓库根目录 `AGENTS.md` 优先于本节。**本仓库只使用 `main`**：所有修改直接在 `main` 提交，`dev` 不再使用（仅保留历史）。`main` 同时是开发线和发布位置，发版用 tag 标记，不新开 `dev` 或 release 分支。
 
 ### 提交信息
 
@@ -89,37 +89,20 @@ TypeScript 文件分组，组间空一行：
 
 ### 分支
 
-只保留一条开发线。`main` 是已上线位置，用 tag 标记版本，不靠来回合并制造发版提交。
+只保留 `main`。它同时是开发线和发布位置；发版用 tag 标记版本，不新开 `dev` 或 release 分支。`dev` 仅保留历史，不要向它提交。
 
-**只有 `main`：** 所有开发都在 `main`。可以上线时，在当前提交打 tag，不另开分支。
-
-**有 `dev`：** 日常只在 `dev` 上提交。`main` 永远是 `dev` 历史上的某个提交，只在用户明确发版、且 `dev` 顶端就是要上线的内容时，把 `main` 快进到该提交：
-
-```bash
-git switch main
-git merge --ff-only origin/main
-git merge --ff-only dev
-```
-
-快进不会产生新的合并提交，所以不用再把 `main` 合回 `dev`。发版边界看 tag，不看合并提交。
-
-不能快进，说明有人在 `main` 上写过 `dev` 没有的提交。这时只做一次：把 `origin/main` 合并进 `dev`，冲突在本地解决，之后 `main` 继续只靠快进前移。
-
-未完成的改动不要留在 `dev` 顶端，否则快进会把它们一起带上线。需要修已上线版本、但 `dev` 上已有不能上线的提交时，从当前 `main` 拉一个短修复分支，修完后快进 `main` 并打 tag，再把这个修复合并回 `dev` 一次，然后删掉该分支。这不是长期 release 分支。
-
-共享的 `dev` / `main` 不要 rebase、不要 force push。同一改动不要 cherry-pick 成两份。
+共享的 `main` 不要 rebase、不要 force push。同一改动不要 cherry-pick 成两份。
 
 ### 提交前同步
 
-先确认当前就在开发线（只有 `main` 时是 `main`，有 `dev` 时是 `dev`）。未提交改动会被覆盖时，先收拾干净再同步。
+先确认当前在 `main`。未提交改动会被覆盖时，先 `git stash -u`，同步后再 `git stash pop`。
 
 ```bash
+git switch main
 git fetch origin
-git merge --ff-only origin/<开发线>
+git pull --no-rebase origin main
 ```
 
-不能快进说明本地和远端分叉：`git merge origin/<开发线>`，冲突在本地解决。确认文件里没有 `<<<<<<<`、`=======`、`>>>>>>>`，跑相关检查或测试，再写本次提交。
+不能快进说明本地和远端分叉：`git merge origin/main`，冲突在本地解决。确认文件里没有 `<<<<<<<`、`=======`、`>>>>>>>`，跑相关检查或测试，再写本次提交。
 
-有 `dev` 时，只有 `git merge-base --is-ancestor origin/main HEAD` 失败才先把 `origin/main` 合并进 `dev`。正常情况下它应当一直成功，不必每次提交都合并 `main`。
-
-推送只在明确要求时进行。远端拒绝时重新 fetch 并对齐，不要 force push。
+完成修改后按本仓库约定提交并推送 `main`；远端拒绝时重新 fetch 并对齐，不要 force push。

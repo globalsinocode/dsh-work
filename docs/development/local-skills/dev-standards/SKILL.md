@@ -74,7 +74,7 @@ description: 本仓库本地开发时使用。对齐命名、docs/SDD、Vue 3 �
 - [ ] 新文件符合 engineering + vue3；计划中的路径已落地  
 - [ ] 失败与空态真实展示，不用 `0` 冒充无数据  
 - [ ] 改动范围最小  
-- [ ] 分支与发版以本仓库 `AGENTS.md` 为准：日常在 `dev`，发版用 `--no-ff` 把 `dev` 合并进 `main`（见 [engineering.md](engineering.md) §5）
+- [ ] 分支与发版以本仓库 `AGENTS.md` 为准：所有修改直接在 `main`，提交前先同步 `origin/main`（见 [engineering.md](engineering.md) §5）
 - [ ] 已在修改记录最上方写下本次改动  
 
 ## 验证

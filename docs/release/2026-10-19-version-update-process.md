@@ -20,20 +20,22 @@ GitHub 最新 Release 标签与上表一致。`main` 在该标签之后还有 3 
 
 ## 2. 标准流程
 
+> 2026-11-02 起：不再使用 `dev`、长期功能分支或 PR 合并流程；所有修改直接在 `main` 提交。以下 2.1–2.2 已按新约定改写，`v2026.10.19-01` 当时走 PR #3 的历史差异保留在第 3 节。
+
 ### 2.1 本地开发
 
-1. 从生产仓库的 `main` 建隔离工作树和功能分支。不在日常脏工作区里改，不把目标机的 `runtime.env`、`~/.dsh`、业务库或模型密钥拷回开发机。
+1. 从生产仓库的 `main` 拉取最新代码，直接在 `main` 修改；不建长期功能分支，不把改动放到 `dev`。提交前先 `git fetch origin && git pull --no-rebase origin main`，冲突在本地解决。不把目标机的 `runtime.env`、`~/.dsh`、业务库或模型密钥拷回开发机。
 2. 修复只走现有 Run / Attempt、Runtime Adapter 与 DSH。不新增第二套 Agent 循环，不在 DSH 不可用时直接调用模型。
 3. 用可丢弃 PostgreSQL 做集成验证。数据库连接只使用 `DSH_WORK_TEST_DATABASE_URL`。容器不挂载宿主机目录，测完删除容器。
 4. 本地绿灯不能写成目标机 P2。Windows 上既有的符号链接、Unix socket 和 POSIX 路径失败，不作为本链路证据。
 
-### 2.2 推送与合并
+### 2.2 推送与 CI
 
-1. 推送到 `globalsinocode/dsh-work` 的功能分支。推送功能分支本身不运行 M6，也不会部署。
+1. 直接在 `main` 提交并推送；推送 `main` 会运行 CI，不先推到功能分支，也不要求开 PR。
 2. 选定当天未被占用的版本号 `YYYY.MM.DD-NN`。不复用已有 Tag，包括 `v2026.10.16-01` 和已经发布的 `v2026.10.19-01`。
 3. 只把 `server/package.json` 的 `releaseVersion` 改成不带 `v` 的版本号，提交并推送。`scripts/release/build-release.sh` 要求它与发布输入一致。
-4. 向 `main` 打开 Pull Request，等待该 PR 上的 **M6 quality gate** 成功。失败则停止，不发布。
-5. 合并 PR。不 force-push `main`。Manual release 发布的是合并后的 `main` 提交，不是分支上合并前的旧 SHA。合并提交上的 M6 也必须成功。
+4. 等待该 `main` 提交的 CI 四个 Job（Static checks and build、Unit tests、PostgreSQL integration tests、Browser tests）与 **M6 quality gate** 全部成功。失败则停止，不发布。
+5. 不 force-push `main`。Manual release 发布的是 `main` 上通过上述检查的提交；如果之后又有新提交，必须重新确认目标提交的 CI。
 
 ### 2.3 生成不可变 Release
 
