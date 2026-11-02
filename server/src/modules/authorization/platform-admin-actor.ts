@@ -18,10 +18,30 @@ export async function requirePlatformAdminActor(
   sql: DatabaseClient | DatabaseTransaction,
   userId: string,
 ): Promise<PlatformAdminActor> {
-  const [actor] = await sql<PlatformAdminActor[]>`
+  const [actor] = await platformAdminActors(sql, { userId })
+  if (!actor) throw authorizationDenied(`操作人不存在、已停用或不是平台管理员：${userId}`)
+  return actor
+}
+
+/** 按同一判定口径取一位平台管理员（平台预置等无请求身份的场景），优先 `preferredUserId`；没有时返回 undefined。 */
+export async function findPlatformAdminActor(
+  sql: DatabaseClient | DatabaseTransaction,
+  preferredUserId: string,
+): Promise<PlatformAdminActor | undefined> {
+  const [actor] = await platformAdminActors(sql, { preferredUserId })
+  return actor
+}
+
+function platformAdminActors(
+  sql: DatabaseClient | DatabaseTransaction,
+  filter: { userId: string } | { preferredUserId: string },
+) {
+  const userId = 'userId' in filter ? filter.userId : null
+  const preferredUserId = 'preferredUserId' in filter ? filter.preferredUserId : null
+  return sql<PlatformAdminActor[]>`
     select u.id, u.display_name as "displayName", coalesce(u.department_id, '未分配部门') as department
       from users u
-     where u.tenant_id = ${tenantId} and u.id = ${userId} and u.status = 'active'
+     where u.tenant_id = ${tenantId} and (${userId}::text is null or u.id = ${userId}) and u.status = 'active'
        and exists (select 1 from tenants t where t.id = u.tenant_id and t.status = 'active')
        and exists (
          select 1 from user_roles ur
@@ -31,7 +51,7 @@ export async function requirePlatformAdminActor(
             and (ur.valid_until is null or ur.valid_until > now())
             and (r.permissions ? 'admin:*' or r.permissions ? 'admin:write')
        )
+     order by (u.id = ${preferredUserId}::text) desc nulls last, u.created_at, u.id
+     limit 1
   `
-  if (!actor) throw authorizationDenied(`操作人不存在、已停用或不是平台管理员：${userId}`)
-  return actor
 }

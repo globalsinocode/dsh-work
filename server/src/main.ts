@@ -86,6 +86,7 @@ import { PostgresWorkspaceUsageService } from './modules/workbench/application/p
 import { PostgresWorkspaceService } from './modules/workbench/application/postgres-workspace-service.ts'
 import { PostgresAgentService } from './modules/agent/postgres-agent-service.ts'
 import { PostgresAgentValidationService } from './modules/agent/agent-validation-service.ts'
+import { loadSkillCreatorPreset, seedSkillCreatorDraft } from './modules/agent/skill-creator-preset.ts'
 import { registerAgentValidationRoutes } from './http/admin/agent-validation-routes.ts'
 import { PostgresAgentRunHistory } from './modules/agent/agent-run-history.ts'
 import { registerAssistantRoutes } from './http/admin/assistant-routes.ts'
@@ -616,6 +617,15 @@ async function start() {
   // 已在运行的案例 Run 由重启恢复收敛，读取验证时折叠为同一状态。
   const validationRecovery = await agentValidation.recoverInterruptedValidations()
   if (validationRecovery.interrupted > 0) console.warn('agent validation recovery completed', validationRecovery)
+  // Skill 创建专家方案 5.1（SKC-05）：环境中还没有专家时预置未发布草稿；失败只记录，不阻止启动。
+  try {
+    const preset = loadSkillCreatorPreset(resolve(projectRoot, 'server/config/agent-presets'))
+    const seeded = await seedSkillCreatorDraft(database, agents, agentValidation, preset)
+    if (seeded.status !== 'skipped') console.info('skill creator preset', seeded)
+    else if (seeded.reason === 'no_admin') console.warn('skill creator preset skipped: 没有可用的本地平台管理员，下次启动重试')
+  } catch (error) {
+    console.warn('skill creator preset skipped:', error instanceof Error ? error.message : error)
+  }
   registerAgentValidationRoutes(router, agents, agentValidation, new PostgresAgentRunHistory(database))
   registerSkillRoutes(router, skills, async () => builtinSkills.status((await operations.getRuntimePolicy('runtime-local-01')).disabledBuiltinSkills))
   registerToolRoutes(router, mcpService, builtinToolStatus)
