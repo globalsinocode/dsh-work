@@ -199,6 +199,28 @@ test('KB-04 文档列表、修改、重新解析、删除、预览与下载；�
   assert.equal((await ok(users.viewer, 'GET', `${base}/knowledge-bases/${planBase}/documents?status=parsing`)).items.length, 1)
   assert.equal((await ok(users.viewer, 'GET', `${base}/knowledge-bases/${planBase}/documents?status=completed`)).items.length, 0)
 
+  // “解析中”包含 WeKnora 的 pending、processing、finalizing，“解析失败”包含 cancelled，与列表显示一致。
+  const externalId = double.documents.find(item => item.fileName === '安全库存口径.txt')!.knowledgeBaseId
+  double.documents.push(
+    { id: 'doc-pending', knowledgeBaseId: externalId, title: '待解析', fileName: 'pending.txt', createdAt: '2026-10-01T00:00:00Z', updatedAt: '2026-10-01T00:00:00Z', parseStatus: 'pending' },
+    // 创建得早、更新得晚：顺序按创建时间（与 WeKnora 一致），不按更新时间。
+    { id: 'doc-finalizing', knowledgeBaseId: externalId, title: '收尾中', fileName: 'finalizing.txt', createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-11-02T09:00:00Z', parseStatus: 'finalizing' },
+    { id: 'doc-cancelled', knowledgeBaseId: externalId, title: '已取消', fileName: 'cancelled.txt', updatedAt: '2026-11-02T00:00:00Z', parseStatus: 'cancelled' },
+  )
+  try {
+    const documentsOf = (query: string) => ok(users.viewer, 'GET', `${base}/knowledge-bases/${planBase}/documents?${query}`)
+    const parsing = await documentsOf('status=parsing')
+    assert.equal(parsing.total, 3)
+    assert.deepEqual(parsing.items.map((item: any) => item.fileName), ['安全库存口径.txt', 'pending.txt', 'finalizing.txt'])
+    // 每个状态只有一篇：若直接把第 2 页透传给 WeKnora，第 2 页会是空的。
+    assert.deepEqual((await documentsOf('status=parsing&page=2&pageSize=2')).items.map((item: any) => item.fileName), ['finalizing.txt'])
+    assert.deepEqual((await documentsOf('status=failed')).items.map((item: any) => item.fileName), ['cancelled.txt'])
+    // WeKnora 的 page_size 上限为 1000：合并窗口超出时明确拒绝，而不是返回残缺的页。
+    assert.equal((await api(users.viewer, 'GET', `${base}/knowledge-bases/${planBase}/documents?status=parsing&page=21&pageSize=50`)).status, 422)
+  } finally {
+    double.documents = double.documents.filter(item => !['doc-pending', 'doc-finalizing', 'doc-cancelled'].includes(item.id))
+  }
+
   await ok(users.docs, 'PATCH', `${base}/knowledge-bases/${planBase}/documents/${document.id}`, { title: '安全库存计算口径' })
   await ok(users.docs, 'POST', `${base}/knowledge-bases/${planBase}/documents/${document.id}/reparse`)
   const preview = await ok(users.viewer, 'GET', `${base}/knowledge-bases/${planBase}/documents/${document.id}/preview`)
@@ -293,6 +315,9 @@ test('KB-06 WeKnora 不可用时返回明确提示，不含密钥与正文', asy
   // 对话中的选择器不读取 WeKnora 统计，WeKnora 不可用时仍可选择。
   const picker = await ok(users.viewer, 'GET', `${base}/knowledge-bases?stats=false`)
   assert.ok(picker.length > 0)
+  // “用这个知识库提问”带入单个知识库同样不读取统计。
+  assert.equal((await api(users.viewer, 'GET', `${base}/knowledge-bases/${picker[0].id}`)).status, 503)
+  assert.equal((await ok(users.viewer, 'GET', `${base}/knowledge-bases/${picker[0].id}?stats=false`)).id, picker[0].id)
 
   // 连接被停用时与执行前检索同一口径：员工端不显示入口，接口回答不可用。
   double.failWith = null

@@ -67,6 +67,8 @@ export interface WeKnoraDocument {
   /** pending、processing、finalizing、completed、failed、deleting、cancelled */
   parseStatus: string
   errorMessage: string | null
+  /** WeKnora 文档列表按创建时间倒序。 */
+  createdAt: string | null
   updatedAt: string | null
 }
 
@@ -305,6 +307,7 @@ function toDocument(value: unknown): WeKnoraDocument {
     fileSize: typeof row.file_size === 'number' ? row.file_size : null,
     parseStatus: typeof row.parse_status === 'string' ? row.parse_status : 'pending',
     errorMessage: typeof row.error_message === 'string' && row.error_message ? row.error_message : null,
+    createdAt: typeof row.created_at === 'string' ? row.created_at : null,
     updatedAt: typeof row.updated_at === 'string' ? row.updated_at : null,
   }
 }

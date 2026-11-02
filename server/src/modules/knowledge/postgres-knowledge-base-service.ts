@@ -81,10 +81,13 @@ export class PostgresKnowledgeBaseService implements KnowledgeBaseService {
     return rows.map(row => this.view(row, level, grants, stats.get(row.externalId)))
   }
 
-  async get(userId: string, knowledgeBaseId: string): Promise<KnowledgeBaseView> {
+  async get(userId: string, knowledgeBaseId: string, options: { withStats?: boolean } = {}): Promise<KnowledgeBaseView> {
     const level = await this.requireLevel(userId, 'view')
     const row = await this.requireVisible(userId, knowledgeBaseId)
-    const stats = (await this.call(client => client.listKnowledgeBases())).find(item => item.id === row.externalId)
+    // 与 list 相同：带入对话只需要名称，不读取 WeKnora 统计，WeKnora 暂不可用时“用这个知识库提问”仍能带上知识库。
+    const stats = options.withStats === false
+      ? undefined
+      : (await this.call(client => client.listKnowledgeBases())).find(item => item.id === row.externalId)
     return this.view(row, level, await this.grantsOf([row.id]), stats)
   }
 
@@ -197,12 +200,12 @@ export class PostgresKnowledgeBaseService implements KnowledgeBaseService {
     const pageSize = input.pageSize ?? 20
     if (!Number.isInteger(page) || page < 1) throw invalidRequest('page 必须为正整数')
     if (!Number.isInteger(pageSize) || pageSize < 1 || pageSize > 50) throw invalidRequest('pageSize 必须为 1 到 50 之间的整数')
-    const parseStatus = input.status === undefined || input.status === '' || input.status === 'all'
+    const parseStatuses = input.status === undefined || input.status === '' || input.status === 'all'
       ? undefined
-      : { parsing: 'processing', completed: 'completed', failed: 'failed' }[input.status]
-    if (input.status && input.status !== 'all' && !parseStatus) throw invalidRequest('status 必须为 all、parsing、completed 或 failed')
+      : documentStatusFilters[input.status]
+    if (input.status && input.status !== 'all' && !parseStatuses) throw invalidRequest('status 必须为 all、parsing、completed 或 failed')
     const keyword = input.keyword?.trim().slice(0, 100) || undefined
-    const result = await this.call(client => client.listDocuments(row.externalId, { keyword, parseStatus, page, pageSize }))
+    const result = await this.call(client => listByStatuses(client, row.externalId, { keyword, parseStatuses, page, pageSize }))
     const documents = result.items.filter(item => item.parseStatus !== 'deleting')
     const uploaders = await this.uploaders(documents.map(item => item.id))
     // “删除中”的文档不显示，总数随之扣除本页去掉的条数（其他页的删除中文档由 WeKnora 清理后自然消失）。
@@ -485,6 +488,40 @@ function requireName(value: string) {
   const name = value.trim()
   if (!name || name.length > 60) throw invalidRequest('名称长度为 1～60 个字')
   return name
+}
+
+/** 员工端筛选与 WeKnora 解析状态的对应，与 toDocumentStatus 的显示一致（WeKnora 一次只按一个状态筛选）。 */
+const documentStatusFilters: Record<string, string[]> = {
+  parsing: ['pending', 'processing', 'finalizing'],
+  completed: ['completed'],
+  failed: ['failed', 'cancelled'],
+}
+
+/** WeKnora 文档列表 `page_size` 的上限（v0.9.0 实测：超过即返回 400）。 */
+const weknoraMaxPageSize = 1000
+
+/**
+ * 按一组解析状态分页：WeKnora 一次只按一个状态筛选，每个状态各取到本页末尾为止的文档，
+ * 按 WeKnora 自身的顺序（创建时间倒序）合并、按 ID 去重（查询间隙里状态变化的文档只算一次）后截取本页。
+ * 只有一个状态（或不筛选）时直接交给 WeKnora 分页。
+ */
+async function listByStatuses(
+  client: WeKnoraClient,
+  knowledgeBaseId: string,
+  input: { keyword?: string; parseStatuses?: string[]; page: number; pageSize: number },
+): Promise<{ items: WeKnoraDocument[]; total: number }> {
+  const { keyword, parseStatuses, page, pageSize } = input
+  if (!parseStatuses || parseStatuses.length === 1) {
+    return client.listDocuments(knowledgeBaseId, { keyword, parseStatus: parseStatuses?.[0], page, pageSize })
+  }
+  const window = page * pageSize
+  if (window > weknoraMaxPageSize) throw invalidRequest(`按解析状态筛选时只能查看前 ${weknoraMaxPageSize} 篇，请用关键词缩小范围`)
+  const results = await Promise.all(parseStatuses.map(parseStatus => client.listDocuments(knowledgeBaseId, { keyword, parseStatus, page: 1, pageSize: window })))
+  const unique = new Map(results.flatMap(result => result.items).map(item => [item.id, item]))
+  const items = [...unique.values()]
+    .sort((left, right) => (right.createdAt ?? '').localeCompare(left.createdAt ?? '') || left.id.localeCompare(right.id))
+  const duplicates = results.reduce((sum, result) => sum + result.items.length, 0) - unique.size
+  return { items: items.slice((page - 1) * pageSize, window), total: results.reduce((sum, result) => sum + result.total, 0) - duplicates }
 }
 
 function toDocumentStatus(parseStatus: string): KnowledgeDocumentStatus {

@@ -340,5 +340,5 @@ WK-S1 删除原有模块后，在 WK-S2 交付前没有任何执行能检索企�
 - 知识库级与工作空间级的重排序配置如何叠加，新建知识库是否需要显式开启重排序，WK-S1 契约测试中确认。
 - 最低相关度。**已校准（2026-11-02，本机 v0.9.0、在线嵌入模型、未配置重排序）：** 命中文档 0.56～0.83，无关提问最高 0.36，相关提问中非目标文档最高 0.45，门槛由 0.2 调为 0.5。契约测试“最低相关度”用例在升级 WeKnora、更换嵌入模型或启用重排序后复核（重排序会改变分值范围）。
 - 单篇文档读取（`GET /knowledge/{id}`）与预览（`…/preview`）的 API Key 能力在 v0.9.0 文档中未声明，WeKnora 对未声明的接口一律返回 403。WK-S2 的文档归属校验已改用批量元数据接口（确认只需 retrieve）；预览接口在真实环境契约测试中确认，不支持时改为只提供下载。**已确认：** 只有 `retrieve`、`ingest`、`manage_kbs` 能力的 Key 可以调用预览、下载、改标题、重新解析与删除文档。
-- `GET /knowledge-bases` 的 `page_size` 上限、解析状态 `pending`/`finalizing` 与员工端“解析中”筛选的对应（目前只按 `processing` 筛选），在 WK-S4 契约测试中确认。**实测：** 文档状态依次为 `pending` → `processing` → `completed`（或 `failed`），`pending` 会持续数秒，员工端“解析中”筛选应同时包含 `pending`（未修改）；`finalizing` 与 `page_size` 上限未观察到。
+- `GET /knowledge-bases` 的 `page_size` 上限、解析状态 `pending`/`finalizing` 与员工端“解析中”筛选的对应（目前只按 `processing` 筛选），在 WK-S4 契约测试中确认。**实测：** 文档状态依次为 `pending` → `processing` → `completed`（或 `failed`），`pending` 会持续数秒。员工端“解析中”筛选按 `pending`、`processing`、`finalizing` 分别查询后合并（WeKnora 一次只接受一个状态），“解析失败”含 `cancelled`；文档列表按创建时间倒序，`page_size` 上限 1000（超过返回 400），合并筛选的窗口超过 1000 时拒绝。知识库统计的 `processing_count` 只计 `processing`，因此卡片上的“解析中”数量不含短暂的 `pending`、`finalizing`（接受该差异）；`finalizing` 与 `page_size` 上限未观察到。
 - 业务接口没有全局限流，平台侧是否需要并发上限，在 P2 压测后决定。

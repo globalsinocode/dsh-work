@@ -61,7 +61,7 @@ export interface KnowledgeBaseService {
   status(userId: string): Promise<KnowledgeStatusView>
   listDepartments(userId: string): Promise<KnowledgeDepartmentOption[]>
   list(userId: string, options?: { withStats?: boolean }): Promise<KnowledgeBaseView[]>
-  get(userId: string, knowledgeBaseId: string): Promise<KnowledgeBaseView>
+  get(userId: string, knowledgeBaseId: string, options?: { withStats?: boolean }): Promise<KnowledgeBaseView>
   create(userId: string, input: { name: string; description?: string; ownerDepartmentId: string; includeDescendants?: boolean }): Promise<KnowledgeBaseView>
   update(userId: string, knowledgeBaseId: string, input: { name?: string; description?: string }): Promise<KnowledgeBaseView>
   remove(userId: string, knowledgeBaseId: string): Promise<void>

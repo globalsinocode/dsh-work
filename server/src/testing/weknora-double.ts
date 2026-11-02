@@ -11,6 +11,8 @@ export interface WeKnoraDoubleDocument {
   title: string
   fileName: string
   updatedAt: string
+  /** 缺省同 updatedAt；列表按它倒序，与 WeKnora 一致。 */
+  createdAt?: string
   /** 缺省为 completed。 */
   parseStatus?: string
 }
@@ -186,7 +188,13 @@ export class WeKnoraDouble {
         .filter(document => document.knowledgeBaseId === decodeURIComponent(list[1]!))
         .filter(document => !keyword || document.title.includes(keyword) || document.fileName.includes(keyword))
         .filter(document => !status || (document.parseStatus ?? 'completed') === status)
-      return { status: 200, body: { success: true, data: items.map(toKnowledge), total: items.length, page: 1, page_size: 20 } }
+        .sort((left, right) => (right.createdAt ?? right.updatedAt).localeCompare(left.createdAt ?? left.updatedAt))
+      // 与 WeKnora v0.9.0 一致：page_size 超过 1000 返回 400，否则按页截取。
+      const page = Number(url.searchParams.get('page') ?? 1)
+      const pageSize = Number(url.searchParams.get('page_size') ?? 20)
+      if (pageSize > 1000) return { status: 400, body: { success: false, error: { code: 1000, message: 'PageSize max' } } }
+      const data = items.slice((page - 1) * pageSize, page * pageSize).map(toKnowledge)
+      return { status: 200, body: { success: true, data, total: items.length, page, page_size: pageSize } }
     }
     const upload = url.pathname.match(/^\/api\/v1\/knowledge-bases\/([^/]+)\/knowledge\/file$/)
     if (request.method === 'POST' && upload) {
@@ -230,6 +238,7 @@ function toKnowledge(document: WeKnoraDoubleDocument) {
     file_size: 1024,
     parse_status: document.parseStatus ?? 'completed',
     error_message: document.parseStatus === 'failed' ? 'parse failed' : '',
+    created_at: document.createdAt ?? document.updatedAt,
     updated_at: document.updatedAt,
   }
 }

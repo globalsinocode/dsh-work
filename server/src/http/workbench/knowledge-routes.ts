@@ -46,7 +46,9 @@ export function registerKnowledgeRoutes(
   })
 
   router.get(`${basePath}/knowledge-bases/:knowledgeBaseId`, async (_request, context) =>
-    ok(await knowledge.get(await identityOf(context), context.params['knowledgeBaseId'] ?? '')))
+    ok(await knowledge.get(await identityOf(context), context.params['knowledgeBaseId'] ?? '', {
+      withStats: context.url.searchParams.get('stats') !== 'false',
+    })))
 
   router.patch(`${basePath}/knowledge-bases/:knowledgeBaseId`, async (request, context) => {
     const userId = await identityOf(context)

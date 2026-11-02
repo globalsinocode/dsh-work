@@ -3765,6 +3765,7 @@
     "/knowledge-bases/{knowledgeBaseId}": {
       "get": {
         "operationId": "getKnowledgeBase",
+        "parameters": [{ "name": "stats", "in": "query", "description": "false 时不读取 WeKnora 统计（documentCount、processingCount 为 0），WeKnora 暂不可用时也能返回；对话中带入知识库时使用。", "schema": { "enum": ["true", "false"] } }],
         "summary": "知识库详情",
         "description": "不可见与不存在同样返回 404。",
         "responses": {

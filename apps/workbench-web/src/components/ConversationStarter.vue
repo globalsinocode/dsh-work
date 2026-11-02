@@ -117,7 +117,7 @@ async function syncKnowledgeFromRoute() {
   const id = typeof route.query.knowledgeBase === 'string' ? route.query.knowledgeBase : ''
   if (!id || props.workspaceLocked) return
   try {
-    const base = await workbenchApi.getKnowledgeBase(id)
+    const base = await workbenchApi.getKnowledgeBase(id, { stats: false })
     selectedKnowledge.value = [{ id: base.id, name: base.name, available: true }]
   } catch {
     selectedKnowledge.value = []

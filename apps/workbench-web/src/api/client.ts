@@ -664,7 +664,8 @@ export const workbenchApi = {
   /** stats=false 时不读取 WeKnora 统计（文档数为 0），供对话中的知识库选择器在 WeKnora 暂不可用时也能使用。 */
   listKnowledgeBases: (options: { stats?: boolean } = {}) =>
     request<KnowledgeBase[]>(options.stats === false ? '/knowledge-bases?stats=false' : '/knowledge-bases'),
-  getKnowledgeBase: (knowledgeBaseId: string) => request<KnowledgeBase>(`/knowledge-bases/${encodeURIComponent(knowledgeBaseId)}`),
+  getKnowledgeBase: (knowledgeBaseId: string, options: { stats?: boolean } = {}) =>
+    request<KnowledgeBase>(`/knowledge-bases/${encodeURIComponent(knowledgeBaseId)}${options.stats === false ? '?stats=false' : ''}`),
   createKnowledgeBase: (input: { name: string; description?: string; ownerDepartmentId: string; includeDescendants?: boolean }) =>
     request<KnowledgeBase>('/knowledge-bases', { method: 'POST', body: JSON.stringify(input) }),
   updateKnowledgeBase: (knowledgeBaseId: string, input: { name?: string; description?: string }) =>
