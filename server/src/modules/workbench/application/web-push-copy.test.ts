@@ -205,6 +205,25 @@ test('collabUnreadRecipientIds excludes actor and respects mute', () => {
   )
 })
 
+test('collabUnread peer uses the mobile direct-chat url and does not use a product session path', () => {
+  const payload = buildCollabUnreadPayload({
+    eventId: 'evt-peer',
+    targetType: 'peer',
+    targetId: 'user-a',
+    sessionId: 'dconv-1',
+    title: '林岚',
+    previewText: '  私下说一句  ',
+    senderName: '林岚',
+    role: 'user',
+  })
+  assert.equal(payload.tag, 'collab:peer:user-a')
+  assert.equal(payload.url, '/c/chats/peer/user-a')
+  assert.equal(payload.sessionId, 'dconv-1')
+  assert.equal(payload.targetType, 'peer')
+  assert.equal(payload.targetId, 'user-a')
+  assert.equal(payload.body, '林岚：私下说一句')
+})
+
 test('runFinishedRecipientIds only requester unless cancelled', () => {
   assert.deepEqual(runFinishedRecipientIds({ requestedBy: 'u9', runStatus: 'succeeded' }), ['u9'])
   assert.deepEqual(runFinishedRecipientIds({ requestedBy: 'u9', runStatus: 'failed' }), ['u9'])

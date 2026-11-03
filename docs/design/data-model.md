@@ -84,7 +84,7 @@ Task 创建时由触发器写入发起 Principal：员工请求为本人，系�
 | `workspace_notification_deliveries` | 通知投递记录 | 按成员与事件去重；不含消息正文 |
 | `workspace_notification_account_states` | 账号级通知汇总状态 | 与空间级已读位置配合 |
 | `workspace_object_gc_candidates` | 待回收的空间对象候选 | 逻辑移除后的延迟清理队列 |
-| `conversation_read_states` | 协作模式对话列表按对话对象（单聊的 AI 同事 / 群组）的已读位置（迁移 0096） | 按账号 + 对话对象唯一；已读时间只前进不回拨；与 `workspace_notification_states` 分开保存；迁移时已有对话对象记为已读 |
+| `conversation_read_states` | 协作模式对话列表按对话对象（单聊的 AI 同事 / 群组 / 私聊对方）的已读位置（迁移 0101，私聊为 0117） | 按账号 + 对话对象唯一；已读时间只前进不回拨；与 `workspace_notification_states` 分开保存；迁移时已有的 AI 同事和群组记为已读。`peer` 的 target_id 是对方用户 id |
 | `message_mentions` | 群聊与共享讨论中 @ 同事的站内提醒（项目空间方案 D38，迁移 0114） | 按消息 + 接收人唯一，与消息同一事务写入；只登记发送时的现任成员且不含发送者；读取时重查成员身份；`read_at` 为本人已读时间，与对话对象已读位置和按空间静音分开 |
 
 ## 4. 会话、Task 与运行
@@ -101,7 +101,8 @@ flowchart LR
 
 | 表 | 作用 | 关键不变量 |
 | --- | --- | --- |
-| `sessions`、`messages` | 产品会话与消息 | 必须归属空间；个人会话锁定 Agent Version，团队会话按消息绑定 Agent 成员；产品 Session 不等于 DSH Session |
+| `sessions`、`messages` | 产品会话与消息 | 必须归属空间；个人会话锁定 Agent Version，团队会话按消息绑定 Agent 成员；产品 Session 不等于 DSH Session。同事私聊不写入这两张表 |
+| `direct_conversations`、`direct_messages`、`direct_conversation_participants` | 同事一对一私聊（迁移 0117） | 同一租户两名员工一条；只追加纯文本；不产生 Run。参与者可单独隐藏列表行。已读仍用 `conversation_read_states` 的 `peer` |
 | `session_summaries` | 长对话中段的摘要（EX-02） | 覆盖首条消息之后、到 `covered_through` 为止的消息；每个会话最多一条 pending；由无 Session 的 `session-summary` 运行生成，成功后不可修改，较新的摘要取代旧的 |
 | `tasks` | 一次业务请求 | 按来源类型和关联键幂等受理；API/event 请求摘要不可漂移；可选关联 Session |
 | `task_operations` | Task 的外部动作与回执 | 按 Task + 操作键唯一，参数摘要不可漂移；效果未知必须查询后收敛 |

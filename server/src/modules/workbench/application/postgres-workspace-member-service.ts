@@ -729,7 +729,8 @@ export class PostgresWorkspaceMemberService {
   }
 }
 
-const workbenchAccessPredicate = /* sql */ `
+/** 在职业务员工是否具备员工工作台权限。SQL 里用户表别名必须是 `u`。 */
+export const workbenchAccessPredicate = /* sql */ `
   select 1
     from user_roles ur
     join roles r on r.tenant_id = ur.tenant_id and r.id = ur.role_id

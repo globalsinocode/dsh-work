@@ -53,6 +53,36 @@ export class WebPushDispatchService {
     })
   }
 
+  enqueueDirectMessagePush(messageId: string): void {
+    void this.deliverDirectMessage(messageId).catch((error: unknown) => {
+      console.error('web push direct message dispatch failed', error)
+    })
+  }
+
+  async deliverDirectMessage(messageId: string): Promise<void> {
+    const [row] = await this.database<DirectMessagePushRow[]>`
+      select m.id as "messageId", m.content, m.conversation_id as "conversationId",
+             m.sender_user_id as "senderUserId", sender.display_name as "senderName",
+             case when c.user_low = m.sender_user_id then c.user_high else c.user_low end as "peerId"
+        from direct_messages m
+        join direct_conversations c on c.tenant_id = m.tenant_id and c.id = m.conversation_id
+        join users sender on sender.tenant_id = m.tenant_id and sender.id = m.sender_user_id
+       where m.tenant_id = ${tenantId} and m.id = ${messageId}
+    `
+    if (!row) return
+    const payload = buildCollabUnreadPayload({
+      eventId: `dmsg:${row.messageId}`,
+      targetType: 'peer',
+      targetId: row.senderUserId,
+      sessionId: row.conversationId,
+      title: row.senderName,
+      previewText: row.content,
+      senderName: row.senderName,
+      role: 'user',
+    })
+    await this.push.deliver(row.peerId, 'collab_unread', payload)
+  }
+
   enqueueRunFinished(input: {
     run: RunFinishedPushRun
     status: RunFinishedStatus
@@ -202,4 +232,13 @@ interface RunContextRow {
   workspaceId: string
   workspaceType: string
   agentId: string | null
+}
+
+interface DirectMessagePushRow {
+  messageId: string
+  content: string
+  conversationId: string
+  senderUserId: string
+  senderName: string
+  peerId: string
 }

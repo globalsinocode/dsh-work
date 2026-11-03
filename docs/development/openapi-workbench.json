@@ -355,6 +355,100 @@
         }
       }
     },
+    "/me/direct-conversations": {
+      "get": {
+        "operationId": "listDirectConversations",
+        "summary": "同事私聊列表（本人）",
+        "description": "移动端一对一私聊。不并入 conversation-targets，PC 员工端不使用。只含已有消息且本人未隐藏的私聊。",
+        "parameters": [
+          { "name": "cursor", "in": "query", "schema": { "type": "string" } },
+          { "name": "limit", "in": "query", "schema": { "type": "integer", "minimum": 1, "maximum": 100, "default": 30 } }
+        ],
+        "responses": {
+          "200": { "description": "私聊行，id 为对方用户 id" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "422": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/direct-conversations/with/{userId}": {
+      "get": {
+        "operationId": "lookupDirectConversation",
+        "summary": "查看与某同事是否已有私聊",
+        "parameters": [{ "name": "userId", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": {
+          "200": { "description": "conversationId 为空表示尚未发言" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" },
+          "422": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/direct-conversations/with/{userId}/messages": {
+      "post": {
+        "operationId": "sendDirectMessage",
+        "summary": "发送同事私聊",
+        "description": "同一事务内保证两人只有一条私聊并追加文本。不创建 Run，不写入 sessions。",
+        "parameters": [{ "name": "userId", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "type": "object", "required": ["content"], "properties": { "content": { "type": "string", "minLength": 1, "maxLength": 20000 } } } } }
+        },
+        "responses": {
+          "200": { "description": "刚写入的消息" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" },
+          "422": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/direct-conversations/with/{userId}/read": {
+      "post": {
+        "operationId": "markDirectConversationRead",
+        "summary": "私聊已读位置只进不退",
+        "parameters": [{ "name": "userId", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "type": "object", "properties": { "upTo": { "type": "string", "format": "date-time" } } } } }
+        },
+        "responses": {
+          "200": { "description": "对方用户 id 与已读时间" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" },
+          "422": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/direct-conversations/{id}/messages": {
+      "get": {
+        "operationId": "listDirectMessages",
+        "summary": "读取私聊消息",
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "cursor", "in": "query", "schema": { "type": "string" } },
+          { "name": "limit", "in": "query", "schema": { "type": "integer", "minimum": 1, "maximum": 100, "default": 30 } }
+        ],
+        "responses": {
+          "200": { "description": "本页按时间从早到晚；nextCursor 取更早的消息" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" },
+          "422": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/direct-conversations/{id}/hide": {
+      "post": {
+        "operationId": "hideDirectConversation",
+        "summary": "从本人列表隐藏私聊",
+        "description": "不删除消息。对方再发来一条后重新出现。",
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": {
+          "200": { "description": "已隐藏" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
     "/me/conversation-targets": {
       "get": {
         "operationId": "listConversationTargets",

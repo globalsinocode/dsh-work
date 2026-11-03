@@ -24,6 +24,7 @@ import { registerUserPreferenceRoutes } from './http/workbench/preference-routes
 import { registerPushRoutes } from './http/workbench/push-routes.ts'
 import { createWeknoraAccessService, registerWeknoraRoutes } from './http/workbench/weknora-routes.ts'
 import { registerConversationTargetRoutes } from './http/workbench/conversation-target-routes.ts'
+import { registerDirectConversationRoutes } from './http/workbench/direct-conversation-routes.ts'
 import { registerWorkspaceTimelineRoutes } from './http/workbench/workspace-timeline-routes.ts'
 import { registerOidcRoutes } from './http/auth-routes.ts'
 import { registerLocalAuthRoutes } from './http/local-auth-routes.ts'
@@ -100,6 +101,7 @@ import { WebPushService } from './modules/workbench/application/web-push-service
 import { bindWebPushDispatch, WebPushDispatchService } from './modules/workbench/application/web-push-dispatch.ts'
 import { registerRunApprovalRoutes } from './http/workbench/run-approval-routes.ts'
 import { PostgresConversationTargetService } from './modules/workbench/application/postgres-conversation-target-service.ts'
+import { PostgresDirectConversationService } from './modules/workbench/application/postgres-direct-conversation-service.ts'
 import { PostgresWorkspaceTimelineService } from './modules/workbench/application/postgres-workspace-timeline-service.ts'
 import { resolvePlatformTimezone } from './domain/execution-time.ts'
 import { PostgresEncryptedCredentialStore } from './modules/tool/postgres-encrypted-credential-store.ts'
@@ -651,6 +653,7 @@ async function start() {
   registerWeknoraRoutes(router, createWeknoraAccessService(database))
   registerRunApprovalRoutes(router, database, runs, persistentWait, 'postgres')
   registerConversationTargetRoutes(router, new PostgresConversationTargetService(database, agents), authorization)
+  registerDirectConversationRoutes(router, new PostgresDirectConversationService(database))
   registerWorkspaceTimelineRoutes(router, new PostgresWorkspaceTimelineService(database, new PostgresWorkspaceService(database)), authorization)
   registerWorkspaceUsageRoutes(router, workspaceUsage, authorization)
   registerProjectRoutes(router, projects, authorization, projectArchive)

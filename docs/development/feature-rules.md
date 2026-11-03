@@ -52,6 +52,14 @@
 - 已按空间静音的群组未读照常计数，列表弱化显示。
 - 列表在回到对话页、页面重新可见、打开中群组的会话活动以及每分钟刷新一次预览与未读；不新增推送通道。
 
+### 2.2c 同事私聊
+
+- 只服务移动端。PC 员工端不展示，也不把私聊并入 `GET /me/conversation-targets`。
+- 同一租户两名员工只有一条私聊，存在 `direct_conversations` / `direct_messages` / `direct_conversation_participants`。不写入 `sessions` 或 `messages`，发送不创建 Run，不调用 DSH。
+- 选人继续用 `GET /member-candidates`。发出第一条消息时创建。对方停用后历史仍可读，`canSend` 为 false，再发送返回 422。
+- 未读记在 `conversation_read_states`，`target_type = peer`，`target_id` 为对方用户 id，只进不退。已读走 `POST /direct-conversations/with/:userId/read`。
+- 隐藏只写本人的 `hidden_at`。对方再发来一条后列表恢复，历史仍在。非参与者读取返回 404，响应不含正文。
+
 ### 2.4 推荐 AI 同事
 
 设计见 [dsh-work 助手推荐 AI 同事方案](../design/agent-recommendation-plan.md)。已达到代码级（P1：REC-01、REC-02）；真实 DSH 下的推荐质量（`REC-P2`）尚未验收。

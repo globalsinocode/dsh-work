@@ -1,5 +1,8 @@
 import type { ConversationTargetType } from './conversation-targets.ts'
 
+/** 推送里的对话对象。peer 只用于同事私聊，不进入 conversation-targets。 */
+export type PushTargetType = ConversationTargetType | 'peer'
+
 const bodyMaxLength = 120
 
 export type PushPayloadType = 'collab_unread' | 'run_finished'
@@ -14,7 +17,7 @@ export interface CollabUnreadPushPayload {
   body: string
   url: string
   sessionId: string
-  targetType: ConversationTargetType
+  targetType: PushTargetType
   targetId: string
 }
 
@@ -34,7 +37,7 @@ export interface RunFinishedPushPayload {
 
 export interface BuildCollabUnreadInput {
   eventId: string
-  targetType: ConversationTargetType
+  targetType: PushTargetType
   targetId: string
   sessionId: string
   workspaceId?: string
@@ -51,7 +54,7 @@ export interface BuildRunFinishedInput {
   runStatus: RunFinishedStatus
   sessionId: string
   sessionTitle?: string
-  targetType: ConversationTargetType
+  targetType: PushTargetType
   targetId: string
   workspaceId?: string
 }
@@ -71,10 +74,12 @@ export function truncatePushBody(text: string): string {
 }
 
 function conversationUrl(input: {
-  targetType: ConversationTargetType
+  targetType: PushTargetType
+  targetId: string
   sessionId: string
   workspaceId?: string
 }): string {
+  if (input.targetType === 'peer') return `/c/chats/peer/${input.targetId}`
   if (input.targetType === 'group') {
     if (!input.workspaceId) throw new Error('group push requires workspaceId')
     return `/workspaces/${input.workspaceId}?session=${input.sessionId}`
@@ -84,12 +89,14 @@ function conversationUrl(input: {
 
 export function buildCollabUnreadPayload(input: BuildCollabUnreadInput): CollabUnreadPushPayload {
   const tag = `collab:${input.targetType}:${input.targetId}`
-  const url = input.targetType === 'group'
-    ? `/workspaces/${input.workspaceId}?session=${input.sessionId}`
-    : `/chat/${input.sessionId}`
+  const url = conversationUrl(input)
 
   let body: string
-  if (input.targetType === 'agent') {
+  if (input.targetType === 'peer') {
+    const sender = input.senderName.trim() || '同事'
+    const preview = input.previewText.trim()
+    body = preview.length > 0 ? `${sender}：${preview}` : `${sender}：发来一条新消息`
+  } else if (input.targetType === 'agent') {
     const preview = input.previewText.trim()
     body = preview.length > 0 ? preview : '发来一条新消息'
   } else {
@@ -117,6 +124,7 @@ export function buildRunFinishedPayload(input: BuildRunFinishedInput): RunFinish
   const tag = `run:${input.runId}`
   const url = conversationUrl({
     targetType: input.targetType,
+    targetId: input.targetId,
     sessionId: input.sessionId,
     workspaceId: input.workspaceId,
   })
