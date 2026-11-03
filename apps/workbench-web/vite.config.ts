@@ -6,6 +6,7 @@ import { VitePWA } from 'vite-plugin-pwa'
 import { defineConfig } from 'vite'
 
 import { resolveBrandPublicDir } from '../shared/vite-brand-public.ts'
+import { copyAppPublic } from '../shared/vite-app-public.ts'
 import { createDshWorkPwaOptions } from '../shared/vite-pwa-options.ts'
 
 const workbenchPort = Number(process.env.DSH_WORK_WORKBENCH_PORT ?? 4174)
@@ -27,6 +28,7 @@ export default defineConfig({
         { importScripts: ['push-sw.js'] },
       ),
     ),
+    copyAppPublic(fileURLToPath(new URL('./public', import.meta.url))),
   ],
   resolve: {
     alias: {

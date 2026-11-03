@@ -6,8 +6,8 @@ export function registerAppPwa() {
 
   registerSW({
     immediate: true,
-    onRegistered(error) {
-      if (error) console.warn('[pwa] Service Worker 注册失败', error)
+    onRegistered(registration) {
+      if (registration) console.info('[pwa] Service Worker 已注册', registration.scope)
     },
     onRegisterError(error) {
       console.warn('[pwa] Service Worker 注册异常', error)

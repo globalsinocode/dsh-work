@@ -57,6 +57,12 @@ server {
   index index.html;
   client_max_body_size 50m;
 
+  # manifest 按规范返回 JSON MIME（mime.types 未映射 .webmanifest）
+  location = /manifest.webmanifest {
+    default_type application/manifest+json;
+    try_files $uri =404;
+  }
+
   location = /health/live {
     proxy_pass http://dsh_work_server;
     include /etc/nginx/proxy_params;
@@ -107,6 +113,12 @@ server {
   root /srv/admin;
   index index.html;
   client_max_body_size 50m;
+
+  # manifest 按规范返回 JSON MIME（mime.types 未映射 .webmanifest）
+  location = /manifest.webmanifest {
+    default_type application/manifest+json;
+    try_files $uri =404;
+  }
 
   location = /health/live {
     proxy_pass http://dsh_work_server;
