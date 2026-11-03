@@ -132,7 +132,11 @@ export const useContentStore = defineStore('workbench-content', () => {
     workspaceFilePages.value = { ...workspaceFilePages.value, [workspaceId]: page }
     const workspace = workspaces.value.find((item) => item.id === workspaceId)
     if (workspace && workspace.type === 'personal') workspace.files.unshift(uploaded)
-    if (workspace && workspace.type === 'team') workspace.fileCount = (workspace.fileCount ?? page.items.length)
+    // 团队共享文件：上传接口只回逻辑文件投影，缺 type / uploadedBy / 上传时间等列表列，
+    // 直接插进 `files` 会在文件页签渲染出一行没有类型与上传者的「幽灵行」。共享文件
+    // 列表以 `/workspaces` 的服务端摘要为准重新拉取（与「上传新版本」同一口径）；
+    // 否则成员上传成功后在整页刷新前都看不到自己的文件。
+    if (workspace && workspace.type === 'team') await refreshWorkspaces()
     return uploaded
   }
 

@@ -548,6 +548,71 @@ describe('WorkspaceDetailView 团队分支与个人空间红线', () => {
     // 新对话仍是唯一内容：个人空间行为与现状一致。
     expect(wrapper.find('conversation-starter-stub').exists()).toBe(true)
   })
+
+  it('团队空间上传共享文件后立即出现在文件列表里，不再等整页刷新', async () => {
+    route.query = { tab: 'files' }
+    const existing: WorkspaceFile = {
+      id: 'file-existing',
+      name: '库存明细.xlsx',
+      type: 'XLSX',
+      size: '12 KB',
+      uploadedBy: '林岚',
+      uploadedAt: '2026-09-12 09:00',
+      logicalFileId: 'wfile-existing',
+      versionNo: 1,
+      versionCount: 1,
+      canDownload: true,
+      canReference: true,
+    }
+    // 上传接口回的是逻辑文件投影：没有 type / uploadedBy / uploadedAt 这些列表列，
+    // 直接插进列表会渲染出缺列的空行。列表行以服务端摘要为准。
+    vi.spyOn(workbenchApi, 'uploadWorkspaceFile').mockResolvedValue({
+      id: 'file-new',
+      logicalFileId: 'wfile-new',
+      name: '巡检记录.md',
+      source: 'workspace',
+      sizeLabel: '1 KB',
+      versionNo: 1,
+      versionCount: 1,
+      parseStatus: 'succeeded',
+      parseErrorCode: null,
+      canReference: true,
+      canDownload: true,
+      createdAt: '2026-11-03 08:00',
+      updatedAt: '2026-11-03 08:00',
+    } as never)
+    vi.spyOn(workbenchApi, 'getWorkspaces').mockResolvedValue([workspace({
+      files: [
+        {
+          id: 'file-new',
+          name: '巡检记录.md',
+          type: 'MD',
+          size: '1 KB',
+          uploadedBy: '周航',
+          uploadedAt: '2026-11-03 08:00',
+          logicalFileId: 'wfile-new',
+          versionNo: 1,
+          versionCount: 1,
+          canDownload: true,
+          canReference: true,
+        },
+        existing,
+      ],
+    })])
+    const { wrapper } = await mountView(workspace({ files: [existing] }))
+    expect(wrapper.text()).not.toContain('巡检记录.md')
+
+    const input = wrapper.find('[data-testid="workspace-upload-input"]')
+    Object.defineProperty(input.element, 'files', {
+      value: [new File(['# 巡检'], '巡检记录.md', { type: 'text/markdown' })],
+      configurable: true,
+    })
+    await input.trigger('change')
+    await flushPromises()
+
+    expect(workbenchApi.uploadWorkspaceFile).toHaveBeenCalledWith('ws-team', expect.any(File))
+    expect(wrapper.text()).toContain('巡检记录.md')
+  })
 })
 
 describe('WorkspaceDetailView 归档只读态（design §2.7 / AC-14 / AC-23）', () => {
