@@ -160,7 +160,6 @@ export interface OrganizationRoleAssignment {
 }
 
 export interface OrganizationSnapshot {
-  available: boolean
   departments: OrganizationDepartment[]
   members: OrganizationMember[]
   employees: OrganizationEmployee[]

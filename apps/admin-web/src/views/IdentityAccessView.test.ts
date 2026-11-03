@@ -32,7 +32,7 @@ beforeEach(() => {
   vi.spyOn(adminApi, 'getIdentityRoles').mockResolvedValue([])
   vi.spyOn(adminApi, 'getLocalPermissions').mockResolvedValue([])
   vi.spyOn(adminApi, 'createLocalAccount').mockResolvedValue({ userId: 'created-user', username: 'created@example.invalid' })
-  vi.spyOn(adminApi, 'getOrganization').mockResolvedValue({ available: false, departments: [], members: [], employees: [], grants: [], roles: [], roleAssignments: [] })
+  vi.spyOn(adminApi, 'getOrganization').mockResolvedValue({ departments: [], members: [], employees: [], grants: [], roles: [], roleAssignments: [] })
 })
 
 afterEach(() => {
@@ -106,7 +106,6 @@ describe('new account validation', () => {
   it('offers the organization tree for the department and never sends free-text department', async () => {
     vi.spyOn(adminApi, 'checkLocalLoginAccount').mockResolvedValue({ username: 'tree@example.invalid', available: true })
     vi.spyOn(adminApi, 'getOrganization').mockResolvedValue({
-      available: true,
       departments: [{ id: 'root', parentId: null, name: '示例企业', sortOrder: 0 }, { id: 'hr', parentId: 'root', name: '人力资源部', sortOrder: 0 }],
       members: [],
       employees: [],
@@ -125,13 +124,6 @@ describe('new account validation', () => {
     const payload = vi.mocked(adminApi.createLocalAccount).mock.calls.at(-1)![0]
     expect(payload).not.toHaveProperty('department')
     expect(payload).not.toHaveProperty('departmentId')
-  })
-
-  it('hides the department field when organization is unavailable', async () => {
-    vi.spyOn(adminApi, 'getOrganization').mockResolvedValue({ available: false, departments: [], members: [], employees: [], grants: [], roles: [], roleAssignments: [] })
-    const dialog = await openAccount()
-    await flushPromises()
-    expect(dialog.find('#account-department').exists()).toBe(false)
   })
 
   it('explains a failed department load instead of silently hiding the field', async () => {

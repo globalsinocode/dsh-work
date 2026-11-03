@@ -50,7 +50,7 @@ test('concurrent start/remove serialize without resurrecting a removed Session o
 })
 test('directory deactivation revokes auth Sessions and preserves personal content/ownership',async()=>{
   const identities=new IdentitySessionRepository(f.db.client)
-  const external={externalUserId:'b5-'+randomUUID(),subject:'b5-subject-'+randomUUID(),displayName:'合成员工',email:'fixture@example.invalid',organizationName:'合成部门',businessUser:true,status:'ACTIVE'}
+  const external={externalUserId:'b5-'+randomUUID(),subject:'b5-subject-'+randomUUID(),displayName:'合成员工',email:'fixture@example.invalid',businessUser:true,status:'ACTIVE'}
   const user=await identities.synchronizeIdentity(external)
   await f.db.client`insert into user_roles(tenant_id,user_id,role_id,source_key,granted_by) values(${testTenant},${user.userId},'role-employee','local','U00008')`
   const s=await f.conversations.createSession({userId:user.userId,title:'B5 员工内容'})

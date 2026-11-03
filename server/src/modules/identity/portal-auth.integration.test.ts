@@ -56,7 +56,7 @@ before(async () => {
   local = new LocalAuthService(localIdentityConfiguration(configuration), database.client)
   repository = new IdentitySessionRepository(database.client)
   localUserId = (await local.bootstrap({ username: 'portal.admin@example.invalid', name: '合成独立管理员', password })).userId
-  upstreamUserId = (await repository.synchronizeIdentity({ externalUserId: 'portal-upstream-admin', subject: 'portal-upstream-subject', displayName: '合成上游管理员', email: null, organizationName: '合成组织', businessUser: true, status: 'ACTIVE' })).userId
+  upstreamUserId = (await repository.synchronizeIdentity({ externalUserId: 'portal-upstream-admin', subject: 'portal-upstream-subject', displayName: '合成上游管理员', email: null, businessUser: true, status: 'ACTIVE' })).userId
   await new IdentityAdministrationService(database.client, true).grantRole({ userId: upstreamUserId, roleId: 'role-platform-admin', actorId: localUserId })
 })
 

@@ -254,14 +254,14 @@ test('disabling, re-enabling, expiring and logging out a local account preserve 
 
 test('same-name and same-email accounts remain separate and binding is unavailable', async () => {
   const repository = new IdentitySessionRepository(database.client)
-  const existing = await repository.synchronizeIdentity({ externalUserId: 'legacy-local-switch', subject: 'legacy-local-subject', displayName: '原有员工', email: 'legacy@example.invalid', organizationName: '原部门', businessUser: true, status: 'ACTIVE' })
+  const existing = await repository.synchronizeIdentity({ externalUserId: 'legacy-local-switch', subject: 'legacy-local-subject', displayName: '原有员工', email: 'legacy@example.invalid', businessUser: true, status: 'ACTIVE' })
   await administration.grantRole({ userId: existing.userId, roleId: 'role-employee', actorId: adminId })
   const independent = await auth.createAccount({ username: 'separate.employee@example.invalid', name: '原有员工', email: 'legacy@example.invalid', password }, adminId)
   assert.notEqual(independent.userId, existing.userId)
   assert.deepEqual((await repository.resolveAuthorization(independent.userId)).roleIds, [])
   assert.ok((await repository.resolveAuthorization(existing.userId)).roleIds.includes('role-employee'))
   const [localIdentity] = await database.client`select external_subject from users where id = ${independent.userId}`
-  await assert.rejects(repository.synchronizeIdentity({ externalUserId: 'conflicting-upstream-subject', subject: localIdentity!.external_subject, displayName: '不应覆盖', email: 'legacy@example.invalid', organizationName: '上游部门', businessUser: true, status: 'ACTIVE' }), /不能绑定或转换独立账号/)
+  await assert.rejects(repository.synchronizeIdentity({ externalUserId: 'conflicting-upstream-subject', subject: localIdentity!.external_subject, displayName: '不应覆盖', email: 'legacy@example.invalid', businessUser: true, status: 'ACTIVE' }), /不能绑定或转换独立账号/)
   const [unchanged] = await database.client`select identity_provider, display_name from users where id = ${independent.userId}`
   assert.equal(unchanged!.identity_provider, 'local')
   assert.equal(unchanged!.display_name, '原有员工')
@@ -277,7 +277,7 @@ test('same-name and same-email accounts remain separate and binding is unavailab
 
 test('an AI Hub administrator cannot replace the final independent administrator', async () => {
   const repository = new IdentitySessionRepository(database.client)
-  const upstream = await repository.synchronizeIdentity({ externalUserId: 'upstream-admin-invariant', subject: 'upstream-admin-invariant', displayName: '上游管理员', email: 'upstream-admin@example.invalid', organizationName: '验收部门', businessUser: true, status: 'ACTIVE' })
+  const upstream = await repository.synchronizeIdentity({ externalUserId: 'upstream-admin-invariant', subject: 'upstream-admin-invariant', displayName: '上游管理员', email: 'upstream-admin@example.invalid', businessUser: true, status: 'ACTIVE' })
   await administration.grantRole({ userId: upstream.userId, roleId: 'role-platform-admin', actorId: adminId })
   await assert.rejects(administration.revokeRole({ userId: adminId, roleId: 'role-platform-admin', actorId: upstream.userId }), /最后一个有效的平台管理员/)
   await assert.rejects(auth.setStatus(adminId, 'disabled', upstream.userId), /最后一个有效的平台管理员/)
@@ -290,7 +290,7 @@ test('an AI Hub administrator cannot replace the final independent administrator
 test('employee login accounts are searchable for both sources without exposing upstream local credentials', async () => {
   const repository = new IdentitySessionRepository(database.client)
   const independent = await auth.createAccount({ username: 'shared.login@example.invalid', name: '独立展示用户', password }, adminId)
-  const upstream = await repository.synchronizeIdentity({ externalUserId: 'display-only-upstream-id', subject: 'shared.login@example.invalid', displayName: '企业展示用户', email: 'profile@example.invalid', organizationName: '同步部门', businessUser: true, status: 'ACTIVE', updatedAt: '2026-10-12T01:00:00Z' })
+  const upstream = await repository.synchronizeIdentity({ externalUserId: 'display-only-upstream-id', subject: 'shared.login@example.invalid', displayName: '企业展示用户', email: 'profile@example.invalid', businessUser: true, status: 'ACTIVE', updatedAt: '2026-10-12T01:00:00Z' })
   const result = await administration.listUsers({ query: 'SHARED.LOGIN@EXAMPLE.INVALID' })
   assert.equal(result.total, 2)
   assert.equal(result.items.find(user => user.id === independent.userId)?.loginAccount, 'shared.login@example.invalid')
@@ -327,8 +327,8 @@ test('creation and availability checks reject duplicate local and synchronized A
   assert.equal(created.body.data.username, 'new+account@example.invalid')
   await auth.setStatus(created.body.data.userId, 'disabled', adminId)
   const repository = new IdentitySessionRepository(database.client)
-  const upstream = await repository.synchronizeIdentity({ externalUserId: 'duplicate-hub-email', subject: 'HUB.LOGIN@EXAMPLE.INVALID', displayName: '已停用企业账号', email: 'contact-only@example.invalid', organizationName: '合成组织', businessUser: true, status: 'DISABLED' })
-  await repository.synchronizeIdentity({ externalUserId: 'duplicate-hub-phone', subject: '+8613800138000', displayName: '企业手机账号', email: null, organizationName: '合成组织', businessUser: true, status: 'ACTIVE' })
+  const upstream = await repository.synchronizeIdentity({ externalUserId: 'duplicate-hub-email', subject: 'HUB.LOGIN@EXAMPLE.INVALID', displayName: '已停用企业账号', email: 'contact-only@example.invalid', businessUser: true, status: 'DISABLED' })
+  await repository.synchronizeIdentity({ externalUserId: 'duplicate-hub-phone', subject: '+8613800138000', displayName: '企业手机账号', email: null, businessUser: true, status: 'ACTIVE' })
   for (const username of ['NEW+ACCOUNT@EXAMPLE.INVALID', ' hub.login@example.invalid ', '13800138000', '+8613800138000']) {
     assert.equal((await check(username)).body.data.available, false)
     const duplicate = await call('/api/admin/v1/identity/users', { cookie: admin.cookie, body: { username, name: '不应创建', password } })

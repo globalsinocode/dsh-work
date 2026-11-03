@@ -36,7 +36,6 @@ export interface ExternalIdentityProfile {
   subject: string
   displayName: string
   email: string | null
-  organizationName: string
   businessUser: boolean
   status: string
   tombstone?: boolean
@@ -172,12 +171,12 @@ export class IdentitySessionRepository {
 
       let applied = false
       let record: { id: string; authorizationVersion: number } | undefined
+      // 员工的“部门”由组织架构维护（显示为主部门名称），AI Hub 登录与目录同步不再写入 department_id。
       if (existing) {
         const [updated] = await transaction<{ id: string; authorizationVersion: number }[]>`
           update users
              set external_subject = ${input.subject},
                  display_name = ${input.displayName},
-                 department_id = ${input.organizationName},
                  status = ${normalizedStatus},
                  identity_provider = 'ai-hub',
                  external_user_id = ${input.externalUserId},
@@ -203,12 +202,12 @@ export class IdentitySessionRepository {
         const generatedId = `user-${randomUUID()}`
         const [inserted] = await transaction<{ id: string; authorizationVersion: number }[]>`
           insert into users (
-            id, tenant_id, external_subject, display_name, department_id, status,
+            id, tenant_id, external_subject, display_name, status,
             identity_provider, external_user_id, business_user, email, identity_updated_at,
             directory_synced_at
           ) values (
             ${generatedId}, ${tenantId}, ${input.subject}, ${input.displayName},
-            ${input.organizationName}, ${normalizedStatus}, 'ai-hub', ${input.externalUserId},
+            ${normalizedStatus}, 'ai-hub', ${input.externalUserId},
             ${input.businessUser}, ${input.email}, ${updatedAt}, ${updatedAt ? new Date() : null}
           )
           returning id, local_authorization_version::integer as "authorizationVersion"

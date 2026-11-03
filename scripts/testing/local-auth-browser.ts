@@ -60,7 +60,7 @@ try {
   if (aiHubFixture) {
     const directory = new IdentitySessionRepository(database.client)
     const administration = new IdentityAdministrationService(database.client, true)
-    const upstream = await directory.synchronizeIdentity({ externalUserId: 'fixture-upstream-admin', subject: 'hub.employee@example.invalid', displayName: '配置验收上游管理员', email: 'profile.employee@example.invalid', organizationName: '合成数据', businessUser: true, status: 'ACTIVE', updatedAt: '2026-10-12T06:00:00Z' })
+    const upstream = await directory.synchronizeIdentity({ externalUserId: 'fixture-upstream-admin', subject: 'hub.employee@example.invalid', displayName: '配置验收上游管理员', email: 'profile.employee@example.invalid', businessUser: true, status: 'ACTIVE', updatedAt: '2026-10-12T06:00:00Z' })
     await administration.grantRole({ userId: upstream.userId, roleId: 'role-platform-admin', actorId: admin.userId })
     const reader = await authentication.createAccount({ username: 'browser.reader@example.invalid', name: '配置验收只读管理员', password: 'Reader123456' }, admin.userId)
     await administration.grantRole({ userId: reader.userId, roleId: 'role-auditor', actorId: admin.userId })

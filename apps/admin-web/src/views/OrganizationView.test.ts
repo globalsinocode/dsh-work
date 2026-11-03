@@ -13,7 +13,6 @@ const wrappers: VueWrapper[] = []
 
 function organization(): OrganizationSnapshot {
   return {
-    available: true,
     departments: [
       { id: 'root', parentId: null, name: '示例企业', sortOrder: 0 },
       { id: 'scm', parentId: 'root', name: '供应链中心', sortOrder: 0 },
@@ -166,12 +165,5 @@ describe('OrganizationView', () => {
     auth.canManage = false
     const wrapper = await render()
     expect(wrapper.findAll('button').some(item => ['新建子部门', '添加成员', '删除'].includes(item.text()))).toBe(false)
-  })
-
-  it('shows an explanation instead of the tree when organization is unavailable', async () => {
-    vi.spyOn(adminApi, 'getOrganization').mockResolvedValue({ available: false, departments: [], members: [], employees: [], grants: [], roles: [], roleAssignments: [] })
-    const wrapper = await render()
-    expect(wrapper.text()).toContain('组织架构不可用')
-    expect(wrapper.find('.department-tree').exists()).toBe(false)
   })
 })

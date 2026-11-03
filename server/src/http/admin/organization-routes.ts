@@ -11,7 +11,7 @@ type OrganizationStore = Pick<
 
 /**
  * 组织架构 ORG-S1/S2：部门树、成员与主部门，按部门授予角色。读取返回整棵树与员工清单（企业内部门与员工规模小），
- * 写操作返回更新后的同一结构，页面直接替换。只有平台管理员可以写；AI Hub 登录模式下不可用。
+ * 写操作返回更新后的同一结构，页面直接替换。只有平台管理员可以写。
  */
 export function registerOrganizationRoutes(
   router: Router,

@@ -59,7 +59,6 @@ export interface OrganizationRoleAssignment {
 }
 
 export interface OrganizationSnapshot {
-  available: boolean
   departments: OrganizationDepartment[]
   members: OrganizationMember[]
   employees: OrganizationEmployee[]
@@ -79,20 +78,15 @@ interface DepartmentRow {
  * 企业组织架构 ORG-S1（docs/design/org-structure-plan.md）：本地维护的部门树、成员与主部门。
  * 部门本身不带权限；按部门授权是第二期（ORG-S2）。所有写操作只有平台管理员可以执行，按企业
  * 串行（事务级咨询锁），在同一事务中同步员工的显示部门（users.department_id = 主部门名称）并写审计。
- * AI Hub（OIDC）登录模式下组织架构不可用（方案 OD1）。
  */
 export class PostgresOrganizationService {
   private readonly database: DatabaseClient
 
-  private readonly available: boolean
-
-  constructor(database: DatabaseClient, options: { available: boolean }) {
+  constructor(database: DatabaseClient) {
     this.database = database
-    this.available = options.available
   }
 
   async snapshot(): Promise<OrganizationSnapshot> {
-    if (!this.available) return { available: false, departments: [], members: [], employees: [], grants: [], roles: [], roleAssignments: [] }
     return readSnapshot(this.database)
   }
 
@@ -335,7 +329,6 @@ export class PostgresOrganizationService {
     change: (transaction: DatabaseTransaction) => Promise<{ action: string; objectId: string; context: Record<string, unknown> }>,
     options: { syncRoles?: boolean } = {},
   ): Promise<OrganizationSnapshot> {
-    if (!this.available) throw stateConflict('当前为 AI Hub 登录模式，组织架构不可用')
     return this.database.begin(async (transaction) => {
       await requirePlatformAdminActor(transaction, actorId)
       await lockOrganization(transaction)
@@ -469,7 +462,7 @@ async function readSnapshot(sql: DatabaseClient | DatabaseTransaction): Promise<
     roleId: row.roleId,
     source: row.sourceKey === 'local' ? 'direct' as const : { grantId: row.sourceKey.slice('department:'.length) },
   }))
-  return { available: true, departments, members, employees, grants, roles, roleAssignments }
+  return { departments, members, employees, grants, roles, roleAssignments }
 }
 
 /** 树的写操作按企业串行，避免两次并发移动绕过“不能移到自己下级之下”的检查而形成环。 */

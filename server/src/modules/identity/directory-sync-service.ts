@@ -138,7 +138,6 @@ function directoryIdentity(user: DirectoryUser) {
     subject: user.subject,
     displayName: user.display_name,
     email: user.email,
-    organizationName: user.organization_name,
     businessUser: user.business_user,
     status: user.status,
     tombstone: user.tombstone,

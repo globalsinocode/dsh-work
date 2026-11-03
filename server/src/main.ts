@@ -147,8 +147,7 @@ async function start() {
   const directorySync = identityConfiguration.mode === 'oidc'
     ? new IdentityDirectorySyncService(identityConfiguration, database)
     : null
-  const organizationAvailable = identityConfiguration.mode !== 'oidc'
-  const localAuthentication = new LocalAuthService(localIdentityConfiguration(identityConfiguration), database, { organizationAvailable })
+  const localAuthentication = new LocalAuthService(localIdentityConfiguration(identityConfiguration), database)
   const router = new Router({ authenticateApi: portalAuthenticator(localAuthentication, oidcAuthentication) })
   if (oidcAuthentication) registerOidcRoutes(router, oidcAuthentication, localAuthentication)
   registerLocalAuthRoutes(router, localAuthentication, oidcAuthentication)
@@ -159,7 +158,7 @@ async function start() {
     new IdentityAdministrationService(database, true),
     directorySync,
   )
-  registerOrganizationRoutes(router, new PostgresOrganizationService(database, { available: organizationAvailable }))
+  registerOrganizationRoutes(router, new PostgresOrganizationService(database))
   const directorySyncTimer = directorySync?.startScheduler() ?? null
   const modelRepository = new PostgresModelGovernanceRepository(database)
 

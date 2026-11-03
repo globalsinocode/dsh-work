@@ -15,7 +15,7 @@ interface TreeNode {
 }
 
 const authStore = useAuthStore()
-const snapshot = ref<OrganizationSnapshot>({ available: true, departments: [], members: [], employees: [], grants: [], roles: [], roleAssignments: [] })
+const snapshot = ref<OrganizationSnapshot>({ departments: [], members: [], employees: [], grants: [], roles: [], roleAssignments: [] })
 const loading = ref(false)
 const saving = ref(false)
 const error = ref('')
@@ -386,175 +386,167 @@ onMounted(load)
   <div class="ops-page organization-page">
     <el-alert v-if="error" :title="error" type="error" show-icon @close="error = ''" />
 
-    <template v-if="!snapshot.available">
-      <section class="content-panel">
-        <el-empty description="当前为 AI Hub 登录模式，组织架构不可用。组织架构只在独立账号登录模式下提供。" />
+    <el-alert
+      type="info"
+      :closable="false"
+      show-icon
+      title="部门由平台管理员维护。部门本身不带权限；授予部门的角色会自动给到覆盖的员工，成员或部门变化时自动调整。"
+    />
+    <el-alert v-if="invalidGrants.length" type="warning" :closable="false" show-icon>
+      <template #title>
+        {{ invalidGrants.length }} 条部门授权因部门被删除而失效（{{ invalidGrants.map(grant => `“${grant.departmentName}”的${roleName(grant.roleId)}`).join('、') }}），不再给任何员工权限。
+        <el-button v-if="canManage" link type="primary" :disabled="saving" @click="clearInvalidGrants">清除失效授权</el-button>
+      </template>
+    </el-alert>
+
+    <section class="organization-summary">
+      <article class="metric-card">
+        <div class="metric-label">部门</div>
+        <div class="metric-value">{{ departments.length }}</div>
+        <div class="metric-detail">最多 {{ maxDepth }} 级</div>
+      </article>
+      <article class="metric-card">
+        <div class="metric-label">已分配部门的员工</div>
+        <div class="metric-value">{{ assignedCount }}</div>
+        <div class="metric-detail">共 {{ snapshot.employees.length }} 名员工</div>
+      </article>
+      <article class="metric-card">
+        <div class="metric-label">未分配部门的员工</div>
+        <div class="metric-value">{{ unassignedCount }}</div>
+        <div class="metric-detail">在“添加成员”中可只看未分配员工</div>
+      </article>
+      <article class="metric-card">
+        <div class="metric-label">部门授权</div>
+        <div class="metric-value">{{ activeGrants.length }}</div>
+        <div class="metric-detail">覆盖 {{ coveredEmployeeCount }} 名员工</div>
+      </article>
+    </section>
+
+    <div class="organization-layout">
+      <section class="content-panel content-panel--flush organization-tree" aria-label="部门树">
+        <div class="panel-header">
+          <strong>部门</strong>
+          <span class="panel-meta">{{ departments.length }} 个</span>
+        </div>
+        <el-tree
+          v-loading="loading"
+          class="department-tree"
+          :data="tree"
+          node-key="id"
+          :current-node-key="selected?.id"
+          :expand-on-click-node="false"
+          highlight-current
+          default-expand-all
+          @node-click="selectDepartment"
+        >
+          <template #default="{ data }">
+            <span class="tree-node">
+              <span class="tree-node__name">{{ data.label }}</span>
+              <span class="tree-node__count">{{ data.count }}</span>
+            </span>
+          </template>
+        </el-tree>
       </section>
-    </template>
 
-    <template v-else>
-      <el-alert
-        type="info"
-        :closable="false"
-        show-icon
-        title="部门由平台管理员维护。部门本身不带权限；授予部门的角色会自动给到覆盖的员工，成员或部门变化时自动调整。"
-      />
-      <el-alert v-if="invalidGrants.length" type="warning" :closable="false" show-icon>
-        <template #title>
-          {{ invalidGrants.length }} 条部门授权因部门被删除而失效（{{ invalidGrants.map(grant => `“${grant.departmentName}”的${roleName(grant.roleId)}`).join('、') }}），不再给任何员工权限。
-          <el-button v-if="canManage" link type="primary" :disabled="saving" @click="clearInvalidGrants">清除失效授权</el-button>
-        </template>
-      </el-alert>
-
-      <section class="organization-summary">
-        <article class="metric-card">
-          <div class="metric-label">部门</div>
-          <div class="metric-value">{{ departments.length }}</div>
-          <div class="metric-detail">最多 {{ maxDepth }} 级</div>
-        </article>
-        <article class="metric-card">
-          <div class="metric-label">已分配部门的员工</div>
-          <div class="metric-value">{{ assignedCount }}</div>
-          <div class="metric-detail">共 {{ snapshot.employees.length }} 名员工</div>
-        </article>
-        <article class="metric-card">
-          <div class="metric-label">未分配部门的员工</div>
-          <div class="metric-value">{{ unassignedCount }}</div>
-          <div class="metric-detail">在“添加成员”中可只看未分配员工</div>
-        </article>
-        <article class="metric-card">
-          <div class="metric-label">部门授权</div>
-          <div class="metric-value">{{ activeGrants.length }}</div>
-          <div class="metric-detail">覆盖 {{ coveredEmployeeCount }} 名员工</div>
-        </article>
-      </section>
-
-      <div class="organization-layout">
-        <section class="content-panel content-panel--flush organization-tree" aria-label="部门树">
-          <div class="panel-header">
-            <strong>部门</strong>
-            <span class="panel-meta">{{ departments.length }} 个</span>
+      <div v-if="selected" class="organization-detail">
+        <section class="content-panel department-header">
+          <div class="department-header__copy">
+            <span>{{ isRoot ? '根部门' : path(selected.id) }}</span>
+            <h2>{{ selected.name }}</h2>
+            <small>直属成员 {{ directMemberIds.size }} 人 · 含下级 {{ subtreeMemberIds.size }} 人 · 下级部门 {{ selectedChildren.length }} 个</small>
           </div>
-          <el-tree
-            v-loading="loading"
-            class="department-tree"
-            :data="tree"
-            node-key="id"
-            :current-node-key="selected?.id"
-            :expand-on-click-node="false"
-            highlight-current
-            default-expand-all
-            @node-click="selectDepartment"
-          >
-            <template #default="{ data }">
-              <span class="tree-node">
-                <span class="tree-node__name">{{ data.label }}</span>
-                <span class="tree-node__count">{{ data.count }}</span>
-              </span>
-            </template>
-          </el-tree>
+          <div v-if="canManage" class="panel-actions department-header__actions">
+            <el-button type="primary" :icon="Plus" :disabled="saving" @click="openName('create')">新建子部门</el-button>
+            <el-button :disabled="saving" @click="openName('rename')">改名</el-button>
+            <el-button :icon="ArrowUp" :disabled="saving || isRoot || siblingIndex <= 0" aria-label="上移" @click="reorder('up')" />
+            <el-button :icon="ArrowDown" :disabled="saving || isRoot || siblingIndex === siblings.length - 1" aria-label="下移" @click="reorder('down')" />
+            <el-button :disabled="saving || isRoot" @click="openMove">移动</el-button>
+            <el-button type="danger" plain :disabled="saving || isRoot" @click="removeDepartment">删除</el-button>
+          </div>
         </section>
 
-        <div v-if="selected" class="organization-detail">
-          <section class="content-panel department-header">
-            <div class="department-header__copy">
-              <span>{{ isRoot ? '根部门' : path(selected.id) }}</span>
-              <h2>{{ selected.name }}</h2>
-              <small>直属成员 {{ directMemberIds.size }} 人 · 含下级 {{ subtreeMemberIds.size }} 人 · 下级部门 {{ selectedChildren.length }} 个</small>
-            </div>
-            <div v-if="canManage" class="panel-actions department-header__actions">
-              <el-button type="primary" :icon="Plus" :disabled="saving" @click="openName('create')">新建子部门</el-button>
-              <el-button :disabled="saving" @click="openName('rename')">改名</el-button>
-              <el-button :icon="ArrowUp" :disabled="saving || isRoot || siblingIndex <= 0" aria-label="上移" @click="reorder('up')" />
-              <el-button :icon="ArrowDown" :disabled="saving || isRoot || siblingIndex === siblings.length - 1" aria-label="下移" @click="reorder('down')" />
-              <el-button :disabled="saving || isRoot" @click="openMove">移动</el-button>
-              <el-button type="danger" plain :disabled="saving || isRoot" @click="removeDepartment">删除</el-button>
-            </div>
-          </section>
+        <el-tabs v-model="activeTab" class="organization-tabs">
+          <el-tab-pane :label="`成员（${directMemberIds.size}）`" name="members">
+        <section class="content-panel filter-panel">
+          <div class="filter-bar">
+            <el-input v-model="memberQuery" :prefix-icon="Search" clearable aria-label="搜索成员" placeholder="搜索姓名或账号" />
+            <el-checkbox v-model="includeSub">包含下级部门成员</el-checkbox>
+            <span class="filter-bar__meta">{{ memberRows.length }} 名员工</span>
+            <el-button v-if="canManage" type="primary" :disabled="saving" @click="openAddMembers">添加成员</el-button>
+          </div>
+        </section>
 
-          <el-tabs v-model="activeTab" class="organization-tabs">
-            <el-tab-pane :label="`成员（${directMemberIds.size}）`" name="members">
-          <section class="content-panel filter-panel">
-            <div class="filter-bar">
-              <el-input v-model="memberQuery" :prefix-icon="Search" clearable aria-label="搜索成员" placeholder="搜索姓名或账号" />
-              <el-checkbox v-model="includeSub">包含下级部门成员</el-checkbox>
-              <span class="filter-bar__meta">{{ memberRows.length }} 名员工</span>
-              <el-button v-if="canManage" type="primary" :disabled="saving" @click="openAddMembers">添加成员</el-button>
-            </div>
-          </section>
-
-          <section class="content-panel content-panel--flush">
-            <el-table class="data-table" :data="memberRows" :empty-text="includeSub ? '本部门及下级部门都还没有成员' : '本部门还没有直属成员'">
-              <el-table-column label="员工" min-width="200">
-                <template #default="scope">
-                  <div class="user-cell">
-                    <span class="user-cell__avatar">{{ [...scope.row.employee.name][0] ?? '员' }}</span>
-                    <span><strong>{{ scope.row.employee.name }}</strong><small>{{ scope.row.employee.email || '未提供邮箱' }}</small></span>
-                  </div>
-                </template>
-              </el-table-column>
-              <el-table-column label="登录账号" min-width="160" show-overflow-tooltip>
-                <template #default="scope">{{ scope.row.employee.loginAccount ?? '—' }}</template>
-              </el-table-column>
-              <el-table-column label="所属部门" min-width="220">
-                <template #default="scope">
-                  <div class="tag-list">
-                    <el-tag v-for="department in scope.row.departments" :key="department.id" effect="plain" :type="department.primary ? 'primary' : 'info'">
-                      {{ department.name }}{{ department.primary ? ' · 主部门' : '' }}
-                    </el-tag>
-                  </div>
-                </template>
-              </el-table-column>
-              <el-table-column label="操作" :width="canManage ? 240 : 100" fixed="right">
-                <template #default="scope">
-                  <el-button link type="primary" @click="drawerUser = scope.row.employee">查看权限</el-button>
-                  <template v-if="canManage && scope.row.direct">
-                    <el-button v-if="!scope.row.primaryHere" link type="primary" :disabled="saving" @click="setPrimary(scope.row.employee)">设为主部门</el-button>
-                    <el-button link type="danger" :disabled="saving" @click="openRemove(scope.row.employee)">移出</el-button>
-                  </template>
-                  <span v-else-if="canManage" class="empty-value">在下级部门</span>
-                </template>
-              </el-table-column>
-            </el-table>
-          </section>
-            </el-tab-pane>
-            <el-tab-pane :label="`部门授权（${grantRows.length}）`" name="grants">
-              <section class="content-panel department-header grant-toolbar">
-                <div class="department-header__copy">
-                  <h3>部门授权</h3>
-                  <small>授予本部门的角色会自动给到覆盖的员工；管理类角色（平台管理员、审计员等）只能在“员工与权限”中单独授给个人。</small>
+        <section class="content-panel content-panel--flush">
+          <el-table class="data-table" :data="memberRows" :empty-text="includeSub ? '本部门及下级部门都还没有成员' : '本部门还没有直属成员'">
+            <el-table-column label="员工" min-width="200">
+              <template #default="scope">
+                <div class="user-cell">
+                  <span class="user-cell__avatar">{{ [...scope.row.employee.name][0] ?? '员' }}</span>
+                  <span><strong>{{ scope.row.employee.name }}</strong><small>{{ scope.row.employee.email || '未提供邮箱' }}</small></span>
                 </div>
-                <el-button v-if="canManage" type="primary" :disabled="saving || !assignableRoles.length" @click="openGrant">添加部门授权</el-button>
-              </section>
-              <section class="content-panel content-panel--flush">
-                <el-table class="data-table" :data="grantRows" empty-text="本部门还没有授权，也没有从上级部门继承的授权">
-                  <el-table-column label="角色" min-width="200">
-                    <template #default="scope">
-                      <div class="user-cell"><span><strong>{{ roleName(scope.row.grant.roleId) }}</strong><small>{{ roleById.get(scope.row.grant.roleId)?.code }}{{ roleById.get(scope.row.grant.roleId)?.status === 'disabled' ? ' · 已停用' : '' }}</small></span></div>
-                    </template>
-                  </el-table-column>
-                  <el-table-column label="适用范围" width="140">
-                    <template #default="scope"><el-tag effect="plain" :type="scope.row.inherited ? 'warning' : scope.row.grant.includeDescendants ? 'primary' : 'info'">{{ scope.row.range }}</el-tag></template>
-                  </el-table-column>
-                  <el-table-column label="覆盖员工" width="110">
-                    <template #default="scope">{{ scope.row.count }} 人</template>
-                  </el-table-column>
-                  <el-table-column label="来源" min-width="160">
-                    <template #default="scope">{{ scope.row.source }}</template>
-                  </el-table-column>
-                  <el-table-column v-if="canManage" label="操作" width="150" fixed="right">
-                    <template #default="scope">
-                      <el-button v-if="!scope.row.inherited" link type="danger" :disabled="saving" @click="revokeGrant(scope.row.grant)">删除</el-button>
-                      <el-button v-else link type="primary" @click="selectedId = scope.row.grant.departmentId">到上级部门修改</el-button>
-                    </template>
-                  </el-table-column>
-                </el-table>
-              </section>
-            </el-tab-pane>
-          </el-tabs>
-        </div>
+              </template>
+            </el-table-column>
+            <el-table-column label="登录账号" min-width="160" show-overflow-tooltip>
+              <template #default="scope">{{ scope.row.employee.loginAccount ?? '—' }}</template>
+            </el-table-column>
+            <el-table-column label="所属部门" min-width="220">
+              <template #default="scope">
+                <div class="tag-list">
+                  <el-tag v-for="department in scope.row.departments" :key="department.id" effect="plain" :type="department.primary ? 'primary' : 'info'">
+                    {{ department.name }}{{ department.primary ? ' · 主部门' : '' }}
+                  </el-tag>
+                </div>
+              </template>
+            </el-table-column>
+            <el-table-column label="操作" :width="canManage ? 240 : 100" fixed="right">
+              <template #default="scope">
+                <el-button link type="primary" @click="drawerUser = scope.row.employee">查看权限</el-button>
+                <template v-if="canManage && scope.row.direct">
+                  <el-button v-if="!scope.row.primaryHere" link type="primary" :disabled="saving" @click="setPrimary(scope.row.employee)">设为主部门</el-button>
+                  <el-button link type="danger" :disabled="saving" @click="openRemove(scope.row.employee)">移出</el-button>
+                </template>
+                <span v-else-if="canManage" class="empty-value">在下级部门</span>
+              </template>
+            </el-table-column>
+          </el-table>
+        </section>
+          </el-tab-pane>
+          <el-tab-pane :label="`部门授权（${grantRows.length}）`" name="grants">
+            <section class="content-panel department-header grant-toolbar">
+              <div class="department-header__copy">
+                <h3>部门授权</h3>
+                <small>授予本部门的角色会自动给到覆盖的员工；管理类角色（平台管理员、审计员等）只能在“员工与权限”中单独授给个人。</small>
+              </div>
+              <el-button v-if="canManage" type="primary" :disabled="saving || !assignableRoles.length" @click="openGrant">添加部门授权</el-button>
+            </section>
+            <section class="content-panel content-panel--flush">
+              <el-table class="data-table" :data="grantRows" empty-text="本部门还没有授权，也没有从上级部门继承的授权">
+                <el-table-column label="角色" min-width="200">
+                  <template #default="scope">
+                    <div class="user-cell"><span><strong>{{ roleName(scope.row.grant.roleId) }}</strong><small>{{ roleById.get(scope.row.grant.roleId)?.code }}{{ roleById.get(scope.row.grant.roleId)?.status === 'disabled' ? ' · 已停用' : '' }}</small></span></div>
+                  </template>
+                </el-table-column>
+                <el-table-column label="适用范围" width="140">
+                  <template #default="scope"><el-tag effect="plain" :type="scope.row.inherited ? 'warning' : scope.row.grant.includeDescendants ? 'primary' : 'info'">{{ scope.row.range }}</el-tag></template>
+                </el-table-column>
+                <el-table-column label="覆盖员工" width="110">
+                  <template #default="scope">{{ scope.row.count }} 人</template>
+                </el-table-column>
+                <el-table-column label="来源" min-width="160">
+                  <template #default="scope">{{ scope.row.source }}</template>
+                </el-table-column>
+                <el-table-column v-if="canManage" label="操作" width="150" fixed="right">
+                  <template #default="scope">
+                    <el-button v-if="!scope.row.inherited" link type="danger" :disabled="saving" @click="revokeGrant(scope.row.grant)">删除</el-button>
+                    <el-button v-else link type="primary" @click="selectedId = scope.row.grant.departmentId">到上级部门修改</el-button>
+                  </template>
+                </el-table-column>
+              </el-table>
+            </section>
+          </el-tab-pane>
+        </el-tabs>
       </div>
-    </template>
+    </div>
 
     <el-dialog v-model="grantDialog.open" title="添加部门授权" width="min(520px, calc(100vw - 32px))">
       <el-form label-position="top" @submit.prevent="saveGrant">

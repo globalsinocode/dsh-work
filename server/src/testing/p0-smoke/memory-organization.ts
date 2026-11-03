@@ -65,7 +65,6 @@ export class MemoryOrganizationStore {
 
   async snapshot(): Promise<OrganizationSnapshot> {
     return {
-      available: true,
       departments: this.departments.map(department => ({ ...department })),
       members: this.members.map(member => ({ ...member })),
       employees: this.employees.map(employee => ({ ...employee })),

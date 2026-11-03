@@ -123,8 +123,9 @@ test('LOGIN-OPTIONS-P1 required fields and duplicate local or AI Hub login accou
   for (const label of ['登录账号', '姓名', '初始密码']) {
     await expect(form.getByLabel(label, { exact: true })).toHaveAttribute('required', '')
   }
-  // 本套件启用 AI Hub 登录，组织架构不可用（ORG-04），新建账号表单不提供部门选择，也不再有自由填写的部门。
-  await expect(form.getByText('部门', { exact: true })).toHaveCount(0)
+  // 配置了 AI Hub 时组织架构照常可用（ORG-04）：部门从部门树选择、可不选，不再有自由填写的部门。
+  await expect(form.getByText('部门', { exact: true })).toBeVisible()
+  await expect(form.getByText('选中的部门即为该员工的主部门；之后可在“组织架构”中调整。')).toBeVisible()
   await expect(form.getByLabel('邮箱', { exact: true })).not.toHaveAttribute('required')
   await form.getByRole('button', { name: '开通账号', exact: true }).click()
   for (const message of ['请输入手机号或邮箱', '请输入姓名', '请输入初始密码']) await expect(form.getByText(message, { exact: true })).toBeVisible()

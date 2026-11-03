@@ -45,7 +45,7 @@ flowchart LR
 | `application_admin_bootstrap_claims` | AI Hub 初始管理员认领 | 按应用/环境幂等消费 |
 | `identity_directory_sync_state` | AI Hub 员工目录同步游标 | 持久化 opaque cursor；员工停用即撤销其 Session，保留本地角色历史 |
 | `org_departments` | 部门树（迁移 0113，[组织架构方案](org-structure-plan.md) ORG-S1） | 每租户一个根部门（迁移创建）；`path` 为根到本部门的 ID 路径，不能移到自己下级之下；同一上级下有效部门不重名；删除置为 `removed`；写操作按租户串行 |
-| `org_department_members` | 员工所属部门（迁移 0113） | 员工可属于多个部门、至多一个主部门；`users.department_id` 只作显示，等于主部门名称，没有主部门时为空；迁移 0113 清空了独立账号的历史部门文本 |
+| `org_department_members` | 员工所属部门（迁移 0113） | 员工可属于多个部门、至多一个主部门；`users.department_id` 只作显示，等于主部门名称，没有主部门时为空；迁移 0113 清空了独立账号的历史部门文本，迁移 0116 把 AI Hub 账号的旧组织名统一为主部门名称（无主部门则清空） |
 | `org_department_grants` | 部门授予的角色（迁移 0114，ORG-S2） | 同一部门同一角色至多一条有效授权；展开为 `user_roles`（`source_key = 'department:<grant_id>'`），随成员与部门变化重算；管理类角色不能授予；部门删除后置为 `invalid` |
 | `roles`、`user_roles`、`data_scope_grants` | 本地角色、用户角色、数据范围授权 | 独立于 AI Hub；过期角色不生效；任何变更由触发器递增本地授权版本，请求按当前版本重新计算 |
 | `system_settings` | 早期的租户级设置 | 当前代码未读写 |
