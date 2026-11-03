@@ -1,6 +1,7 @@
 import { existsSync, readdirSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { pnpmCommands, workflowCommands } from './context.mjs'
+import { uncoveredConfigFiles } from '../release/release-bundle.mjs'
 
 // CI runs server tests by file name (scripts/testing/run-server-tests.mjs), so wiring is checked
 // at the level of these entry points rather than per suite.
@@ -77,6 +78,7 @@ export function checkProject(check) {
   ])
   checkMigrationNumbers(check)
   checkDataModelCoversTables(check)
+  checkReleaseBundlesServerConfig(check)
   checkDatabaseTestsAreNamed(check)
 }
 
@@ -133,5 +135,15 @@ function checkDataModelCoversTables(check) {
   const model = check.read('docs/design/data-model.md')
   for (const table of tables) {
     check.assert(model.includes(`\`${table}\``), `docs/design/data-model.md 未说明数据表 ${table}`)
+  }
+
+}
+
+/** 服务启动读取的 server/config 文件必须被发布打包脚本复制（Agent 预置曾因漏复制而未随版本交付）。 */
+function checkReleaseBundlesServerConfig(check) {
+  const script = check.read('scripts/release/build-release.sh')
+  if (!script) return
+  for (const file of uncoveredConfigFiles(check.root, script)) {
+    check.assert(false, `scripts/release/build-release.sh 未把 ${file} 复制进发布包`)
   }
 }

@@ -59,7 +59,7 @@
     "probe:artifact": "pnpm probe -- artifact",
     "probe:cancel": "pnpm probe -- cancel",
     "probe:concurrency": "pnpm probe -- concurrency",
-    "test:scripts": "node --experimental-strip-types --test scripts/checks/checks.test.mjs scripts/checks/server-dependencies.test.mjs scripts/runtime/probe.test.mjs scripts/testing/playwright-p0-config.test.mjs scripts/testing/run-server-tests.test.mjs scripts/runtime/run-timings.test.mjs scripts/acceptance/c-tier-p2.test.mjs",
+    "test:scripts": "node --experimental-strip-types --test scripts/checks/checks.test.mjs scripts/checks/server-dependencies.test.mjs scripts/runtime/probe.test.mjs scripts/testing/playwright-p0-config.test.mjs scripts/testing/run-server-tests.test.mjs scripts/runtime/run-timings.test.mjs scripts/acceptance/c-tier-p2.test.mjs scripts/release/release-bundle.test.mjs",
     "ci:static": "pnpm verify && pnpm test:scripts && pnpm test:pf07:matrix && pnpm test:pf07:fixture && pnpm check:secrets && pnpm typecheck && pnpm lint && pnpm build",
     "ci:unit": "pnpm test:unit && pnpm test:m5:frontend",
     "ci:check": "pnpm ci:static && pnpm ci:unit",

@@ -20,11 +20,41 @@ export interface SkillCreatorPreset {
   systemPrompt: string
 }
 
-/** 定义随代码发布（Skill 创建专家方案 5.1、5.2）：`preset.json` 与 `SOUL.md`。 */
+/**
+ * 定义随代码发布（Skill 创建专家方案 5.1、5.2）：`preset.json` 与 `SOUL.md`。
+ * 文件缺失或字段不完整属于发布缺陷：抛错，由启动流程拒绝启动，不能静默少一个预置 Agent。
+ */
 export function loadSkillCreatorPreset(root: string): SkillCreatorPreset {
   const directory = join(root, 'skill-creator')
-  const preset = JSON.parse(readFileSync(join(directory, 'preset.json'), 'utf8')) as Omit<SkillCreatorPreset, 'systemPrompt'>
-  return { ...preset, systemPrompt: readFileSync(join(directory, 'SOUL.md'), 'utf8') }
+  const fail = (detail: string): never => { throw new Error(`Skill 创建专家预置定义无效（${directory}）：${detail}`) }
+  const read = (file: string) => {
+    try {
+      return readFileSync(join(directory, file), 'utf8')
+    } catch (error) {
+      return fail(`无法读取 ${file}：${error instanceof Error ? error.message : String(error)}`)
+    }
+  }
+  const json = read('preset.json')
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(json)
+  } catch (error) {
+    return fail(`preset.json 不是有效 JSON：${error instanceof Error ? error.message : String(error)}`)
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return fail('preset.json 必须是 JSON 对象')
+  const raw = parsed as Record<string, unknown>
+  const text = (key: string) => typeof raw[key] === 'string' && raw[key].trim() ? raw[key] : fail(`缺少 ${key}`)
+  const list = (key: string) => {
+    const value = raw[key]
+    return Array.isArray(value) && value.length && value.every(item => typeof item === 'string' && item.trim())
+      ? value as string[] : fail(`${key} 必须是非空字符串数组`)
+  }
+  const systemPrompt = read('SOUL.md')
+  if (!systemPrompt.trim()) fail('SOUL.md 为空')
+  return {
+    id: text('id'), name: text('name'), description: text('description'), welcomeMessage: text('welcomeMessage'),
+    examplePrompts: list('examplePrompts'), testPrompts: list('testPrompts'), systemPrompt,
+  }
 }
 
 export type SkillCreatorSeedResult =

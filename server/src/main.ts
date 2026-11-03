@@ -180,6 +180,8 @@ async function start() {
   const dataRoot = resolve(projectRoot, process.env.DSH_WORK_DATA_ROOT ?? '.runtime')
   // 平台内置 Skill 随代码发布；内容与版本锁不一致属于发布缺陷，服务不启动（builtin-skills-plan 5.1）。
   const builtinSkills = loadBuiltinSkillCatalog(resolve(projectRoot, 'server/config/builtin-skills'))
+  // Agent 预置定义同样随代码发布，缺失或格式错误属于发布缺陷，服务不启动（Skill 创建专家方案 5.1）。
+  const skillCreatorPreset = loadSkillCreatorPreset(resolve(projectRoot, 'server/config/agent-presets'))
   const skillArtifacts = new SkillArtifactStore(new LocalObjectStorage(resolve(dataRoot, 'skills'), { fileMode: 0o400 }))
   await migrateSkillFilesToFileSystem(database, skillArtifacts)
   // Database migrations and identity initialization above stay fail-closed.
@@ -617,10 +619,9 @@ async function start() {
   // 已在运行的案例 Run 由重启恢复收敛，读取验证时折叠为同一状态。
   const validationRecovery = await agentValidation.recoverInterruptedValidations()
   if (validationRecovery.interrupted > 0) console.warn('agent validation recovery completed', validationRecovery)
-  // Skill 创建专家方案 5.1（SKC-05）：环境中还没有专家时预置未发布草稿；失败只记录，不阻止启动。
+  // Skill 创建专家方案 5.1（SKC-05）：环境中还没有专家时预置未发布草稿；写库失败只记录，不阻止启动。
   try {
-    const preset = loadSkillCreatorPreset(resolve(projectRoot, 'server/config/agent-presets'))
-    const seeded = await seedSkillCreatorDraft(database, agents, agentValidation, preset)
+    const seeded = await seedSkillCreatorDraft(database, agents, agentValidation, skillCreatorPreset)
     if (seeded.status !== 'skipped') console.info('skill creator preset', seeded)
     else if (seeded.reason === 'no_admin') console.warn('skill creator preset skipped: 没有可用的本地平台管理员，下次启动重试')
   } catch (error) {
