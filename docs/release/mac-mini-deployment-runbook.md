@@ -310,6 +310,12 @@ test -x "${DWP_BUNDLE}/scripts/deploy/install-release-watcher.sh"
 任何验证失败都停止。不能只验证随包下载的 SHA-256，也不能手工更改 `release.json`、
 忽略来源证明或从某个未经验证的源码目录启动应用。
 
+> `gh release verify` 报 `no valid Sigstore verifiers could be initialized` 时，先别当成来源证明坏了：
+> gh 要先把 Sigstore 信任根缓存到 `<cache>/gh/.sigstore`（默认 `~/.cache/gh`），写入被拒（受限 shell、
+> 沙箱、只读 `HOME`）就会得到这句误导性的错误。`gh attestation trusted-root` 会打印真实原因
+> （`open /…/tuf_tmp…: operation not permitted`）。把缓存指到可写目录再重跑即可，例如
+> `export XDG_CACHE_HOME="${DWP_ROOT}/.cache"`；`scripts/deploy/release.sh` 已内置同样的兜底探测。
+
 ## 7. 首次创建运行配置与证书目录
 
 再次确认目标目录不存在，只初始化一次：

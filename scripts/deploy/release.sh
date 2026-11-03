@@ -65,6 +65,19 @@ cleanup() {
 trap cleanup EXIT
 
 command -v gh >/dev/null || { echo "GitHub CLI is required to verify public Release provenance" >&2; exit 1; }
+# `gh release verify` / `attestation verify` 要先把 Sigstore 信任根缓存到
+# <cache>/gh/.sigstore（默认 ~/.cache/gh）。缓存目录不可写时 gh 只回一句
+# "no valid Sigstore verifiers could be initialized"（真实原因是临时文件写入被拒），
+# 看起来像来源证明坏了。2026-11-03 发 v2026.11.03-01 就因此绕过了官方脚本。
+# 这里探测一次，不可写就改用部署根目录下的缓存，让复核照常进行。
+gh_cache_home=${XDG_CACHE_HOME:-${HOME}/.cache}
+if ! mkdir -p "${gh_cache_home}/gh" 2>/dev/null || ! : > "${gh_cache_home}/gh/.dsh-work-cache-probe" 2>/dev/null; then
+  gh_cache_home="${deploy_root}/.cache"
+  mkdir -p "${gh_cache_home}/gh"
+  echo "gh cache is not writable; using ${gh_cache_home} for Sigstore trusted-root material" >&2
+fi
+rm -f "${gh_cache_home}/gh/.dsh-work-cache-probe" 2>/dev/null || true
+export XDG_CACHE_HOME="${gh_cache_home}"
 gh auth status >/dev/null 2>&1 \
   || { echo "GitHub CLI is not authenticated; use a read-only credential for the public repository" >&2; exit 1; }
 gh attestation verify --help | grep -F -- '--signer-workflow' >/dev/null \
