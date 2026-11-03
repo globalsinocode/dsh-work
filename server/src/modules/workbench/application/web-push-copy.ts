@@ -54,7 +54,8 @@ export interface BuildRunFinishedInput {
   runStatus: RunFinishedStatus
   sessionId: string
   sessionTitle?: string
-  targetType: PushTargetType
+  /** Run 只发生在 agent / group 会话；peer 私聊没有 Run，因此这里不含 'peer'。 */
+  targetType: ConversationTargetType
   targetId: string
   workspaceId?: string
 }

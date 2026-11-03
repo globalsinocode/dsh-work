@@ -54,11 +54,11 @@ after(async () => {
   await freshThrowaway?.dispose()
 })
 
-test('empty database applies the full migration chain through 0116', async () => {
+test('empty database applies the full migration chain through 0117', async () => {
   const versions = await freshThrowaway.client<{ version: string }[]>`
     select version from schema_migrations order by version desc limit 1
   `
-  assert.equal(versions[0]?.version, '0116_agent_recommendation.sql')
+  assert.equal(versions[0]?.version, '0117_direct_conversations.sql')
   const applied = await freshThrowaway.client<{ version: string }[]>`
     select version from schema_migrations where version = '0111_web_push.sql'
   `
@@ -83,11 +83,11 @@ test('database stopped at 0084 upgrades through hardening and tonycc tail', asyn
     assert.equal(before?.version, '0084_mcp_user_grants.sql')
     const second = await runMigrations(throwaway.client, migrationsDirectory)
     assert.ok(second.some(row => row.version === '0111_web_push.sql' && row.applied))
-    assert.ok(second.some(row => row.version === '0116_agent_recommendation.sql' && row.applied))
+    assert.ok(second.some(row => row.version === '0117_direct_conversations.sql' && row.applied))
     const [tail] = await throwaway.client<{ version: string }[]>`
       select version from schema_migrations order by version desc limit 1
     `
-    assert.equal(tail?.version, '0116_agent_recommendation.sql')
+    assert.equal(tail?.version, '0117_direct_conversations.sql')
     await assertGovernanceSurfaces(throwaway.client)
   } finally {
     await throwaway.dispose()
@@ -139,7 +139,7 @@ test('hardening midpoint 0088 upgrades without dropping governance tables', asyn
     const [tail] = await throwaway.client<{ version: string }[]>`
       select version from schema_migrations order by version desc limit 1
     `
-    assert.equal(tail?.version, '0116_agent_recommendation.sql')
+    assert.equal(tail?.version, '0117_direct_conversations.sql')
   } finally {
     await throwaway.dispose()
     await rm(baselineDir, { recursive: true, force: true })
