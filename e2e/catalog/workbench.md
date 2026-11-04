@@ -165,6 +165,19 @@ P1/P2 的执行结果须单独记录数据库、身份、Runtime/DSH 版本和�
 
 **验收：** 刷新后两轮成果分别位于对应回复下，正文与各自一轮的输入对应；「继续修改」仅一处；读取失败可在右栏提示并重试成功。P2 另需在目标环境用真实 DSH 两轮各生成一份 Markdown，刷新后核对两份正文。
 
+### EX-STATE-01 对话中停止、失败的轮次留有记录，加载失败与对话不存在分开提示
+
+**优先级：** P1 · **角色：** 员工 · **运行层级：** 一次性 PostgreSQL、合成 Runtime（不调用模型）、真实 HTTP 接口与浏览器；加载失败另由组件单测覆盖<br>
+**前置数据：** `personalWorkbenchFixture` 一次性库；合成 Runtime 对含 `P1-保持运行` 的 prompt 保持运行直到停止，对含 `P1-执行失败` 的 prompt 确定性失败<br>
+**spec：** `e2e/personal-integration/conversation-states.spec.ts`、`apps/workbench-web/src/components/conversation/conversation-components.test.ts`、`apps/workbench-web/src/views/ConversationView.test.ts`、`server/src/infrastructure/postgres/personal-conversation-states.integration.test.ts`
+
+1. 员工在个人对话中发起一轮，执行中显示该 AI 同事的真实名称（与完成后回复的名称一致），不显示为其他同事。
+2. 停止这一轮后再发起新一轮：较早一轮的问题下仍标出“已停止（停止人），没有生成回复”；失败且没有回复的较早一轮标出“这一轮没有完成”。本轮的停止与失败仍由本轮的说明卡片给出，不重复。
+3. 本轮失败或结论在状态变化之后才到达时，页面跟随到底部，说明卡片不被输入框遮挡；员工正在往上翻看历史时不打断。
+4. 打开对话时服务暂时不可用或网络中断：显示“暂时无法加载对话”和“重试”，不说对话不存在或无权访问；服务端答复不存在、无权访问或链接无效时仍显示“未找到对话”。对话列表同样读取失败时（服务整体不可用）也按“暂时无法加载”处理，重试会重新加载列表。正在查看的对话在后台刷新遇到暂时不可用时保留当前内容。
+
+**验收：** 刷新后历史轮次的停止、失败说明仍在；执行中名称与回复一致；失败说明完整可见；加载失败可重试成功。
+
 ### EX-ATTACH-01 对话中上传的文件显示在发送它的消息下，后续各轮仍可就该文件问答
 
 **优先级：** P1 · **角色：** 员工 · **运行层级：** 一次性 PostgreSQL、合成 Runtime（不调用模型）、真实 HTTP 接口与浏览器<br>

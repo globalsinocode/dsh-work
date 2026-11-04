@@ -152,6 +152,11 @@ export interface TaskRun {
    * 本轮核验仍只用 result.artifacts（当前 Run）。团队 Run 详情与本轮一致时可省略。
    */
   threadArtifacts?: Artifact[]
+  /**
+   * 个人会话多轮详情中各轮的执行状态（按创建时间）：前端在停止或失败、没有回复的历史轮次下标出结果，
+   * 不随新一轮消失。只有一轮或团队 Run 详情时省略。
+   */
+  threadRuns?: Array<{ runId: string; status: TaskRun['status']; stoppedBy: string | null }>
   /** 推荐方案 4.2：个人会话中各 Run 当前 Attempt 的推荐卡片，前端按 runId 挂到该 Run 的回复下。 */
   recommendations?: AgentRecommendationView[]
   /** Skill 创建专家方案 4.3：各 Run 当前 Attempt 保存的 Skill 草稿，只给提交人本人看。 */

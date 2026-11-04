@@ -318,6 +318,11 @@ export interface TaskRun {
    * 的成果合集，供气泡按 runId 挂到对应回复下。本轮核验仍只用 result.artifacts。
    */
   threadArtifacts?: Artifact[]
+  /**
+   * 个人会话多轮详情中各轮的执行状态：停止或失败、没有回复的历史轮次在其问题下标出结果，
+   * 不随新一轮消失。只有一轮或团队详情时缺省。
+   */
+  threadRuns?: Array<{ runId: string; status: RunStatus; stoppedBy: string | null }>
   /** 推荐 AI 同事：个人会话中各 Run 当前 Attempt 的推荐卡片，按 runId 挂到该 Run 的回复下。 */
   recommendations?: AgentRecommendation[]
   skillDrafts?: SkillDraft[]

@@ -506,6 +506,14 @@
   }
 }
 
+/* 历史轮次停止或失败、没有回复时，在员工问题下方（右对齐）留一行说明。 */
+.conversation-past-run {
+  margin: 6px 34px 14px auto;
+  color: var(--dsh-color-muted);
+  font-size: var(--dsh-font-size-caption);
+  text-align: right;
+}
+
 .conversation-stopped-by {
   margin: 24px 0 0 34px;
   color: var(--dsh-color-muted);

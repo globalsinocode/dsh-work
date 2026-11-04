@@ -1349,23 +1349,7 @@ export class PostgresConversationRepository {
     const artifacts = row.isProjectTaskThread
       ? (await this.loadThreadArtifactsForRuns(pageRunIds)).map(artifact => mapArtifactRow(artifact, artifact.sourceRunId))
       : []
-    const runs = await this.database<{
-      id: string
-      status: RunState
-      requestedBy: string
-      requesterName: string
-      stoppedByName: string | null
-      createdAt: Date
-    }[]>`
-      select r.id, r.status, r.requested_by as "requestedBy",
-             ru.display_name as "requesterName", r.created_at as "createdAt",
-             case when r.status = 'cancelled' then stopper.display_name end as "stoppedByName"
-        from runs r
-        join users ru on ru.tenant_id = r.tenant_id and ru.id = r.requested_by
-        left join users stopper on stopper.tenant_id = r.tenant_id and stopper.id = r.cancel_requested_by
-       where r.tenant_id = ${tenantId} and r.session_id = ${sessionId}
-       order by r.created_at asc
-    `
+    const runs = await this.loadSessionRuns(sessionId)
     return {
       sessionId: row.id,
       title: row.title,
@@ -1495,6 +1479,27 @@ export class PostgresConversationRepository {
   }
 
 
+  /** 会话内各 Run 的状态与归因（按创建时间），共享线程的执行记录与个人多轮详情的历史轮次共用。 */
+  private async loadSessionRuns(sessionId: string) {
+    return this.database<{
+      id: string
+      status: RunState
+      requestedBy: string
+      requesterName: string
+      stoppedByName: string | null
+      createdAt: Date
+    }[]>`
+      select r.id, r.status, r.requested_by as "requestedBy",
+             ru.display_name as "requesterName", r.created_at as "createdAt",
+             case when r.status = 'cancelled' then stopper.display_name end as "stoppedByName"
+        from runs r
+        join users ru on ru.tenant_id = r.tenant_id and ru.id = r.requested_by
+        left join users stopper on stopper.tenant_id = r.tenant_id and stopper.id = r.cancel_requested_by
+       where r.tenant_id = ${tenantId} and r.session_id = ${sessionId}
+       order by r.created_at asc
+    `
+  }
+
   /**
    * 个人会话详情展示整段多轮消息时，按消息所属 Run 装载各自当前 Attempt 的成果，
    * 让历史轮次的成果卡仍能挂在对应回复下（不只最新 Run 的 result.artifacts）。
@@ -1567,6 +1572,10 @@ export class PostgresConversationRepository {
       ? (await this.loadThreadArtifactsForRuns(threadRunIds)).map(artifact => mapArtifactRow(artifact, artifact.sourceRunId))
       : evidence.artifacts.map(item => item.artifact)
     const attachmentsByRun = await this.loadRunAttachments([...new Set([row.id, ...threadRunIds])])
+    // 个人多轮详情：各轮的执行状态，停止或失败且没有回复的历史轮次在其问题下标出，不随新一轮消失。
+    const threadRuns = row.workspaceType === 'personal' && threadRunIds.length > 1
+      ? (await this.loadSessionRuns(row.sessionId)).map(run => ({ runId: run.id, status: mapStatus(run.status), stoppedBy: run.stoppedByName }))
+      : undefined
     // 推荐只在个人对话中装配；列表不装载，只有查看单个会话详情时按查看者当前可用同事计算。
     const recommendations = viewerUserId && this.recommendations && row.workspaceType === 'personal'
       ? await this.recommendations.loadForRuns([...new Set([row.id, ...threadRunIds])], viewerUserId)
@@ -1595,6 +1604,7 @@ export class PostgresConversationRepository {
       messages: withRunAttachments(messages.map(mapMessage), attachmentsByRun),
       steps: mapSteps(row.id, evidence.events, row.status),
       threadArtifacts,
+      ...(threadRuns ? { threadRuns } : {}),
       ...(recommendations.length ? { recommendations } : {}),
       ...(skillDrafts.length ? { skillDrafts } : {}),
       result: deriveTaskResult(evidence),

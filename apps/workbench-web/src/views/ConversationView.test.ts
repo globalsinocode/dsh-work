@@ -187,7 +187,7 @@ function projectTask(overrides: Partial<ProjectTask> = {}): ProjectTask {
   }
 }
 
-async function mountView(options: { item?: TaskRun | null; workspace?: Workspace; bridge?: ProjectTaskDetailBridge } = {}) {
+async function mountView(options: { item?: TaskRun | null; workspace?: Workspace; bridge?: ProjectTaskDetailBridge; listError?: Error } = {}) {
   const pinia = createPinia()
   setActivePinia(pinia)
   api.getSession.mockResolvedValue({
@@ -204,7 +204,8 @@ async function mountView(options: { item?: TaskRun | null; workspace?: Workspace
   taskStore.tasks.splice(0, taskStore.tasks.length, ...(item ? [item] : []))
   // B5：详情刷新失败会把条目从缓存移除；Run 存在时详情请求应返回它本身。
   if (item) api.getRun.mockResolvedValue(item)
-  vi.spyOn(taskStore, 'load').mockResolvedValue(undefined)
+  const loadList = vi.spyOn(taskStore, 'load').mockResolvedValue(undefined)
+  if (options.listError) loadList.mockRejectedValueOnce(options.listError)
   const contentStore = useContentStore(pinia)
   contentStore.workspaces.splice(0, contentStore.workspaces.length, options.workspace ?? workspace())
   const wrapper = mount(ConversationView, {
@@ -215,7 +216,7 @@ async function mountView(options: { item?: TaskRun | null; workspace?: Workspace
     },
   })
   await flushPromises()
-  return { wrapper, taskStore, contentStore }
+  return { wrapper, taskStore, contentStore, loadList }
 }
 
 describe('ConversationView 归档只读态（design §2.7 / AC-23）', () => {
@@ -393,6 +394,94 @@ describe('ConversationView 归档只读态（design §2.7 / AC-23）', () => {
 
     expect(api.getRun).toHaveBeenCalledWith('run-001')
     expect(wrapper.text()).toContain('共享 Run 的回答')
+  })
+
+  it('EX-STATE-01: tells a temporary outage apart from a missing conversation and can retry', async () => {
+    const outage = Object.assign(new Error('服务暂时不可用'), { status: 503 })
+    api.getRun.mockRejectedValue(outage)
+    api.getSessionThread.mockRejectedValue(outage)
+    const { wrapper } = await mountView({ item: null })
+    expect(wrapper.text()).toContain('暂时无法加载对话')
+    expect(wrapper.text()).not.toContain('未找到对话')
+
+    api.getRun.mockResolvedValue(task({
+      messages: [{ id: 'm-back', role: 'assistant', content: '恢复后的回答', createdAt: '10:01', runId: 'run-001' }],
+    }))
+    await wrapper.get('[data-testid="conversation-unavailable"] button').trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('恢复后的回答')
+    expect(wrapper.find('[data-testid="conversation-unavailable"]').exists()).toBe(false)
+  })
+
+  it('EX-STATE-01: still offers a retry when the whole service is down, and the retry reloads the list', async () => {
+    const outage = Object.assign(new Error('服务暂时不可用'), { status: 503 })
+    api.getRun.mockRejectedValue(outage)
+    api.getSessionThread.mockRejectedValue(outage)
+    const { wrapper, loadList } = await mountView({ item: null, listError: outage })
+    expect(wrapper.text()).toContain('暂时无法加载对话')
+    expect(wrapper.text()).not.toContain('未找到对话')
+
+    api.getRun.mockResolvedValue(task({
+      messages: [{ id: 'm-back', role: 'assistant', content: '恢复后的回答', createdAt: '10:01', runId: 'run-001' }],
+    }))
+    await wrapper.get('[data-testid="conversation-unavailable"] button').trigger('click')
+    await flushPromises()
+    expect(loadList).toHaveBeenCalledTimes(2)
+    expect(wrapper.text()).toContain('恢复后的回答')
+  })
+
+  it('EX-STATE-01: treats a run outage as unavailable even when the id is not a session', async () => {
+    api.getRun.mockRejectedValue(Object.assign(new Error('服务暂时不可用'), { status: 503 }))
+    api.getSessionThread.mockRejectedValue(Object.assign(new Error('不存在'), { status: 404 }))
+    const { wrapper } = await mountView({ item: null })
+    expect(wrapper.text()).toContain('暂时无法加载对话')
+    expect(wrapper.text()).not.toContain('未找到对话')
+  })
+
+  it('EX-STATE-01: keeps showing the conversation when a refresh fails temporarily', async () => {
+    const { wrapper, taskStore } = await mountView({ item: task({
+      messages: [{ id: 'm-keep', role: 'assistant', content: '已有的回答', createdAt: '10:01', runId: 'run-001' }],
+    }) })
+    api.getRun.mockRejectedValue(Object.assign(new Error('服务暂时不可用'), { status: 503 }))
+    await taskStore.refreshRun('run-001').catch(() => undefined)
+    await flushPromises()
+    expect(wrapper.text()).toContain('已有的回答')
+    expect(wrapper.text()).not.toContain('未找到对话')
+  })
+
+  it('EX-STATE-01: follows a late failure notice to the bottom, but not while the employee reads history', async () => {
+    const running = task({ status: 'running', result: { ...task().result, outcome: 'pending', error: null } })
+    const { wrapper, taskStore } = await mountView({ item: running })
+    const scroller = wrapper.get('.conversation-scroll').element as HTMLElement
+    Object.defineProperty(scroller, 'scrollHeight', { configurable: true, value: 2000 })
+    Object.defineProperty(scroller, 'clientHeight', { configurable: true, value: 500 })
+    const scrollTo = vi.fn()
+    scroller.scrollTo = scrollTo as typeof scroller.scrollTo
+    const fail = (code: string) => taskStore.upsert({ ...running, result: { ...running.result, outcome: 'not_achieved', error: { ...task().result.error!, code } } })
+
+    // 停在底部附近：结论随后才到达也跟随到底部。
+    scroller.scrollTop = 1450
+    await wrapper.get('.conversation-scroll').trigger('scroll')
+    fail('late_failure')
+    await flushPromises()
+    expect(scrollTo).toHaveBeenCalled()
+
+    // 正在往上翻看历史：不打断。
+    scrollTo.mockClear()
+    scroller.scrollTop = 0
+    await wrapper.get('.conversation-scroll').trigger('scroll')
+    fail('another_failure')
+    await flushPromises()
+    expect(scrollTo).not.toHaveBeenCalled()
+  })
+
+  it('EX-STATE-01: still says not found when the server answers that the conversation is missing', async () => {
+    const missing = Object.assign(new Error('不存在'), { status: 404 })
+    api.getRun.mockRejectedValue(missing)
+    api.getSessionThread.mockRejectedValue(missing)
+    const { wrapper } = await mountView({ item: null })
+    expect(wrapper.text()).toContain('未找到对话')
+    expect(wrapper.find('[data-testid="conversation-unavailable"]').exists()).toBe(false)
   })
 
   it('loads a shared session thread without runs and shows sender/Agent attribution (TW-10)', async () => {

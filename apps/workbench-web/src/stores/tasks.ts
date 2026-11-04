@@ -3,6 +3,7 @@ import { defineStore } from 'pinia'
 
 import { workbenchApi } from '../api/client'
 import type { RunStatus, TaskRun } from '../types/domain'
+import { isMissingResource } from '@/utils/missing-resource'
 
 interface RuntimeEvent {
   event_id: string
@@ -95,7 +96,9 @@ export const useTaskStore = defineStore('tasks', () => {
       if (!isTerminal(task.status)) subscribe(task.id)
       return task
     } catch (cause) {
-      if (current === generation) {
+      // 只有服务端答复不存在或已无权访问时才移出缓存；服务暂时不可用时保留已有内容，
+      // 正在查看的对话不会因一次刷新失败变成“未找到对话”。
+      if (current === generation && isMissingResource(cause)) {
         tasks.value = tasks.value.filter(item => item.id !== id)
         closeStream(id)
       }

@@ -480,6 +480,52 @@ describe('RunMessageList', () => {
     const stopped = mount(RunMessageList, { global, props: { task: run({ status: 'cancelled', stoppedBy: '周航', result: result({ outcome: 'unverified' }) }), isOwn: () => false } })
     expect(stopped.get('[data-testid="run-stopped-by"]').text()).toBe('本轮执行已由 周航 停止')
   })
+
+  it('EX-STATE-01: names the working colleague the same way as its finished reply', () => {
+    const named = mount(RunMessageList, {
+      global,
+      props: { task: run({ status: 'running', agentVersion: '库存助手@1.2.0', result: result({ outcome: 'pending' }), steps: liveSteps }), isOwn: () => false },
+    })
+    expect(named.get('[data-testid="run-progress-card"] .assistant-identity').text()).toContain('库存助手')
+    expect(named.get('[data-testid="run-progress-card"] .assistant-avatar').text()).toBe('库')
+
+    // 没有版本时 agentVersion 为空串：退回最近一条回复的名称。
+    const fallback = mount(RunMessageList, {
+      global,
+      props: { task: run({ status: 'running', agentVersion: '', result: result({ outcome: 'pending' }), steps: liveSteps }), isOwn: () => false },
+    })
+    expect(fallback.get('[data-testid="run-progress-card"] .assistant-identity strong').text()).toBe('库存助手')
+  })
+
+  it('EX-STATE-01: keeps a note under earlier rounds that were stopped or failed without a reply', () => {
+    const thread: ChatMessage[] = [
+      ...messages,
+      { id: 'm3', role: 'user', content: '再核对明细', createdAt: '10:02', runId: 'run-2', senderId: 'U1', senderName: '林岚' },
+      { id: 'm4', role: 'user', content: '换个口径', createdAt: '10:03', runId: 'run-3', senderId: 'U1', senderName: '林岚' },
+      { id: 'm5', role: 'user', content: '最后一轮', createdAt: '10:04', runId: 'run-4', senderId: 'U1', senderName: '林岚' },
+    ]
+    const wrapper = mount(RunMessageList, {
+      global,
+      props: {
+        task: run({
+          id: 'run-4', status: 'cancelled', stoppedBy: '林岚', messages: thread, result: result({ outcome: 'unverified' }),
+          threadRuns: [
+            { runId: 'run-1', status: 'succeeded', stoppedBy: null },
+            { runId: 'run-2', status: 'cancelled', stoppedBy: '林岚' },
+            { runId: 'run-3', status: 'failed', stoppedBy: null },
+            { runId: 'run-4', status: 'cancelled', stoppedBy: '林岚' },
+          ],
+        }),
+        isOwn: message => message.role === 'user',
+      },
+    })
+    // 已有回复的轮次与本轮都不加说明；本轮的停止仍由下方说明给出，不重复。
+    expect(wrapper.findAll('[data-testid="past-run-note"]').map(note => note.text())).toEqual([
+      '已停止（林岚），没有生成回复',
+      '这一轮没有完成，没有生成回复',
+    ])
+    expect(wrapper.get('[data-testid="run-stopped-by"]').text()).toBe('本轮执行已由 林岚 停止')
+  })
 })
 
 describe('SessionDiscussionList', () => {

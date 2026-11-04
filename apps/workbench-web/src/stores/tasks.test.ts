@@ -171,6 +171,25 @@ describe('task store', () => {
     expect(store.getTask(initial.id)).toBeDefined()
   })
 
+  it('EX-STATE-01: keeps a cached conversation when a refresh fails temporarily, drops it once it is missing', async () => {
+    const { useTaskStore } = await import('./tasks')
+    api.getTasks.mockResolvedValue([structuredClone(baseTask)])
+    const store = useTaskStore()
+    await store.load()
+
+    api.getRun.mockRejectedValueOnce(Object.assign(new Error('服务暂时不可用'), { status: 503 }))
+    await expect(store.refreshRun(baseTask.id)).rejects.toThrow('服务暂时不可用')
+    expect(store.getTask(baseTask.id)).toBeDefined()
+
+    api.getRun.mockRejectedValueOnce(new TypeError('Failed to fetch'))
+    await expect(store.refreshRun(baseTask.id)).rejects.toThrow('Failed to fetch')
+    expect(store.getTask(baseTask.id)).toBeDefined()
+
+    api.getRun.mockRejectedValueOnce(Object.assign(new Error('不存在'), { status: 404 }))
+    await expect(store.refreshRun(baseTask.id)).rejects.toThrow('不存在')
+    expect(store.getTask(baseTask.id)).toBeUndefined()
+  })
+
   it('discards uploaded session files when Run creation is rejected', async () => {
     const { useTaskStore } = await import('./tasks')
     api.createSession.mockResolvedValue({ id: 'session-001' })

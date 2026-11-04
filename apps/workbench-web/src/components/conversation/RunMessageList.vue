@@ -116,6 +116,32 @@ function skippedArtifactsForMessage(message: ChatMessage) {
   return task.value.result.pendingItems.filter(item => item.kind === 'artifact_skipped').map(item => item.message)
 }
 
+/**
+ * 历史轮次的结果说明：停止或失败、没有任何回复的较早一轮，在其问题下留一行说明；
+ * 本轮的停止与失败仍由下方的卡片说明，这里不重复。
+ */
+const pastRunNotes = computed(() => {
+  const answered = new Set(task.value.messages.filter(message => message.role === 'assistant').map(message => message.runId))
+  const byRun = new Map<string, string>()
+  for (const run of task.value.threadRuns ?? []) {
+    if (run.runId === task.value.id || answered.has(run.runId)) continue
+    if (run.status === 'cancelled') byRun.set(run.runId, run.stoppedBy ? `已停止（${run.stoppedBy}），没有生成回复` : '已停止，没有生成回复')
+    else if (run.status === 'failed') byRun.set(run.runId, '这一轮没有完成，没有生成回复')
+  }
+  // 每轮只在该轮最后一条员工消息下标出一次：按消息 id 记录，渲染时直接取。
+  const byMessage = new Map<string, string>()
+  const lastUserByRun = new Map<string, string>()
+  for (const message of task.value.messages) {
+    if (message.role === 'user' && message.runId && byRun.has(message.runId)) lastUserByRun.set(message.runId, message.id)
+  }
+  for (const [runId, messageId] of lastUserByRun) byMessage.set(messageId, byRun.get(runId)!)
+  return byMessage
+})
+
+function pastRunNote(message: ChatMessage) {
+  return pastRunNotes.value.get(message.id)
+}
+
 /** 本轮最后一条回复在执行结束后显示业务结论与耗时，代替发送时间。 */
 function messageMeta(message: ChatMessage) {
   if (message.id !== lastAssistantMessageId.value || !belongsToCurrentRun(message) || !isTerminalRun.value) return undefined
@@ -124,62 +150,63 @@ function messageMeta(message: ChatMessage) {
 </script>
 
 <template>
-  <ConversationMessageItem
-    v-for="message in task.messages"
-    :key="message.id"
-    :message="message"
-    :own="isOwn(message)"
-    :meta="messageMeta(message)"
-    :tag="!isOwn(message) && mentionsUser(message, authStore.user.id) ? '@了你' : undefined"
-  >
-    <template v-if="isTerminalRun && message.id === firstAssistantMessageId" #before>
-      <RunProgressSummary :task="task" />
-    </template>
-    <RunArtifactCards
-      :artifacts="artifactsForMessage(message)"
-      :can-continue-editing="canFollowUp && belongsToCurrentRun(message)"
-      :referenced-file-ids="referencedFileIds"
-      :preview-key="previewKey"
-      @preview="emit('preview', $event)"
-      @download="emit('download', $event)"
-      @continue-editing="emit('continue-editing', $event)"
-    />
-    <AgentRecommendationCards
-      :recommendations="recommendationsForMessage(message)"
-      @open="openRecommendedAgent"
-    />
-    <SkillDraftCards :drafts="skillDraftsForMessage(message)" />
-
-    <div
-      v-if="skippedArtifactsForMessage(message).length"
-      class="answer-skipped"
-      role="note"
-      aria-label="未登记为成果的文件"
-      data-testid="artifact-skipped"
+  <template v-for="message in task.messages" :key="message.id">
+    <ConversationMessageItem
+      :message="message"
+      :own="isOwn(message)"
+      :meta="messageMeta(message)"
+      :tag="!isOwn(message) && mentionsUser(message, authStore.user.id) ? '@了你' : undefined"
     >
-      <p class="answer-skipped__title">以下文件未登记为成果</p>
-      <ul>
-        <li v-for="line in skippedArtifactsForMessage(message)" :key="line">{{ line }}</li>
-      </ul>
-    </div>
+      <template v-if="isTerminalRun && message.id === firstAssistantMessageId" #before>
+        <RunProgressSummary :task="task" />
+      </template>
+      <RunArtifactCards
+        :artifacts="artifactsForMessage(message)"
+        :can-continue-editing="canFollowUp && belongsToCurrentRun(message)"
+        :referenced-file-ids="referencedFileIds"
+        :preview-key="previewKey"
+        @preview="emit('preview', $event)"
+        @download="emit('download', $event)"
+        @continue-editing="emit('continue-editing', $event)"
+      />
+      <AgentRecommendationCards
+        :recommendations="recommendationsForMessage(message)"
+        @open="openRecommendedAgent"
+      />
+      <SkillDraftCards :drafts="skillDraftsForMessage(message)" />
 
-    <div class="assistant-actions">
-      <button type="button" aria-label="复制回答" @click="emit('copy-answer', message.content)">
-        <el-icon><CopyDocument /></el-icon>
-      </button>
-      <button
-        type="button"
-        aria-label="复制对话链接"
-        @click="emit('copy-link')"
+      <div
+        v-if="skippedArtifactsForMessage(message).length"
+        class="answer-skipped"
+        role="note"
+        aria-label="未登记为成果的文件"
+        data-testid="artifact-skipped"
       >
-        <el-icon><Share /></el-icon>
-      </button>
-      <span v-if="belongsToCurrentRun(message)" class="assistant-run-meta">
-        {{ task.tokenUsage ? `${task.tokenUsage.toLocaleString()} Token` : '自动' }}
-        · {{ task.agentVersion.split('@')[0] }}
-      </span>
-    </div>
-  </ConversationMessageItem>
+        <p class="answer-skipped__title">以下文件未登记为成果</p>
+        <ul>
+          <li v-for="line in skippedArtifactsForMessage(message)" :key="line">{{ line }}</li>
+        </ul>
+      </div>
+
+      <div class="assistant-actions">
+        <button type="button" aria-label="复制回答" @click="emit('copy-answer', message.content)">
+          <el-icon><CopyDocument /></el-icon>
+        </button>
+        <button
+          type="button"
+          aria-label="复制对话链接"
+          @click="emit('copy-link')"
+        >
+          <el-icon><Share /></el-icon>
+        </button>
+        <span v-if="belongsToCurrentRun(message)" class="assistant-run-meta">
+          {{ task.tokenUsage ? `${task.tokenUsage.toLocaleString()} Token` : '自动' }}
+          · {{ task.agentVersion.split('@')[0] }}
+        </span>
+      </div>
+    </ConversationMessageItem>
+    <p v-if="pastRunNote(message)" class="conversation-past-run" data-testid="past-run-note">{{ pastRunNote(message) }}</p>
+  </template>
 
   <RunProgressCard
     v-if="['queued', 'running'].includes(task.status)"
@@ -189,7 +216,7 @@ function messageMeta(message: ChatMessage) {
 
   <RunApprovalNotice v-if="task.status === 'awaiting_approval'" :task="task" />
 
-  <section v-if="task.result.error" class="conversation-notice error-notice">
+  <section v-if="task.result.error" class="conversation-notice error-notice" data-testid="run-error-notice">
     <span class="conversation-notice__icon"><el-icon><Close /></el-icon></span>
     <div>
       <strong>{{ task.result.error.message }}</strong>

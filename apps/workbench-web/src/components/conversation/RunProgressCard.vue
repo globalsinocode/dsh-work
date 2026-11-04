@@ -21,6 +21,13 @@ const progress = computed(() => projectRunProgress(props.task))
 const offset = computed(() => props.task.clockOffsetMs ?? 0)
 const totalLabel = computed(() => formatElapsed(elapsedMs(progress.value.startMs, now.value, offset.value)))
 const activeLabels = computed(() => progress.value.rows.filter(row => row.state === 'active').map(row => row.label).join('，'))
+/**
+ * 执行中的 AI 同事名称与完成后的回复一致：agentVersion 为“名称@版本”（无版本时为空串），
+ * 取不到时退回本轮已有回复的 agentName（不取其他轮，避免共享对话里借用别的同事），再退回 dsh-work。
+ */
+const agentName = computed(() => props.task.agentVersion.split('@')[0]
+  || props.task.messages.find(message => message.role === 'assistant' && message.runId === props.task.id && message.agentName)?.agentName
+  || 'dsh-work')
 </script>
 
 <template>
@@ -29,9 +36,9 @@ const activeLabels = computed(() => progress.value.rows.filter(row => row.state 
     data-testid="run-progress-card"
   >
     <div class="assistant-identity">
-      <span class="assistant-avatar">d</span>
+      <span class="assistant-avatar">{{ agentName.slice(0, 1) }}</span>
       <div>
-        <strong>dsh-work</strong>
+        <strong>{{ agentName }}</strong>
         <span>正在处理<template v-if="totalLabel"> · 已用 {{ totalLabel }}</template></span>
       </div>
     </div>
