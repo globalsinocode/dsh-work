@@ -2,7 +2,7 @@ import { randomBytes } from 'node:crypto'
 import { realpathSync } from 'node:fs'
 import { dependencyUnavailable, invalidRequest, stateConflict } from '../../domain/request-errors.ts'
 import { builtinTools } from './builtin-tools.ts'
-import type { ContainerCommand, ContainerCommandResult, ExecutionBackend } from './execution-backend.ts'
+import type { ContainerCommand, ContainerCommandResult, ExecutionBackend, PythonModuleIndex } from './execution-backend.ts'
 import type { ExecutionTool } from './execution-toolchain.ts'
 import { PlatformToolError } from './platform-tool-contract.ts'
 import type { RuntimeToolDescriptor } from './runtime-types.ts'
@@ -99,6 +99,8 @@ export class AttemptExecutionContainers {
   toolchain: readonly ExecutionTool[] = []
   /** Python distributions installed in the image (normalized names); Skill dependencies are checked against them (plan 4.8). */
   pythonPackages: readonly string[] = []
+  /** Standard library and import name → distributions in the image; Skill imports are checked against it. Null when unknown. */
+  pythonModules: PythonModuleIndex | null = null
   private readonly backend: ExecutionBackend
   private readonly attempts = new Map<string, AttemptState>()
   private readonly pendingRemoval = new Set<string>()
@@ -129,7 +131,14 @@ export class AttemptExecutionContainers {
   /** Image and toolchain check, feature detection and the startup orphan sweep (single service instance). */
   async preflight() {
     this.toolchain = await this.backend.inspectExecutionImage(this.image, this.user)
-    if (this.toolchain.some(tool => tool.id === 'python3')) this.pythonPackages = await this.backend.inspectPythonPackages(this.image, this.user)
+    if (this.toolchain.some(tool => tool.id === 'python3')) {
+      this.pythonPackages = await this.backend.inspectPythonPackages(this.image, this.user)
+      // 模块清单只用于核对 Skill 的 import；读不出时退回只按声明的包核对，不影响执行容器可用性。
+      this.pythonModules = await Promise.resolve(this.backend.inspectPythonModules?.(this.image, this.user) ?? null).catch(error => {
+        console.warn(`execution image python module index unavailable: ${error instanceof Error ? error.message : String(error)}`)
+        return null
+      })
+    }
     await this.backend.detectFeatures()
     await this.backend.removeOrphans()
   }

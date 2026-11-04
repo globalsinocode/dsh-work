@@ -1,3 +1,4 @@
+import type { PythonModuleIndex } from '../runtime/execution-backend.ts'
 import { randomUUID } from 'node:crypto'
 import { lstat, readdir, readFile } from 'node:fs/promises'
 import { isAbsolute, join, normalize, sep } from 'node:path'
@@ -52,7 +53,7 @@ export class SkillSubmissionService {
   private readonly authorization: Pick<PostgresAuthorizationService, 'authorizeWorkbench'>
   private readonly artifactStore: SkillArtifactStore
   private readonly builtinSkills?: BuiltinSkillCatalog
-  private readonly python: { sandboxAvailable: boolean; packages: string[] }
+  private readonly python: { sandboxAvailable: boolean; packages: string[]; modules: PythonModuleIndex | null }
 
   constructor(input: {
     database: DatabaseClient
@@ -62,13 +63,14 @@ export class SkillSubmissionService {
     builtinSkills?: BuiltinSkillCatalog
     pythonSandboxAvailable?: boolean
     pythonPackages?: string[]
+    pythonModules?: PythonModuleIndex | null
   }) {
     this.database = input.database
     this.skills = input.skills
     this.authorization = input.authorization
     this.artifactStore = input.artifactStore
     this.builtinSkills = input.builtinSkills
-    this.python = { sandboxAvailable: input.pythonSandboxAvailable === true, packages: input.pythonPackages ?? [] }
+    this.python = { sandboxAvailable: input.pythonSandboxAvailable === true, packages: input.pythonPackages ?? [], modules: input.pythonModules ?? null }
   }
 
   /** `list_available_skills`：员工本人可选用的已发布 Skill 与平台内置 Skill，可按关键词筛选。 */
@@ -100,6 +102,7 @@ export class SkillSubmissionService {
     const plan = buildSkillInstallationPlan({ root: parsed, packages: [parsed], edges: [] }, {
       pythonSandboxAvailable: this.python.sandboxAvailable,
       pythonPackages: this.python.packages,
+      pythonModules: this.python.modules,
     })
     const pkg = plan.packages[0]!
     const compatibility = plan.compatibility

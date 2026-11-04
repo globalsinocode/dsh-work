@@ -262,7 +262,7 @@
 
 - `SKILL.md` 带 YAML frontmatter，必须有 name、description 和正文；version 可选，缺失时不伪造。拒绝重复 YAML 键和别名展开。
 - 允许 md、txt、json、yaml/yml、csv、toml、py 和 LICENSE。Shell、二进制、运行时动态安装依赖和未适配工具不会被静默忽略，而是拒绝解析或标为不兼容。
-- `allowed-tools` 已适配 read/glob/grep 的固定平台版本，纯指令包可以零工具；Python 包声明 `python_execute@1.0.0`，只有固定沙箱镜像可用时才兼容。
+- `allowed-tools` 已适配 read/glob/grep 的固定平台版本，纯指令包可以零工具；Python 包声明 `python_execute@1.0.0`，只有固定沙箱镜像可用时才兼容；第三方依赖写在 `requirements.txt`，脚本 import 的模块也按执行镜像核对（第 6 节“依赖登记”）。
 - 正文明确要求调用的另一个 Skill 须在同一制品中，递归形成依赖图；缺失或循环依赖阻止确认。单次计划最多 32 个 Skill。依赖 Skill 随根 Skill 按锁定版本加载，员工端只显示曾作为安装根节点的已发布 Skill。
 - 限额：下载 20 MB；ZIP 解压 32 MB / 2000 项；所选 Skill 64 文件 / 1 MB（运行时同样按单个 Skill 限制）。校验 UTF-8、路径穿越、绝对路径、重复与冲突、CRC、大小和压缩格式；所选 Skill 目录不允许符号链接或特殊文件。无关 Skill 的不兼容声明不阻断安装。
 
@@ -322,7 +322,8 @@
 - 取消与超时由执行容器的进程组终止与静止确认结束（执行隔离 1c），工具调用等清理结束再返回；执行容器随 Attempt 结束删除，服务启动时按名称前缀清扫遗留容器。
 - 所有容器经服务内执行器模块启动（执行容器经 `AttemptExecutionContainers`，成果解析的一次性容器经 `ContainerExecutor`，均基于 `ExecutionBackend` 端口的 docker 实现）：只接受固定参数，只运行配置的摘要锁定镜像，容器姿态由后端固定，业务代码不直接调用 `docker` CLI。执行器与业务服务同进程、同账号，是代码边界而非账号隔离。
 - 输出：脚本写入工作区 `output/`，本次调用新增或修改的顶层文件回列给模型（最多 20 个），Attempt 结束时按第 1 节“成果登记”的规则登记为成果。
-- 执行容器只挂载本 Attempt 的工作区，不挂载 `DSH_HOME`、应用目录、数据库配置、Docker socket 或凭据；Docker 控制权只在可信平台 Runner 手中。运行时禁止联网安装依赖，Skill 声明的 Python 依赖按启动时从执行镜像读出的已安装包核对，新增依赖须发布新的执行镜像。
+- 执行容器只挂载本 Attempt 的工作区，不挂载 `DSH_HOME`、应用目录、数据库配置、Docker socket 或凭据；Docker 控制权只在可信平台 Runner 手中。运行时禁止联网安装依赖，新增依赖须发布新的执行镜像（部署手册 12.1）。
+- **依赖登记（2026-11-04）：** 服务启动时从执行镜像读出已安装的包、标准库模块与“模块 → 包”对应关系。安装、员工提交与发布核对 Skill 的 Python 依赖：`requirements.txt` 声明的包；脚本中 import 的模块（只读源码、不执行，按 Python 词法处理字符串、注释、续行与 `;`；跳过相对 import、`__future__`、包内模块，以及 `references/`、`templates/`、`assets/` 下的示例文件）。标准库模块不计；已声明的包覆盖其 import（含 docx→python-docx、jwt→pyjwt 等常见名称差异；对照表不是全集，未收录的名称差异在镜像缺包时会多报一条），不重复报告；镜像中有对应包的记为 `python-package:<包>`，依据标“由 import 识别”；镜像中没有时计划不兼容并提示声明、加入镜像（链接安装延后核对时为待复核）。只有写在 `try` 语句中（`try`、`except`、`else`、`finally` 内，含 `try: import x` 写在同一行）的 import 视为可选，镜像中没有时只给警告；函数内与 `if __name__ == "__main__":` 下的 import 仍为必需。镜像的模块清单读不出时，只按声明的包核对。服务启动时按当前镜像复查所有已发布 Skill 的活动版本（声明的包与重新扫描的 import，也覆盖此前安装的版本）：缺依赖的写服务日志、管理端 Skill 列表标“依赖缺失”并在详情说明。只拦这个 Skill：员工在会话中直接选用时（即使 AI 同事也固定了它），运行创建前以 `skill_python_dependency_missing` 拒绝；AI 同事固定引用时本次运行不装配它，Manifest 记入 `unavailable_skills`，运行说明告知模型该 Skill 暂不可用，其余照常；保存 AI 同事不检查，验证与发布 AI 同事时拒绝。含 Python 的 Skill 的试运行指纹包含执行镜像引用：换镜像后待发布版本须重新严格试运行，已发布版本不受影响（本规则上线时，此前已试运行、尚未发布的含 Python 的版本须重新试运行一次）。Skill 创建专家生成脚本时须在 `requirements.txt` 声明用到的标准库以外的包。
 - Python 只能写任务输出，不能写企业业务系统。脚本结果是不可信工具输出，不能授予新权限；日志和文件可能含业务数据，只进入获授权的会话，审计不保存正文。
 - 发布须同时满足依赖匹配、权限配置、真实脚本执行证据和管理员验收；只有一段回答或退出码为 0 都不足以认定业务效果合格。环境、入口或依赖变化后必须重新验证。
 
@@ -330,7 +331,7 @@
 
 已随执行隔离实现：输出收集、格式与安全检查及成果登记（2b-2，`python_execute` 的输出自 1b② 起同样登记）；本轮装配了 `bash` 时原始文件只读挂载于 `input/original/`（2b-4），`python_execute` 与 `bash` 在同一执行容器中运行，脚本可经参数读取；员工侧运行总装配 `bash`，只有 Runtime 紧急停用 `bash` 时没有原始文件。服务重启不恢复执行：活动 Attempt 以 `SERVICE_RESTARTED` 失败、遗留执行容器在启动时删除，由员工重新执行（[Runtime 优化方案](../design/runtime-execution-optimization-plan.md)约束 2，已决定不做中断后继续执行）。
 
-未完成（在此之前不得宣称完整的生产脚本平台）：版本化环境注册表与周期自检（目前只在启动时从执行镜像读出已装包核对依赖；新增依赖须发布新的执行镜像，镜像版本没有登记，运行中不复查）；包格式 v2 与显式入口配置；数据库调用记录；Mac mini 上 `python-skill` 场景的真实验收（仓库中没有 Mac mini 执行该场景的记录）。`python_execute` 读取原始 xlsx 已有真实 Docker 用例；2026-11-04 在本机开发环境（真实 DSH 与执行容器）按验收目录 `SKILL-PY-P2` 走通样例脚本型 Skill 的安装、严格试运行、发布与员工上传 xlsx 汇总。
+未完成（在此之前不得宣称完整的生产脚本平台）：周期自检（依赖只在服务启动时按当前镜像复查，运行中不复查；镜像引用只记入试运行指纹，没有单独的镜像版本登记表）；包格式 v2 与显式入口配置；数据库调用记录；Mac mini 上 `python-skill` 场景的真实验收（仓库中没有 Mac mini 执行该场景的记录）。`python_execute` 读取原始 xlsx 已有真实 Docker 用例；2026-11-04 在本机开发环境（真实 DSH 与执行容器）按验收目录 `SKILL-PY-P2` 走通样例脚本型 Skill 的安装、严格试运行、发布与员工上传 xlsx 汇总。
 
 ## 7. 自动任务（AG-03）
 

@@ -81,6 +81,13 @@ export interface RuntimeManifest {
     reason: 'covered' | 'disabled'
     covered_by?: string
   }>
+  /** Agent 固定引用、但执行镜像缺少其 Python 依赖而本次未装配的 Skill；运行说明告知模型（2026-11-04 依赖登记）。 */
+  unavailable_skills?: Array<{
+    skill: string
+    name: string
+    reason: 'python_dependency_missing'
+    missing: string[]
+  }>
   user_context: {
     user_id: string
     tenant_id: string

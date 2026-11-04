@@ -310,6 +310,25 @@ describe('Skill installation sibling tab', () => {
     expect(wrapper.get('.el-drawer').text()).toContain('依赖 Skill（员工端不单独展示）')
   })
 
+  it('flags a published Skill whose Python dependencies the execution image lacks', async () => {
+    const { wrapper, content } = await render()
+    const skill = { ...strictDraftSkill(), status: 'published' as const, activeVersion: '0.1.0', missingPythonDependencies: ['pandas', '模块 sklearn'] }
+    content.skills.splice(0, content.skills.length, skill)
+    await flushPromises()
+
+    const label = wrapper.get('.skill-dependency-gap-label')
+    expect(label.text()).toBe('依赖缺失')
+    expect(label.attributes('title')).toBe('执行镜像缺少：pandas、模块 sklearn')
+
+    await wrapper.get('[data-action="view-skill"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('.el-drawer [role="alert"]').text()).toContain('当前执行镜像缺少已发布版本需要的 Python 依赖：pandas、模块 sklearn')
+
+    content.skills.splice(0, content.skills.length, { ...skill, missingPythonDependencies: undefined })
+    await flushPromises()
+    expect(wrapper.find('.skill-dependency-gap-label').exists()).toBe(false)
+  })
+
   it('opens a progress dialog immediately and polls the real strict test run', async () => {
     const { wrapper, content } = await render()
     const skill = strictDraftSkill()

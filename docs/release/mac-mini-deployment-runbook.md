@@ -620,6 +620,15 @@ bash current/scripts/deploy/restore.sh \
 目录传给上述 `restore.sh`；不要跳过恢复演练。
 
 
+### 12.1 为脚本型 Skill 增加 Python 包
+
+脚本型 Skill 只能使用执行镜像中已安装的 Python 包，运行时不联网安装。平台在安装、提交与发布时核对 Skill 的依赖：`requirements.txt` 声明的包，以及脚本中 import 的标准库以外的模块（未声明的按镜像中的“模块 → 包”对应关系识别）。镜像里没有时安装计划不兼容。需要新包时：
+
+1. 在仓库 [deploy/execution-image/requirements.in](../../deploy/execution-image/requirements.in) 添加包名，按该文件顶部注释的 `uv pip compile` 命令重新生成带哈希的 `requirements.lock`，提交 PR；[执行镜像工作流](../../.github/workflows/execution-image.yml)在 PR 中构建并跑冒烟检查，合入 `main` 后推送 GHCR，新摘要见该次运行的 Summary。
+2. 在 Mac mini 上按摘要拉取新镜像，把 `runtime.env` 中的 `DSH_WORK_EXECUTION_IMAGE` 改为新引用，按第 8 节部署（或重启服务）。
+3. 服务启动时会用新镜像复查所有已发布 Skill 的依赖：缺包的 Skill 记入服务日志（`skill python dependencies missing in execution image`），在管理端 Skill 列表标“依赖缺失”；员工直接选用时在运行前被拒绝，固定引用它的 AI 同事本次不装配它、其余照常。去掉包之前先确认没有已发布 Skill 依赖它。
+4. 镜像摘要是脚本型 Skill 试运行证据的一部分：换镜像后，待发布的脚本型 Skill 版本须重新严格试运行才能发布；已发布且依赖仍满足的版本不受影响。
+
 ## 13. 多 IP、固定域名与证书
 
 入口配置由 dsh-work 自己管理，不改写 AI Hub 的配置、数据库或网络。两者独立升级、回滚；同机维护仍需协调共同的 Docker Desktop 和宿主机故障域。

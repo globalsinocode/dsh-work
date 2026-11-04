@@ -1,5 +1,5 @@
 import { authorizationDenied } from '../../domain/authorization-errors.ts'
-import { skillNotFound, skillConflict, skillInvalid, skillUnavailable, skillInternalFailure } from './skill-errors.ts'
+import { SkillError, skillNotFound, skillConflict, skillInvalid, skillUnavailable, skillInternalFailure } from './skill-errors.ts'
 import { ExecutionCapabilityUnavailableError } from '../runtime/execution-capabilities.ts'
 import type { RuntimeManifest } from '../runtime/runtime-types.ts'
 import { normalizeSkillTestScenario, type SkillTestScenario } from '../../domain/skill-test-scenario.ts'
@@ -21,12 +21,16 @@ import type { AuditTrail } from '../../domain/audit-trail.ts'
 import { invalidSkillToolReferences } from '../runtime/builtin-tools.ts'
 import type { SkillArtifactStore } from './skill-artifact-store.ts'
 import { DEFAULT_SKILL_TEST_PROMPT, lockInstallationKey } from './skill-identity.ts'
+import { missingPythonDependencies } from './skill-installation-plan.ts'
+import type { PythonModuleIndex } from '../runtime/execution-backend.ts'
 import { BUILTIN_SKILL_NAME_SUFFIX, isReservedBuiltinSkillName, normalizeBuiltinSkillScenarios } from './builtin-skills.ts'
 
 const tenantId = 'tenant-dsh-work'
 
 interface SkillRow {
   id: string
+  activeArtifact?: SkillPackageArtifact | null
+  missingPythonDependencies?: string[]
   name: string
   category: string
   description: string
@@ -153,7 +157,53 @@ interface WorkbenchSkillRow extends Omit<WorkbenchSkillDefinition, 'updatedAt'> 
 
 export class PostgresSkillService {
   private publicationAvailabilityChecker?: (references: string[], requiredPackages: string[]) => Promise<void>
+  private pythonEnvironment: { image: string; packages: readonly string[]; modules: PythonModuleIndex | null } | null = null
+  private readonly pythonGaps = new Map<string, string[]>()
   setPublicationAvailabilityChecker(checker: (references: string[], requiredPackages: string[]) => Promise<void>) { this.publicationAvailabilityChecker = checker }
+
+  /**
+   * 当前执行镜像与其中的 Python 包（2026-11-04 依赖登记）：试运行指纹带上镜像，已发布 Skill 按镜像复查依赖，
+   * 缺包的 Skill 在运行前被拒绝。未设置（没有执行容器）时不复查。
+   */
+  setPythonEnvironment(environment: { image: string; packages: readonly string[]; modules: PythonModuleIndex | null } | null) {
+    this.pythonEnvironment = environment
+    this.pythonGaps.clear()
+  }
+
+  private runtimeFingerprint(skill: RuntimeSkillConfiguration) {
+    return runtimeSkillFingerprint(skill, this.pythonEnvironment?.image)
+  }
+
+  /** 某个 Skill 版本（`id@version`）在当前镜像中缺少的 Python 依赖（声明的包与重新扫描的 import）；按版本缓存。 */
+  private async pythonDependencyGaps(reference: string, artifact?: SkillPackageArtifact | null): Promise<string[]> {
+    const environment = this.pythonEnvironment
+    if (!environment || !artifact || !artifact.files.some(file => file.path.endsWith('.py'))) return []
+    const cached = this.pythonGaps.get(reference)
+    if (cached) return cached
+    const content = await this.requireArtifactStore().read(artifact)
+    const gaps = missingPythonDependencies({ requirements: artifact.requirements ?? [], files: content.files, packages: environment.packages, modules: environment.modules })
+    this.pythonGaps.set(reference, gaps)
+    return gaps
+  }
+
+  /** 服务启动时：用当前执行镜像复查所有已发布 Skill 的活动版本，返回缺少依赖的 Skill（并写日志）。 */
+  async recheckPublishedPythonDependencies() {
+    if (!this.pythonEnvironment) return []
+    const rows = await this.database<{ skillId: string; name: string; version: string; artifact: SkillPackageArtifact | null }[]>`
+      select s.id as "skillId", sv.name, sv.version, sv.manifest->'artifact' as artifact
+        from skills s join skill_versions sv on sv.tenant_id = s.tenant_id and sv.id = s.active_version_id
+       where s.tenant_id = ${tenantId} and s.status = 'published'
+    `
+    const affected: Array<{ skillId: string; name: string; version: string; missing: string[] }> = []
+    for (const row of rows) {
+      const missing = await this.pythonDependencyGaps(`${row.skillId}@${row.version}`, row.artifact)
+      if (missing.length) affected.push({ skillId: row.skillId, name: row.name, version: row.version, missing })
+    }
+    for (const item of affected) {
+      console.warn(`skill python dependencies missing in execution image: ${item.name}@${item.version} (${item.skillId}) needs ${item.missing.join(', ')}`)
+    }
+    return affected
+  }
   private packageTester?: (userId: string, skill: RuntimeSkillConfiguration, prompt: string) => Promise<{ passed: boolean; summary: string; runId: string; attemptId?: string; evidencePolicy?: string }>
   private packageTestLifecycle?: {
     start: (userId: string, skill: RuntimeSkillConfiguration, prompt: string) => Promise<{ runId: string; status: string; steps: SkillTestRunProgress['steps'] }>
@@ -492,7 +542,7 @@ export class PostgresSkillService {
         disableModelInvocation: version.manifest.artifact.disableModelInvocation,
         dependencies: version.manifest.dependencies ?? [], dependencySkills }
       if (input.scenario !== undefined) runtimeSkill.testScenario = normalizeSkillTestScenario(input.scenario, [runtimeSkill, ...flattenRuntimeDependencies(runtimeSkill)])
-      const runtimeFingerprint = runtimeSkillFingerprint(runtimeSkill)
+      const runtimeFingerprint = this.runtimeFingerprint(runtimeSkill)
       const result = await this.packageTester(actor.id, runtimeSkill, prompt)
       evidencePolicy = result.evidencePolicy ?? SKILL_TEST_EVIDENCE_POLICY
       if (result.passed && !result.attemptId) throw skillConflict('严格试运行缺少精确 Attempt 证据，请重新测试', 'skill_test_evidence_required')
@@ -552,7 +602,7 @@ export class PostgresSkillService {
       }
     }
     if (!this.packageTestLifecycle) throw skillUnavailable('DSH Skill 试运行进度服务不可用')
-    const runtimeFingerprint = runtimeSkillFingerprint(context.runtimeSkill)
+    const runtimeFingerprint = this.runtimeFingerprint(context.runtimeSkill)
     const progress = await this.packageTestLifecycle.start(context.actor.id, context.runtimeSkill, context.prompt)
     await this.bindStrictTest(progress.runId, context.skill.id, context.skill.draftVersionId!, context.fingerprint,
       runtimeFingerprint, context.prompt, context.actor.id)
@@ -573,7 +623,7 @@ export class PostgresSkillService {
        where tenant_id = ${tenantId} and run_id = ${input.runId} and skill_id = ${input.skillId} and created_by = ${context.actor.id}
     `
     assertStartedSkillTest({ versionId: context.skill.draftVersionId!, fingerprint: context.fingerprint,
-      runtimeFingerprint: runtimeSkillFingerprint(context.runtimeSkill) }, binding)
+      runtimeFingerprint: this.runtimeFingerprint(context.runtimeSkill) }, binding)
     if (!binding) throw skillConflict('试运行启动快照不存在，请重新测试', 'skill_test_snapshot_changed')
     const progress = await this.packageTestLifecycle.progress(context.actor.id, context.runtimeSkill, input.runId)
     if (!progress.attemptId) throw skillConflict('严格试运行缺少精确 Attempt 证据，请重新测试', 'skill_test_evidence_required')
@@ -867,7 +917,35 @@ export class PostgresSkillService {
     }
   }
 
-  async resolveRuntimeSkills(references: string[]): Promise<RuntimeSkillConfiguration[]> {
+  /**
+   * 解析运行用的 Skill 及其递归依赖。`dependencyGaps` 决定当前执行镜像缺少某个 Skill（含其依赖）需要的
+   * Python 依赖时怎么办（2026-11-04 决策）：`reject`（默认，员工直接选用、Agent 验证与发布）拒绝；
+   * `omit`（Agent 固定引用的 Skill）本次不装配该入口 Skill 并记入 `omitted`；`ignore`（保存 Agent 等配置校验）不检查。
+   */
+  async resolveRuntimeSkills(references: string[], options: {
+    dependencyGaps?: 'reject' | 'omit' | 'ignore'
+    omitted?: Array<{ reference: string; name: string; missing: string[] }>
+  } = {}): Promise<RuntimeSkillConfiguration[]> {
+    const mode = options.dependencyGaps ?? 'reject'
+    if (mode === 'omit') {
+      const merged = new Map<string, RuntimeSkillConfiguration>()
+      for (const reference of unique(references)) {
+        try {
+          for (const skill of await this.resolveRuntimeSkills([reference])) merged.set(`${skill.id}@${skill.version}`, skill)
+        } catch (error) {
+          if (!(error instanceof SkillError) || error.code !== 'skill_python_dependency_missing') throw error
+          // 记入口 Skill 自己的名称；缺口在它的依赖 Skill 里时，注明是哪个依赖缺什么。
+          const detail = error as SkillError & { skillName?: string; missing?: string[] }
+          const { id, version } = parseReference(reference)
+          const [root] = await this.database<{ name: string }[]>`
+            select name from skill_versions where tenant_id = ${tenantId} and skill_id = ${id} and version = ${version}`
+          const name = root?.name ?? reference
+          const missing = detail.missing ?? []
+          options.omitted?.push({ reference, name, missing: detail.skillName && detail.skillName !== name ? missing.map(item => `${item}（依赖 Skill“${detail.skillName}”）`) : missing })
+        }
+      }
+      return [...merged.values()]
+    }
     const resolved: RuntimeSkillConfiguration[] = []
     const pending = [...unique(references)]
     const seen = new Set<string>()
@@ -882,6 +960,13 @@ export class PostgresSkillService {
            and status = 'published'
       `
       if (!row) throw skillConflict(`Runtime 无法解析已锁定的 Skill Version：${reference}`, 'skill_dependency_unavailable')
+      const missing = mode === 'ignore' ? [] : await this.pythonDependencyGaps(`${id}@${version}`, row.manifest.artifact)
+      if (missing.length) {
+        throw Object.assign(
+          skillConflict(`Skill“${row.name}”需要的 Python 依赖不在当前执行镜像中（${missing.join('、')}），暂时不能使用；请联系平台管理员`, 'skill_python_dependency_missing'),
+          { skillName: row.name, missing },
+        )
+      }
       const artifactContent = row.manifest.artifact ? await this.requireArtifactStore().read(row.manifest.artifact) : null
       pending.push(...(row.manifest.dependencies ?? []))
       resolved.push({ id, name: row.name, description: row.description, version, instructions: artifactContent?.instructions ?? row.instructions, tools: row.tools,
@@ -938,7 +1023,7 @@ export class PostgresSkillService {
     `
     const [root] = await this.resolveTestRuntimeSkills([`${current.id}@${current.version}`], transaction)
     if (!root) throw skillConflict('测试配置或依赖已变化，请重新测试', 'skill_test_snapshot_changed')
-    const expectedFingerprint = runtimeSkillFingerprint(root)
+    const expectedFingerprint = this.runtimeFingerprint(root)
     const rows = await transaction<{
       id: string; runId: string; attemptId: string; testStatus: string; runStatus: string;
       attemptStatus: string; runtimeFingerprint: string; manifest: RuntimeManifest
@@ -1095,7 +1180,7 @@ export class PostgresSkillService {
         const [runtimeSkill] = await this.resolveTestRuntimeSkills([`${current.id}@${current.version}`], transaction)
         if (!runtimeSkill) throw skillConflict('测试的 Skill 版本已失效', 'skill_test_snapshot_changed')
         assertStartedSkillTest({ versionId: locked.versionId, fingerprint,
-          runtimeFingerprint: runtimeSkillFingerprint(runtimeSkill) }, binding)
+          runtimeFingerprint: this.runtimeFingerprint(runtimeSkill) }, binding)
       }
 
       if (submission) await submission.apply(transaction, actorId)
@@ -1184,6 +1269,7 @@ export class PostgresSkillService {
              (sv.manifest ? 'installationId') as "strictTest", sv.test_prompt as "testPrompt",
              s.covered_builtin_scenarios as "coveredBuiltinScenarios", s.visible_role_ids as "visibleRoleIds",
              (sv.id = s.draft_version_id and sv.manifest ? 'submissionVersionId') as "submissionDraft",
+             active.manifest->'artifact' as "activeArtifact",
              s.updated_at as "updatedAt"
         from skills s
         join users owner on owner.tenant_id = s.tenant_id and owner.id = s.owner_user_id
@@ -1197,6 +1283,9 @@ export class PostgresSkillService {
        order by s.updated_at desc
     `
     for (const row of rows) if (row.artifact) row.instructions = (await this.requireArtifactStore().read(row.artifact)).instructions
+    for (const row of rows) {
+      if (row.activeVersion) row.missingPythonDependencies = await this.pythonDependencyGaps(`${row.id}@${row.activeVersion}`, row.activeArtifact)
+    }
     const dependencyRows = await this.database<SkillDependencyRow[]>`
       select d.skill_version_id as "parentVersionId", dependency.id as "versionId",
              dependency.skill_id as id, dependency.name, dependency.version,
@@ -1315,6 +1404,7 @@ function toSkillDefinition(row: SkillRow): SkillDefinition {
     coveredBuiltinScenarios: row.coveredBuiltinScenarios,
     visibleRoleIds: row.visibleRoleIds,
     ...(row.submissionDraft ? { submissionDraft: true } : {}),
+    ...(row.missingPythonDependencies?.length ? { missingPythonDependencies: row.missingPythonDependencies } : {}),
     updatedAt: formatDateTime(row.updatedAt),
   }
 }

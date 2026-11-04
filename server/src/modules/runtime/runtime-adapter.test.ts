@@ -249,6 +249,22 @@ describe('Runtime Manifest compiler', () => {
     assert.match(rendered, /可用库存低于安全库存/)
   })
 
+  it('tells the model which pinned Skills are unavailable because the image lacks their Python dependencies', () => {
+    const input = manifest('run-unavailable-skill', 'attempt-1')
+    input.unavailable_skills = [{ skill: 'skill-aging@0.1.0', name: '应收账款账龄分析', reason: 'python_dependency_missing', missing: ['pandas'] }]
+    const rendered = renderSystemPrompt(compileRuntimeManifest(input).manifest)
+    assert.match(rendered, /# 本次不可用的 Skill[\s\S]*- 应收账款账龄分析：缺少 pandas/)
+    assert.match(rendered, /不要假装已经使用/)
+    assert.doesNotMatch(renderSystemPrompt(compileRuntimeManifest(manifest('run-no-unavailable', 'attempt-1')).manifest), /本次不可用的 Skill/)
+    const assembled = manifest('run-unavailable-assembled', 'attempt-1')
+    const first = assembled.skills[0]!
+    assembled.unavailable_skills = [{ skill: `${first.id}@${first.version}`, name: 'x', reason: 'python_dependency_missing', missing: [] }]
+    assert.throws(() => compileRuntimeManifest(assembled), /both unavailable and assembled/)
+    const invalid = manifest('run-unavailable-invalid', 'attempt-1')
+    invalid.unavailable_skills = [{ skill: 'skill-aging@0.1.0', name: 'x', reason: 'other' as never, missing: [] }]
+    assert.throws(() => compileRuntimeManifest(invalid), /unavailable_skills.reason is invalid/)
+  })
+
   it('tells the model why no enterprise knowledge was retrieved (WK18, 第 7 节)', () => {
     const render = (status?: 'not_selected' | 'skipped' | 'ok' | 'unavailable') => {
       const input = manifest(`run-knowledge-${status ?? 'none'}`, 'attempt-1')

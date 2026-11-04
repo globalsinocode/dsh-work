@@ -182,9 +182,128 @@ function parseSkillFiles(files: Record<string, Uint8Array>, specialPaths: Set<st
       }
     }
     if (packaged.some(file => /(?:^|\/)pyproject\.toml$/i.test(file.path))) requirements.push({ type: 'external', name: 'pyproject-dependencies', status: 'needs_review', evidence: 'pyproject.toml 需要与固定镜像核对' })
+    for (const found of scanPythonImports(packaged)) {
+      requirements.push({ type: 'external', name: `${found.optional ? 'python-optional-import' : 'python-import'}:${found.module}`, status: 'needs_review', evidence: found.path })
+    }
   }
   const compatibility = compatibilityFor(requirements)
   return { ...metadata, toolIds: [...tools], files: packaged, requirements, compatibility, archiveSha256, sha256: skillPackageContentHash(packaged) }
+}
+
+/**
+ * Top-level modules the package's Python files import, found by reading the source (never executing it).
+ * Imports inside a `try` statement (its `try`, `except`, `else` or `finally` suites) are optional; all others,
+ * including those inside functions or `if __name__ == "__main__"`, are required. Relative imports, `__future__`,
+ * the package's own modules and example files under `references/`, `templates/` or `assets/` are skipped.
+ * One entry per module, first file wins; a module imported both ways counts as required.
+ */
+export function scanPythonImports(files: Array<{ path: string; content: string }>) {
+  const sources = files.filter(item => item.path.endsWith('.py') && !/^(?:references|templates|assets)\//.test(item.path))
+  const local = new Set<string>()
+  for (const file of sources) for (const part of file.path.slice(0, -'.py'.length).split('/')) local.add(part)
+  const found = new Map<string, { module: string; path: string; optional: boolean }>()
+  const record = (module: string, path: string, optional: boolean) => {
+    const top = module.split('.')[0]!
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(top) || top === '__future__' || local.has(top)) return
+    const existing = found.get(top)
+    if (!existing) found.set(top, { module: top, path, optional })
+    else if (existing.optional && !optional) found.set(top, { module: top, path, optional: false })
+  }
+  for (const file of sources) {
+    const tryIndents: number[] = []
+    for (const statement of pythonStatements(file.content).flatMap(splitCompoundHeader)) {
+      while (tryIndents.length && tryIndents.at(-1)! >= statement.indent
+        && !(tryIndents.at(-1) === statement.indent && /^(?:except|else|finally)\b/.test(statement.text))) tryIndents.pop()
+      const optional = tryIndents.length > 0 && statement.indent > tryIndents.at(-1)!
+      if (/^try\s*:/.test(statement.text)) { tryIndents.push(statement.indent); continue }
+      const from = statement.text.match(/^from\s+([A-Za-z_][\w.]*)\s+import\b/)
+      if (from) { record(from[1]!, file.path, optional); continue }
+      const plain = statement.text.match(/^import\s+(.+)$/)
+      if (plain) for (const item of plain[1]!.split(',')) record(item.trim().split(/\s+/)[0]!, file.path, optional)
+    }
+  }
+  return [...found.values()].sort((left, right) => left.module.localeCompare(right.module))
+}
+
+/**
+ * `if x: import y` and `try: import y` put the suite on the header line; return the header and the suite
+ * (one level deeper) as separate statements so imports in it are found and `try` tracking still applies.
+ */
+function splitCompoundHeader(statement: { indent: number; text: string }): Array<{ indent: number; text: string }> {
+  if (!/^(?:if|elif|else|for|while|with|try|except|finally|def|class|async)\b/.test(statement.text)) return [statement]
+  let depth = 0
+  for (let index = 0; index < statement.text.length; index++) {
+    const char = statement.text[index]!
+    if ('([{'.includes(char)) depth++
+    else if (')]}'.includes(char)) depth = Math.max(0, depth - 1)
+    else if (char === ':' && depth === 0) {
+      const body = statement.text.slice(index + 1).trim()
+      if (!body) return [statement]
+      return [{ indent: statement.indent, text: statement.text.slice(0, index + 1) }, { indent: statement.indent + 1, text: body }]
+    }
+  }
+  return [statement]
+}
+
+/**
+ * Splits Python source into simple statements with their indentation, the way the tokenizer would for
+ * this purpose: string literals (including triple-quoted ones) and comments are blanked, backslash and
+ * bracket continuations join physical lines, and `;` separates statements on one line.
+ */
+function pythonStatements(raw: string): Array<{ indent: number; text: string }> {
+  const source = raw.replace(/\r\n?/g, '\n')
+  const statements: Array<{ indent: number; text: string }> = []
+  let buffer = ''
+  let indent = 0
+  let atLineStart = true
+  let depth = 0
+  let index = 0
+  const flush = () => {
+    for (const part of buffer.split(';')) {
+      const text = part.trim()
+      if (text) statements.push({ indent, text })
+    }
+    buffer = ''
+    atLineStart = true
+  }
+  while (index < source.length) {
+    const char = source[index]!
+    if (atLineStart) {
+      let width = 0
+      while (source[index + width] === ' ' || source[index + width] === '\t') width++
+      indent = width
+      index += width
+      atLineStart = false
+      continue
+    }
+    if (char === '#') { while (index < source.length && source[index] !== '\n') index++; continue }
+    if (char === '"' || char === "'") {
+      const triple = source.startsWith(char.repeat(3), index)
+      const quote = triple ? char.repeat(3) : char
+      index += quote.length
+      while (index < source.length && !source.startsWith(quote, index)) {
+        if (source[index] === '\\') index++
+        else if (!triple && source[index] === '\n') break
+        index++
+      }
+      index += quote.length
+      buffer += "''"
+      continue
+    }
+    if (char === '\\' && source[index + 1] === '\n') { index += 2; buffer += ' '; continue }
+    if ('([{'.includes(char)) depth++
+    if (')]}'.includes(char)) depth = Math.max(0, depth - 1)
+    if (char === '\n') {
+      index++
+      if (depth > 0) { buffer += ' '; continue }
+      flush()
+      continue
+    }
+    buffer += char
+    index++
+  }
+  flush()
+  return statements
 }
 
 /** Resolve same-archive Skill dependencies without executing package content. */

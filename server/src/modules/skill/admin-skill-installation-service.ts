@@ -1,3 +1,4 @@
+import type { PythonModuleIndex } from '../runtime/execution-backend.ts'
 import { skillNotFound, skillConflict } from './skill-errors.ts'
 import { DEFAULT_SKILL_TEST_PROMPT, installationKey, lockInstallationKey, nextInstalledVersion } from './skill-identity.ts'
 import { normalizeSkillTestScenario } from '../../domain/skill-test-scenario.ts'
@@ -61,8 +62,9 @@ export class AdminSkillInstallationService {
   private readonly pythonPackages: string[]
   private readonly artifactStore?: SkillArtifactStore
   private readonly checkRuntime?: (references: string[], requiredPackages: string[]) => Promise<void>
-  constructor(db: DatabaseClient, orchestration: AdminRunLauncher, authorization: PostgresAuthorizationService, acquire = acquireSkillSource, pythonSandboxAvailable = false, pythonPackages: string[] = [], artifactStore?: SkillArtifactStore, checkRuntime?: (references: string[], requiredPackages: string[]) => Promise<void>) {
-    this.db = db; this.orchestration = orchestration; this.authorization = authorization; this.acquire = acquire; this.pythonSandboxAvailable = pythonSandboxAvailable; this.pythonPackages = pythonPackages; this.artifactStore = artifactStore; this.checkRuntime = checkRuntime
+  private readonly pythonModules: PythonModuleIndex | null
+  constructor(db: DatabaseClient, orchestration: AdminRunLauncher, authorization: PostgresAuthorizationService, acquire = acquireSkillSource, pythonSandboxAvailable = false, pythonPackages: string[] = [], artifactStore?: SkillArtifactStore, checkRuntime?: (references: string[], requiredPackages: string[]) => Promise<void>, pythonModules: PythonModuleIndex | null = null) {
+    this.db = db; this.orchestration = orchestration; this.authorization = authorization; this.acquire = acquire; this.pythonSandboxAvailable = pythonSandboxAvailable; this.pythonPackages = pythonPackages; this.artifactStore = artifactStore; this.checkRuntime = checkRuntime; this.pythonModules = pythonModules
   }
 
   async testPackage(userId: string, skill: RuntimeSkillConfiguration, prompt: string) {
@@ -454,7 +456,7 @@ export class AdminSkillInstallationService {
     if (reserved.length) throw invalidRequest(`Skill 名称不能以“${BUILTIN_SKILL_NAME_SUFFIX}”结尾，该后缀保留给平台内置 Skill：${reserved.join('、')}`)
     const unavailableTools = invalidSkillToolReferences(bundle.packages.flatMap(pkg => pkg.toolIds))
       .map(reference => reference.split('@')[0]!)
-    const preparedPlan = buildSkillInstallationPlan(bundle, { pythonSandboxAvailable: this.pythonSandboxAvailable, pythonPackages: this.pythonPackages, unavailableTools, deferRuntimeRequirements })
+    const preparedPlan = buildSkillInstallationPlan(bundle, { pythonSandboxAvailable: this.pythonSandboxAvailable, pythonPackages: this.pythonPackages, pythonModules: this.pythonModules, unavailableTools, deferRuntimeRequirements })
     const artifacts: SkillPackageArtifact[] = []
     for (const packageToStore of preparedPlan.packages) artifacts.push(await this.requireArtifactStore().put(packageToStore))
     const plan = externalizeSkillInstallationPlan(preparedPlan, artifacts)

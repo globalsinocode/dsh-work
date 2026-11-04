@@ -419,6 +419,8 @@ export interface SkillDefinition {
   visibleRoleIds: string[] | null
   /** 待发布版本来自员工提交：只能在“待审核”中审核发布，详情页不提供发布。 */
   submissionDraft?: boolean
+  /** 当前执行镜像缺少的、活动版本需要的 Python 依赖（包名或“模块 X”）；为空时不返回。 */
+  missingPythonDependencies?: string[]
   updatedAt: string
 }
 

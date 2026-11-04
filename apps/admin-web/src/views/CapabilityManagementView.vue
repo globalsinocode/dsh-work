@@ -857,6 +857,7 @@ onUnmounted(() => clearSkillTestPoll())
               <div class="skill-primary-cell__name">
                 <strong>{{ scope.row.name }}</strong>
                 <span v-if="scope.row.installationRole === 'root'" class="skill-entry-label">入口 Skill</span>
+                <span v-if="scope.row.missingPythonDependencies?.length" class="skill-dependency-gap-label" :title="`执行镜像缺少：${scope.row.missingPythonDependencies.join('、')}`">依赖缺失</span>
               </div>
               <small>{{ scope.row.description }}</small>
               <div v-if="scope.row.dependencies?.length" class="skill-dependencies" aria-label="依赖 Skill">
@@ -1042,6 +1043,7 @@ onUnmounted(() => clearSkillTestPoll())
 
     <el-drawer v-model="detailOpen" size="min(620px, 100vw)" :title="detailTitle">
       <div v-if="detailType === 'skill'" class="capability-detail__notice"><el-icon><Connection /></el-icon><p>Skill 发布后当前版本不可原地编辑，Agent 引用时锁定具体版本。</p></div>
+      <div v-if="detailType === 'skill' && selectedSkill?.missingPythonDependencies?.length" class="capability-detail__notice capability-detail__notice--warning" role="alert"><el-icon><Connection /></el-icon><p>当前执行镜像缺少已发布版本需要的 Python 依赖：{{ selectedSkill.missingPythonDependencies.join('、') }}。员工直接选用时会在运行前被拒绝；固定引用它的 AI 同事本次不装配它，验证与发布这些 AI 同事会被拒绝。请把对应的包加入执行镜像并部署，或发布不需要它的新版本。</p></div>
       <div v-if="detailType === 'skill'" class="status-tabs capability-detail__tabs" role="tablist" aria-label="Skill 详情类型">
         <button class="status-tab" :class="{ active: skillDetailTab === 'config' }" type="button" role="tab" :aria-selected="skillDetailTab === 'config'" @click="skillDetailTab = 'config'">配置详情</button>
         <button class="status-tab" :class="{ active: skillDetailTab === 'versions' }" type="button" role="tab" :aria-selected="skillDetailTab === 'versions'" @click="skillDetailTab = 'versions'">版本历史 <span class="tab-count">{{ selectedSkillVersions.length }}</span></button>
@@ -1169,6 +1171,7 @@ onUnmounted(() => clearSkillTestPoll())
 .skill-primary-cell { gap: 4px; padding: 3px 0; }
 .skill-primary-cell__name { display: flex; min-width: 0; align-items: center; gap: 8px; }
 .skill-entry-label { flex: none; padding: 2px 6px; border-radius: var(--radius-tag); color: var(--color-primary); background: var(--color-primary-light); font-size: var(--font-size-micro); font-weight: var(--font-weight-badge); }
+.skill-dependency-gap-label { flex: none; padding: 2px 6px; border-radius: var(--radius-tag); color: var(--color-warning-strong); background: var(--color-warning-light); font-size: var(--font-size-micro); font-weight: var(--font-weight-badge); }
 .skill-dependencies { display: flex; min-width: 0; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 5px; }
 .skill-dependencies__label { color: var(--color-text-muted); font-size: var(--font-size-micro); }
 .skill-dependency-chip { display: inline-flex; max-width: 230px; align-items: center; gap: 5px; padding: 3px 7px; border: 1px solid var(--color-border); border-radius: var(--radius-tag); color: var(--color-text-secondary); background: var(--color-bg-base); cursor: pointer; }
@@ -1196,6 +1199,7 @@ onUnmounted(() => clearSkillTestPoll())
 .mcp-form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 14px; }
 .capability-detail__notice { display: flex; align-items: flex-start; gap: 9px; padding: 13px; border-radius: var(--radius-button); color: var(--color-primary); background: var(--color-primary-light); }
 .capability-detail__notice p { margin: 0; font-size: var(--font-size-badge); line-height: 1.6; }
+.capability-detail__notice--warning { color: var(--color-warning-strong); background: var(--color-warning-light); }
 .capability-detail__rows { margin: 18px 0 0; }
 .capability-detail__tabs { margin-top: 16px; }
 .capability-detail__rows div { display: grid; grid-template-columns: 110px minmax(0, 1fr); gap: 12px; padding: 12px 2px; border-bottom: 1px solid var(--color-border); }

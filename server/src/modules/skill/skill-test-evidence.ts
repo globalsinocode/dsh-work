@@ -9,8 +9,11 @@ import { RequestError } from '../../domain/request-errors.ts'
 export const SKILL_TEST_EVIDENCE_POLICY = 'attempt-v2'
 export const SKILL_TEST_SCENARIO_POLICY = 'scenario-v1'
 
-/** Fingerprint the exact root and transitive dependencies supplied when a test starts. */
-export function runtimeSkillFingerprint(root: RuntimeSkillConfiguration): string {
+/**
+ * Fingerprint the exact root and transitive dependencies supplied when a test starts. When any of them runs
+ * Python, the execution image is part of it too, so evidence from another image cannot publish (2026-11-04).
+ */
+export function runtimeSkillFingerprint(root: RuntimeSkillConfiguration, executionImage?: string | null): string {
   const entries = new Map<string, unknown>()
   const visiting = new Set<string>()
   const visit = (skill: RuntimeSkillConfiguration) => {
@@ -34,8 +37,10 @@ export function runtimeSkillFingerprint(root: RuntimeSkillConfiguration): string
     visiting.delete(reference)
   }
   visit(root)
+  const runsPython = [...entries.values()].some(entry => (entry as { tools: string[] }).tools.some(tool => tool.startsWith('python_execute@')))
   return createHash('sha256').update(canonicalJson({ root: `${root.id}@${root.version}`,
     entries: [...entries.entries()].sort(([left], [right]) => left.localeCompare(right)),
+    ...(runsPython && executionImage ? { executionImage } : {}),
   })).digest('hex')
 }
 

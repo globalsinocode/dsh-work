@@ -72,3 +72,9 @@ test('absent legacy binding and current-vs-started mismatch require a new test',
   assert.throws(() => assertStartedSkillTest({ ...started, fingerprint: 'changed' }, started), { code: 'skill_test_snapshot_changed' })
   assert.throws(() => assertStartedSkillTest(started, undefined), { code: 'skill_test_snapshot_changed' })
 })
+test('the execution image is part of the snapshot only when a Skill in the graph runs Python', () => {
+  assert.equal(runtimeSkillFingerprint(skill(), 'image@sha256:a'), runtimeSkillFingerprint(skill(), 'image@sha256:b'), 'instruction-only Skills keep their evidence across images')
+  const python = skill(); python.dependencySkills![0]!.tools = ['python_execute@1.0.0']
+  assert.notEqual(runtimeSkillFingerprint(python, 'image@sha256:a'), runtimeSkillFingerprint(python, 'image@sha256:b'))
+  assert.equal(runtimeSkillFingerprint(python, 'image@sha256:a'), runtimeSkillFingerprint(python, 'image@sha256:a'))
+})

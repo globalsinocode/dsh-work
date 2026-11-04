@@ -130,6 +130,20 @@ export function compileRuntimeManifest(input: RuntimeManifest): CompiledRuntimeM
       }
     }
   }
+  if (input.unavailable_skills !== undefined) {
+    const unavailable = input.unavailable_skills
+    if (!Array.isArray(unavailable) || unavailable.length === 0 || unavailable.length > 32) throw new TypeError('unavailable_skills must be a non-empty bounded array')
+    for (const item of unavailable) {
+      for (const key of Object.keys(item)) {
+        if (!['skill', 'name', 'reason', 'missing'].includes(key)) throw new TypeError(`unavailable_skills contains unsupported field: ${key}`)
+      }
+      if (typeof item.skill !== 'string' || !/^[^@]+@[^@]+$/.test(item.skill)) throw new TypeError('unavailable_skills.skill must be a Skill reference')
+      if (skillReferences.has(item.skill)) throw new TypeError(`Skill is both unavailable and assembled: ${item.skill}`)
+      if (typeof item.name !== 'string' || !item.name.trim() || item.name.length > 200) throw new TypeError('unavailable_skills.name is invalid')
+      if (item.reason !== 'python_dependency_missing') throw new TypeError('unavailable_skills.reason is invalid')
+      if (!Array.isArray(item.missing) || item.missing.length > 64 || item.missing.some(name => typeof name !== 'string' || name.length > 200)) throw new TypeError('unavailable_skills.missing is invalid')
+    }
+  }
   if (input.test_scenario !== undefined) {
     if (input.purpose !== 'admin-skill-test') throw new TypeError('test_scenario requires admin-skill-test purpose')
     normalizeSkillTestScenario(input.test_scenario, input.agent_configuration.skill_instructions)

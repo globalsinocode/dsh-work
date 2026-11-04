@@ -11,6 +11,7 @@ import {
   type ContainerCommandResult,
   type ExecutionBackend,
   type ExecutionContainerSpec,
+  type PythonModuleIndex,
   type PythonSandboxSpec,
   type RunningSandbox,
 } from './execution-backend.ts'
@@ -137,6 +138,12 @@ export class DockerExecutionBackend implements ExecutionBackend {
     const probe = await runCommand(this.command, buildToolchainProbeArguments(image, user, PYTHON_PACKAGES_PROBE_SCRIPT), 60_000)
     if (probe.exitCode !== 0) throw dependencyUnavailable(`执行镜像无法列出 Python 包：${brief(probe.stderr) || image}`)
     return probe.stdout.split('\n').map(line => line.trim()).filter(line => /^[a-z0-9][a-z0-9-]*$/.test(line))
+  }
+
+  async inspectPythonModules(image: string, user: string): Promise<PythonModuleIndex> {
+    const probe = await runCommand(this.command, buildToolchainProbeArguments(image, user, PYTHON_MODULES_PROBE_SCRIPT), 60_000)
+    if (probe.exitCode !== 0) throw dependencyUnavailable(`执行镜像无法列出 Python 模块：${brief(probe.stderr) || image}`)
+    return parsePythonModulesProbe(probe.stdout)
   }
 
   async detectFeatures() {
@@ -315,6 +322,24 @@ export function buildPythonSandboxArguments(
     '--mount', `type=bind,src=${outputRoot},dst=/output`,
     '--workdir', '/skill', image, 'python', '-I', '-B', entry, ...args,
   ]
+}
+
+/**
+ * Prints `S <module>` for each standard-library module and `M <module> <distribution>` for each top-level
+ * import name an installed distribution provides (distribution names normalized as in PEP 503).
+ */
+export const PYTHON_MODULES_PROBE_SCRIPT = `python3 -I -c 'import importlib.metadata as m, re, sys; [print("S", n) for n in sorted(sys.stdlib_module_names)]; [print("M", k, re.sub(r"[-_.]+", "-", d.lower())) for k, v in sorted(m.packages_distributions().items()) for d in sorted(set(v))]'`
+
+export function parsePythonModulesProbe(stdout: string): PythonModuleIndex {
+  const stdlib: string[] = []
+  const modules: Record<string, string[]> = {}
+  for (const line of stdout.split('\n')) {
+    const [kind, name, distribution] = line.trim().split(/\s+/)
+    if (!name || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) continue
+    if (kind === 'S') stdlib.push(name)
+    else if (kind === 'M' && distribution && /^[a-z0-9][a-z0-9-]*$/.test(distribution)) (modules[name] ??= []).push(distribution)
+  }
+  return { stdlib, modules }
 }
 
 /** Prints the normalized names of the Python distributions installed in the image, one per line. */

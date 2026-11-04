@@ -88,6 +88,7 @@ export class AttemptDispatcher {
           skills: [],
           skillInstructions: [],
           coveringSkills: [],
+          unavailableSkills: [],
           runtimeTools: [],
           projectTasksEnabled: false,
           agentRecommendationEnabled: false,
@@ -235,6 +236,9 @@ export class AttemptDispatcher {
         write_policy: 'workspace_only',
       },
       skills: [...agent.skills, ...builtin.skills.map(skill => `${skill.id}@${skill.version}`)].map(toCapabilityReference),
+      ...(agent.unavailableSkills?.length ? {
+        unavailable_skills: agent.unavailableSkills.map(item => ({ skill: item.reference, name: item.name, reason: 'python_dependency_missing' as const, missing: item.missing })),
+      } : {}),
       ...(builtin.exclusions.length ? {
         builtin_skill_exclusions: builtin.exclusions.map(item => ({
           skill: item.skill,

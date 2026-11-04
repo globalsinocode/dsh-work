@@ -496,17 +496,21 @@ async function start() {
   orchestration.setPersistentWaitService(persistentWait)
   persistentWait.start()
   const pythonPackages = containerPythonRunner && attemptContainers ? [...attemptContainers.pythonPackages] : []
+  const pythonModules = containerPythonRunner && attemptContainers ? attemptContainers.pythonModules : null
+  // 依赖登记（2026-11-04）：按当前执行镜像复查已发布 Skill 的 Python 依赖；缺包的在管理端标出并在运行前被拒绝。
+  skills.setPythonEnvironment(containerPythonRunner && attemptContainers ? { image: attemptContainers.image, packages: pythonPackages, modules: pythonModules } : null)
+  await skills.recheckPublishedPythonDependencies().catch(error => console.error('skill python dependency recheck failed', error))
   // Skill 创建专家：草稿用与安装相同的包规则与 Python 环境核对（skill-creator-plan 4.2）。
   skillSubmissionsRef.current = new SkillSubmissionService({
     database, skills, authorization, artifactStore: skillArtifacts, builtinSkills,
-    pythonSandboxAvailable: Boolean(containerPythonRunner), pythonPackages,
+    pythonSandboxAvailable: Boolean(containerPythonRunner), pythonPackages, pythonModules,
   })
   conversations.setSkillDraftReader(skillSubmissionsRef.current)
   registerSkillSubmissionRoutes(router, skillSubmissionsRef.current)
   registerSkillSubmissionReviewRoutes(router, new SkillSubmissionReviewService({
     database, skills, artifactStore: skillArtifacts, audit: operations,
   }))
-  const installationService: AdminSkillInstallationService = new AdminSkillInstallationService(database, orchestration, authorization, acquireSkillSource, Boolean(containerPythonRunner), pythonPackages, skillArtifacts, checkInstallationRuntime)
+  const installationService: AdminSkillInstallationService = new AdminSkillInstallationService(database, orchestration, authorization, acquireSkillSource, Boolean(containerPythonRunner), pythonPackages, skillArtifacts, checkInstallationRuntime, pythonModules)
   const assistantService = new AdminAssistantService(database, orchestration, authorization, installationService, skills, agents, operations)
   skills.setPackageTester((userId, skill, prompt) => installationService.testPackage(userId, skill, prompt))
   skills.setPackageTestLifecycle({

@@ -105,6 +105,12 @@ export interface ContainerCommandResult {
   limit?: 'workspace' | 'disk'
 }
 
+/** What a Python import resolves to in the execution image: standard library, or the distributions that provide it. */
+export interface PythonModuleIndex {
+  stdlib: string[]
+  modules: Record<string, string[]>
+}
+
 export interface ExecutionBackend {
   /** Fails when the image is not present locally or the runtime is unreachable. */
   inspectImage(image: string): Promise<void>
@@ -115,6 +121,8 @@ export interface ExecutionBackend {
   inspectExecutionImage(image: string, user: string): Promise<ExecutionTool[]>
   /** Normalized names of the Python distributions installed in the execution image (plan 4.8). */
   inspectPythonPackages(image: string, user: string): Promise<string[]>
+  /** Standard-library modules and import name → distributions, so Skill imports can be checked without running them. */
+  inspectPythonModules?(image: string, user: string): Promise<PythonModuleIndex>
   /** Detects optional runtime features (swap accounting, AppArmor) used by the fixed posture. */
   detectFeatures(): Promise<void>
   /** Startup only: removes every container this service manages. Assumes a single service instance. */
