@@ -20,7 +20,7 @@ import type { DatabaseClient, DatabaseTransaction } from '../../infrastructure/p
 import type { AuditTrail } from '../../domain/audit-trail.ts'
 import { invalidSkillToolReferences } from '../runtime/builtin-tools.ts'
 import type { SkillArtifactStore } from './skill-artifact-store.ts'
-import { lockInstallationKey } from './skill-identity.ts'
+import { DEFAULT_SKILL_TEST_PROMPT, lockInstallationKey } from './skill-identity.ts'
 import { BUILTIN_SKILL_NAME_SUFFIX, isReservedBuiltinSkillName, normalizeBuiltinSkillScenarios } from './builtin-skills.ts'
 
 const tenantId = 'tenant-dsh-work'
@@ -200,7 +200,12 @@ export class PostgresSkillService {
          and ${this.visibleTo(roleIds)}
        order by s.updated_at desc, sv.name asc
     `
-    return rows.map(row => ({ ...row, updatedAt: formatDateTime(row.updatedAt) }))
+    // 安装与员工提交的 Skill 默认带平台的试运行提示语，它面向管理员验证，不作为员工的“推荐提问”。
+    return rows.map(row => ({
+      ...row,
+      testPrompt: row.testPrompt === DEFAULT_SKILL_TEST_PROMPT ? '' : row.testPrompt,
+      updatedAt: formatDateTime(row.updatedAt),
+    }))
   }
 
   /** 会话选择 Skill：同 Skill 广场的口径；Skill 存在但不对员工当前角色可见时按无权限拒绝。 */

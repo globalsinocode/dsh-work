@@ -141,7 +141,7 @@ onMounted(() => {
           </div>
           <el-tag size="small" effect="plain">{{ detailSkill.category }}</el-tag>
           <p class="skill-detail__description">{{ detailSkill.description }}</p>
-          <div class="skill-detail__prompt">
+          <div v-if="detailSkill.testPrompt" class="skill-detail__prompt">
             <span>推荐提问</span>
             <p>{{ detailSkill.testPrompt }}</p>
           </div>

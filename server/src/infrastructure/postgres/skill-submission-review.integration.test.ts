@@ -221,7 +221,11 @@ test('待审核列表与详情：未试运行不能发布；试运行通过后�
   assert.equal(approved.skill.status, 'published')
   assert.deepEqual(approved.skill.visibleRoleIds, ['role-employee'])
   assert.ok((await skills.getSkills()).some(skill => skill.id === skillId))
-  assert.ok((await skills.listWorkbenchSkills(['role-employee'])).some(skill => skill.id === skillId))
+  const published = (await skills.listWorkbenchSkills(['role-employee'])).find(skill => skill.id === skillId)
+  assert.ok(published)
+  // 平台默认的试运行提示语只给管理员验证用，员工端不当作“推荐提问”，也不预填进输入框。
+  assert.equal(published.testPrompt, '')
+  assert.ok((await skills.getSkills()).find(skill => skill.id === skillId)?.testPrompt, '管理端仍保留试运行提示语')
   assert.equal((await skills.listWorkbenchSkills([])).some(skill => skill.id === skillId), false, '指定角色发布后对其他角色不可见')
   assert.equal((await card(submitted.runId)).status, 'approved')
   assert.equal((await reviews.listPending()).some(item => item.id === submitted.submissionId), false)
