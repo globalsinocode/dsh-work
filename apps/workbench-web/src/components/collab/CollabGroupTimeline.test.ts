@@ -278,7 +278,9 @@ describe('CollabGroupTimeline (S5d 群聊)', () => {
       const entry = wrapper.get('[data-testid="group-run-entry"]')
       expect(entry.attributes('data-status')).toBe('running')
       expect(entry.text()).toContain('由 管理员 发起')
-      expect(entry.text()).toMatch(/执行中 · 已用/)
+      // 有步骤时只用转圈与步骤计时表示执行中，不再重复状态标签，也不套卡片。
+      expect(entry.text()).not.toMatch(/执行中 · 已用/)
+      expect(entry.find('.assistant-answer').exists()).toBe(false)
       expect(entry.findAll('[data-testid="run-progress-step"]').length).toBeGreaterThan(0)
 
       timeline(ask, run('cancelled', '管理员'))
@@ -289,6 +291,51 @@ describe('CollabGroupTimeline (S5d 群聊)', () => {
       expect(stopped.text()).toContain('管理员 停止')
       expect(stopped.text()).toContain('执行已被 管理员 停止，没有生成回复')
       expect(stopped.findAll('button').map(button => button.text())).toEqual(['查看执行详情'])
+    })
+
+    it('folds finished steps into counts that keep failures apart and announces them', async () => {
+      timeline(ask, run('running'))
+      api.getRun.mockResolvedValue({
+        id: 'run-p', sessionId: 's-plan', status: 'running', title: '排产计划', messages: [], attachments: [],
+        steps: [
+          { id: 'e1', title: '执行服务开始运行', detail: '', status: 'succeeded', event: 'run.started', at: at(1) },
+          { id: 'c1', title: '工具完成', detail: '', status: 'succeeded', tool: 'project_tasks_list', callId: 'c1', event: 'tool.completed', at: at(2), startedAt: at(1) },
+          { id: 'c2', title: '工具失败', detail: '', status: 'failed', tool: 'project_tasks_list', callId: 'c2', event: 'tool.completed', at: at(3), startedAt: at(2) },
+          { id: 'c3', title: '正在调用工具', detail: '', status: 'running', tool: 'project_tasks_list', callId: 'c3', event: 'tool.started', at: at(3), startedAt: at(3) },
+          { id: 'c4', title: '正在调用工具', detail: '', status: 'running', tool: 'project_tasks_list', callId: 'c4', event: 'tool.started', at: at(3), startedAt: at(3) },
+        ],
+      } as unknown as TaskRun)
+      const wrapper = await mountTimeline()
+      await flushPromises()
+
+      const entry = wrapper.get('[data-testid="group-run-entry"]')
+      // 同时进行的步骤都显示，已结束的只留计数；失败的不算“已完成”。
+      expect(entry.findAll('[data-testid="run-progress-step"]')).toHaveLength(2)
+      expect(entry.get('.collab-run-entry__done').text()).toBe('已完成 1 步 · 1 步失败')
+      expect(entry.get('[role="status"]').text()).toContain('已完成 1 步 · 1 步失败')
+    })
+
+    it('falls back to the status tag and notice when the run detail has no step in progress', async () => {
+      // 群聊状态仍是执行中，但缓存的执行详情已没有进行中的步骤：不能把已完成的步骤当作进度。
+      timeline(ask, run('running'))
+      api.getRun.mockResolvedValue({
+        id: 'run-p', sessionId: 's-plan', status: 'succeeded', title: '排产计划', messages: [], attachments: [],
+        steps: [
+          { id: 'e1', title: '执行服务开始运行', detail: '', status: 'succeeded', event: 'run.started', at: at(1) },
+          { id: 'c1', title: '工具完成', detail: '', status: 'succeeded', tool: 'project_tasks_list', callId: 'c1', event: 'tool.completed', at: at(2), startedAt: at(1) },
+          { id: 'e2', title: '执行完成', detail: '', status: 'succeeded', event: 'run.completed', at: at(3) },
+        ],
+      } as unknown as TaskRun)
+      const wrapper = await mountTimeline()
+      await flushPromises()
+
+      const entry = wrapper.get('[data-testid="group-run-entry"]')
+      expect(entry.findAll('[data-testid="run-progress-step"]')).toHaveLength(0)
+      expect(entry.find('.assistant-answer').exists()).toBe(true)
+      expect(entry.text()).toMatch(/执行中/)
+      expect(entry.text()).toContain('正在执行…')
+      expect(entry.get('[role="status"]').text()).toBe('正在执行…')
+      expect(entry.findAll('button').map(button => button.text())).toEqual(['查看执行详情', '停止'])
     })
 
     it('explains a failed run without a reply and offers no stop to read-only members', async () => {
