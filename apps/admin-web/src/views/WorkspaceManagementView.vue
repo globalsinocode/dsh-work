@@ -117,11 +117,13 @@ onMounted(async () => {
       </div>
     </section>
 
-    <section v-loading="contentStore.loading" class="metric-grid">
-      <article class="metric-card"><div class="metric-label">项目空间</div><div class="metric-value">{{ contentStore.workspaces.length }}</div><div class="metric-detail">个人空间由系统自动维护</div></article>
-      <article class="metric-card"><div class="metric-label">成员席位</div><div class="metric-value">{{ memberTotal }}</div><div class="metric-detail">按工作空间成员关系累计</div></article>
-      <article class="metric-card"><div class="metric-label">空间内 Session</div><div class="metric-value">{{ sessionTotal }}</div><div class="metric-detail">继承工作空间上下文</div></article>
-      <article class="metric-card"><div class="metric-label">空间成果</div><div class="metric-value">{{ artifactTotal }}</div><div class="metric-detail">团队可复用交付物</div></article>
+    <section v-loading="contentStore.loading" class="content-panel overview-strip" aria-label="项目空间概况">
+      <dl class="overview-strip__stats">
+        <div class="overview-stat"><dt>项目空间</dt><dd><strong class="overview-stat__value">{{ contentStore.workspaces.length }}</strong><small>个人空间由系统自动维护</small></dd></div>
+        <div class="overview-stat"><dt>成员席位</dt><dd><strong class="overview-stat__value">{{ memberTotal }}</strong><small>按工作空间成员关系累计</small></dd></div>
+        <div class="overview-stat"><dt>空间内 Session</dt><dd><strong class="overview-stat__value">{{ sessionTotal }}</strong><small>继承工作空间上下文</small></dd></div>
+        <div class="overview-stat"><dt>空间成果</dt><dd><strong class="overview-stat__value">{{ artifactTotal }}</strong><small>团队可复用交付物</small></dd></div>
+      </dl>
     </section>
 
     <section class="content-panel content-panel--flush workspace-table">

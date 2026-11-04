@@ -178,11 +178,13 @@ onMounted(() => void load())
     <el-alert v-if="error" type="error" :closable="false" show-icon :title="error" />
     <el-alert class="record-only-notice" type="warning" :closable="false" show-icon title="模型路由目前仅记录，不决定执行使用的模型" description="每次运行会把解析到的路由写入快照，用于审计和用量统计；DSH 实际调用的模型由 DSH Profile 固定，修改路由不会改变执行模型。没有可用路由（Provider 或模型已停用、密钥引用未配置）时，新运行会被拒绝。dsh-work 只保存密钥引用与状态，不能读取、回显或导出密钥正文。" />
 
-    <section class="metric-grid">
-      <article class="metric-card"><div class="metric-label">启用 Provider</div><div class="metric-value">{{ activeProviderCount }}</div><div class="metric-detail">共 {{ providers.length }} 个</div></article>
-      <article class="metric-card"><div class="metric-label">可治理模型</div><div class="metric-value">{{ modelCount }}</div><div class="metric-detail">按 Provider 注册</div></article>
-      <article class="metric-card"><div class="metric-label">凭据已配置</div><div class="metric-value">{{ configuredCredentialCount }}</div><div class="metric-detail">仅记录引用状态</div></article>
-      <article class="metric-card"><div class="metric-label">启用路由</div><div class="metric-value">{{ routes.filter((item) => item.enabled).length }}</div><div class="metric-detail">仅记录到运行快照</div></article>
+    <section class="content-panel overview-strip" aria-label="模型治理概况">
+      <dl class="overview-strip__stats">
+        <div class="overview-stat"><dt>启用 Provider</dt><dd><strong class="overview-stat__value">{{ activeProviderCount }}</strong><small>共 {{ providers.length }} 个</small></dd></div>
+        <div class="overview-stat"><dt>可治理模型</dt><dd><strong class="overview-stat__value">{{ modelCount }}</strong><small>按 Provider 注册</small></dd></div>
+        <div class="overview-stat"><dt>凭据已配置</dt><dd><strong class="overview-stat__value">{{ configuredCredentialCount }}</strong><small>仅记录引用状态</small></dd></div>
+        <div class="overview-stat"><dt>启用路由</dt><dd><strong class="overview-stat__value">{{ routes.filter((item) => item.enabled).length }}</strong><small>仅记录到运行快照</small></dd></div>
+      </dl>
     </section>
 
     <section class="content-panel content-panel--flush">
@@ -238,7 +240,6 @@ onMounted(() => void load())
 
 <style scoped>
 .page-heading-row, .governance-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
-.metric-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
 .governance-toolbar { min-height: 56px; padding: 0 14px; border-bottom: 1px solid var(--color-border); }
 .governance-tabs { min-width: 300px; }
 .governance-tabs :deep(.el-tabs__header) { margin: 0; }
@@ -257,5 +258,4 @@ onMounted(() => void load())
 .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
 .dialog-form { margin-top: 18px; }
 .form-grid :deep(.el-select), .form-grid :deep(.el-input-number), .dialog-form :deep(.el-select), :deep(.el-form-item .el-select) { width: 100%; }
-@media (max-width: 1100px) { .metric-grid { grid-template-columns: repeat(2, 1fr); } }
 </style>

@@ -90,13 +90,18 @@ const selectedChildren = computed(() => selected.value ? childrenOf.value.get(se
 const siblings = computed(() => selected.value?.parentId ? childrenOf.value.get(selected.value.parentId) ?? [] : [])
 const siblingIndex = computed(() => siblings.value.findIndex(sibling => sibling.id === selected.value?.id))
 
-const memberRows = computed(() => {
-  const ids = includeSub.value ? subtreeMemberIds.value : directMemberIds.value
+function matchingEmployees(ids: Set<string>) {
   const query = memberQuery.value.trim().toLowerCase()
   return [...ids]
     .map(id => employeeById.value.get(id))
     .filter((employee): employee is OrganizationEmployee => Boolean(employee))
     .filter(employee => !query || employee.name.toLowerCase().includes(query) || (employee.loginAccount ?? '').toLowerCase().includes(query))
+}
+/** 只看直属成员时，下级部门中符合当前搜索的人数；用于空列表时给出“查看含下级部门”的入口。 */
+const subtreeMatchCount = computed(() => includeSub.value ? 0 : matchingEmployees(subtreeMemberIds.value).length)
+
+const memberRows = computed(() => {
+  return matchingEmployees(includeSub.value ? subtreeMemberIds.value : directMemberIds.value)
     .sort((a, b) => a.name.localeCompare(b.name, 'zh-CN'))
     .map(employee => {
       const memberships = membershipsByUser.value.get(employee.id) ?? []
@@ -243,7 +248,7 @@ async function run(action: () => Promise<OrganizationSnapshot>, success: string,
   }
 }
 
-function selectDepartment(node: TreeNode) {
+function selectDepartment(node: Pick<TreeNode, 'id'>) {
   selectedId.value = node.id
   includeSub.value = false
   memberQuery.value = ''
@@ -386,12 +391,6 @@ onMounted(load)
   <div class="ops-page organization-page">
     <el-alert v-if="error" :title="error" type="error" show-icon @close="error = ''" />
 
-    <el-alert
-      type="info"
-      :closable="false"
-      show-icon
-      title="部门由平台管理员维护。部门本身不带权限；授予部门的角色会自动给到覆盖的员工，成员或部门变化时自动调整。"
-    />
     <el-alert v-if="invalidGrants.length" type="warning" :closable="false" show-icon>
       <template #title>
         {{ invalidGrants.length }} 条部门授权因部门被删除而失效（{{ invalidGrants.map(grant => `“${grant.departmentName}”的${roleName(grant.roleId)}`).join('、') }}），不再给任何员工权限。
@@ -399,27 +398,26 @@ onMounted(load)
       </template>
     </el-alert>
 
-    <section class="organization-summary">
-      <article class="metric-card">
-        <div class="metric-label">部门</div>
-        <div class="metric-value">{{ departments.length }}</div>
-        <div class="metric-detail">最多 {{ maxDepth }} 级</div>
-      </article>
-      <article class="metric-card">
-        <div class="metric-label">已分配部门的员工</div>
-        <div class="metric-value">{{ assignedCount }}</div>
-        <div class="metric-detail">共 {{ snapshot.employees.length }} 名员工</div>
-      </article>
-      <article class="metric-card">
-        <div class="metric-label">未分配部门的员工</div>
-        <div class="metric-value">{{ unassignedCount }}</div>
-        <div class="metric-detail">在“添加成员”中可只看未分配员工</div>
-      </article>
-      <article class="metric-card">
-        <div class="metric-label">部门授权</div>
-        <div class="metric-value">{{ activeGrants.length }}</div>
-        <div class="metric-detail">覆盖 {{ coveredEmployeeCount }} 名员工</div>
-      </article>
+    <section class="content-panel overview-strip" aria-label="组织概况">
+      <dl class="overview-strip__stats">
+        <div class="overview-stat">
+          <dt>部门</dt>
+          <dd><strong class="overview-stat__value">{{ departments.length }}</strong><small>最多 {{ maxDepth }} 级</small></dd>
+        </div>
+        <div class="overview-stat">
+          <dt>已分配部门的员工</dt>
+          <dd><strong class="overview-stat__value">{{ assignedCount }}</strong><small>共 {{ snapshot.employees.length }} 人</small></dd>
+        </div>
+        <div class="overview-stat" :class="{ 'overview-stat--attention': unassignedCount > 0 }">
+          <dt>未分配部门的员工</dt>
+          <dd><strong class="overview-stat__value">{{ unassignedCount }}</strong></dd>
+        </div>
+        <div class="overview-stat">
+          <dt>部门授权</dt>
+          <dd><strong class="overview-stat__value">{{ activeGrants.length }}</strong><small>覆盖 {{ coveredEmployeeCount }} 人</small></dd>
+        </div>
+      </dl>
+      <p class="overview-strip__hint">部门由平台管理员维护。部门本身不带权限；授予部门的角色会自动给到覆盖的员工，成员或部门变化时自动调整。</p>
     </section>
 
     <div class="organization-layout">
@@ -467,57 +465,65 @@ onMounted(load)
 
         <el-tabs v-model="activeTab" class="organization-tabs">
           <el-tab-pane :label="`成员（${directMemberIds.size}）`" name="members">
-        <section class="content-panel filter-panel">
-          <div class="filter-bar">
-            <el-input v-model="memberQuery" :prefix-icon="Search" clearable aria-label="搜索成员" placeholder="搜索姓名或账号" />
-            <el-checkbox v-model="includeSub">包含下级部门成员</el-checkbox>
-            <span class="filter-bar__meta">{{ memberRows.length }} 名员工</span>
-            <el-button v-if="canManage" type="primary" :disabled="saving" @click="openAddMembers">添加成员</el-button>
-          </div>
-        </section>
+            <section class="content-panel filter-panel">
+              <div class="filter-bar">
+                <el-input v-model="memberQuery" :prefix-icon="Search" clearable aria-label="搜索成员" placeholder="搜索姓名或账号" />
+                <el-checkbox v-model="includeSub">包含下级部门成员</el-checkbox>
+                <span class="filter-bar__meta">{{ memberRows.length }} 名员工</span>
+                <el-button v-if="canManage" type="primary" :disabled="saving" @click="openAddMembers">添加成员</el-button>
+              </div>
+            </section>
 
-        <section class="content-panel content-panel--flush">
-          <el-table class="data-table" :data="memberRows" :empty-text="includeSub ? '本部门及下级部门都还没有成员' : '本部门还没有直属成员'">
-            <el-table-column label="员工" min-width="200">
-              <template #default="scope">
-                <div class="user-cell">
-                  <span class="user-cell__avatar">{{ [...scope.row.employee.name][0] ?? '员' }}</span>
-                  <span><strong>{{ scope.row.employee.name }}</strong><small>{{ scope.row.employee.email || '未提供邮箱' }}</small></span>
-                </div>
-              </template>
-            </el-table-column>
-            <el-table-column label="登录账号" min-width="160" show-overflow-tooltip>
-              <template #default="scope">{{ scope.row.employee.loginAccount ?? '—' }}</template>
-            </el-table-column>
-            <el-table-column label="所属部门" min-width="220">
-              <template #default="scope">
-                <div class="tag-list">
-                  <el-tag v-for="department in scope.row.departments" :key="department.id" effect="plain" :type="department.primary ? 'primary' : 'info'">
-                    {{ department.name }}{{ department.primary ? ' · 主部门' : '' }}
-                  </el-tag>
-                </div>
-              </template>
-            </el-table-column>
-            <el-table-column label="操作" :width="canManage ? 240 : 100" fixed="right">
-              <template #default="scope">
-                <el-button link type="primary" @click="drawerUser = scope.row.employee">查看权限</el-button>
-                <template v-if="canManage && scope.row.direct">
-                  <el-button v-if="!scope.row.primaryHere" link type="primary" :disabled="saving" @click="setPrimary(scope.row.employee)">设为主部门</el-button>
-                  <el-button link type="danger" :disabled="saving" @click="openRemove(scope.row.employee)">移出</el-button>
+            <section class="content-panel content-panel--flush">
+              <el-table class="data-table" :data="memberRows">
+                <template #empty>
+                  <div class="table-empty">
+                    <span>{{ memberQuery.trim() ? '没有匹配的成员' : includeSub ? '本部门及下级部门都还没有成员' : '本部门还没有直属成员' }}</span>
+                    <!-- 根部门等上层部门通常没有直属成员，直接给出查看整棵子树的入口，避免误以为部门是空的；搜索时同样适用。 -->
+                    <el-button v-if="subtreeMatchCount" link type="primary" @click="includeSub = true">
+                      {{ memberQuery.trim() ? `在下级部门中找到 ${subtreeMatchCount} 名匹配成员` : `查看含下级部门的 ${subtreeMatchCount} 名成员` }}
+                    </el-button>
+                  </div>
                 </template>
-                <span v-else-if="canManage" class="empty-value">在下级部门</span>
-              </template>
-            </el-table-column>
-          </el-table>
-        </section>
+                <el-table-column label="员工" min-width="200">
+                  <template #default="scope">
+                    <div class="user-cell">
+                      <span class="user-cell__avatar">{{ [...scope.row.employee.name][0] ?? '员' }}</span>
+                      <span><strong>{{ scope.row.employee.name }}</strong><small>{{ scope.row.employee.email || '未提供邮箱' }}</small></span>
+                    </div>
+                  </template>
+                </el-table-column>
+                <el-table-column label="登录账号" min-width="160" show-overflow-tooltip>
+                  <template #default="scope">{{ scope.row.employee.loginAccount ?? '—' }}</template>
+                </el-table-column>
+                <el-table-column label="所属部门" min-width="220">
+                  <template #default="scope">
+                    <div class="tag-list">
+                      <el-tag v-for="department in scope.row.departments" :key="department.id" effect="plain" :type="department.primary ? 'primary' : 'info'">
+                        {{ department.name }}{{ department.primary ? ' · 主部门' : '' }}
+                      </el-tag>
+                    </div>
+                  </template>
+                </el-table-column>
+                <el-table-column label="操作" :width="canManage ? 240 : 100" fixed="right">
+                  <template #default="scope">
+                    <el-button link type="primary" @click="drawerUser = scope.row.employee">查看权限</el-button>
+                    <template v-if="canManage && scope.row.direct">
+                      <el-button v-if="!scope.row.primaryHere" link type="primary" :disabled="saving" @click="setPrimary(scope.row.employee)">设为主部门</el-button>
+                      <el-button link type="danger" :disabled="saving" @click="openRemove(scope.row.employee)">移出</el-button>
+                    </template>
+                    <span v-else-if="canManage" class="empty-value">在下级部门</span>
+                  </template>
+                </el-table-column>
+              </el-table>
+            </section>
           </el-tab-pane>
           <el-tab-pane :label="`部门授权（${grantRows.length}）`" name="grants">
-            <section class="content-panel department-header grant-toolbar">
-              <div class="department-header__copy">
-                <h3>部门授权</h3>
-                <small>授予本部门的角色会自动给到覆盖的员工；管理类角色（平台管理员、审计员等）只能在“员工与权限”中单独授给个人。</small>
+            <section class="content-panel filter-panel">
+              <div class="filter-bar grant-toolbar">
+                <span class="grant-toolbar__hint">授予本部门的角色会自动给到覆盖的员工；管理类角色（平台管理员、审计员等）只能在“员工与权限”中单独授给个人。</span>
+                <el-button v-if="canManage" type="primary" :disabled="saving || !assignableRoles.length" @click="openGrant">添加部门授权</el-button>
               </div>
-              <el-button v-if="canManage" type="primary" :disabled="saving || !assignableRoles.length" @click="openGrant">添加部门授权</el-button>
             </section>
             <section class="content-panel content-panel--flush">
               <el-table class="data-table" :data="grantRows" empty-text="本部门还没有授权，也没有从上级部门继承的授权">
@@ -538,7 +544,7 @@ onMounted(load)
                 <el-table-column v-if="canManage" label="操作" width="150" fixed="right">
                   <template #default="scope">
                     <el-button v-if="!scope.row.inherited" link type="danger" :disabled="saving" @click="revokeGrant(scope.row.grant)">删除</el-button>
-                    <el-button v-else link type="primary" @click="selectedId = scope.row.grant.departmentId">到上级部门修改</el-button>
+                    <el-button v-else link type="primary" @click="selectDepartment({ id: scope.row.grant.departmentId })">到上级部门修改</el-button>
                   </template>
                 </el-table-column>
               </el-table>
@@ -668,10 +674,11 @@ onMounted(load)
 </template>
 
 <style scoped>
-.organization-summary { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--spacing-section); }
 .organization-tabs { width: 100%; }
 .organization-tabs :deep(.el-tab-pane) { display: flex; flex-direction: column; gap: 14px; }
-.grant-toolbar h3 { margin: 0 0 4px; color: var(--color-text-heading); font-size: var(--font-size-title); }
+.grant-toolbar { justify-content: space-between; }
+.grant-toolbar__hint { flex: 1 1 280px; min-width: 0; color: var(--color-text-muted); font-size: var(--font-size-badge); line-height: 1.6; }
+.table-empty { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 8px 0; line-height: 1.6; }
 .grant-impact { margin-top: 12px; }
 .user-detail-hero { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 14px; padding: var(--spacing-card); border-radius: var(--radius-card); background: var(--color-bg-subtle); }
 .user-detail-hero__avatar { width: 48px; height: 48px; font-size: var(--font-size-heading); }
@@ -722,6 +729,5 @@ onMounted(load)
 .candidate__name { display: flex; min-width: 0; flex-direction: column; }
 .candidate__name strong { color: var(--color-text-heading); font-size: var(--font-size-caption); }
 .candidate__name small { color: var(--color-text-muted); font-size: var(--font-size-badge); }
-@media (max-width: 1200px) { .organization-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-@media (max-width: 900px) { .organization-summary { grid-template-columns: 1fr; } .organization-tree { max-width: none; } .filter-bar .el-input { width: 100%; } }
+@media (max-width: 900px) { .organization-tree { max-width: none; } .filter-bar .el-input { width: 100%; } }
 </style>

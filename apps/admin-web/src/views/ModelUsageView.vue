@@ -102,10 +102,12 @@ onMounted(() => {
   <div class="ops-page model-usage-page">
     <el-alert v-if="pageError" :title="pageError" type="error" show-icon @close="clearError" />
 
-    <section v-loading="recordsLoading" class="metric-grid">
-      <article class="metric-card"><div class="metric-label">模型调用</div><div class="metric-value">{{ summary?.callCount ?? 0 }}</div><div class="metric-detail">涉及 {{ summary?.employeeCount ?? 0 }} 名员工</div></article>
-      <article class="metric-card"><div class="metric-label">Token 用量</div><div class="metric-value">{{ formatTokens(summary?.totalTokens ?? 0) }}</div><div class="metric-detail">输入与输出 Token 合计</div></article>
-      <article class="metric-card"><div class="metric-label">平均模型延迟</div><div class="metric-value">{{ formatLatency(summary?.averageLatencyMs ?? 0) }}</div><div class="metric-detail">只统计成功调用</div></article>
+    <section v-loading="recordsLoading" class="content-panel overview-strip" aria-label="用量概况">
+      <dl class="overview-strip__stats">
+        <div class="overview-stat"><dt>模型调用</dt><dd><strong class="overview-stat__value">{{ summary?.callCount ?? 0 }}</strong><small>涉及 {{ summary?.employeeCount ?? 0 }} 名员工</small></dd></div>
+        <div class="overview-stat"><dt>Token 用量</dt><dd><strong class="overview-stat__value">{{ formatTokens(summary?.totalTokens ?? 0) }}</strong><small>输入与输出 Token 合计</small></dd></div>
+        <div class="overview-stat"><dt>平均模型延迟</dt><dd><strong class="overview-stat__value">{{ formatLatency(summary?.averageLatencyMs ?? 0) }}</strong><small>只统计成功调用</small></dd></div>
+      </dl>
     </section>
 
     <section class="content-panel filter-panel usage-filter-panel">

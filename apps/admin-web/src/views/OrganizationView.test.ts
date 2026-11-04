@@ -80,13 +80,21 @@ afterEach(() => {
 })
 
 describe('OrganizationView', () => {
-  it('opens straight into the tree with member counts and summary metrics', async () => {
+  it('opens straight into the tree with member counts and a compact overview', async () => {
     const wrapper = await render()
     expect(wrapper.text()).toContain('部门本身不带权限')
     const counts = Object.fromEntries(wrapper.findAll('.tree-node').map(node => [node.get('.tree-node__name').text(), node.get('.tree-node__count').text()]))
     expect(counts).toEqual({ 示例企业: '3', 供应链中心: '3', 采购部: '1', 财务部: '1' })
-    const metrics = wrapper.findAll('.metric-value').map(item => item.text())
+    const metrics = wrapper.findAll('.overview-stat__value').map(item => item.text())
     expect(metrics).toEqual(['4', '3', '3', '1'])
+    expect(wrapper.find('.metric-card').exists()).toBe(false)
+
+    // 根部门没有直属成员时，空状态直接给出查看整棵子树成员的入口。
+    expect(wrapper.text()).toContain('本部门还没有直属成员')
+    await button(wrapper, '查看含下级部门的 3 名成员').trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('张伟')
+    expect(wrapper.text()).toContain('李娜')
 
     await selectDepartment(wrapper, '供应链中心')
     expect(wrapper.get('.department-header').text()).toContain('示例企业 / 供应链中心')
@@ -96,6 +104,31 @@ describe('OrganizationView', () => {
     await wrapper.get('.filter-bar input[type="checkbox"]').setValue(true)
     expect(wrapper.text()).toContain('李娜')
     expect(wrapper.text()).toContain('在下级部门')
+  })
+
+  it('offers sub-department matches when a search finds no direct members', async () => {
+    const wrapper = await render()
+    await wrapper.get('input[aria-label="搜索成员"]').setValue('张伟')
+    await flushPromises()
+    expect(wrapper.text()).toContain('没有匹配的成员')
+    await button(wrapper, '在下级部门中找到 1 名匹配成员').trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('张伟')
+    expect(wrapper.text()).not.toContain('李娜')
+  })
+
+  it('resets the member filters when jumping to the parent department from an inherited grant', async () => {
+    const wrapper = await render()
+    await selectDepartment(wrapper, '采购部')
+    await wrapper.get('.filter-bar input[type="checkbox"]').setValue(true)
+    await wrapper.get('input[aria-label="搜索成员"]').setValue('李')
+    await wrapper.findAll('.el-tabs__item').find(item => item.text().startsWith('部门授权'))!.trigger('click')
+    await flushPromises()
+    await button(wrapper, '到上级部门修改').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('.department-header').text()).toContain('示例企业 / 供应链中心')
+    expect((wrapper.get('.filter-bar input[type="checkbox"]').element as HTMLInputElement).checked).toBe(false)
+    expect((wrapper.get('input[aria-label="搜索成员"]').element as HTMLInputElement).value).toBe('')
   })
 
   it('asks for a new primary department when removing a member from their primary department', async () => {

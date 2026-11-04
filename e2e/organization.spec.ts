@@ -23,9 +23,12 @@ async function selectDepartment(page: Page, name: string) {
 
 test('administrator maintains the department tree and members', async ({ page }) => {
   const tree = await openOrganization(page)
-  await expect(page.getByText('部门本身不带权限')).toBeVisible()
   await expect(tree.getByText('供应链中心', { exact: true })).toBeVisible()
-  await expect(page.getByText('未分配部门的员工')).toBeVisible()
+  const overview = page.getByRole('region', { name: '组织概况' })
+  await expect(overview.getByText('未分配部门的员工')).toBeVisible()
+  await expect(overview.getByText('部门本身不带权限')).toBeVisible()
+  await page.getByRole('button', { name: /^查看含下级部门的 \d+ 名成员$/ }).click()
+  await expect(page.getByRole('checkbox', { name: '包含下级部门成员' })).toBeChecked()
 
   await selectDepartment(page, '供应链中心')
   await expect(page.getByText('直属成员 2 人 · 含下级 5 人 · 下级部门 2 个')).toBeVisible()

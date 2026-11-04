@@ -255,27 +255,25 @@ onMounted(load)
       <template #default>请检查连接配置；知识库与授权仍可查看和调整。</template>
     </el-alert>
 
-    <section class="metric-grid" aria-label="企业知识库概况">
-      <article class="metric-card">
-        <div class="metric-label">连接状态</div>
-        <div class="metric-value">{{ !connection?.configured ? '未配置' : !connection.enabled ? '已停用' : connection.credentialReadable ? '已启用' : 'Key 不可读' }}</div>
-        <div class="metric-detail">最近成功 {{ formatDateTime(connection?.lastSuccessAt ?? null) }}</div>
-      </article>
-      <article class="metric-card">
-        <div class="metric-label">知识库</div>
-        <div class="metric-value">{{ baseList.items.length }}</div>
-        <div class="metric-detail">{{ baseList.statsAvailable ? `共 ${counts.documents} 篇文档` : '文档数暂不可读' }}</div>
-      </article>
-      <article class="metric-card">
-        <div class="metric-label">需要处理</div>
-        <div class="metric-value knowledge-admin__warn">{{ counts.attention }}</div>
-        <div class="metric-detail">无可见部门 {{ counts.noGrant }} · 归属部门已删除 {{ counts.ownerDeleted }} · 需重建 {{ counts.rebuild }}</div>
-      </article>
-      <article class="metric-card">
-        <div class="metric-label">最近 24 小时检索</div>
-        <div class="metric-value">{{ overview?.health.retrievals24h ?? 0 }} 次</div>
-        <div class="metric-detail">不可用 {{ overview?.health.unavailable24h ?? 0 }} 次<template v-if="connection?.lastFailureAt"> · 最近失败 {{ formatDateTime(connection.lastFailureAt) }}（{{ failureLabels[connection.lastFailureReason ?? ''] ?? '未知' }}）</template></div>
-      </article>
+    <section class="content-panel overview-strip" aria-label="企业知识库概况">
+      <dl class="overview-strip__stats">
+        <div class="overview-stat">
+          <dt>连接状态</dt>
+          <dd><strong class="overview-stat__value">{{ !connection?.configured ? '未配置' : !connection.enabled ? '已停用' : connection.credentialReadable ? '已启用' : 'Key 不可读' }}</strong><small>最近成功 {{ formatDateTime(connection?.lastSuccessAt ?? null) }}</small></dd>
+        </div>
+        <div class="overview-stat">
+          <dt>知识库</dt>
+          <dd><strong class="overview-stat__value">{{ baseList.items.length }}</strong><small>{{ baseList.statsAvailable ? `共 ${counts.documents} 篇文档` : '文档数暂不可读' }}</small></dd>
+        </div>
+        <div class="overview-stat" :class="{ 'overview-stat--attention': counts.attention > 0 }">
+          <dt>需要处理</dt>
+          <dd><strong class="overview-stat__value">{{ counts.attention }}</strong><small>无可见部门 {{ counts.noGrant }} · 归属部门已删除 {{ counts.ownerDeleted }} · 需重建 {{ counts.rebuild }}</small></dd>
+        </div>
+        <div class="overview-stat">
+          <dt>最近 24 小时检索</dt>
+          <dd><strong class="overview-stat__value">{{ overview?.health.retrievals24h ?? 0 }} 次</strong><small>不可用 {{ overview?.health.unavailable24h ?? 0 }} 次<template v-if="connection?.lastFailureAt"> · 最近失败 {{ formatDateTime(connection.lastFailureAt) }}（{{ failureLabels[connection.lastFailureReason ?? ''] ?? '未知' }}）</template></small></dd>
+        </div>
+      </dl>
     </section>
 
     <section class="content-panel">
@@ -450,7 +448,6 @@ onMounted(load)
 </template>
 
 <style scoped>
-.knowledge-admin__warn { color: var(--color-warning-strong); }
 .knowledge-admin__tabs { width: 100%; }
 .knowledge-admin__tabs :deep(.el-tab-pane) { display: flex; flex-direction: column; gap: 12px; }
 .knowledge-admin__create { margin-left: auto; }

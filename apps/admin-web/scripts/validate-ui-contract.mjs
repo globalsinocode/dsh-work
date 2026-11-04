@@ -36,7 +36,7 @@ requireFragments('src/styles.css', [
   '.filter-panel',
   '.filter-bar',
   '.status-tabs',
-  '.metric-grid',
+  '.overview-strip',
   '.data-table',
 ])
 
