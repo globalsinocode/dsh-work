@@ -1479,7 +1479,7 @@ export function renderSystemPrompt(manifest: RuntimeManifest, options: { executi
       '动手写之前先调用 list_available_skills 查看员工已经能用的 Skill（含平台内置 Skill）；有相符的就引导员工去用，不要重复创建。',
       'Skill 是一个目录：根目录的 SKILL.md 以 YAML frontmatter 开头，写明 name（Skill 名称）和 description（一句话说明何时使用），之后是正文指令；可以附带 references/、templates/、scripts/ 下的文本文件。只接受 md、txt、json、yaml、csv、toml、py 和 LICENSE 文件，最多 64 个文件、合计 1 MB。正文提到的 references/、templates/、scripts/ 文件必须真的在目录中。',
       '用 bash 在工作区新建目录写这些文件，例如 drafts/weekly-report/；不要放在 output/、input/ 或 skills/ 下（write 工具只能写 output/ 中的成果，不能用来写草稿）。有 Python 脚本时，先在 bash 中用示例输入运行确认能跑通，只使用环境中已经安装的包；脚本读写文件用环境变量 DSH_INPUT_DIR、DSH_OUTPUT_DIR 和相对路径，不要写死 /skill、/input、/output。',
-      '管理员审核时会做一次严格试运行：试运行不提供业务输入文件，脚本必须以退出码 0 跑通才能发布。所以完全没有提供输入时（参数中没有指定输入文件，输入目录中也没有文件），脚本要改用写在脚本里的一小份内置样例运行，输出注明“自检结果，不是业务结果”，并以退出码 0 结束；指定了输入文件却找不到或读不了时，要报出明确错误并以非 0 退出码结束，不能改跑样例；有输入时照常处理。SKILL.md 中写明：看到自检结果时，向员工索要真实文件。保存前在 bash 中分别用示例输入和不给输入文件各运行一次，两次都跑通再保存。',
+      '管理员审核时会做一次严格试运行：试运行不提供业务输入文件，脚本必须以退出码 0 跑通才能发布。所以完全没有提供输入时（参数中没有指定输入文件，输入目录中也没有文件），脚本要改用写在脚本里的一小份内置样例运行，输出注明“自检结果，不是业务结果”，并以退出码 0 结束；指定了输入文件却找不到或读不了时，要报出明确错误并以非 0 退出码结束，不能改跑样例；有输入时照常处理。SKILL.md 中写明：员工没有附文件时直接不带参数运行脚本，不要逐个目录查找文件；看到自检结果时，向员工索要真实文件。保存前在 bash 中分别用示例输入和不给输入文件各运行一次，两次都跑通再保存。',
       '写好后调用 skill_draft_save，directory 填该目录的相对路径。返回 compatibility.status 为 incompatible 时按 issues 修改后重新保存。保存后草稿会作为卡片显示在你的回复下方；是否提交审核由员工在卡片上决定，你不能替员工提交，也不要说已经提交或已经发布。',
     ].join('\n'))
   }
@@ -1532,7 +1532,7 @@ export function renderSystemPrompt(manifest: RuntimeManifest, options: { executi
       ...[...inputFiles.values()].map((file, index) => [
         `${index + 1}. ${file.sourceName}`,
         ...(file.textPath ? [`   - 读取路径（解析文本）：${file.textPath.slice('/workspace/'.length)}`] : []),
-        ...(file.originalPath ? [`   - 原始文件（只读，供 bash 中的程序处理，如 pandas、openpyxl、LibreOffice）：${file.originalPath.slice('/workspace/'.length)}`] : []),
+        ...(file.originalPath ? [`   - 原始文件（只读，供 bash 中的程序或 python_execute 运行的 Skill 脚本处理，如 pandas、openpyxl、LibreOffice；传给 python_execute 时按“Python 脚本”一节拼成工作区绝对路径）：${file.originalPath.slice('/workspace/'.length)}`] : []),
         `   - 媒体类型：${file.mediaType}`,
         ...(file.revision ? [!BINARY_INPUT_PATTERN.test(file.sourceName)
           ? `   - 这是此前生成的成果第 ${file.revision.version} 版；用户要求修改它时，把修改后的完整内容写入 output/${file.sourceName}（按成果文件一节选择工具），平台会登记为第 ${file.revision.version + 1} 版；只是参考时不要重写`

@@ -508,6 +508,36 @@ async function rollbackSkill(version: SkillVersionRecord) {
   }
 }
 
+/** 只有当前待发布、由安装得到的入口草稿可以放弃；员工提交的草稿在“待审核”中处理。 */
+function canDiscardSkillDraft(version: SkillVersionRecord) {
+  const skill = selectedSkill.value
+  return Boolean(authStore.canManage && skill && version.status === 'draft' && skill.status === 'draft'
+    && version.version === skill.version && !skill.submissionDraft && skill.installationRole !== 'dependency')
+}
+
+async function discardSkillDraft(version: SkillVersionRecord) {
+  const skill = selectedSkill.value
+  if (!skill) return
+  try {
+    await ElMessageBox.confirm(
+      skill.activeVersion
+        ? `草稿 v${version.version} 将停用，已发布的 v${skill.activeVersion} 继续生效。之后可重新上传修正后的包。`
+        : `草稿 v${version.version} 将停用，这个 Skill 尚未发布过，放弃后从列表移除。之后可重新上传修正后的包。`,
+      `放弃“${skill.name}”的草稿？`,
+      { confirmButtonText: '确认放弃', cancelButtonText: '取消', type: 'warning' },
+    )
+    actionLoading.value = `skill-discard:${version.id}`
+    const updated = await contentStore.discardSkillDraft(skill.id)
+    if (updated) inspectSkill(updated)
+    else detailOpen.value = false
+    ElMessage.success(`已放弃草稿 v${version.version}`)
+  } catch (cause) {
+    if (cause instanceof Error) ElMessage.error(cause.message)
+  } finally {
+    actionLoading.value = ''
+  }
+}
+
 function releaseActionLabel(record: SkillReleaseRecord) {
   return {
     published: '发布版本',
@@ -1058,7 +1088,7 @@ onUnmounted(() => clearSkillTestPoll())
           <el-table-column label="版本" width="95"><template #default="scope"><span class="mono">v{{ scope.row.version }}</span></template></el-table-column>
           <el-table-column label="变更说明" min-width="210"><template #default="scope"><div class="version-summary"><strong>{{ scope.row.summary }}</strong><small>{{ scope.row.createdBy }} · {{ scope.row.createdAt }}</small></div></template></el-table-column>
           <el-table-column label="状态" width="95"><template #default="scope"><StatusTag :status="scope.row.status" /></template></el-table-column>
-          <el-table-column label="操作" width="100" fixed="right"><template #default="scope"><el-button v-if="authStore.canManage && scope.row.status === 'published' && scope.row.version !== selectedSkill?.activeVersion" link type="primary" :loading="actionLoading === `skill-rollback:${scope.row.id}`" @click="rollbackSkill(scope.row)">回滚至此</el-button><span v-else class="muted">—</span></template></el-table-column>
+          <el-table-column label="操作" width="100" fixed="right"><template #default="scope"><el-button v-if="authStore.canManage && scope.row.status === 'published' && scope.row.version !== selectedSkill?.activeVersion" link type="primary" :loading="actionLoading === `skill-rollback:${scope.row.id}`" @click="rollbackSkill(scope.row)">回滚至此</el-button><el-button v-else-if="canDiscardSkillDraft(scope.row)" link type="danger" :loading="actionLoading === `skill-discard:${scope.row.id}`" @click="discardSkillDraft(scope.row)">放弃草稿</el-button><span v-else class="muted">—</span></template></el-table-column>
         </el-table>
         <el-pagination v-model:current-page="skillVersionPage" class="list-pagination" background hide-on-single-page layout="prev, pager, next" :total="selectedSkillVersions.length" :page-size="10" />
       </section>

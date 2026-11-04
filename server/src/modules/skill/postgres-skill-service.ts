@@ -20,6 +20,7 @@ import type { DatabaseClient, DatabaseTransaction } from '../../infrastructure/p
 import type { AuditTrail } from '../../domain/audit-trail.ts'
 import { invalidSkillToolReferences } from '../runtime/builtin-tools.ts'
 import type { SkillArtifactStore } from './skill-artifact-store.ts'
+import { lockInstallationKey } from './skill-identity.ts'
 import { BUILTIN_SKILL_NAME_SUFFIX, isReservedBuiltinSkillName, normalizeBuiltinSkillScenarios } from './builtin-skills.ts'
 
 const tenantId = 'tenant-dsh-work'
@@ -739,6 +740,81 @@ export class PostgresSkillService {
     })
     await this.audit(actor.id, 'skill.rollback', input.skillId, 'success', release.note)
     return { skill: await this.requireSkill(input.skillId), release }
+  }
+
+  /**
+   * 放弃安装得到的待发布草稿（例如严格试运行未通过、需要重新上传修正包）。草稿版本与同一安装图中
+   * 仍为草稿的依赖版本标为停用、该安装记录取消，释放待发布指针；版本记录与试运行证据保留，
+   * 已发布版本不受影响。从未发布过的 Skill 放弃后不再出现在列表中，再次安装时沿用同一 Skill 并递增版本号。
+   * 只能从产生该草稿的那次安装的入口 Skill 发起；同一安装图外仍有草稿依赖其中版本时拒绝。
+   * 来自员工提交的草稿只能经“待审核”撤回或拒绝。
+   */
+  async discardDraft(input: { skillId: string; actor: string }) {
+    const actor = await this.requireActor(input.actor)
+    assertSkillId(input.skillId)
+    const [current] = await this.readSkillRows(input.skillId)
+    if (!current) throw skillNotFound(`Skill 不存在：${input.skillId}`)
+    const draftVersionId = current.draftVersionId
+    if (!draftVersionId) throw skillConflict('当前 Skill 没有待发布草稿')
+    if (current.submissionDraft) throw skillConflict('待发布版本来自员工提交，请在“待审核”中撤回或拒绝', 'skill_submission_review_required')
+    const installationId = current.installationId
+
+    const discarded = await this.database.begin(async transaction => {
+      // 入口按草稿所属的那次安装判断：同一 Skill 以前作为入口安装过，不代表这份草稿也是入口。
+      if (installationId) {
+        const [installation] = await transaction<{ skillId: string | null }[]>`
+          select skill_id as "skillId" from skill_installations where tenant_id = ${tenantId} and id = ${installationId}
+        `
+        if (installation?.skillId !== input.skillId) throw skillConflict('这个草稿是安装其他 Skill 时一并带入的依赖，请放弃入口 Skill 的草稿')
+      }
+      // 与安装（installPlan）相同的锁顺序：先按名称键排序取安装锁，再锁 Skill 行，避免与并发安装死锁。
+      const keys = await transaction<{ key: string }[]>`
+        select distinct s.installation_key as key from skills s
+         where s.tenant_id = ${tenantId} and s.installation_key is not null and (s.id = ${input.skillId} or exists (
+           select 1 from skill_versions sv where sv.tenant_id = s.tenant_id and sv.id = s.draft_version_id
+              and sv.status = 'draft' and sv.manifest->>'installationId' = ${installationId ?? ''}))
+         order by key
+      `
+      for (const { key } of keys) await lockInstallationKey(transaction, tenantId, key)
+      const [locked] = await transaction<{ draftVersionId: string | null }[]>`
+        select draft_version_id as "draftVersionId" from skills where tenant_id = ${tenantId} and id = ${input.skillId} for update
+      `
+      if (locked?.draftVersionId !== draftVersionId) throw skillConflict('Skill 状态已发生变化，请刷新后重试')
+      const graph = installationId ? await transaction<{ id: string; skillId: string }[]>`
+        select sv.id, sv.skill_id as "skillId" from skill_versions sv
+          join skills s on s.tenant_id = sv.tenant_id and s.id = sv.skill_id and s.draft_version_id = sv.id
+         where sv.tenant_id = ${tenantId} and sv.status = 'draft' and sv.manifest->>'installationId' = ${installationId}
+         order by s.installation_key
+         for update of s
+      ` : []
+      const versions = [{ id: draftVersionId, skillId: input.skillId }, ...graph.filter(row => row.id !== draftVersionId)]
+      const versionIds = versions.map(row => row.id)
+      // 另一次安装复用了图中的依赖草稿（重复包）时，停用它会让那份草稿无法试运行或发布。
+      const dependents = await transaction<{ name: string }[]>`
+        select distinct parent.name from skill_version_dependencies d
+          join skill_versions parent on parent.tenant_id = d.tenant_id and parent.id = d.skill_version_id
+         where d.tenant_id = ${tenantId} and d.dependency_skill_version_id in ${transaction(versionIds)}
+           and parent.id not in ${transaction(versionIds)} and parent.status <> 'disabled'
+         order by parent.name
+      `
+      if (dependents.length) {
+        throw skillConflict(`草稿中的依赖版本仍被其他 Skill 的版本使用：${dependents.map(row => `“${row.name}”`).join('、')}。请先发布或放弃这些 Skill 的草稿`)
+      }
+      await transaction`update skill_versions set status = 'disabled' where tenant_id = ${tenantId} and id in ${transaction(versionIds)} and status = 'draft'`
+      await transaction`update skills set draft_version_id = null, updated_at = now() where tenant_id = ${tenantId} and draft_version_id in ${transaction(versionIds)}`
+      if (installationId) {
+        await transaction`update skill_installations set status = 'cancelled', updated_at = now() where tenant_id = ${tenantId} and id = ${installationId} and status = 'installed'`
+      }
+      return versions
+    })
+    const note = `放弃待发布草稿 v${current.version}${discarded.length > 1 ? `，连同同一安装带入的 ${discarded.length - 1} 个依赖草稿` : ''}；已发布版本不受影响。`
+    await this.audit(actor.id, 'skill.draft.discard', input.skillId, 'success', note)
+    const [skill] = await this.readSkillRows(input.skillId)
+    return {
+      skill: skill ? toSkillDefinition(skill) : null,
+      discardedVersionIds: discarded.map(row => row.id),
+      discardedSkillIds: [...new Set(discarded.map(row => row.skillId))],
+    }
   }
 
   /**

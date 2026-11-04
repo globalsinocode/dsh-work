@@ -1246,6 +1246,43 @@
         }
       }
     },
+    "/skills/{skillId}/draft/discard": {
+      "post": {
+        "operationId": "discardSkillDraft",
+        "summary": "放弃安装得到的待发布草稿：草稿版本与同一安装图中仍为草稿的依赖版本标为停用、安装记录取消，释放待发布指针；版本记录与试运行证据保留，已发布版本不受影响。从未发布过的 Skill 放弃后返回 skill 为 null。来自员工提交的草稿须经“待审核”处理（skill_submission_review_required）；写审计 skill.draft.discard",
+        "parameters": [
+          {
+            "name": "skillId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error",
+            "description": "当前管理员身份或操作权限不足"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error",
+            "description": "Skill 不存在（skill_not_found）"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error",
+            "description": "没有待发布草稿、草稿来自员工提交或属于其他 Skill 的依赖，或状态已变化"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error",
+            "description": "内部数据或持久化故障；仅返回安全摘要与 traceId"
+          }
+        }
+      }
+    },
     "/skills/{skillId}/visibility": {
       "put": {
         "operationId": "setSkillVisibility",

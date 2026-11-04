@@ -532,12 +532,13 @@ export class AdminSkillInstallationService {
     const [sameVersion] = await tx<{ versionId: string; version: string }[]>`
       select id as "versionId", version from skill_versions
       where tenant_id = ${tenant} and skill_id = ${existing.skillId} and package_sha256 = ${pkg.sha256}
+        and status <> 'disabled'
       order by created_at desc, id desc limit 1
     `
     if (sameVersion) return { skillId: existing.skillId, ...sameVersion, action: 'duplicate' }
     if (existing.draftVersionId) {
       const [draft] = await tx<{ version: string }[]>`select version from skill_versions where tenant_id = ${tenant} and id = ${existing.draftVersionId}`
-      throw new RequestError(409, 'skill_draft_conflict', `Skill“${pkg.name}”已有内容不同的待验证草稿${draft ? ` v${draft.version}` : ''}，本次安装未覆盖。请先发布或删除现有草稿后重试。`)
+      throw new RequestError(409, 'skill_draft_conflict', `Skill“${pkg.name}”已有内容不同的待验证草稿${draft ? ` v${draft.version}` : ''}，本次安装未覆盖。请先发布，或在 Skill 详情的“版本历史”中放弃该草稿后重试。`)
     }
     const [latest] = await tx<{ version: string }[]>`
       select version from skill_versions where tenant_id = ${tenant} and skill_id = ${existing.skillId}
@@ -553,7 +554,7 @@ export class AdminSkillInstallationService {
       where tenant_id = ${tenant} and id = ${identity.skillId} for update
     `
     if (existing?.draftVersionId) {
-      throw new RequestError(409, 'skill_draft_conflict', `Skill“${pkg.name}”的依赖内容已变化，但当前已有待验证草稿，本次安装未覆盖。请先发布或删除现有草稿后重试。`)
+      throw new RequestError(409, 'skill_draft_conflict', `Skill“${pkg.name}”的依赖内容已变化，但当前已有待验证草稿，本次安装未覆盖。请先发布，或在 Skill 详情的“版本历史”中放弃该草稿后重试。`)
     }
     const [latest] = await tx<{ version: string }[]>`
       select version from skill_versions where tenant_id = ${tenant} and skill_id = ${identity.skillId}

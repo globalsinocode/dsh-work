@@ -73,6 +73,12 @@ export function registerSkillRoutes(router: Router, service: PostgresSkillServic
       actor: requireRequestIdentity(context, 'admin').userId,
     }), 'postgres')
   })
+  router.post(`${basePath}/skills/:skillId/draft/discard`, async (_request, context) => {
+    return envelope('admin', await service.discardDraft({
+      skillId: context.params['skillId'] ?? '',
+      actor: requireRequestIdentity(context, 'admin').userId,
+    }), 'postgres')
+  })
   router.post(`${basePath}/skills/rollback`, async (request, context) => {
     const input = await readJsonBody<{ skillId: string; version: string }>(request)
     return envelope('admin', await service.rollback({

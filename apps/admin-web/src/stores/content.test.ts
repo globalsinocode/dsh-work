@@ -25,6 +25,7 @@ const api = vi.hoisted(() => ({
   reconcileGrantSources: vi.fn(),
   updateRuntimeConfiguration: vi.fn(),
   rollbackSkill: vi.fn(),
+  discardSkillDraft: vi.fn(),
   setAgentWorkspaceJoin: vi.fn(),
   setSkillStatus: vi.fn(),
 }))
@@ -80,6 +81,26 @@ describe('admin content store Skill version state', () => {
     expect(store.skillVersions.find(item => item.id === 'skill-version-draft')?.status).toBe('disabled')
     expect(store.skillVersions.find(item => item.id === 'skill-version-target')?.status).toBe('published')
     expect(store.skillReleaseRecords).toEqual([release])
+  })
+
+  it('reloads Skills and versions after discarding, so dependency drafts discarded alongside update too', async () => {
+    const { useContentStore } = await import('./content')
+    const store = useContentStore()
+    store.$patch({
+      skills: [makeSkill({ version: '0.1.0', status: 'draft' }), makeSkill({ id: 'skill-dependency', version: '0.1.0', status: 'draft' })],
+      skillVersions: [makeVersion({ id: 'skill-version-draft', version: '0.1.0', status: 'draft' })],
+    })
+    const remaining = makeSkill({ id: 'skill-other', version: '1.0.0', status: 'published' })
+    const disabled = makeVersion({ id: 'skill-version-draft', version: '0.1.0', status: 'disabled' })
+    api.discardSkillDraft.mockResolvedValue({ skill: null, discardedVersionIds: ['skill-version-draft', 'skill-version-dependency'], discardedSkillIds: ['skill-reporting', 'skill-dependency'] })
+    api.getSkills.mockResolvedValue([remaining])
+    api.getSkillVersions.mockResolvedValue([disabled])
+
+    await expect(store.discardSkillDraft('skill-reporting')).resolves.toBeNull()
+
+    expect(api.discardSkillDraft).toHaveBeenCalledWith('skill-reporting')
+    expect(store.skills).toEqual([remaining])
+    expect(store.skillVersions).toEqual([disabled])
   })
 
   it('loads only audit endpoints for an audit-only session', async () => {

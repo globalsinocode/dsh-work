@@ -299,3 +299,34 @@
 另需观察：模型调用 `activate_skill` 时传入的名称能否唯一匹配（目录行形如“文件分析（平台内置）（dsh-work-file-analysis@1.0.0）”，只传“文件分析”会得到“没有唯一匹配”）。
 
 **验收：** 留存 Run/Attempt、激活记录、成果与版本；与不装配内置 Skill 的同题产出对比的人工结论写入发布说明。P0/P1 绿灯不能替代本层。
+
+### SKILL-DRAFT-01 放弃未通过的安装草稿并上传修正包
+
+**优先级：** P1
+**角色：** 平台管理员
+**运行层级：** 专用可丢弃 PostgreSQL 与 Mock ACP Worker；管理端组件测试
+**前置数据：** 一个经 ZIP 安装、尚未发布的 Skill 草稿；同名的修正包
+**spec：** `server/src/infrastructure/postgres/admin-skill-installation.integration.test.ts`、`apps/admin-web/src/stores/content.test.ts`
+
+1. 草稿严格试运行未通过后上传修正包：安装被拒绝，提示在 Skill 详情的“版本历史”中放弃该草稿。
+2. 在“版本历史”的草稿行点“放弃草稿”并确认：从未发布过的 Skill 从列表移除；已发布过的 Skill 回到当前已发布版本。
+3. 再次上传修正包：同一 Skill 生成新的草稿版本（版本号递增），可以试运行并发布。
+4. 经链接安装带依赖的 Skill：放弃入口 Skill 的草稿时，同一安装带入的依赖草稿一并停用，管理端列表随之更新；直接放弃依赖草稿被拒绝并提示放弃入口 Skill（即使该依赖以前单独作为入口安装过）。
+5. 另一次安装复用了同一份依赖草稿时，放弃被拒绝并列出复用它的 Skill；先放弃那个 Skill 的草稿后可以放弃。
+6. 来自员工提交的草稿被拒绝放弃，仍在“待审核”中处理。
+
+**验收：** 被放弃的版本标为停用、安装记录取消、审计记录 `skill.draft.discard`；试运行证据与已发布版本不受影响；与停用版本内容相同的包重新安装时生成新草稿，不复用停用版本。
+
+### SKILL-PY-P2 脚本型 Skill 读取员工上传的原始表格
+
+**优先级：** P2
+**角色：** 平台管理员、员工
+**运行层级：** 真实 DSH Run/Attempt、Runtime Adapter 与执行容器
+**前置数据：** 样例 Skill 包 `scripts/acceptance/fixtures/xlsx-region-summary/`（含 `scripts/summarize.py` 与 `requirements.txt`）；一份含“区域”“金额”列的 xlsx
+**spec：** 手工执行；平台部分另由 `server/src/modules/runtime/execution-container.e2e.test.ts`（`python_execute` 读原始 xlsx）覆盖
+
+1. 管理员经 ZIP 安装样例包：安装计划兼容，`python_execute` 与 `openpyxl` 已满足。
+2. 严格试运行：模型无附件时不带参数运行脚本自检，Python 入口执行成功，说明自检结果不是业务结果；管理员确认后发布。
+3. 员工在 Skill 广场选择该 Skill，上传 xlsx 并要求按区域汇总：`python_execute` 以 `input/original/` 下原始文件的绝对路径运行脚本，汇总数值与表格一致，汇总 xlsx 与 md 登记为成果并可预览、下载。
+
+**验收：** 留存 Run/Attempt、Python 执行记录与成果；数值人工核对。P0/P1 与真实 Docker 用例不能替代本层。

@@ -1164,7 +1164,7 @@ describe('DSH ACP Runtime Adapter', () => {
     assert.equal(refused.status, 'failed', 'fails closed without a loader')
 
     const prompt = renderSystemPrompt(compileRuntimeManifest(withOriginal('run-original-prompt')).manifest)
-    assert.match(prompt, /原始文件（只读，供 bash 中的程序处理[^）]*）：input\/original\/01-data\.xlsx/)
+    assert.match(prompt, /原始文件（只读，供 bash 中的程序或 python_execute 运行的 Skill 脚本处理[^）]*）：input\/original\/01-data\.xlsx/)
     assert.match(prompt, /基于原始文件处理，把修改后的完整文件写入 output\/数据\.xlsx，平台会登记为第 2 版/)
     assert.doesNotMatch(prompt, /读取路径（解析文本）/, 'no text path when the file has none')
   })
