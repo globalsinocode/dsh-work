@@ -3,6 +3,7 @@ import { defineStore } from 'pinia'
 import { ElMessage } from 'element-plus'
 
 import { workbenchApi } from '../api/client'
+import { isDingTalkContainer } from '../container/dingtalk'
 import type { UserProfile, UserRole, WorkbenchSession } from '../types/domain'
 
 export const roleLabels: Record<UserRole, string> = {
@@ -73,8 +74,8 @@ export const useAuthStore = defineStore('workbench-auth', () => {
       try {
         const response = await fetch('/auth/workbench/logout', { method: 'POST', credentials: 'same-origin' })
         if (!response.ok) throw new Error('退出登录失败，请重试')
-        // 带 logged_out：钉钉容器内的登录页不再自动免登，否则刚退出就被重新登录。
-        window.location.assign('/login?logged_out=1')
+        // 钉钉容器内带 logged_out：登录页不再自动免登，否则刚退出就被重新登录。桌面端不变。
+        window.location.assign(isDingTalkContainer() ? '/login?logged_out=1' : '/login')
       } catch (cause) {
         ElMessage.error(cause instanceof Error ? cause.message : '退出登录失败')
       }
