@@ -78,11 +78,12 @@ export async function bindFromSelfTicket(transaction: DatabaseTransaction, userI
     ) on conflict do nothing returning id
   `
   if (!created) {
-    // 并发绑定：同一平台账号的另一请求先提交时，仍按“已有其他绑定”提示。
-    const [own] = await transaction<{ externalUserId: string }[]>`
-      select external_user_id as "externalUserId" from external_account_bindings
+    // 并发绑定：同一平台账号的另一请求先提交。绑定的是同一个钉钉账号时视为已绑定，否则按“已有其他绑定”提示。
+    const [own] = await transaction<{ id: string; externalUserId: string }[]>`
+      select id, external_user_id as "externalUserId" from external_account_bindings
        where tenant_id = ${tenantId} and channel = ${DINGTALK_CHANNEL} and user_id = ${userId} and status = 'valid'
     `
+    if (own?.externalUserId === ticket.externalUserId) return { status: 'bound', bindingId: own.id, created: false }
     return { status: 'refused', reason: own ? 'account_has_other_binding' : 'dingtalk_account_bound_to_other' }
   }
   return { status: 'bound', bindingId, created: true }
