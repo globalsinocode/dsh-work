@@ -31,8 +31,13 @@ import { registerKnowledgeAdminRoutes } from './http/admin/knowledge-admin-route
 import { registerWorkspaceTimelineRoutes } from './http/workbench/workspace-timeline-routes.ts'
 import { registerOidcRoutes } from './http/auth-routes.ts'
 import { registerLocalAuthRoutes } from './http/local-auth-routes.ts'
+import { registerDingTalkAuthRoutes } from './http/dingtalk-auth-routes.ts'
 import { registerAuthConfigurationRoutes, registerSessionRoutes } from './http/session-routes.ts'
 import { LocalAuthService } from './modules/identity/local-auth-service.ts'
+import { DingTalkAuthService } from './modules/identity/dingtalk/dingtalk-auth-service.ts'
+import { loadDingTalkConfiguration } from './modules/identity/dingtalk/dingtalk-config.ts'
+import { UnconfiguredDingTalkDirectory } from './modules/identity/dingtalk/dingtalk-directory.ts'
+import { DingTalkOpenApiDirectory } from './modules/identity/dingtalk/dingtalk-open-api.ts'
 import { checkDatabase, createDatabase } from './infrastructure/postgres/database.ts'
 import { runMigrations } from './infrastructure/postgres/migration-runner.ts'
 import { PostgresOperationsService } from './modules/admin/application/postgres-operations-service.ts'
@@ -147,10 +152,15 @@ async function start() {
   const directorySync = identityConfiguration.mode === 'oidc'
     ? new IdentityDirectorySyncService(identityConfiguration, database)
     : null
-  const localAuthentication = new LocalAuthService(localIdentityConfiguration(identityConfiguration), database)
+  // 钉钉企业内部应用（钉钉接入方案 DT-S1）：未配置时免登接口明确返回不可用；测试替身不在生产启动中接线。
+  const dingtalkConfiguration = loadDingTalkConfiguration(process.env)
+  const dingtalkDirectory = dingtalkConfiguration ? new DingTalkOpenApiDirectory(dingtalkConfiguration) : new UnconfiguredDingTalkDirectory()
+  const localAuthentication = new LocalAuthService(localIdentityConfiguration(identityConfiguration), database, dingtalkConfiguration)
+  const dingtalkAuthentication = new DingTalkAuthService(localIdentityConfiguration(identityConfiguration), database, dingtalkDirectory, dingtalkConfiguration)
   const router = new Router({ authenticateApi: portalAuthenticator(localAuthentication, oidcAuthentication) })
   if (oidcAuthentication) registerOidcRoutes(router, oidcAuthentication, localAuthentication)
   registerLocalAuthRoutes(router, localAuthentication, oidcAuthentication)
+  registerDingTalkAuthRoutes(router, dingtalkAuthentication, localAuthentication, oidcAuthentication)
   registerSessionRoutes(router)
   registerAuthConfigurationRoutes(router, () => ({ mode: identityConfiguration.mode, localEnabled: true, aiHubEnabled: Boolean(oidcAuthentication) }))
   registerIdentityAdministrationRoutes(
