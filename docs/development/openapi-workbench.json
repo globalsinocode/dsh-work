@@ -40,6 +40,7 @@
         }
       }
     },
+    "/me/dingtalk-binding": {"get": {"operationId": "getMyDingTalkBinding", "summary": "用户中心 › 钉钉：本人的钉钉绑定（钉钉接入 DT-S1）。enabled 为部署是否配置了钉钉应用（AI Hub 账号恒为 false）；status 为 bound / unbound / invalid，含钉钉姓名与部门、绑定方式（本人 / 管理员及其姓名）、失效原因与是否被锁定自行绑定", "responses": {"200": {"$ref": "#/components/responses/Ok"}}}, "delete": {"operationId": "unbindMyDingTalk", "summary": "员工自行解除钉钉绑定：绑定失效并在同一事务中按 binding_id 撤销钉钉会话（含当前的钉钉会话），写审计；不锁定自行绑定，之后在钉钉内登录一次可重新绑定。没有有效绑定时返回 404", "responses": {"200": {"$ref": "#/components/responses/Ok"}, "404": {"$ref": "#/components/responses/Error"}}}},
     "/me/preferences": {
       "get": {
         "operationId": "getMyPreferences",

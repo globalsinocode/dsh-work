@@ -2,6 +2,7 @@ import { createRouter, createWebHistory } from 'vue-router'
 
 import { pinia } from '@/stores'
 import { useAuthStore } from '@/stores/auth'
+import { setContainerTitle } from '@/container/dingtalk'
 import { useUiModeStore } from '@/stores/ui-mode'
 import { locationForMode } from './mode-routes'
 
@@ -189,6 +190,8 @@ router.beforeEach(async (to) => {
 
 router.afterEach((to) => {
   document.title = `${String(to.meta.title ?? '员工工作台')} · dsh-work`
+  // 钉钉容器内导航栏标题随页面变化（钉钉接入方案 4.3 容器适配）；钉钉外不做任何事。
+  setContainerTitle(String(to.meta.title ?? 'dsh-work'))
 })
 
 export default router

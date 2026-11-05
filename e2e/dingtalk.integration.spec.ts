@@ -1,10 +1,45 @@
-import { expect, test, type Page } from '@playwright/test'
+import { expect, test, type Browser, type Page } from '@playwright/test'
 
 // P1 钉钉接入旅程（e2e/catalog/dingtalk.md）：真实应用 + 可丢弃数据库 + 假钉钉开放平台 HTTP 服务
 // （scripts/testing/dingtalk-browser.ts）。不是真实钉钉验收（DT-P2）。
 // 夹具账号：管理员陈默；赵宁、王一凡、孙悦、李响未绑定；林岚本人绑定；何青管理员代绑；周婷需改初始密码；吴凡已被锁定。
 
 const adminOrigin = `http://localhost:${process.env.DSH_WORK_DINGTALK_E2E_ADMIN_PORT ?? '4681'}`
+const workbenchOrigin = `http://localhost:${process.env.DSH_WORK_DINGTALK_E2E_WORKBENCH_PORT ?? '4675'}`
+const fakeDingTalk = `http://127.0.0.1:${process.env.DSH_WORK_DINGTALK_E2E_FAKE_PORT ?? '4699'}`
+const employeePassword = 'Employee12345'
+const dingTalkUserAgent = 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 AliApp(DingTalk/7.6.0) DingTalk(7.6.0)'
+
+/**
+ * 钉钉容器替身：钉钉 User-Agent + 页面注入的 `window.dd`。`requestAuthCode` 向假钉钉服务为指定成员申请
+ * 一次性授权码（真实钉钉由 JSAPI 签发）。只用于 P1，不能代替真机验收。
+ */
+async function dingTalkPage(browser: Browser, dingUserId: string) {
+  const context = await browser.newContext({ userAgent: dingTalkUserAgent, viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true })
+  await context.addInitScript(({ fake, userId }) => {
+    const target = window as unknown as { dd: unknown; __ddTitle?: string }
+    target.dd = {
+      runtime: { permission: { requestAuthCode: ({ corpId, onSuccess, onFail }: { corpId: string; onSuccess: (result: { code: string }) => void; onFail: (error: unknown) => void }) => {
+        if (corpId !== 'ding-corp-e2e') return onFail({ errorMessage: 'corpId 不符' })
+        void fetch(`${fake}/__test/auth-code`, { method: 'POST', body: JSON.stringify({ userId }) })
+          .then(response => response.json() as Promise<{ code: string }>).then(result => onSuccess({ code: result.code }), onFail)
+      } } },
+      biz: { navigation: { setTitle: ({ title }: { title: string }) => { target.__ddTitle = title }, close: () => undefined } },
+    }
+  }, { fake: fakeDingTalk, userId: dingUserId })
+  return { context, page: await context.newPage() }
+}
+
+async function passwordForm(page: Page, account: string, password = employeePassword) {
+  await page.getByLabel('登录账号', { exact: true }).fill(account)
+  await page.getByLabel('密码', { exact: true }).fill(password)
+}
+
+async function expectCollabShell(page: Page) {
+  const navigation = page.getByRole('navigation', { name: '协作模式主导航' })
+  await expect(navigation).toBeVisible()
+  for (const label of ['对话', 'AI 同事', '群组', '定时任务']) await expect(navigation.getByRole('button', { name: label })).toBeVisible()
+}
 
 async function adminLogin(page: Page) {
   await page.goto(`${adminOrigin}/login`)
@@ -107,5 +142,126 @@ test.describe('DT-ADM-03 管理员代绑、解绑与钉钉集成页', () => {
 
     await page.getByRole('tab', { name: '通知投递' }).click()
     await expect(page.getByText('钉钉工作通知在下一阶段（DT-S2）启用')).toBeVisible()
+  })
+})
+
+test.describe('DT-EMP-01 钉钉内首次登录即绑定与拒绝情形', () => {
+  test('未绑定时显示绑定说明，登录即绑定并进入协作模式；之后在钉钉内免登', async ({ browser }) => {
+    const { context, page } = await dingTalkPage(browser, 'ding-sunyue')
+    await page.goto(`${workbenchOrigin}/c/groups`)
+    await expect(page.getByRole('note', { name: '钉钉账号绑定说明' })).toContainText('当前钉钉账号：孙悦（销售部）')
+    await expect(page.getByRole('note', { name: '钉钉账号绑定说明' })).toContainText('登录后将绑定此钉钉账号')
+    await passwordForm(page, 'sunyue@example.invalid')
+    await page.getByRole('button', { name: '登录并绑定' }).click()
+    await expect(page).toHaveURL(/\/c\/groups/)
+    await expect(page.getByRole('status').filter({ hasText: '已绑定钉钉账号，之后在钉钉内打开无需再登录' })).toBeVisible()
+    await expectCollabShell(page)
+    await expect.poll(() => page.evaluate(() => (window as unknown as { __ddTitle?: string }).__ddTitle)).toBeTruthy()
+
+    // 关闭后再次打开（模拟会话 Cookie 不在）：自动免登，不出现登录表单。
+    await context.clearCookies()
+    await page.goto(`${workbenchOrigin}/c/chats`)
+    await expect(page).toHaveURL(/\/c\/chats/)
+    await expectCollabShell(page)
+    await expect(page.getByLabel('登录账号', { exact: true })).toHaveCount(0)
+    await context.close()
+  })
+
+  test('需先修改初始密码：改密后才绑定', async ({ browser }) => {
+    const { context, page } = await dingTalkPage(browser, 'ding-zhouting')
+    await page.goto(`${workbenchOrigin}/c/groups`)
+    await passwordForm(page, 'zhouting@example.invalid')
+    await page.getByRole('button', { name: '登录并绑定' }).click()
+    await expect(page.getByRole('heading', { name: '请先修改初始密码' })).toBeVisible()
+    await expect(page.getByText('修改后才会绑定钉钉账号')).toBeVisible()
+    await page.getByLabel('当前密码', { exact: true }).fill(employeePassword)
+    await page.getByLabel('新密码', { exact: true }).fill('Changed12345')
+    await page.getByLabel('确认新密码', { exact: true }).fill('Changed12345')
+    await page.getByRole('button', { name: '修改并绑定' }).click()
+    await expect(page.getByRole('status').filter({ hasText: '密码已修改，并已绑定钉钉账号' })).toBeVisible()
+    await expectCollabShell(page)
+    await context.close()
+  })
+
+  test('本账号已绑定其他钉钉：说明原因，可不绑定继续使用', async ({ browser }) => {
+    const { context, page } = await dingTalkPage(browser, 'ding-stranger')
+    await page.goto(`${workbenchOrigin}/c/groups`)
+    await expect(page.getByRole('note', { name: '钉钉账号绑定说明' })).toContainText('陌生人')
+    await passwordForm(page, 'heqing@example.invalid')
+    await page.getByRole('button', { name: '登录并绑定' }).click()
+    await expect(page.getByRole('alert')).toContainText('你的账号已绑定另一个钉钉账号')
+    await page.getByRole('button', { name: '不绑定，继续使用' }).click()
+    await expect(page.getByRole('status').filter({ hasText: '本次未绑定钉钉' })).toBeVisible()
+    await expectCollabShell(page)
+    await context.close()
+  })
+
+  test('管理员已锁定自行绑定：说明原因，可不绑定继续使用', async ({ browser }) => {
+    const { context, page } = await dingTalkPage(browser, 'ding-wufan')
+    await page.goto(`${workbenchOrigin}/c/groups`)
+    await passwordForm(page, 'wufan@example.invalid')
+    await page.getByRole('button', { name: '登录并绑定' }).click()
+    await expect(page.getByRole('alert')).toContainText('管理员已暂停你的钉钉自行绑定')
+    await page.getByRole('button', { name: '不绑定，继续使用' }).click()
+    await expectCollabShell(page)
+    await context.close()
+  })
+
+  test('在钉钉内退出登录后不会被立即自动登录回去', async ({ browser }) => {
+    const { context, page } = await dingTalkPage(browser, 'ding-heqing')
+    await page.goto(`${workbenchOrigin}/c/chats`)
+    await expectCollabShell(page)
+    await page.getByRole('button', { name: '打开用户菜单' }).click()
+    await page.getByRole('menuitem', { name: '退出登录' }).click()
+    await expect(page).toHaveURL(/\/login\?logged_out=1/)
+    await expect(page.getByText('已退出登录。从钉钉工作台重新打开 dsh-work 时会再次自动登录。')).toBeVisible()
+    await expect(page.getByLabel('登录账号', { exact: true })).toBeVisible()
+    await expect(page.getByRole('navigation', { name: '协作模式主导航' })).toHaveCount(0)
+    await context.close()
+  })
+
+  test('默认工作模式的员工在钉钉内进入协作模式，桌面浏览器仍是工作模式且偏好不变', async ({ browser }) => {
+    const { context, page } = await dingTalkPage(browser, 'ding-linlan')
+    await page.goto(`${workbenchOrigin}/workbench`)
+    await expectCollabShell(page)
+    await expect(page.getByRole('button', { name: '切换模式' })).toHaveCount(0)
+    await context.close()
+
+    const desktop = await browser.newContext()
+    const desktopPage = await desktop.newPage()
+    await desktopPage.goto(`${workbenchOrigin}/login`)
+    await passwordForm(desktopPage, 'linlan@example.invalid')
+    await desktopPage.getByRole('button', { name: '登录' }).click()
+    await expect(desktopPage.getByRole('navigation', { name: '员工工作台主导航' })).toBeVisible()
+    const preferences = await desktopPage.evaluate(() => fetch('/api/workbench/v1/me/preferences').then(response => response.json()))
+    expect(preferences.data.uiMode).toBe('work')
+    await desktop.close()
+  })
+})
+
+test.describe('DT-EMP-02 用户中心 › 钉钉', () => {
+  test('查看本人绑定并解除；解除后钉钉内需重新登录', async ({ browser }) => {
+    const { context, page } = await dingTalkPage(browser, 'ding-linlan')
+    await page.goto(`${workbenchOrigin}/settings?section=dingtalk`)
+    const section = page.getByRole('region', { name: '钉钉' })
+    await expect(section).toContainText('已绑定')
+    await expect(section).toContainText('林岚（市场部）')
+    await expect(section).toContainText('本人在钉钉内登录时绑定')
+    await section.getByRole('button', { name: '解除绑定' }).click()
+    const dialog = page.getByRole('dialog', { name: '解除钉钉绑定？' })
+    await expect(dialog).toContainText('钉钉内的登录会立即失效')
+    await dialog.getByRole('button', { name: '解除绑定' }).click()
+    // 当前就是钉钉内的登录：会话随解绑失效，回到登录页，并重新显示绑定说明。
+    await expect(page.getByRole('note', { name: '钉钉账号绑定说明' })).toContainText('林岚')
+    await context.close()
+  })
+
+  test('管理员代绑的账号显示核实提醒', async ({ browser }) => {
+    const { context, page } = await dingTalkPage(browser, 'ding-heqing')
+    await page.goto(`${workbenchOrigin}/settings`)
+    const section = page.getByRole('region', { name: '钉钉' })
+    await expect(section).toContainText('管理员陈默代为绑定')
+    await expect(section).toContainText('如果不是你本人的钉钉账号，请立即解除绑定并联系管理员')
+    await context.close()
   })
 })

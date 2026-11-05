@@ -2,6 +2,7 @@ import { ref } from 'vue'
 import { defineStore } from 'pinia'
 
 import { workbenchApi } from '../api/client'
+import { isDingTalkContainer } from '../container/dingtalk'
 import type { UiMode } from '../types/domain'
 
 const cachePrefix = 'dsh-work:ui-mode:'
@@ -12,9 +13,13 @@ const cachePrefix = 'dsh-work:ui-mode:'
  * 服务端偏好为准，跨设备一致；浏览器按账号缓存一份，只用于首屏直接渲染正确的壳层。
  * 有缓存时先用缓存、后台向服务端核对；本设备从未缓存时等待服务端（读取失败按缺省的
  * 工作模式）。切换等服务端保存成功后才生效，失败时保持原模式。
+ *
+ * 钉钉容器内一律使用协作模式（钉钉接入方案 DT25）：不读取、不修改员工保存的偏好，也不写本地缓存，
+ * 回到桌面浏览器仍按偏好显示。
  */
 export const useUiModeStore = defineStore('workbench-ui-mode', () => {
-  const mode = ref<UiMode>('work')
+  const containerLocked = isDingTalkContainer()
+  const mode = ref<UiMode>(containerLocked ? 'collab' : 'work')
   const switching = ref(false)
   let userId: string | undefined
   // 本设备没有缓存时，首个导航等待服务端偏好，避免先渲染错误的壳层再跳转。
@@ -23,6 +28,11 @@ export const useUiModeStore = defineStore('workbench-ui-mode', () => {
   let revision = 0
 
   async function ensureLoaded(nextUserId: string) {
+    if (containerLocked) {
+      userId = nextUserId
+      mode.value = 'collab'
+      return
+    }
     if (userId === nextUserId) return blockingLoad
     userId = nextUserId
     const current = ++revision
@@ -49,6 +59,7 @@ export const useUiModeStore = defineStore('workbench-ui-mode', () => {
 
   /** 保存为本人偏好；成功返回 true。界面与地址由壳层随 `mode` 变化切换。 */
   async function setMode(next: UiMode) {
+    if (containerLocked) return next === mode.value
     if (next === mode.value || switching.value) return next === mode.value
     switching.value = true
     const forUserId = userId
@@ -64,7 +75,7 @@ export const useUiModeStore = defineStore('workbench-ui-mode', () => {
     }
   }
 
-  return { mode, switching, ensureLoaded, setMode }
+  return { mode, switching, containerLocked, ensureLoaded, setMode }
 })
 
 function readCache(userId: string): UiMode | undefined {

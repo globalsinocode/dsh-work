@@ -19,6 +19,8 @@ import { ModelGovernanceService } from '../../modules/model/model-governance-ser
 import { testApiAuthenticator } from '../test-identity.ts'
 import { AdminQueryService } from './admin-query-service.ts'
 import { MemoryUserPreferenceStore } from './memory-user-preferences.ts'
+import { MemoryDingTalkBindingStore } from './memory-dingtalk-binding.ts'
+import { registerDingTalkBindingRoutes } from '../../http/workbench/dingtalk-binding-routes.ts'
 import { MemoryConversationTargetStore } from './memory-conversation-targets.ts'
 import { MemoryOrganizationStore } from './memory-organization.ts'
 import { MemoryUserNotificationStore } from './memory-user-notifications.ts'
@@ -48,6 +50,7 @@ export function createSmokeRouter() {
   registerWorkbenchRoutes(router, workbenchQueries)
   registerSmokeProjectRoutes(router)
   registerUserPreferenceRoutes(router, new MemoryUserPreferenceStore(), 'prototype-memory')
+  registerDingTalkBindingRoutes(router, new MemoryDingTalkBindingStore(), 'prototype-memory')
   registerConversationTargetRoutes(router, new MemoryConversationTargetStore(repository), undefined, 'prototype-memory')
   registerUserNotificationRoutes(router, new MemoryUserNotificationStore(), undefined, 'prototype-memory')
   const knowledge = new MemoryKnowledgeBaseStore()

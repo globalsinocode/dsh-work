@@ -28,9 +28,9 @@ export function registerSessionRoutes(router: Router) {
 /** Login options for both portals; the login pages read it before showing the AI Hub entry. */
 export function registerAuthConfigurationRoutes(
   router: Router,
-  describe: () => { mode: string; localEnabled: boolean; aiHubEnabled: boolean },
+  describe: (audience: 'workbench' | 'admin') => { mode: string; localEnabled: boolean; aiHubEnabled: boolean; dingtalk?: { corpId: string } },
 ) {
-  for (const audience of ['workbench', 'admin']) {
-    router.get(`/auth/${audience}/configuration`, () => describe())
+  for (const audience of ['workbench', 'admin'] as const) {
+    router.get(`/auth/${audience}/configuration`, () => describe(audience))
   }
 }
