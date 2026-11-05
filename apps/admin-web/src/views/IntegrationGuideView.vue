@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Connection, Document, Download, Key, Lock, Monitor, Refresh } from '@element-plus/icons-vue'
+import { Connection, Document, Download, Key, Lock, Monitor, Refresh, Iphone } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 
 import guideMarkdown from '../../../../docs/development/mobile-integration-guide.md?raw'
@@ -34,7 +34,7 @@ function downloadGuide() {
       <ul class="guide-list">
         <li>移动端使用独立工程开发，通过浏览器访问 dsh-work 服务端 API，不引入第二套执行链路。</li>
         <li>移动端入口（独立端口或二级域名）必须由自身网关/nginx 反代 <code>/api</code> 与 <code>/auth</code> 到 dsh-work 服务端，浏览器视角保持同源；服务端不提供 CORS，禁止跨源直连 API。</li>
-        <li>移动端 origin 登记到服务端 <code>DSH_WORK_WORKBENCH_ORIGINS</code>；优先独立账号登录，<strong>不</strong>配置 AI Hub 回调、不集成 AI Hub。</li>
+        <li>移动端 origin 登记到服务端 <code>DSH_WORK_WORKBENCH_ORIGINS</code>；优先独立账号登录，<strong>不</strong>配置 AI Hub 回调、不集成 AI Hub。只有配置了 AI Hub 时才要求所有员工端 origin 与 <code>DSH_WORK_WORKBENCH_PORT</code> 同端口；校验不过时服务不报错，而是静默回退为本地模式并关闭 AI Hub 登录。</li>
         <li>二级域名与桌面端天然隔离会话；同 IP 不同端口会共享 <code>dsh_work_local_session</code> Cookie（Cookie 按 host 隔离、不认端口）。</li>
       </ul>
     </section>
@@ -49,6 +49,19 @@ function downloadGuide() {
         <li>移动端不持有 token，不调用 OIDC 登录；会话失效返回 <code>401 authentication_required</code>，应引导用户重新走独立登录。</li>
         <li>登出：<code>POST /auth/workbench/logout</code>（或 GET）；切换账号走 <code>/auth/workbench/switch-account</code>。</li>
         <li>会话角色、权限和数据范围由 dsh-work 本地配置，客户端传入的任何权限字段都会被忽略。</li>
+      </ul>
+    </section>
+
+    <section class="content-panel guide-section">
+      <header class="guide-section__heading">
+        <el-icon><Iphone /></el-icon>
+        <h2>钉钉容器内（H5 微应用）</h2>
+      </header>
+      <ul class="guide-list">
+        <li>员工端在钉钉客户端内运行时，可用钉钉免登作为附加方式：<code>GET /auth/workbench/configuration</code> 返回 <code>dingtalk.corpId</code>，JSAPI 取一次性授权码后 <code>POST /auth/workbench/dingtalk/login</code>。</li>
+        <li>没有有效绑定时返回服务端保存的单次待绑定凭证；用账号密码 + 凭证 <code>POST /auth/workbench/dingtalk/bind-login</code> 登录并绑定。客户端不能指定钉钉 userid。</li>
+        <li>公网入口（Mac mini 部署下使用员工端端口 4174，网关保留原始 Host）只转发员工端页面、<code>/api/workbench/</code> 与 <code>/auth/workbench/</code> 下显式列出的路径，并按客户端 IP 限流；管理端不上公网。见部署手册第 14 节。</li>
+        <li>钉钉容器内一律使用协作模式，不修改模式偏好；容器识别只用于界面。真机表现（返回键、软键盘、上传下载）以钉钉验收为准。</li>
       </ul>
     </section>
 

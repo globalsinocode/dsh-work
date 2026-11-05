@@ -142,6 +142,24 @@ test('invalid optional AI Hub configuration preserves password authentication wi
   assert.throws(() => loadStartupIdentityConfiguration({ ...startupEnvironment, DSH_WORK_SESSION_SECRET: '' }))
   assert.throws(() => loadStartupIdentityConfiguration({ ...startupEnvironment, DSH_WORK_ADMIN_ORIGINS: 'not-a-url' }))
 })
+
+// 钉钉接入方案 4.3 与部署手册第 14 节：公网 443 员工端入口在配置了 AI Hub 时静默回退为本地模式。
+test('a public 443 workbench origin silently disables AI Hub while every origin stays allowed for local login', () => {
+  const origins = { DSH_WORK_WORKBENCH_ORIGINS: 'https://192.168.1.99:4174,https://m.example.com', DSH_WORK_ADMIN_ORIGINS: 'https://192.168.1.99:4180' }
+  const withHub = loadStartupIdentityConfiguration({ ...startupEnvironment, ...startupHub, ...origins })
+  assert.equal(withHub.mode, 'local', '不报错、不阻止启动')
+  assert.match(withHub.aiHubConfigurationIssue!, /https:\/\/m\.example\.com 必须使用端口 4174/)
+  assert.deepEqual(withHub.audiences.workbench.allowedOrigins, ['https://192.168.1.99:4174', 'https://m.example.com'])
+
+  const withoutHub = loadStartupIdentityConfiguration({ ...startupEnvironment, ...origins })
+  assert.equal(withoutHub.mode, 'local')
+  assert.equal(withoutHub.aiHubConfigurationIssue, undefined, '不配置 AI Hub 时账号密码模式不校验端口')
+  assert.deepEqual(withoutHub.audiences.workbench.allowedOrigins, ['https://192.168.1.99:4174', 'https://m.example.com'])
+
+  const samePort = loadStartupIdentityConfiguration({ ...startupEnvironment, ...startupHub, ...origins, DSH_WORK_WORKBENCH_ORIGINS: 'https://192.168.1.99:4174,https://m.example.com:4174' })
+  assert.equal(samePort.mode, 'oidc', '公网入口改用 4174 时 AI Hub 保持可用')
+})
+
 test('the removed prototype mode is rejected with a migration hint and legacy portal origins remain compatible', () => {
   for (const NODE_ENV of ['development', 'production']) {
     assert.throws(() => loadStartupIdentityConfiguration({ NODE_ENV, DSH_WORK_AUTH_MODE: 'prototype' }), /原型模式已移除/)

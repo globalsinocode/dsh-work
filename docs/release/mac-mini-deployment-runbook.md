@@ -1,6 +1,6 @@
 # Mac mini 部署手册
 
-更新时间：2026-09-08
+更新时间：2026-11-05（新增第 14 节：钉钉移动端公网员工端入口）
 
 本流程用于在**已经部署 AI Hub、已经安装 DSH 的同一台 Apple Silicon Mac mini** 上，
 首次部署 dsh-work。参考 AI Hub 的
@@ -154,7 +154,7 @@ PostgreSQL/Nginx 镜像所在的 Docker Hub。AI Hub 已能从 GHCR 拉取镜像
 
 确认服务账号保持图形登录会话、Docker Desktop 登录后自动启动、Mac mini 不自动睡眠，且
 磁盘除 AI Hub 用量外仍有足够余量；脚本最低要求部署盘空闲 5 GiB，这不是生产容量规划值。
-防火墙仅向受信任内网新增放行 **4174、4180**；不要开放 4190、5434 或配置公网转发。
+防火墙仅向受信任内网新增放行 **4174、4180**；不要开放 4190、5434 或配置公网转发。启用钉钉移动端时，只按第 14 节为员工端增加经路径白名单的公网入口，管理端、4190 与 5434 仍不上公网。
 
 首次安装根目录应尚不存在；已有目录、服务或数据卷时停止本流程，先确认是旧部署还是失败
 现场，不能删除它们来“重新安装”：
@@ -677,3 +677,137 @@ bash current/scripts/deploy/set-macmini-endpoints.sh rollback \
 地址回滚不恢复 DNS、AI Hub 回调或证书文件，需分别核对。域名不变仅改变其 DNS IP 通常无需重签；新增直接访问的 IP/域名必须已在 SAN 中。所有副本续期后分别生效。
 
 旧自签 CA 若曾将私钥放在服务器，应换成离线 CA 签发方案并在客户端完成信任切换；不要沿用服务器持有根私钥的模式。异机备份目录仍为所有发布的前置条件。
+
+## 14. 钉钉移动端：公网员工端入口与钉钉应用（DT-S1）
+
+依据[钉钉接入方案](../design/dingtalk-integration-plan.md) 4.3 与 8.3（DT2、DT24）。本节是 DT-S1 上线前的操作清单，**不代表已在生产执行或验收**；真实钉钉验收（DT-P2）按发布流程单独留证。第 4.1 节“不要配置公网转发”对内网 4174、4180 仍然有效：公网只开放本节的员工端入口，管理端（4180）、服务端口（4190）与数据库（5434）保持内网。
+
+### 14.1 上线前必须确认
+
+1. **安全基线（方案 8.3）已定：** 登录与免登接口按 IP 与账号限流、连续失败锁定（应用内已按账号与钉钉 userid 限流，**按 IP 限流在公网反向代理上配置**，见 14.3）；访问日志与异常登录告警；是否另加 WAF 或网关 IP 控制。员工首次在钉钉内绑定需要公网上的账号密码登录，网关不能只放行免登。
+2. **AI Hub 静默回退检查：** 只要 `runtime.env` 中配置了 `AI_HUB_PLATFORM_URL`、`AI_HUB_OIDC_ISSUER`、`AI_HUB_APPLICATION_ID`、`AI_HUB_CLIENT_ID`、`AI_HUB_CLIENT_SECRET`（含 `WORKBENCH_`/`ADMIN_` 前缀的同名变量）中任一项，启动就会尝试 AI Hub（OIDC）配置；`AI_HUB_*_PORTAL_URL`、`AI_HUB_*_REDIRECT_URI` 由入口脚本维护，不会单独触发。OIDC 要求所有员工端 origin 与 `DSH_WORK_WORKBENCH_PORT` 同端口。端口不一致（例如 443 的公网 origin）时**不会报错，而是静默回退为本地模式并关闭 AI Hub 登录**（`loadStartupIdentityConfiguration`，启动日志只有一行 `AI Hub 登录未启用：…`）。本节的公网入口使用 4174 端口（14.2），不触发回退；若以后改用 443，须先从 `runtime.env` 删除上述 AI Hub 接入变量（组织架构方案 OD1 计划删除 AI Hub），否则 AI Hub 登录会被静默关闭。上线后检查启动日志没有 `AI Hub 登录未启用`，并在桌面端确认登录页的 AI Hub 入口与预期一致。
+3. **钉钉企业内部应用已创建**，并按方案 8.1“DT-S1 钉钉后台配置清单”完成配置（14.4）。
+
+### 14.2 域名、证书与 origin
+
+1. 申请员工端独立域名（例如 `m.<企业域名>`），网关对外使用**公网受信证书**（钉钉客户端不信任企业自签根证书）。证书只覆盖员工端域名，不覆盖管理端。
+2. **公网入口使用 4174 端口：** `https://m.example.com:4174`。当前入口脚本（`set-macmini-endpoints.sh`、`render-endpoint-compose.mjs`）要求所有员工端 origin 使用 `DSH_WORK_WORKBENCH_PORT`（4174），并把各 origin 的主机名生成为 4174 Nginx 的 `server_name`；端口一致也满足 AI Hub 的同端口校验（14.1 第 2 项）。改用 443 需要先扩展入口脚本对公网 origin 的端口规则，属于后续工作，不能只改 `runtime.env` 绕过。
+3. **Mac mini 侧的两项前置（缺一项入口脚本就会失败）：**
+   - **内网证书加入公网域名：** `check` 调用的 `preflight.sh` 要求内网服务器证书含每个 origin 主机名的 DNS SAN。按第 13 节在离线工作站重签，追加 `--dns m.example.com`，安装到 `runtime.env` 既有路径。这张证书只供网关到 Mac mini 这一跳使用，员工看到的是网关的公网证书。
+   - **Mac mini 把公网域名解析到本机：** `apply` 会用内网根证书逐个请求 `<origin>/health`。在 Mac mini 上配置内网 DNS（分区解析）或 `/etc/hosts`，使 `m.example.com` 指向 `192.168.1.99`，这些检查才会到达本机 4174 Nginx，而不是公网网关（网关不转发 `/health`，证书也不是企业根证书签发）。
+4. 用入口脚本把公网 origin 追加到员工端（保留全部现有参数，先 `plan`、再 `check`、最后 `apply --confirm`，见第 13 节）：
+
+```bash
+bash current/scripts/deploy/set-macmini-endpoints.sh plan \
+  --deploy-root /Users/deploy/services/dsh-work \
+  --bind-address 192.168.1.99 \
+  --workbench-origin https://192.168.1.99:4174 \
+  --workbench-origin https://m.example.com:4174 \
+  --admin-origin https://192.168.1.99:4180 \
+  --workbench-default-origin https://192.168.1.99:4174 \
+  --admin-default-origin https://192.168.1.99:4180
+```
+
+   这会同时更新 `DSH_WORK_WORKBENCH_ORIGINS` 与 4174 Nginx 的 `server_name`。管理端 origin 不变。
+5. 钉钉 H5 微应用把公网 origin 作为“首页地址”和“可信域名”，见 14.4。
+
+### 14.3 反向代理：只转发员工端，`/auth/workbench/` 按路径白名单
+
+公网网关（企业网关或独立 Nginx，不在 Mac mini 上）对外监听 `m.example.com:4174`，终止 TLS 后反代到 Mac mini 的员工端 Nginx（`https://192.168.1.99:4174`）。必须：
+
+- **保留原始 Host（`m.example.com:4174`）：** 4174 Nginx 按它匹配 `server_name` 并写入 `X-Forwarded-Host`，后端据此确认请求来自已登记的公网 origin；改写成内网地址会让登录与写请求的来源校验失败（403），未登记的 Host 返回 421；
+- 只转发员工端页面、`/api/workbench/`，以及 `/auth/workbench/` 下**显式列出**的路径；不转发 `/api/admin/`、`/auth/admin/`、`/health*`，也不整段转发 `/auth/`；
+- 对登录与免登接口按真实客户端 IP 限流（应用内不按连接地址限流：反向代理后所有请求共享一个地址）。同一办公网出口或运营商 NAT 后的员工共用一个 IP，额度按“整个办公室”估算：钉钉会话 12 小时过期后，早上上班时会集中免登。下例给免登单独的宽松额度，密码登录额度稍紧；上线后按访问日志调整，账号级的连续失败锁定仍由应用负责；
+- `/api/workbench/` 关闭缓冲（事件流需要）。
+
+Nginx 示例（域名、证书路径与上游地址按实际替换；上游证书由企业根 CA 签发，含公网域名的 DNS SAN）：
+
+```nginx
+# 按客户端 IP；NAT 后多人共用，额度按办公室规模调整。
+limit_req_zone $binary_remote_addr zone=dsh_work_password:10m rate=60r/m;
+limit_req_zone $binary_remote_addr zone=dsh_work_dingtalk:10m rate=300r/m;
+
+upstream dsh_work_workbench {
+  server 192.168.1.99:4174;
+  keepalive 16;
+}
+
+server {
+  listen 4174 ssl;
+  server_name m.example.com;
+  ssl_certificate     /etc/nginx/tls/m.example.com.fullchain.pem;
+  ssl_certificate_key /etc/nginx/tls/m.example.com.key;
+
+  add_header Strict-Transport-Security "max-age=31536000" always;
+  add_header X-Content-Type-Options "nosniff" always;
+  add_header Referrer-Policy "same-origin" always;
+  client_max_body_size 50m;
+
+  proxy_ssl_trusted_certificate /etc/nginx/tls/dsh-work-root-ca.crt;
+  proxy_ssl_verify on;
+  proxy_ssl_name m.example.com;   # 内网证书已含该 DNS SAN（14.2 第 3 项）
+  proxy_ssl_server_name on;
+
+  # 认证：只放行登录、钉钉免登、绑定登录、改密、退出与配置查询。
+  location = /auth/workbench/configuration       { proxy_pass https://dsh_work_workbench; include /etc/nginx/dsh-work-public-proxy; }
+  location = /auth/workbench/login               { limit_req zone=dsh_work_password burst=30 nodelay; proxy_pass https://dsh_work_workbench; include /etc/nginx/dsh-work-public-proxy; }
+  location = /auth/workbench/dingtalk/login      { limit_req zone=dsh_work_dingtalk burst=100 nodelay; proxy_pass https://dsh_work_workbench; include /etc/nginx/dsh-work-public-proxy; }
+  location = /auth/workbench/dingtalk/bind-login { limit_req zone=dsh_work_password burst=30 nodelay; proxy_pass https://dsh_work_workbench; include /etc/nginx/dsh-work-public-proxy; }
+  location = /auth/workbench/password            { limit_req zone=dsh_work_password burst=30 nodelay; proxy_pass https://dsh_work_workbench; include /etc/nginx/dsh-work-public-proxy; }
+  location = /auth/workbench/logout              { proxy_pass https://dsh_work_workbench; include /etc/nginx/dsh-work-public-proxy; }
+  location /auth/ { return 404; }
+
+  location /api/workbench/ {
+    proxy_pass https://dsh_work_workbench;
+    include /etc/nginx/dsh-work-public-proxy;
+    proxy_buffering off;
+    proxy_read_timeout 3600s;
+  }
+  location /api/ { return 404; }
+  location /health { return 404; }
+
+  # 员工端页面（单页应用）。
+  location / { proxy_pass https://dsh_work_workbench; include /etc/nginx/dsh-work-public-proxy; }
+}
+```
+
+`/etc/nginx/dsh-work-public-proxy`：
+
+```nginx
+proxy_http_version 1.1;
+proxy_set_header Host $http_host;
+proxy_set_header X-Real-IP $remote_addr;
+proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+proxy_set_header Connection "";
+```
+
+AI Hub 登录（`/auth/workbench/oidc/*`、`/auth/workbench/callback`）与切换账号不在公网白名单内；钉钉内只用账号密码与钉钉免登。仍配置 AI Hub 时，公网登录页会显示“使用 AI Hub 账号登录”，点击后得到网关的 404；公网上线前最好按组织架构方案 OD1 停用 AI Hub，或接受这一入口在公网不可用。示例已在固定版本的 Nginx 镜像中做过语法检查与路径白名单探测（允许的路径带原始 Host 转发、其余返回 404、登录接口超限返回 503）；实际网关上线前仍须按 14.5 验证。
+
+### 14.4 钉钉企业内部应用与服务端配置
+
+1. 在钉钉开放平台创建**企业内部应用**，开通 H5 微应用：首页地址为公网员工端（例如 `https://m.example.com:4174/c/chats`），可信域名为 `m.example.com:4174`（以开发者后台对端口的要求为准，P2 确认）。
+2. 按方案 8.1 开通权限：免登（默认）、工作通知（默认，DT-S2 使用）、根据手机号获取成员基本信息、成员信息读权限、通讯录部门信息读权限；**通讯录权限范围设为“全部员工”**。不申请“企业员工手机号信息”与“邮箱等个人信息”。开始前在开发者后台逐项核对权限当前名称，与方案不同以后台为准并回写方案。
+3. 在“服务器出口 IP”登记 Mac mini 的公网出口 IP；服务器出站放行 `oapi.dingtalk.com:443`（与出口 IP 白名单是两件事）。
+4. 把应用凭据写入 `runtime.env`（mode 600，不入库、不进 Git；四项必须同时设置，只设一部分时服务拒绝启动）：
+
+```bash
+DSH_WORK_DINGTALK_CORP_ID=dingxxxxxxxxxxxxxxxx
+DSH_WORK_DINGTALK_AGENT_ID=3189xxxxx
+DSH_WORK_DINGTALK_APP_KEY=replace-me
+DSH_WORK_DINGTALK_APP_SECRET=replace-me
+# 可选：钉钉会话有效期（默认 12 小时）、单个管理员每日代绑上限（默认 50）
+# DSH_WORK_DINGTALK_SESSION_TTL_SECONDS=43200
+# DSH_WORK_DINGTALK_ADMIN_DAILY_BIND_LIMIT=50
+```
+
+5. 重启后端（`launchctl kickstart -k gui/$(id -u)/com.company.dsh-work.server`，或随下一次发布生效）。
+
+### 14.5 上线验证（DT-P2 的前置检查）
+
+1. 管理端“钉钉集成”：应用配置显示 AgentId，“钉钉内入口”列出公网 origin；“重新检查连接”后凭据与各项接口权限为“已开通”。“配置异常”时按提示检查权限、通讯录范围与出口 IP。
+2. 公网入口：`curl -sS -o /dev/null -w '%{http_code}\n' https://m.example.com:4174/auth/admin/configuration` 返回 404；`/api/admin/v1/session` 返回 404；`/auth/workbench/configuration` 返回 200 且含 `dingtalk.corpId`。
+3. 用未登记的 Host 访问后端返回 421；跨站 `Origin` 的登录请求返回 403。
+4. 启动日志没有 `AI Hub 登录未启用`（或确认这是预期的本地模式）。
+5. 在 iOS 与 Android 钉钉中从工作台打开 dsh-work：未绑定时显示“当前钉钉账号”与“登录并绑定”，登录后进入协作模式；再次打开免登。按 `e2e/catalog/dingtalk.md` 的 DT-P2 记录真机结果（返回键、软键盘、上传下载、安全区）。
+
+回退：网关先撤下公网入口；用 `set-macmini-endpoints.sh` 去掉公网 origin（`plan`、`check`、`apply --confirm`，参数中不再包含 `https://m.example.com:4174`），或在刚变更后用 `rollback --confirm` 恢复上一份入口配置——不要手改 `DSH_WORK_WORKBENCH_ORIGINS`，否则与生成的 Nginx `server_name` 不一致；再删除 `runtime.env` 中的 `DSH_WORK_DINGTALK_*` 并重启后端。已写入的绑定记录保留，钉钉免登接口返回“未启用”。
