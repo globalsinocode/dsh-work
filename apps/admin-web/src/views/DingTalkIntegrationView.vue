@@ -17,6 +17,8 @@ const tab = ref<Tab>(route.query.tab === 'unbound' ? 'unbound' : route.query.tab
 const overview = ref<DingTalkIntegrationOverview>()
 const unbound = ref<DingTalkUnboundEmployee[]>([])
 const unboundTotal = ref(0)
+const unboundPage = ref(1)
+const unboundPageSize = 50
 const loading = ref(false)
 const checking = ref(false)
 const reminding = ref(false)
@@ -54,7 +56,7 @@ async function loadOverview() {
 }
 
 async function loadUnbound() {
-  const page = await adminApi.getDingTalkUnbound()
+  const page = await adminApi.getDingTalkUnbound(unboundPage.value)
   unbound.value = page.items
   unboundTotal.value = page.total
 }
@@ -92,8 +94,8 @@ async function remind(target: DingTalkUnboundEmployee | null) {
   try {
     const result = await adminApi.remindDingTalkBinding(target ? { userIds: [target.id] } : { all: true })
     listMessage.value = target
-      ? (result.reminded ? `已提醒${target.name}。` : `${target.name}已被锁定自行绑定，未提醒。`)
-      : `已提醒 ${result.reminded} 名未绑定员工。`
+      ? (result.reminded ? `已提醒${target.name}。` : `未提醒${target.name}：已绑定、已锁定自行绑定或今天已提醒过。`)
+      : `已向 ${result.reminded} 名未绑定员工发送提醒（今天已提醒过的不重复发送）。`
   } catch (cause) {
     listMessage.value = cause instanceof Error ? cause.message : '提醒失败'
   } finally {
@@ -236,6 +238,15 @@ onMounted(load)
               </template>
             </el-table-column>
           </el-table>
+          <el-pagination
+            v-if="unboundTotal > unboundPageSize"
+            v-model:current-page="unboundPage"
+            class="dingtalk-list-foot"
+            layout="prev, pager, next"
+            :total="unboundTotal"
+            :page-size="unboundPageSize"
+            @current-change="loadUnbound"
+          />
           <p v-if="listMessage" role="status" class="dingtalk-status dingtalk-list-foot">{{ listMessage }}</p>
           <p class="dingtalk-muted dingtalk-list-foot">“提醒员工”发送一条站内通知：在钉钉工作台打开 dsh-work，用账号密码登录一次即可绑定。</p>
         </section>

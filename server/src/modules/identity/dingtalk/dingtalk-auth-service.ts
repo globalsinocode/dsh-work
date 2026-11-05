@@ -70,6 +70,14 @@ export class DingTalkAuthService {
     const sessionToken = randomOpaque()
     const sessionHash = hashOpaque(sessionToken)
     const signedIn = await this.database.begin(async transaction => {
+      // 与停用、重置密码、解绑相同的加锁顺序：先锁 users，再锁绑定，避免死锁。
+      const [candidate] = await transaction<{ userId: string }[]>`
+        select user_id as "userId" from external_account_bindings
+         where tenant_id = ${tenantId} and channel = ${DINGTALK_CHANNEL}
+           and external_user_id = ${identity.userId} and status = 'valid'
+      `
+      if (!candidate) return null
+      await transaction`select id from users where tenant_id = ${tenantId} and id = ${candidate.userId} for update`
       const [binding] = await transaction<{ id: string; userId: string; active: boolean }[]>`
         select b.id, b.user_id as "userId",
                (u.status = 'active' and u.business_user and t.status = 'active' and u.identity_provider = 'local') as active
@@ -77,8 +85,8 @@ export class DingTalkAuthService {
           join users u on u.tenant_id = b.tenant_id and u.id = b.user_id
           join tenants t on t.id = u.tenant_id
          where b.tenant_id = ${tenantId} and b.channel = ${DINGTALK_CHANNEL}
-           and b.external_user_id = ${identity.userId} and b.status = 'valid'
-         for update of u, b
+           and b.external_user_id = ${identity.userId} and b.status = 'valid' and b.user_id = ${candidate.userId}
+         for update of b
       `
       if (!binding) return null
       if (!binding.active) {
