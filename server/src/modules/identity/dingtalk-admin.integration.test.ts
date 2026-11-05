@@ -333,6 +333,24 @@ test('离职检查只按明确“用户不存在”失效，检查失败不改�
   assert.equal(count, 8)
 })
 
+test('离职检查中途中断留下的 running 记录超过 6 小时后不阻止下一次检查', async () => {
+  await database.client`
+    insert into dingtalk_departure_checks (id, tenant_id, status, started_at)
+    values ('dtcheck-crashed', 'tenant-dsh-work', 'running', now() - interval '7 hours')
+  `
+  const result = await service.runDepartureCheck()
+  assert.ok(result, '中断的检查不再阻止新检查')
+  const [crashed] = await database.client<{ status: string }[]>`select status from dingtalk_departure_checks where id = 'dtcheck-crashed'`
+  assert.equal(crashed!.status, 'failed')
+
+  await database.client`
+    insert into dingtalk_departure_checks (id, tenant_id, status, started_at)
+    values ('dtcheck-active', 'tenant-dsh-work', 'running', now() - interval '5 minutes')
+  `
+  assert.equal(await service.runDepartureCheck(), null, '仍在进行中的检查不重复开始')
+  await database.client`delete from dingtalk_departure_checks where id = 'dtcheck-active'`
+})
+
 test('停用账号使代绑失效；停用后不能再代绑', async () => {
   const userId = await employee()
   const { phone } = member('停用')
