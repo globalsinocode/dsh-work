@@ -23,7 +23,7 @@
 ### 部署清单
 
 1. nginx 为移动端 origin 新增 server block：`/` 指移动端静态产物；`location /api/`、`location /auth/` proxy_pass 到 dsh-work 服务端，并 `proxy_buffering off`（SSE 必需）。
-2. 服务端 `DSH_WORK_WORKBENCH_ORIGINS` 追加移动端 origin。只有配置了 AI Hub（任一 `AI_HUB_*` 接入变量）时才要求所有员工端 origin 与 `DSH_WORK_WORKBENCH_PORT` 同端口；校验不过时服务**不报错，而是静默回退为本地模式并关闭 AI Hub 登录**（启动日志 `AI Hub 登录未启用：…`）。不使用 AI Hub 时删除全部 `AI_HUB_*` 变量，或让移动端 origin 使用与 `DSH_WORK_WORKBENCH_PORT` 相同的端口。
+2. 服务端 `DSH_WORK_WORKBENCH_ORIGINS` 追加移动端 origin。只有配置了 AI Hub（`AI_HUB_PLATFORM_URL`、`AI_HUB_OIDC_ISSUER`、`AI_HUB_APPLICATION_ID`、`AI_HUB_CLIENT_ID`、`AI_HUB_CLIENT_SECRET` 任一项）时才要求所有员工端 origin 与 `DSH_WORK_WORKBENCH_PORT` 同端口；校验不过时服务**不报错，而是静默回退为本地模式并关闭 AI Hub 登录**（启动日志 `AI Hub 登录未启用：…`）。不使用 AI Hub 时删除上述接入变量，或让移动端 origin 使用与 `DSH_WORK_WORKBENCH_PORT` 相同的端口。
 3. **不要**为移动端配置 AI Hub 应用回调；独立登录不依赖 OIDC。账号由平台管理员在管理端「员工与权限」开通，详见 [独立账号登录](../release/local-authentication.md)。
 
 ## 3. 认证与会话
