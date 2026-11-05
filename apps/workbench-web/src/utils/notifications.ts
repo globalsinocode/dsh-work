@@ -39,6 +39,13 @@ export function notificationText(item: UserNotification): NotificationTextPart[]
         // 不写“原因见草稿卡片”：之后修改再提交、通过后，卡片已显示新结论，旧通知不能指向找不到的原因。
         { text: item.detail?.result === 'approved' ? ' 已发布到 Skill 广场' : ' 未通过审核' },
       ]
+    // 钉钉绑定（钉钉接入方案 4.2）：objectName 为钉钉姓名，取自绑定记录。
+    case 'dingtalk_bound_by_admin':
+      return [{ text: `管理员${item.actor?.name ? ` ${item.actor.name} ` : ''}已为你绑定钉钉账号` }, ...(object ? [{ text: `（${object}）`, strong: true }] : []), { text: '；如果不是你本人的钉钉账号，请立即解除并联系管理员' }]
+    case 'dingtalk_binding_revoked':
+      return [{ text: item.detail?.reason === 'rebound_to_other' ? '你的钉钉绑定已由管理员改绑到其他员工' : '管理员已解除你的钉钉绑定' }, ...(object ? [{ text: `（${object}）`, strong: true }] : []), { text: '，钉钉内的登录已失效' }]
+    case 'dingtalk_bind_reminder':
+      return [{ text: '请在钉钉工作台打开 dsh-work，用账号密码登录一次即可绑定钉钉，之后可在钉钉内免登' }]
   }
 }
 
@@ -70,6 +77,7 @@ export function notificationGlyph(item: UserNotification): string {
   return {
     mention: '@', task_assigned: '任', task_completed: '任', workspace_member_added: '员',
     task_schedule_stopped: '时', automation_failed: '时', skill_review_result: 'S',
+    dingtalk_bound_by_admin: '钉', dingtalk_binding_revoked: '钉', dingtalk_bind_reminder: '钉',
   }[item.kind]
 }
 
@@ -84,6 +92,7 @@ export function notificationLocation(item: UserNotification, mode: UiMode): Rout
   const sessionId = item.target.sessionId
   if (item.target.type === 'automation') return sessionId ? { name: 'session-detail', params: { id: sessionId } } : { path: '/automations' }
   if (item.target.type === 'skill_submission') return sessionId ? { name: 'session-detail', params: { id: sessionId } } : { path: '/skills' }
+  if (item.target.type === 'dingtalk_binding') return { path: '/settings', query: { section: 'dingtalk' } }
   if (!item.workspace) return null
   const workspaceId = item.workspace.id
   switch (item.target.type) {

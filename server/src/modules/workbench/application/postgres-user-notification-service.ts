@@ -35,6 +35,7 @@ export interface UserNotificationItem {
 
 /** 允许返回给员工的事件代码；`safe_metadata` 中的其他键（如执行 ID）不对外。 */
 const detailKeys = ['state', 'reason', 'outcome', 'result'] as const
+// 钉钉绑定通知（DT-S1）：`reason` 为 admin_unbind / rebound_to_other；钉钉姓名取自绑定记录作为 objectName。
 
 export interface UserNotificationPage {
   items: UserNotificationItem[]
@@ -82,7 +83,7 @@ export class PostgresUserNotificationService {
              v.visible, n.actor_user_id as "actorUserId", actor.display_name as "actorName",
              n.workspace_id as "workspaceId", w.name as "workspaceName",
              n.object_type as "objectType", n.object_id as "objectId",
-             coalesce(pt.title, au.name, ss.name) as "objectName",
+             coalesce(pt.title, au.name, ss.name, eb.external_display_name) as "objectName",
              coalesce(n.safe_metadata ->> 'sessionId', ss.session_id) as "sessionId",
              n.safe_metadata as metadata
         from user_notifications n
@@ -214,6 +215,8 @@ function visibilityJoins(sql: DatabaseClient, userId: string) {
       and au.owner_user_id = n.recipient_user_id and au.status <> 'disabled'
     left join skill_submissions ss on n.object_type = 'skill_submission'
       and ss.tenant_id = n.tenant_id and ss.id = n.object_id and ss.submitter_user_id = n.recipient_user_id
+    left join external_account_bindings eb on n.object_type = 'dingtalk_binding'
+      and eb.tenant_id = n.tenant_id and eb.id = n.object_id
     left join users actor on actor.tenant_id = n.tenant_id and actor.id = n.actor_user_id
     left join workspace_notification_states ns
       on ns.tenant_id = n.tenant_id and ns.workspace_id = n.workspace_id and ns.user_id = n.recipient_user_id

@@ -186,6 +186,79 @@ export interface IdentityUserSummary {
   dataScopes: string[]
   activeSessionCount: number
   lastSeenAt: string | null
+  /** 钉钉绑定（钉钉接入 DT-S1）：只对独立账号返回，AI Hub 账号为 null。 */
+  dingtalk?: {
+    status: DingTalkBindingStatus
+    boundBy: 'self' | 'admin' | null
+    dingtalkName: string | null
+    revokeReason: string | null
+    selfRebindLocked: boolean
+  } | null
+}
+
+export type DingTalkBindingStatus = 'bound' | 'unbound' | 'invalid'
+
+export interface DingTalkBindingCounts {
+  activeLocal: number
+  bound: number
+  selfBound: number
+  adminBound: number
+  unbound: number
+  invalid: number
+}
+
+export interface DingTalkBindingView {
+  status: DingTalkBindingStatus
+  binding: {
+    id: string
+    dingtalkName: string | null
+    dingtalkDepartment: string | null
+    boundBy: 'self' | 'admin'
+    boundByAdminName: string | null
+    boundAt: string
+  } | null
+  invalid: { reason: string | null; at: string } | null
+  selfRebindLocked: boolean
+}
+
+export interface DingTalkBindPreview {
+  confirmationToken: string
+  expiresInSeconds: number
+  dingtalkName: string | null
+  dingtalkDepartment: string | null
+  maskedMobile: string
+  platformName: string
+  nameMatches: boolean
+  requireIdentityConfirmation: boolean
+  conflict: { userId: string; name: string } | null
+}
+
+export interface DingTalkIntegrationOverview {
+  configured: boolean
+  agentId: string | null
+  publicEntries: string[]
+  connection: {
+    checkedAt: string | null
+    status: 'ok' | 'configuration_error' | 'unavailable' | null
+    capabilities: Record<string, 'ok' | 'denied' | 'unknown'>
+    message: string | null
+  } | null
+  counts: DingTalkBindingCounts
+  departureCheck: {
+    lastRun: { id: string; startedAt: string; status: string; checked: number; departed: number; failed: number; bound: number; errorCodes: Record<string, number> } | null
+    pausedRun: { id: string; pending: number; bound: number } | null
+    persistentWarning: boolean
+  }
+}
+
+export interface DingTalkUnboundEmployee {
+  id: string
+  name: string
+  loginAccount: string
+  department: string
+  status: 'unbound' | 'invalid'
+  revokeReason: string | null
+  selfRebindLocked: boolean
 }
 
 export interface IdentityUserPage {
@@ -197,6 +270,7 @@ export interface IdentityUserPage {
     synchronized: number
     active: number
     authorized: number
+    dingtalk?: DingTalkBindingCounts
   }
 }
 

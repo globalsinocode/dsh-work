@@ -32,6 +32,8 @@ import { registerWorkspaceTimelineRoutes } from './http/workbench/workspace-time
 import { registerOidcRoutes } from './http/auth-routes.ts'
 import { registerLocalAuthRoutes } from './http/local-auth-routes.ts'
 import { registerDingTalkAuthRoutes } from './http/dingtalk-auth-routes.ts'
+import { registerDingTalkAdminRoutes } from './http/admin/dingtalk-admin-routes.ts'
+import { DingTalkAdministrationService } from './modules/identity/dingtalk/dingtalk-admin-service.ts'
 import { registerAuthConfigurationRoutes, registerSessionRoutes } from './http/session-routes.ts'
 import { LocalAuthService } from './modules/identity/local-auth-service.ts'
 import { DingTalkAuthService } from './modules/identity/dingtalk/dingtalk-auth-service.ts'
@@ -161,6 +163,13 @@ async function start() {
   if (oidcAuthentication) registerOidcRoutes(router, oidcAuthentication, localAuthentication)
   registerLocalAuthRoutes(router, localAuthentication, oidcAuthentication)
   registerDingTalkAuthRoutes(router, dingtalkAuthentication, localAuthentication, oidcAuthentication)
+  const dingtalkAdministration = new DingTalkAdministrationService(database, dingtalkDirectory, dingtalkConfiguration, {
+    secret: identityConfiguration.sessionSecret,
+    workbenchOrigins: localIdentityConfiguration(identityConfiguration).audiences.workbench.allowedOrigins,
+  })
+  registerDingTalkAdminRoutes(router, dingtalkAdministration)
+  // 每日离职检查（钉钉接入方案 4.2）：只在配置了钉钉应用时启动；单进程部署，进行中的检查由唯一索引互斥。
+  const dingtalkDepartureTimer = dingtalkAdministration.startDailyDepartureCheck()
   registerSessionRoutes(router)
   registerAuthConfigurationRoutes(router, () => ({ mode: identityConfiguration.mode, localEnabled: true, aiHubEnabled: Boolean(oidcAuthentication) }))
   registerIdentityAdministrationRoutes(
@@ -690,6 +699,7 @@ async function start() {
     server.close(() => {
       void (async () => {
         if (directorySyncTimer) clearInterval(directorySyncTimer)
+        if (dingtalkDepartureTimer) clearInterval(dingtalkDepartureTimer)
         if (memoryProposalSweep) clearInterval(memoryProposalSweep)
         if (notificationRetentionSweep) clearInterval(notificationRetentionSweep)
         await notificationRetentionRun

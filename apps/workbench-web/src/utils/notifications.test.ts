@@ -49,4 +49,15 @@ describe('notification text and destination (NC-S3)', () => {
   it('has no destination once the content is no longer visible', () => {
     expect(notificationLocation(notification({ kind: 'automation_failed', visible: false }), 'work')).toBeNull()
   })
+
+  it('describes DingTalk binding changes by an administrator and opens personal settings › 钉钉', () => {
+    const target = { type: 'dingtalk_binding' as const, id: 'binding-1', sessionId: null }
+    const bound = notification({ kind: 'dingtalk_bound_by_admin', actor: { id: 'admin', name: '陈默' }, objectName: '赵宁', target })
+    expect(notificationPlainText(bound)).toBe('管理员 陈默 已为你绑定钉钉账号（赵宁）；如果不是你本人的钉钉账号，请立即解除并联系管理员')
+    expect(notificationLocation(bound, 'collab')).toEqual({ path: '/settings', query: { section: 'dingtalk' } })
+    const rebound = notification({ kind: 'dingtalk_binding_revoked', objectName: '赵宁', detail: { reason: 'rebound_to_other' }, target })
+    expect(notificationPlainText(rebound)).toBe('你的钉钉绑定已由管理员改绑到其他员工（赵宁），钉钉内的登录已失效')
+    expect(notificationPlainText({ ...rebound, detail: { reason: 'admin_unbind' } })).toBe('管理员已解除你的钉钉绑定（赵宁），钉钉内的登录已失效')
+    expect(notificationPlainText(notification({ kind: 'dingtalk_bind_reminder', target }))).toContain('用账号密码登录一次即可绑定钉钉')
+  })
 })

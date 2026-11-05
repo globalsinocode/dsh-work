@@ -1133,6 +1133,7 @@ export interface UserNotification {
   kind:
     | 'mention' | 'task_assigned' | 'task_completed' | 'workspace_member_added'
     | 'task_schedule_stopped' | 'automation_failed' | 'skill_review_result'
+    | 'dingtalk_bound_by_admin' | 'dingtalk_binding_revoked' | 'dingtalk_bind_reminder'
   createdAt: string
   read: boolean
   visible: boolean
@@ -1142,7 +1143,7 @@ export interface UserNotification {
   /** 事件代码（NC-S3）：`state`、`reason`、`outcome`、`result`。 */
   detail: Record<string, string> | null
   target: {
-    type: 'message' | 'project_task' | 'workspace' | 'automation' | 'skill_submission'
+    type: 'message' | 'project_task' | 'workspace' | 'automation' | 'skill_submission' | 'dingtalk_binding'
     id: string
     sessionId: string | null
   } | null

@@ -29,6 +29,10 @@ import type {
   McpConnectorDeletionResult,
   McpInvocationAudit,
   DirectorySyncState,
+  DingTalkBindingView,
+  DingTalkBindPreview,
+  DingTalkIntegrationOverview,
+  DingTalkUnboundEmployee,
   EmployeeModelUsageSummary,
   GrantSourceReconciliationView,
   HealthComponent,
@@ -413,10 +417,11 @@ export const adminApi = {
     enabled: boolean
   }) => request<ModelRoute>('/model-routes', { method: 'POST', body: JSON.stringify(input) }),
   getPlatformStatus: () => request<PlatformStatus>('/platform-status'),
-  getIdentityUsers: (input: { query?: string; status?: string; page?: number; pageSize?: number } = {}) => {
+  getIdentityUsers: (input: { query?: string; status?: string; dingtalk?: string; page?: number; pageSize?: number } = {}) => {
     const query = new URLSearchParams()
     if (input.query) query.set('query', input.query)
     if (input.status && input.status !== 'all') query.set('status', input.status)
+    if (input.dingtalk && input.dingtalk !== 'all') query.set('dingtalk', input.dingtalk)
     query.set('page', String(input.page ?? 1))
     query.set('page_size', String(input.pageSize ?? 20))
     const suffix = query.size > 0 ? `?${query.toString()}` : ''
@@ -496,6 +501,23 @@ export const adminApi = {
     { method: 'PUT' },
   ),
   getDirectorySyncState: () => request<DirectorySyncState>('/identity/directory-sync'),
+  // 钉钉接入 DT-S1：管理员代绑、解绑与“钉钉集成”页。
+  getDingTalkBinding: (userId: string) => request<DingTalkBindingView>(`/identity/users/${encodeURIComponent(userId)}/dingtalk-binding`),
+  previewDingTalkBinding: (userId: string, mobile: string) =>
+    request<DingTalkBindPreview>(`/identity/users/${encodeURIComponent(userId)}/dingtalk-binding/preview`, { method: 'POST', body: JSON.stringify({ mobile }) }),
+  confirmDingTalkBinding: (userId: string, input: { confirmationToken: string; identityConfirmed?: boolean; rebind?: boolean }) =>
+    request<DingTalkBindingView>(`/identity/users/${encodeURIComponent(userId)}/dingtalk-binding/confirm`, { method: 'POST', body: JSON.stringify(input) }),
+  unbindDingTalk: (userId: string, lockSelfRebind = false) =>
+    request<DingTalkBindingView>(`/identity/users/${encodeURIComponent(userId)}/dingtalk-binding${lockSelfRebind ? '?lock_self_rebind=true' : ''}`, { method: 'DELETE' }),
+  unlockDingTalkSelfBinding: (userId: string) =>
+    request<DingTalkBindingView>(`/identity/users/${encodeURIComponent(userId)}/dingtalk-binding/unlock`, { method: 'POST' }),
+  getDingTalkOverview: () => request<DingTalkIntegrationOverview>('/dingtalk/overview'),
+  checkDingTalkConnection: () => request<DingTalkIntegrationOverview>('/dingtalk/connection-check', { method: 'POST' }),
+  getDingTalkUnbound: (page = 1) => request<{ items: DingTalkUnboundEmployee[]; total: number; page: number; pageSize: number }>(`/dingtalk/unbound?page=${page}&page_size=50`),
+  remindDingTalkBinding: (input: { userIds?: string[]; all?: boolean }) =>
+    request<{ reminded: number }>('/dingtalk/reminders', { method: 'POST', body: JSON.stringify(input) }),
+  decideDingTalkDepartureCheck: (runId: string, decision: 'confirm' | 'dismiss') =>
+    request<{ invalidated: number }>(`/dingtalk/departure-checks/${encodeURIComponent(runId)}/decision`, { method: 'POST', body: JSON.stringify({ decision }) }),
   synchronizeDirectory: (full = false) => request<DirectorySyncState>(
     `/identity/directory-sync${full ? '?full=true' : ''}`,
     { method: 'POST' },

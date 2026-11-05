@@ -43,6 +43,8 @@ flowchart LR
 | `authentication_sessions` | 服务端 Session | 浏览器只持有不透明 Cookie，数据库只存摘要；OIDC Token 服务端加密；来源 `ai-hub-oidc` / `local-password` / `dingtalk`（迁移 0117），`dingtalk` 会话必须带 `binding_id`、按该绑定有效性校验并按它撤销，其他来源不得带 |
 | `external_account_bindings` | 平台账号与外部渠道账号的绑定（迁移 0117，[钉钉接入方案](dingtalk-integration-plan.md) 4.2；本期 `channel = 'dingtalk'`） | 有效记录中平台账号与外部账号各自唯一（部分唯一索引）；状态只有 `valid` / `invalid`，未绑定即没有有效记录；`self_rebind_locked` 只出现在失效记录上；只存钉钉 userid、姓名与部门，不存手机号 |
 | `external_binding_tickets` | 服务端短时单次凭证：钉钉内待绑定凭证与管理员代绑确认凭证（迁移 0117） | 只存凭证哈希；原子消费，重复使用、过期、来源或目标员工 / 管理员不符一律无效；代绑凭证只存脱敏手机号与 HMAC |
+| `external_channel_status` | 外部渠道连接检查结果（迁移 0118，钉钉集成页） | 每租户每渠道一行；只存检查时间、结论与各接口权限探测结果，不存凭据 |
+| `dingtalk_departure_checks` | 每日钉钉离职检查记录（迁移 0118） | 同一租户至多一条 `running`（部分唯一索引），超过 6 小时未结束的视为中断并标为 `failed` 后再开始新检查；只有明确“用户不存在”才判为离职；判为离职超过有效绑定 10% 时 `paused` 并保存待确认的绑定 ID，管理员确认或忽略后结束 |
 | `oidc_login_transactions` | OIDC 登录事务 | state、nonce 与入口绑定，一次性使用 |
 | `application_admin_bootstrap_claims` | AI Hub 初始管理员认领 | 按应用/环境幂等消费 |
 | `identity_directory_sync_state` | AI Hub 员工目录同步游标 | 持久化 opaque cursor；员工停用即撤销其 Session，保留本地角色历史 |

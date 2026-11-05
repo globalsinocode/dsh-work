@@ -180,6 +180,18 @@ const router = createRouter({
       },
     },
     {
+      path: '/dingtalk',
+      name: 'dingtalk',
+      component: () => import('@/views/DingTalkIntegrationView.vue'),
+      meta: {
+        title: '钉钉集成',
+        subtitle: '钉钉工作通知与钉钉内打开员工端：应用配置、绑定情况、离职检查与未绑定名单。',
+        requiresAdmin: true,
+        requiredPermission: 'adminRead',
+        requiresManagedIdentity: true,
+      },
+    },
+    {
       path: '/experience-iterations',
       name: 'experience-iterations',
       component: () => import('@/views/ExperienceIterationView.vue'),
