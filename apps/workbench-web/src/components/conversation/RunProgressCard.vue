@@ -20,6 +20,13 @@ onBeforeUnmount(() => clearInterval(timer))
 const progress = computed(() => projectRunProgress(props.task))
 const offset = computed(() => props.task.clockOffsetMs ?? 0)
 const totalLabel = computed(() => formatElapsed(elapsedMs(progress.value.startMs, now.value, offset.value)))
+/** 多个步骤，或唯一的步骤不是从本轮开头开始（如重新执行后），步骤计时不等于总用时，需显示总用时。 */
+const showTotal = computed(() => {
+  const rows = progress.value.rows
+  if (rows.length !== 1) return rows.length > 1
+  const [only] = rows
+  return only!.startMs === undefined || progress.value.startMs === undefined || only!.startMs - progress.value.startMs > 2000
+})
 const activeLabels = computed(() => progress.value.rows.filter(row => row.state === 'active').map(row => row.label).join('，'))
 /**
  * 执行中的 AI 同事名称与完成后的回复一致：agentVersion 为“名称@版本”（无版本时为空串），
@@ -39,7 +46,8 @@ const agentName = computed(() => props.task.agentVersion.split('@')[0]
       <span class="assistant-avatar">{{ agentName.slice(0, 1) }}</span>
       <div>
         <strong>{{ agentName }}</strong>
-        <span>正在处理<template v-if="totalLabel"> · 已用 {{ totalLabel }}</template></span>
+        <!-- 只有一个步骤且从本轮开头算起时，它的计时就是总用时，不在标题旁重复。 -->
+        <span>正在处理<template v-if="totalLabel && showTotal"> · 已用 {{ totalLabel }}</template></span>
       </div>
     </div>
     <div class="run-progress">

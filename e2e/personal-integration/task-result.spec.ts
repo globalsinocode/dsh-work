@@ -24,7 +24,8 @@ test('P1: verified result separates business outcome from execution state', asyn
   const runId = await sendTask(page, `P1-成果达成-${crypto.randomUUID().slice(0, 8)}`)
   await expect(page.getByText(/受控测试运行已完成/).first()).toBeVisible()
   // 业务核验状态独立于执行状态呈现：当前 Attempt 已登记成果 → 目标已达成
-  await expect(page.getByText('目标已达成', { exact: true }).first()).toBeVisible()
+  // 结论与发送时间同在回复身份行（EX-STATE-01）：“时间 · 目标已达成”。
+  await expect(page.getByText(/^\d{1,2}:\d{2} · 目标已达成$/).first()).toBeVisible()
 
   const result = await runResult(page, runId)
   expect(result.execution).toBe('succeeded')
@@ -44,7 +45,7 @@ test('P1: a committed answer alone stays unverified without verifiable deliverab
   const runId = await sendTask(page, `P1-仅回答-${crypto.randomUUID().slice(0, 8)}`)
   await expect(page.getByText(/受控测试运行已完成/).first()).toBeVisible()
   await expect(page.getByTestId('run-result-unverified')).toHaveCount(0)
-  await expect(page.getByText('目标已达成', { exact: true })).toHaveCount(0)
+  await expect(page.getByText(/目标已达成/)).toHaveCount(0)
 
   const result = await runResult(page, runId)
   expect(result.execution).toBe('succeeded')
@@ -59,7 +60,7 @@ test('P1: artifact registration gap shows unverified instead of achieved', async
   // 执行成功但证据缺口：消息流不显示待核验警示，也绝不误报「目标已达成」。
   await expect(page.getByTestId('run-result-unverified')).toHaveCount(0)
   await expect(page.getByText(/业务结果未验证/)).toHaveCount(0)
-  await expect(page.getByText('目标已达成', { exact: true })).toHaveCount(0)
+  await expect(page.getByText(/目标已达成/)).toHaveCount(0)
 
   const result = await runResult(page, runId)
   expect(result.execution).toBe('succeeded')

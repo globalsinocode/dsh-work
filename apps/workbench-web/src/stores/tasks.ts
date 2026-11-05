@@ -426,7 +426,7 @@ export const useTaskStore = defineStore('tasks', () => {
           ? '本轮动作、参数摘要、资源和数据版本已固定，当前执行已释放 Worker。'
           : 'DSH 请求本轮一次性工具权限，服务端正在校验 Agent、角色和数据范围。',
         nextStep: durable
-          ? '平台管理员处理后会创建新的 Attempt 继续执行；无需重复提交。'
+          ? '平台管理员处理后会自动继续执行，无需重复提交。'
           : '当前动作正在自动确认，无需手动操作；确认结果会自动更新。',
         toolName,
         dataScope: task.workspaceName === '我的空间' ? '当前员工个人授权范围' : `${task.workspaceName}成员授权范围`,

@@ -52,7 +52,7 @@ function isPreviewing(artifact: Artifact) {
       class="answer-artifact"
       :data-testid="`answer-artifact-${artifact.id}`"
     >
-      <div class="answer-artifact__row">
+      <div class="answer-artifact__row" :class="{ 'is-active': isPreviewing(artifact) }">
         <button
           type="button"
           class="answer-artifact__open"

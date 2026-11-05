@@ -22,6 +22,9 @@ test('P1: stopped and failed rounds keep a note after later rounds, and the fail
   await expect(page).toHaveURL(/\/conversations\/run-/)
   const firstReply = page.getByRole('article').filter({ hasText: /受控测试运行已完成/ })
   await expect(firstReply).toContainText(agentName)
+  // 个人对话只有本人发起，不标“由某人发起”；底部不再出现“自动”占位。
+  await expect(firstReply).not.toContainText('发起')
+  await expect(firstReply).not.toContainText('自动')
 
   // 执行中的名称与完成后回复的名称一致。
   await send(page, stopped)
@@ -30,10 +33,18 @@ test('P1: stopped and failed rounds keep a note after later rounds, and the fail
   await page.getByRole('button', { name: '停止本轮执行' }).click()
   await page.getByRole('dialog', { name: '停止本轮执行？' }).getByRole('button', { name: '停止本轮执行' }).click()
   await expect(page.getByTestId('run-stopped-by')).toBeVisible()
+  // 主动停止只留一行，不再另有“目标未达成”的警示。
+  await expect(page.getByTestId('run-result-not-achieved')).toHaveCount(0)
 
   // 较早一轮被停止且没有回复：在其问题下留有说明，不随新一轮消失。
   await send(page, failed)
-  await expect(page.getByTestId('run-error-notice')).toBeVisible()
+  const notice = page.getByTestId('run-error-notice')
+  await expect(notice).toBeVisible()
+  // 失败说明不出现内部用语；运行编号与错误码收在默认收起的技术详情里。
+  await expect(notice).not.toContainText(/Attempt|Worker|DSH/)
+  await expect(notice.getByText('RUNTIME_EXECUTION_FAILED')).toBeHidden()
+  await notice.getByText('技术详情', { exact: true }).click()
+  await expect(notice.getByText('RUNTIME_EXECUTION_FAILED')).toBeVisible()
   await expect(page.getByTestId('past-run-note')).toHaveText([/^已停止（.+），没有生成回复$/])
 
   await send(page, last)

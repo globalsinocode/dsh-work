@@ -291,7 +291,10 @@ describe('ConversationView 归档只读态（design §2.7 / AC-23）', () => {
       { id: 'tool-call-call-read', title: '正在调用工具', detail: 'read：正在调用', status: 'running', tool: 'read', callId: 'call-read', event: 'tool.started', at: startedAt, startedAt },
     ] }) })
     expect(wrapper.get('[data-testid="current-step"]').text()).toBe('正在读取文件')
-    expect(wrapper.get('[data-testid="run-progress-card"]').text()).toMatch(/正在处理 · 已用 4\d 秒/)
+    // 只有一个步骤时它的计时就是总用时，标题旁不重复“已用”。
+    const card = wrapper.get('[data-testid="run-progress-card"]').text()
+    expect(card).toMatch(/4\d 秒/)
+    expect(card).not.toContain('已用')
     expect(wrapper.text()).not.toContain('没有新的')
   })
 

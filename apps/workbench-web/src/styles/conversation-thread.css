@@ -229,11 +229,19 @@
   min-width: min(100%, 420px);
 }
 
+/* 一个成果一张卡：预览、下载、继续修改在同一边框内，以分隔线区分，不再是三个独立的框。 */
 .answer-artifact__row {
   display: flex;
   align-items: stretch;
-  flex-wrap: wrap;
-  gap: 6px;
+  overflow: hidden;
+  border: 1px solid #e2e4e1;
+  border-radius: 10px;
+  background: #fafbfa;
+}
+
+.answer-artifact__row.is-active {
+  border-color: #356858;
+  box-shadow: 0 0 0 2px rgb(53 104 88 / 12%);
 }
 
 
@@ -250,19 +258,19 @@
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  padding: 0 10px;
-  border: 1px solid #e2e4e1;
-  border-radius: 10px;
+  padding: 0 12px;
+  border: 0;
+  border-left: 1px solid #e2e4e1;
+  border-radius: 0;
   color: #356858;
-  background: #fafbfa;
+  background: transparent;
   cursor: pointer;
   font-size: var(--dsh-font-size-badge);
   white-space: nowrap;
 }
 
 .answer-artifact__revise:hover:not(:disabled) {
-  border-color: #bdcbc5;
-  background: #f5f8f6;
+  background: #f0f4f2;
 }
 
 .answer-artifact__revise:disabled {
@@ -285,27 +293,32 @@
   display: grid;
   grid-template-columns: 30px minmax(0, 1fr) auto;
   align-items: center;
-  min-width: 230px;
+  min-width: 140px;
   flex: 1 1 260px;
   gap: 8px;
   padding: 8px 12px 8px 10px;
-  border: 1px solid #e2e4e1;
-  border-radius: 10px;
+  border: 0;
+  border-radius: 0;
   color: #4c514c;
-  background: #fafbfa;
+  background: transparent;
   cursor: pointer;
   text-align: left;
 }
 
 .answer-artifact__open:hover {
-  border-color: #bdcbc5;
-  background: #f5f8f6;
+  background: #f0f4f2;
+}
+
+/* 卡片裁切圆角外的内容，焦点框画在按钮内侧，键盘切换时仍清晰可见。 */
+.answer-artifact__open:focus-visible,
+.answer-artifact__download:focus-visible,
+.answer-artifact__revise:focus-visible {
+  outline: 2px solid #356858;
+  outline-offset: -2px;
 }
 
 .answer-artifact__open.is-active {
-  border-color: #356858;
   background: #f2f7f5;
-  box-shadow: 0 0 0 2px rgb(53 104 88 / 12%);
 }
 
 .answer-artifact__open > span:first-child {
@@ -341,16 +354,16 @@
   flex: 0 0 40px;
   align-items: center;
   justify-content: center;
-  border: 1px solid #e2e4e1;
-  border-radius: 10px;
+  border: 0;
+  border-left: 1px solid #e2e4e1;
+  border-radius: 0;
   color: #356858;
-  background: #fafbfa;
+  background: transparent;
   cursor: pointer;
 }
 
 .answer-artifact__download:hover {
-  border-color: #bdcbc5;
-  background: #f5f8f6;
+  background: #f0f4f2;
 }
 
 .answer-artifacts strong {
@@ -590,10 +603,24 @@
 }
 
 .error-notice code {
-  display: inline-block;
-  margin-top: 7px;
   color: #9b3c47;
   font-size: var(--dsh-font-size-micro);
+}
+
+/* 运行编号与错误码默认收起，供排查时展开复制。 */
+.error-notice__details {
+  margin-top: 6px;
+  color: #767069;
+  font-size: var(--dsh-font-size-badge);
+}
+
+.error-notice__details summary {
+  width: fit-content;
+  cursor: pointer;
+}
+
+.error-notice__details dl {
+  margin-top: 6px;
 }
 
 .verify-notice {

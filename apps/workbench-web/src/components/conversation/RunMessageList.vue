@@ -142,10 +142,22 @@ function pastRunNote(message: ChatMessage) {
   return pastRunNotes.value.get(message.id)
 }
 
-/** 本轮最后一条回复在执行结束后显示业务结论与耗时，代替发送时间。 */
+/** 写入外部系统但效果未知的操作：失败说明与停止提醒共用。 */
+const unknownExternalEffects = computed(() => task.value.result.pendingItems.filter(item => item.kind === 'external_effect_unknown'))
+
+/** 个人对话只有本人发起，不再标“由某人发起”；团队对话保留归因。 */
+const showRequester = computed(() => task.value.workspaceType === 'team')
+
+/**
+ * 回复身份行统一显示发送时间；本轮最后一条回复在目标已达成时追加结论（I-06）。待核验不在消息流提示，
+ * 未达成由下方说明给出，用时见回答上方的步骤摘要，都不再挤进身份行。
+ */
 function messageMeta(message: ChatMessage) {
-  if (message.id !== lastAssistantMessageId.value || !belongsToCurrentRun(message) || !isTerminalRun.value) return undefined
-  return `${resultOutcomeLabels[task.value.result.outcome]}${task.value.duration ? ` · ${task.value.duration}` : ''}`
+  const achieved = message.id === lastAssistantMessageId.value && belongsToCurrentRun(message)
+    && isTerminalRun.value && task.value.result.outcome === 'achieved'
+  if (!achieved) return undefined
+  const requester = showRequester.value && message.runRequesterName ? `由 ${message.runRequesterName} 发起` : ''
+  return [message.createdAt, requester, resultOutcomeLabels.achieved].filter(Boolean).join(' · ')
 }
 </script>
 
@@ -155,6 +167,7 @@ function messageMeta(message: ChatMessage) {
       :message="message"
       :own="isOwn(message)"
       :meta="messageMeta(message)"
+      :show-requester="showRequester"
       :tag="!isOwn(message) && mentionsUser(message, authStore.user.id) ? '@了你' : undefined"
     >
       <template v-if="isTerminalRun && message.id === firstAssistantMessageId" #before>
@@ -199,9 +212,9 @@ function messageMeta(message: ChatMessage) {
         >
           <el-icon><Share /></el-icon>
         </button>
-        <span v-if="belongsToCurrentRun(message)" class="assistant-run-meta">
-          {{ task.tokenUsage ? `${task.tokenUsage.toLocaleString()} Token` : '自动' }}
-          · {{ task.agentVersion.split('@')[0] }}
+        <!-- 只在有用量时显示 Token；AI 同事名称已在身份行，不再重复。 -->
+        <span v-if="belongsToCurrentRun(message) && task.tokenUsage" class="assistant-run-meta">
+          {{ task.tokenUsage.toLocaleString() }} Token
         </span>
       </div>
     </ConversationMessageItem>
@@ -220,15 +233,19 @@ function messageMeta(message: ChatMessage) {
     <span class="conversation-notice__icon"><el-icon><Close /></el-icon></span>
     <div>
       <strong>{{ task.result.error.message }}</strong>
-      <dl>
-        <div><dt>对象</dt><dd>{{ task.result.error.object }}</dd></div>
-        <div><dt>原因</dt><dd>{{ task.result.error.reason }}</dd></div>
-      </dl>
+      <!-- 员工先看到原因与下一步；运行编号与错误码收进技术详情，排查时再展开复制给管理员。 -->
+      <p>{{ task.result.error.reason }}</p>
       <p><strong>下一步：</strong>{{ task.result.error.suggestion }}</p>
-      <ul v-if="task.result.pendingItems.some(item => item.kind === 'external_effect_unknown')" class="result-pending">
-        <li v-for="item in task.result.pendingItems.filter(item => item.kind === 'external_effect_unknown')" :key="item.message">{{ item.message }}</li>
+      <ul v-if="unknownExternalEffects.length" class="result-pending">
+        <li v-for="item in unknownExternalEffects" :key="item.message">{{ item.message }}</li>
       </ul>
-      <code>{{ task.result.error.code }}</code>
+      <details class="error-notice__details" data-testid="run-error-details">
+        <summary>技术详情</summary>
+        <dl>
+          <div><dt>对象</dt><dd>{{ task.result.error.object }}</dd></div>
+          <div><dt>错误码</dt><dd><code>{{ task.result.error.code }}</code></dd></div>
+        </dl>
+      </details>
     </div>
     <el-button
       v-if="canRetry"
@@ -242,7 +259,7 @@ function messageMeta(message: ChatMessage) {
   </section>
 
   <section
-    v-if="isTerminalRun && task.result.outcome === 'not_achieved' && !task.result.error"
+    v-if="isTerminalRun && task.result.outcome === 'not_achieved' && !task.result.error && task.status !== 'cancelled'"
     class="conversation-notice verify-notice verify-notice--neutral"
     data-testid="run-result-not-achieved"
   >
@@ -253,8 +270,25 @@ function messageMeta(message: ChatMessage) {
     <StatusTag :status="task.result.outcome" :label="resultOutcomeLabels[task.result.outcome]" />
   </section>
 
-  <p v-if="task.status === 'cancelled' && task.stoppedBy" class="conversation-stopped-by" data-testid="run-stopped-by">
-    本轮执行已由 {{ task.stoppedBy }} 停止
+  <!-- 停止是员工的主动操作，不再另用“目标未达成”的警示卡片重复说明，只留一行。 -->
+  <p v-if="task.status === 'cancelled'" class="conversation-stopped-by" data-testid="run-stopped-by">
+    {{ task.stoppedBy ? `本轮执行已由 ${task.stoppedBy} 停止` : '本轮执行已停止' }}
   </p>
+  <!-- 停止时正在执行的写入操作效果未知：单独提醒先核对，避免重新发送后对外部系统重复操作。 -->
+  <section
+    v-if="task.status === 'cancelled' && unknownExternalEffects.length"
+    class="conversation-notice verify-notice"
+    role="alert"
+    data-testid="run-external-effect-unknown"
+  >
+    <span class="conversation-notice__icon"><el-icon><Warning /></el-icon></span>
+    <div>
+      <strong>停止时有操作的实际效果尚未确认</strong>
+      <p>重新发送前，请先在对应系统中核对结果，避免重复操作。</p>
+      <ul class="result-pending">
+        <li v-for="item in unknownExternalEffects" :key="item.message">{{ item.message }}</li>
+      </ul>
+    </div>
+  </section>
 
 </template>
