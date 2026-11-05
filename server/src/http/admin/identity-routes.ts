@@ -12,6 +12,7 @@ export function registerIdentityAdministrationRoutes(
   router.get(`${basePath}/users`, async (_request, context) => envelope('admin', await administration.listUsers({
     query: context.url.searchParams.get('query') ?? '',
     status: context.url.searchParams.get('status') ?? '',
+    dingtalk: context.url.searchParams.get('dingtalk') ?? '',
     page: Number(context.url.searchParams.get('page') ?? undefined),
     pageSize: Number(context.url.searchParams.get('page_size') ?? undefined),
   }), 'postgres'))

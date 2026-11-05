@@ -1,12 +1,16 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
+import { useRoute } from 'vue-router'
 import { Refresh, Search, UserFilled } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
 import { adminApi, AdminApiError } from '@/api/client'
 import { useListPagination } from '@/composables/use-list-pagination'
 import { useAuthStore } from '@/stores/auth'
+import DingTalkBindingPanel from '@/components/dingtalk/DingTalkBindingPanel.vue'
+import { dingtalkBoundBy, dingtalkRevokeReason, dingtalkStatusLabel, dingtalkStatusTag } from '@/utils/dingtalk'
 import type {
+  DingTalkBindingStatus,
   DirectorySyncState,
   IdentityRoleSummary,
   IdentityUserPage,
@@ -22,6 +26,8 @@ interface DepartmentOption {
 }
 
 const authStore = useAuthStore()
+// 单元测试中可能没有路由。
+const route = useRoute() as ReturnType<typeof useRoute> | undefined
 const localAccountsEnabled = ref(false)
 const directoryEnabled = ref(false)
 const accountDialogOpen = ref(false)
@@ -46,12 +52,13 @@ const loading = ref(false)
 const saving = ref(false)
 const syncing = ref(false)
 const error = ref('')
-const query = ref('')
+const query = ref(typeof route?.query.query === 'string' ? route.query.query : '')
 const statusFilter = ref<'all' | 'active' | 'disabled'>('all')
+const dingtalkFilter = ref<'all' | 'bound' | 'unbound' | 'invalid'>('all')
 const currentPage = ref(1)
 const userPageSize = 20
 const userTotal = ref(0)
-const userSummary = ref({ synchronized: 0, active: 0, authorized: 0 })
+const userSummary = ref<IdentityUserPage['summary']>({ synchronized: 0, active: 0, authorized: 0 })
 const activeTab = ref<'users' | 'roles'>('users')
 const selectedUser = ref<IdentityUserSummary>()
 const userDrawerOpen = ref(false)
@@ -101,6 +108,9 @@ async function load() {
     permissionDefinitions.value = nextPermissions
     directoryState.value = nextState
     refreshSelectedUser()
+    // “钉钉集成 › 未绑定名单 › 代为绑定”带员工 ID 跳转：直接打开该员工的配置抽屉。
+    const requested = typeof route?.query.user === 'string' ? users.value.find(user => user.id === route.query.user) : undefined
+    if (requested) openUser(requested)
   } catch (cause) {
     error.value = cause instanceof Error ? cause.message : '身份与权限数据加载失败'
   } finally {
@@ -418,6 +428,7 @@ function userListRequest() {
   return {
     query: query.value.trim(),
     status: statusFilter.value,
+    dingtalk: dingtalkFilter.value,
     page: currentPage.value,
     pageSize: userPageSize,
   }
@@ -428,6 +439,14 @@ function applyUserPage(result: IdentityUserPage) {
   userTotal.value = result.total
   currentPage.value = result.page
   userSummary.value = result.summary
+}
+
+function dingtalkRowHint(user: IdentityUserSummary) {
+  const dingtalk = user.dingtalk
+  if (!dingtalk) return ''
+  if (dingtalk.status === 'bound') return dingtalkBoundBy(dingtalk.boundBy)
+  if (dingtalk.status === 'invalid') return dingtalkRevokeReason(dingtalk.revokeReason) + (dingtalk.selfRebindLocked ? '，已锁定' : '')
+  return '收不到钉钉通知'
 }
 
 function changeUserPage(page: number) {
@@ -502,6 +521,11 @@ onMounted(() => void load())
           <dd><strong class="sync-source">{{ directoryState?.applicationId ?? 'dsh-work' }} · {{ directoryState?.environment ?? '—' }}</strong><small>最近成功：{{ formatDate(directoryState?.lastSucceededAt) }}</small></dd>
         </div>
       </dl>
+      <p v-if="localAccountsEnabled && userSummary.dingtalk" class="overview-strip__hint dingtalk-summary" aria-label="钉钉绑定概况">
+        钉钉：已绑定 <strong>{{ userSummary.dingtalk.bound }}</strong>（本人登录 {{ userSummary.dingtalk.selfBound }} · 管理员代绑 {{ userSummary.dingtalk.adminBound }}）
+        · 未绑定 <strong>{{ userSummary.dingtalk.unbound + userSummary.dingtalk.invalid }}</strong>
+        <a v-if="authStore.canManageIdentity" href="/dingtalk?tab=unbound">查看名单</a>
+      </p>
       <p v-if="directoryEnabled && directoryState?.lastError" class="overview-strip__hint sync-error">{{ directoryState.lastError }}</p>
       <p v-else-if="!directoryEnabled" class="overview-strip__hint">账号安全：仅管理员可开通账号。</p>
       <div v-if="directoryEnabled" class="overview-strip__actions">
@@ -533,6 +557,12 @@ onMounted(() => void load())
               <el-option label="有效" value="active" />
               <el-option label="已停用" value="disabled" />
             </el-select>
+            <el-select v-if="localAccountsEnabled" v-model="dingtalkFilter" aria-label="筛选钉钉绑定" @change="reloadUsers(true)">
+              <el-option label="钉钉：全部" value="all" />
+              <el-option label="已绑定" value="bound" />
+              <el-option label="未绑定" value="unbound" />
+              <el-option label="已失效" value="invalid" />
+            </el-select>
             <el-button :icon="Search" @click="reloadUsers(true)">查询</el-button>
             <span class="filter-bar__meta">{{ userTotal }} 名员工</span>
             <el-button v-if="localAccountsEnabled && authStore.canManageIdentity" type="primary" @click="openAccount()">新建账号</el-button>
@@ -550,6 +580,15 @@ onMounted(() => void load())
             </el-table-column>
             <el-table-column label="登录账号" min-width="180" show-overflow-tooltip><template #default="scope"><span class="login-account">{{ scope.row.loginAccount || '未提供' }}</span></template></el-table-column>
             <el-table-column label="来源" width="100"><template #default="scope"><el-tag effect="plain" :type="scope.row.identityProvider === 'ai-hub' ? 'primary' : 'info'">{{ scope.row.identityProvider === 'ai-hub' ? 'AI Hub' : '独立账号' }}</el-tag></template></el-table-column>
+            <el-table-column v-if="localAccountsEnabled" label="钉钉" min-width="150">
+              <template #default="scope">
+                <template v-if="scope.row.dingtalk">
+                  <el-tag :type="dingtalkStatusTag[scope.row.dingtalk.status as DingTalkBindingStatus]" effect="plain">{{ dingtalkStatusLabel[scope.row.dingtalk.status as DingTalkBindingStatus] }}</el-tag>
+                  <div class="dingtalk-hint">{{ dingtalkRowHint(scope.row) }}</div>
+                </template>
+                <span v-else class="empty-value">—</span>
+              </template>
+            </el-table-column>
             <el-table-column prop="department" label="组织 / 部门" min-width="140" show-overflow-tooltip />
             <el-table-column label="本地角色" min-width="180">
               <template #default="scope">
@@ -658,6 +697,13 @@ onMounted(() => void load())
             <el-button :type="selectedUser.status === 'active' ? 'danger' : 'primary'" :loading="saving" @click="toggleAccountStatus">{{ selectedUser.status === 'active' ? '停用账号' : '启用账号' }}</el-button>
           </div>
         </section>
+        <DingTalkBindingPanel
+          v-if="localAccountsEnabled && authStore.canManageIdentity && selectedUser.identityProvider === 'local' && selectedUser.username"
+          :user-id="selectedUser.id"
+          :user-name="selectedUser.name"
+          :can-manage="selectedUser.status === 'active'"
+          @changed="void refreshUsers()"
+        />
         <p v-if="selectedUser.identityProvider === 'ai-hub'">AI Hub 账号，登录凭据和账号启停由 AI Hub 管理。</p>
 
         <section class="drawer-section">
@@ -714,6 +760,8 @@ onMounted(() => void load())
 
 <style scoped>
 .identity-tabs { width: 100%; }
+.dingtalk-hint { margin-top: 2px; font-size: 12px; color: var(--el-text-color-secondary); }
+.dingtalk-summary a { margin-left: 6px; }
 .filter-bar .el-input { width: 340px; }
 .filter-bar .el-select { width: 140px; }
 .identity-pagination { justify-content: space-between; padding: 14px var(--spacing-card); }

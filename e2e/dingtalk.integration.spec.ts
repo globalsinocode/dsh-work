@@ -1,0 +1,111 @@
+import { expect, test, type Page } from '@playwright/test'
+
+// P1 钉钉接入旅程（e2e/catalog/dingtalk.md）：真实应用 + 可丢弃数据库 + 假钉钉开放平台 HTTP 服务
+// （scripts/testing/dingtalk-browser.ts）。不是真实钉钉验收（DT-P2）。
+// 夹具账号：管理员陈默；赵宁、王一凡、孙悦、李响未绑定；林岚本人绑定；何青管理员代绑；周婷需改初始密码；吴凡已被锁定。
+
+const adminOrigin = `http://localhost:${process.env.DSH_WORK_DINGTALK_E2E_ADMIN_PORT ?? '4681'}`
+
+async function adminLogin(page: Page) {
+  await page.goto(`${adminOrigin}/login`)
+  await page.getByLabel('登录账号', { exact: true }).fill('dingtalk.admin@example.invalid')
+  await page.getByLabel('密码', { exact: true }).fill('AdminPass123')
+  await page.getByRole('button', { name: '登录' }).click()
+  await expect(page).toHaveURL(/\/overview/)
+}
+
+async function openEmployee(page: Page, account: string) {
+  await page.goto(`${adminOrigin}/identity`)
+  const row = page.getByRole('row').filter({ hasText: account })
+  await row.getByRole('button', { name: '配置' }).click()
+  const drawer = page.getByRole('dialog', { name: '员工授权配置' })
+  await expect(drawer.getByRole('region', { name: '钉钉' })).toBeVisible()
+  return drawer.getByRole('region', { name: '钉钉' })
+}
+
+async function lookup(panel: ReturnType<Page['getByRole']>, mobile: string) {
+  await panel.getByRole('button', { name: '代为绑定钉钉' }).click()
+  await panel.getByLabel('员工在钉钉中使用的手机号').fill(mobile)
+  await panel.getByRole('button', { name: '在钉钉中查找' }).click()
+}
+
+test.describe('DT-ADM-03 管理员代绑、解绑与钉钉集成页', () => {
+  test('员工列表显示钉钉状态并可按状态筛选', async ({ page }) => {
+    await adminLogin(page)
+    await page.goto(`${adminOrigin}/identity`)
+    await expect(page.getByLabel('钉钉绑定概况')).toContainText('本人登录 1')
+    await expect(page.getByLabel('钉钉绑定概况')).toContainText('管理员代绑 1')
+    const linlan = page.getByRole('row').filter({ hasText: 'linlan@example.invalid' })
+    await expect(linlan).toContainText('已绑定')
+    await expect(linlan).toContainText('本人在钉钉内登录')
+    await expect(page.getByRole('row').filter({ hasText: 'wufan@example.invalid' })).toContainText('已失效')
+
+    // Element Plus 选择框的占位层盖在 combobox 上，点击外层选择框。
+    await page.locator('.el-select').filter({ has: page.getByRole('combobox', { name: '筛选钉钉绑定' }) }).click()
+    await page.getByRole('option', { name: '已绑定' }).click()
+    await expect(page.getByRole('row').filter({ hasText: 'linlan@example.invalid' })).toBeVisible()
+    await expect(page.getByRole('row').filter({ hasText: 'zhaoning@example.invalid' })).toHaveCount(0)
+  })
+
+  test('代为绑定：预览钉钉姓名与部门，确认后显示已绑定；解除并锁定自行绑定', async ({ page }) => {
+    await adminLogin(page)
+    const panel = await openEmployee(page, 'zhaoning@example.invalid')
+    await expect(panel).toContainText('未绑定')
+    await lookup(panel, '138 0000 2201')
+    await expect(panel).toContainText('将绑定以下钉钉成员，请确认是本人')
+    await expect(panel).toContainText('赵宁')
+    await expect(panel).toContainText('销售部 · *******2201')
+    await panel.getByRole('button', { name: '确认绑定' }).click()
+    await expect(panel.getByRole('status')).toContainText('已绑定。已通知赵宁')
+    await expect(panel).toContainText('管理员陈默代绑')
+    await expect(panel).toContainText('赵宁（销售部）')
+
+    await panel.getByRole('button', { name: '解除绑定' }).click()
+    const dialog = page.getByRole('dialog', { name: '解除赵宁的钉钉绑定？' })
+    await dialog.getByText('锁定自行绑定').click()
+    await dialog.getByRole('button', { name: '解除绑定' }).click()
+    await expect(panel).toContainText('已失效')
+    await expect(panel).toContainText('已锁定自行绑定')
+    await expect(panel.getByRole('button', { name: '解除锁定' })).toBeVisible()
+  })
+
+  test('钉钉姓名不一致须勾选“我已核实是本人”；号码不存在直接提示', async ({ page }) => {
+    await adminLogin(page)
+    const panel = await openEmployee(page, 'wangyf@example.invalid')
+    await lookup(panel, '13800002202')
+    await expect(panel).toContainText('钉钉姓名“王逸帆”与员工姓名“王一凡”不一致')
+    const confirm = panel.getByRole('button', { name: '确认绑定' })
+    await expect(confirm).toBeDisabled()
+    await panel.getByText('我已核实是本人').click()
+    await expect(confirm).toBeEnabled()
+    await panel.getByRole('button', { name: '不是此人，重新输入' }).click()
+    await panel.getByLabel('员工在钉钉中使用的手机号').fill('13900009999')
+    await panel.getByRole('button', { name: '在钉钉中查找' }).click()
+    await expect(panel.getByRole('alert')).toContainText('企业钉钉中没有找到这个手机号')
+  })
+
+  test('钉钉集成：连接检查、绑定情况、未绑定名单与提醒、通知投递说明', async ({ page }) => {
+    await adminLogin(page)
+    await page.getByRole('navigation', { name: '管理后台主导航' }).getByRole('button', { name: '钉钉集成' }).click()
+    const config = page.getByRole('region', { name: '应用配置' })
+    await expect(config).toContainText('AgentId 3189001')
+    await config.getByRole('button', { name: '重新检查连接' }).click()
+    await expect(config.getByRole('status')).toContainText('连接正常')
+    await expect(config.getByText('已开通', { exact: true })).toHaveCount(4)
+    await expect(config.getByText('未开通', { exact: true })).toHaveCount(0)
+    await expect(page.getByRole('region', { name: '绑定情况' })).toContainText('已绑定')
+
+    await page.getByRole('region', { name: '绑定情况' }).getByRole('button', { name: '查看未绑定名单' }).click()
+    const sunyue = page.getByRole('row').filter({ hasText: 'sunyue@example.invalid' })
+    await expect(sunyue).toContainText('未绑定')
+    const wufan = page.getByRole('row').filter({ hasText: 'wufan@example.invalid' })
+    await expect(wufan).toContainText('已失效')
+    await expect(wufan).toContainText('已锁定自行绑定')
+    await expect(wufan.getByRole('button', { name: '提醒员工' })).toBeDisabled()
+    await sunyue.getByRole('button', { name: '提醒员工' }).click()
+    await expect(page.getByRole('status').filter({ hasText: '已提醒孙悦' })).toBeVisible()
+
+    await page.getByRole('tab', { name: '通知投递' }).click()
+    await expect(page.getByText('钉钉工作通知在下一阶段（DT-S2）启用')).toBeVisible()
+  })
+})

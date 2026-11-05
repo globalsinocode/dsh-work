@@ -4,12 +4,13 @@ import type { DatabaseTransaction } from '../../infrastructure/postgres/database
 
 const tenantId = 'tenant-dsh-work'
 
-/** 站内通知的类型；与迁移 0110、0111 的 CHECK 约束一一对应。 */
+/** 站内通知的类型；与迁移 0110、0111、0118 的 CHECK 约束一一对应。 */
 export type UserNotificationKind =
   | 'mention' | 'task_assigned' | 'task_completed' | 'workspace_member_added'
   | 'task_schedule_stopped' | 'automation_failed' | 'skill_review_result'
+  | 'dingtalk_bound_by_admin' | 'dingtalk_binding_revoked' | 'dingtalk_bind_reminder'
 
-export type UserNotificationObjectType = 'message' | 'project_task' | 'workspace' | 'automation' | 'skill_submission'
+export type UserNotificationObjectType = 'message' | 'project_task' | 'workspace' | 'automation' | 'skill_submission' | 'dingtalk_binding'
 
 /** 定时任务一次执行没有成功的方式（NC-S3）：执行失败、被跳过、停机错过、受理后未能开始。 */
 export type AutomationOutcome = 'failed' | 'skipped' | 'missed' | 'interrupted'

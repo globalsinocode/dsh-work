@@ -5727,7 +5727,7 @@
         "required": ["id", "kind", "createdAt", "read", "visible", "actor", "workspace", "objectName", "detail", "target"],
         "properties": {
           "id": { "type": "string" },
-          "kind": { "type": "string", "enum": ["mention", "task_assigned", "task_completed", "workspace_member_added", "task_schedule_stopped", "automation_failed", "skill_review_result"] },
+          "kind": { "type": "string", "enum": ["mention", "task_assigned", "task_completed", "workspace_member_added", "task_schedule_stopped", "automation_failed", "skill_review_result", "dingtalk_bound_by_admin", "dingtalk_binding_revoked", "dingtalk_bind_reminder"], "description": "dingtalk_*：管理员代绑钉钉、钉钉绑定被管理员解除或改绑（detail.reason 为 admin_unbind / rebound_to_other）、管理员提醒绑定钉钉；这三类不可在偏好中关闭，objectName 为钉钉姓名" },
           "createdAt": { "type": "string", "format": "date-time" },
           "read": { "type": "boolean" },
           "visible": { "type": "boolean", "description": "本人当前是否仍能看到对应内容；为 false 时以下名称与跳转目标均为 null。" },
@@ -5735,7 +5735,7 @@
           "workspace": { "type": ["object", "null"], "required": ["id", "name"], "properties": { "id": { "type": "string" }, "name": { "type": "string" } } },
           "objectName": { "type": ["string", "null"], "description": "任务标题、定时任务名称或提交的 Skill 名称；@ 我与被加入项目为 null。" },
           "detail": { "type": ["object", "null"], "additionalProperties": { "type": "string" }, "description": "事件代码（NC-S3）：定时执行的 state（paused/stopped）与 reason、定时任务的 outcome（failed/skipped/missed/interrupted）、Skill 审核的 result（approved/rejected）；不含拒绝原因等正文。" },
-          "target": { "type": ["object", "null"], "required": ["type", "id", "sessionId"], "properties": { "type": { "type": "string", "enum": ["message", "project_task", "workspace", "automation", "skill_submission"] }, "id": { "type": "string" }, "sessionId": { "type": ["string", "null"], "description": "@ 我所在的会话、定时任务这次执行的会话或提交 Skill 的会话。" } } }
+          "target": { "type": ["object", "null"], "required": ["type", "id", "sessionId"], "properties": { "type": { "type": "string", "enum": ["message", "project_task", "workspace", "automation", "skill_submission", "dingtalk_binding"] }, "id": { "type": "string" }, "sessionId": { "type": ["string", "null"], "description": "@ 我所在的会话、定时任务这次执行的会话或提交 Skill 的会话。" } } }
         }
       },
       "ConversationMessagePreview": {
