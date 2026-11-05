@@ -40,7 +40,9 @@ flowchart LR
 | `local_user_credentials` | 独立账号密码 | 用户名全租户唯一；密码以加盐 scrypt 保存；初始密码必须修改 |
 | `local_identity_bootstrap` | 首个独立管理员的一次性初始化 | 每租户只能消费一次 |
 | `local_auth_rate_limits` | 登录限流计数 | 键是 HMAC，不保存用户名或地址；多进程与重启共享 |
-| `authentication_sessions` | 服务端 Session | 浏览器只持有不透明 Cookie，数据库只存摘要；OIDC Token 服务端加密 |
+| `authentication_sessions` | 服务端 Session | 浏览器只持有不透明 Cookie，数据库只存摘要；OIDC Token 服务端加密；来源 `ai-hub-oidc` / `local-password` / `dingtalk`（迁移 0117），`dingtalk` 会话必须带 `binding_id`、按该绑定有效性校验并按它撤销，其他来源不得带 |
+| `external_account_bindings` | 平台账号与外部渠道账号的绑定（迁移 0117，[钉钉接入方案](dingtalk-integration-plan.md) 4.2；本期 `channel = 'dingtalk'`） | 有效记录中平台账号与外部账号各自唯一（部分唯一索引）；状态只有 `valid` / `invalid`，未绑定即没有有效记录；`self_rebind_locked` 只出现在失效记录上；只存钉钉 userid、姓名与部门，不存手机号 |
+| `external_binding_tickets` | 服务端短时单次凭证：钉钉内待绑定凭证与管理员代绑确认凭证（迁移 0117） | 只存凭证哈希；原子消费，重复使用、过期、来源或目标员工 / 管理员不符一律无效；代绑凭证只存脱敏手机号与 HMAC |
 | `oidc_login_transactions` | OIDC 登录事务 | state、nonce 与入口绑定，一次性使用 |
 | `application_admin_bootstrap_claims` | AI Hub 初始管理员认领 | 按应用/环境幂等消费 |
 | `identity_directory_sync_state` | AI Hub 员工目录同步游标 | 持久化 opaque cursor；员工停用即撤销其 Session，保留本地角色历史 |

@@ -28,10 +28,10 @@ export function registerLocalAuthRoutes(router: Router, authentication: LocalAut
       return { location: result.location }
     })
     router.post(`/auth/${audience}/password`, async (request, _context, response) => {
-      const input = await readLocalBody<{ currentPassword: unknown; newPassword: unknown; returnTo?: string }>(request)
-      const result = await authentication.changePassword(request, audience, input)
+      const input = await readLocalBody<{ currentPassword: unknown; newPassword: unknown; returnTo?: string; dingtalkBindingToken?: unknown }>(request)
+      const result = await authentication.changePassword(request, audience, { ...input, dingtalkTicket: input.dingtalkBindingToken })
       response.setHeader('Set-Cookie', oidc ? [result.sessionCookie, await oidc.revokeSession(request, audience), oidc.clearTransactionCookie(audience)] : result.sessionCookie)
-      return { location: result.location }
+      return result.dingtalkBinding ? { location: result.location, binding: result.dingtalkBinding } : { location: result.location }
     })
   }
 
