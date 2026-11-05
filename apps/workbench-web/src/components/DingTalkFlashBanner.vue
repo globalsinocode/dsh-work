@@ -24,10 +24,10 @@ const copy = {
   /* 浮在页面上方，不改变各页的整屏布局；宽屏让出协作模式侧栏，窄屏在顶栏之下。 */
   position: fixed; z-index: 30; top: 12px; left: calc(var(--collab-rail-width, 0px) + 12px); right: 12px;
   display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; padding: 10px 12px;
-  border-radius: 10px; background: #f0fdf4; color: #166534; font-size: 13px; line-height: 1.5;
+  border-radius: 10px; background: #f0fdf4; color: #166534; font-size: var(--dsh-font-size-caption); line-height: 1.5;
   box-shadow: 0 4px 16px rgb(15 23 42 / 12%);
 }
 @media (max-width: 820px) { .dingtalk-flash { top: 60px; left: 12px; } }
 .dingtalk-flash--warning { background: #fffbeb; color: #92400e; }
-.dingtalk-flash button { min-width: 32px; min-height: 32px; border: 0; background: none; color: inherit; font-size: 18px; line-height: 1; cursor: pointer; }
+.dingtalk-flash button { min-width: 32px; min-height: 32px; border: 0; background: none; color: inherit; font-size: var(--dsh-font-size-subheading); line-height: 1; cursor: pointer; }
 </style>
