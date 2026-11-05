@@ -56,6 +56,7 @@ import type {
   WorkspaceUsage,
   WorkspaceUsageQuery,
   UploadedWorkspaceFileVersion,
+  DingTalkSelfBinding,
 } from '../types/domain'
 import type {
   KnowledgeBase,
@@ -171,6 +172,9 @@ export const workbenchApi = {
 
   getSession: () => request<WorkbenchSession>('/session'),
   getPreferences: () => request<UserPreferences>('/me/preferences'),
+  // 用户中心 › 钉钉（钉钉接入 DT-S1）：查看与解除本人的钉钉绑定。
+  getDingTalkBinding: () => request<DingTalkSelfBinding>('/me/dingtalk-binding'),
+  unbindDingTalk: () => request<DingTalkSelfBinding>('/me/dingtalk-binding', { method: 'DELETE' }),
   updatePreferences: (input: { uiMode: UiMode }) =>
     request<UserPreferences>('/me/preferences', { method: 'PUT', body: JSON.stringify(input) }),
   listConversationTargets: (query: { query?: string; cursor?: string; limit?: number } = {}) => {

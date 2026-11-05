@@ -115,7 +115,10 @@ async function onCommand(command: string | number | object) {
 </script>
 
 <template>
+  <!-- 钉钉容器内固定协作模式（DT25），不提供切换，只显示 logo。 -->
+  <span v-if="uiMode.containerLocked" class="mode-switch mode-switch--locked"><slot /></span>
   <el-dropdown
+    v-else
     ref="dropdownRef"
     trigger="click"
     :placement="placement"

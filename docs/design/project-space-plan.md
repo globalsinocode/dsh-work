@@ -354,6 +354,7 @@
 - **B 专属路由：** `/c/chats`、`/c/chats/agent/:agentId`（`?session=` 定位到某段会话）、`/c/chats/group/:id`（`?tab=chat|tasks|files|artifacts|archive`，`?info=1` 展开信息栏，`?session=` 定位到某段讨论）及与 A 同构的子路由 `/c/chats/group/:id/tasks/:taskId`（任务详情）、`.../tasks/:taskId/thread/:conversationId`（任务对话）、`/c/chats/group/:id/conversations/:runId`（执行详情）、`/c/groups`（`/c/groups/:id` 选中群组）、`/c/agents`（`/c/agents/:agentId` 选中 Agent）。S5d 起任务详情由查询参数改为子路由，以便任务对话与执行详情原样复用 A 的嵌套页面；旧格式 `?tab=tasks&task=` 仍能映射。
 - **切换时的映射：** `/workbench` ↔ `/c/chats`；`/conversations/:id` ↔ 该会话所属 Agent 的单聊并定位到该段；`/workspaces` ↔ `/c/groups`；`/agents` ↔ `/c/agents`；`/workspaces/:id` ↔ `/c/chats/group/:id`；`/workspaces/:id/tasks/:taskId(/thread/:conversationId)` ↔ `/c/chats/group/:id/tasks/:taskId(/thread/:conversationId)`；`/workspaces/:id/conversations/:runId` ↔ `/c/chats/group/:id/conversations/:runId`；`/workspaces/:id?tab=tasks|files|artifacts|archive` ↔ `/c/chats/group/:id?tab=` 对应页签。共用页保持原地址；没有对应页时进入该模式首页。
 - **链接与通知：** 站内通知、复制的链接与旧书签继续使用 A 的地址；当前为 B 模式时由路由守卫映射到 B 的对应地址，当前为 A 时访问 `/c/...` 映射回 A。链接因此与模式无关。
+- **钉钉容器内固定 B（钉钉接入方案 DT25，DT-S1 实施）：** 在钉钉客户端内打开员工端时一律使用协作模式，不提供模式切换，也不读取、不修改员工保存的模式偏好和本地缓存；回到桌面浏览器仍按偏好显示。容器识别（User-Agent）只用于界面。
 - **个人空间：** B 不显示个人空间页。个人对话按 Agent 归入对话列表；未选择 AI 同事的个人对话归入平台默认 Agent 一行。
 
 ### 12.6 数据与接口

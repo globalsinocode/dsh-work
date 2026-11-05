@@ -16,6 +16,7 @@ import {
 } from '@element-plus/icons-vue'
 
 import { AppLogo } from '@dsh-work/ui-core'
+import DingTalkFlashBanner from '@/components/DingTalkFlashBanner.vue'
 import ModeSwitchMenu from '@/components/ModeSwitchMenu.vue'
 import NotificationCenter from '@/components/NotificationCenter.vue'
 import { useWorkbenchBootstrap } from '@/composables/useWorkbenchBootstrap'
@@ -149,7 +150,7 @@ onMounted(() => {
       </div>
     </aside>
 
-    <main class="collab-main"><router-view :key="authStore.user.id" /></main>
+    <main class="collab-main"><DingTalkFlashBanner /><router-view :key="authStore.user.id" /></main>
   </div>
 </template>
 

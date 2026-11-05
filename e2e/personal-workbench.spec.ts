@@ -41,6 +41,16 @@ test('P0: personal Workspace is implicit, navigation exposes work entries', asyn
   await expect(page.getByLabel('选择工作空间')).toHaveCount(0)
 })
 
+test('DT-EMP-P0: 用户中心有“钉钉”分区，未绑定时说明如何绑定', async ({ page }) => {
+  await page.goto('/settings?section=dingtalk')
+  const section = page.getByRole('region', { name: '钉钉' })
+  await expect(section).toBeVisible()
+  await expect(section).toContainText('未绑定')
+  await expect(section.getByRole('heading', { name: '如何绑定' })).toBeVisible()
+  await expect(section).toContainText('用你的 dsh-work 账号和密码登录一次')
+  await expect(section.getByRole('button', { name: '解除绑定' })).toHaveCount(0)
+})
+
 test('NC-03: the sidebar bell above the avatar opens notifications and jumps to the project', async ({ page }) => {
   await page.goto('/workbench')
   // 通知入口不进入主导航（仍是五个入口），位于侧栏底部头像上方。

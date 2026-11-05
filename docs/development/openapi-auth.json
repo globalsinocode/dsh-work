@@ -57,6 +57,19 @@
                     "aiHubEnabled": {
                       "type": "boolean",
                       "description": "是否允许用户主动选择 AI Hub 登录"
+                    },
+                    "dingtalk": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "corpId"
+                      ],
+                      "description": "仅员工端、且部署配置了钉钉企业内部应用时返回：钉钉容器内调用 JSAPI requestAuthCode 所需的企业 corpId（非秘密）。管理端不返回",
+                      "properties": {
+                        "corpId": {
+                          "type": "string"
+                        }
+                      }
                     }
                   }
                 }

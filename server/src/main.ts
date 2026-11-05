@@ -24,6 +24,8 @@ import { registerWorkspaceAgentMemberRoutes } from './http/workbench/workspace-a
 import { registerProjectRoutes } from './http/workbench/project-routes.ts'
 import { registerWorkbenchAgentRoutes } from './http/workbench/agent-routes.ts'
 import { registerUserPreferenceRoutes } from './http/workbench/preference-routes.ts'
+import { registerDingTalkBindingRoutes } from './http/workbench/dingtalk-binding-routes.ts'
+import { PostgresDingTalkSelfBindingService } from './modules/identity/dingtalk/dingtalk-self-service.ts'
 import { registerConversationTargetRoutes } from './http/workbench/conversation-target-routes.ts'
 import { registerUserNotificationRoutes } from './http/workbench/user-notification-routes.ts'
 import { registerKnowledgeRoutes } from './http/workbench/knowledge-routes.ts'
@@ -171,7 +173,11 @@ async function start() {
   // 每日离职检查（钉钉接入方案 4.2）：只在配置了钉钉应用时启动；单进程部署，进行中的检查由唯一索引互斥。
   const dingtalkDepartureTimer = dingtalkAdministration.startDailyDepartureCheck()
   registerSessionRoutes(router)
-  registerAuthConfigurationRoutes(router, () => ({ mode: identityConfiguration.mode, localEnabled: true, aiHubEnabled: Boolean(oidcAuthentication) }))
+  // 钉钉只对员工端提供 corpId（容器内 requestAuthCode 需要），不是秘密，也不暴露 AppKey/AppSecret。
+  registerAuthConfigurationRoutes(router, audience => ({
+    mode: identityConfiguration.mode, localEnabled: true, aiHubEnabled: Boolean(oidcAuthentication),
+    ...(audience === 'workbench' && dingtalkConfiguration ? { dingtalk: { corpId: dingtalkConfiguration.corpId } } : {}),
+  }))
   registerIdentityAdministrationRoutes(
     router,
     new IdentityAdministrationService(database, true),
@@ -613,6 +619,7 @@ async function start() {
   registerWorkspaceLifecycleRoutes(router, workspaceLifecycle, authorization)
   registerWorkspaceActivityRoutes(router, workspaceActivity, authorization)
   registerUserPreferenceRoutes(router, new PostgresUserPreferenceService(database))
+  registerDingTalkBindingRoutes(router, new PostgresDingTalkSelfBindingService(database, dingtalkConfiguration !== null))
   registerConversationTargetRoutes(router, new PostgresConversationTargetService(database, agents), authorization)
   const userNotifications = new PostgresUserNotificationService(database)
   registerUserNotificationRoutes(router, userNotifications, authorization)

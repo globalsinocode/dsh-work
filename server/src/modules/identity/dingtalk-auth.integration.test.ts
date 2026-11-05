@@ -5,6 +5,8 @@ import { after, before, beforeEach, test } from 'node:test'
 import { createThrowawayDatabase, type ThrowawayDatabase } from '../../infrastructure/postgres/test-database.ts'
 import { registerDingTalkAuthRoutes } from '../../http/dingtalk-auth-routes.ts'
 import { registerLocalAuthRoutes } from '../../http/local-auth-routes.ts'
+import { registerDingTalkBindingRoutes } from '../../http/workbench/dingtalk-binding-routes.ts'
+import { PostgresDingTalkSelfBindingService } from './dingtalk/dingtalk-self-service.ts'
 import { envelope, requireRequestIdentity, Router } from '../../http/router.ts'
 import { DingTalkDirectoryDouble } from '../../testing/dingtalk-double.ts'
 import { IdentityAdministrationService } from './administration-service.ts'
@@ -50,6 +52,7 @@ before(async () => {
   adminId = (await local.bootstrap({ username: 'dt.admin@example.invalid', name: '钉钉管理员', password })).userId
   registerLocalAuthRoutes(router, local)
   registerDingTalkAuthRoutes(router, new DingTalkAuthService(config, database.client, dingtalk, dingtalkConfig), local)
+  registerDingTalkBindingRoutes(router, new PostgresDingTalkSelfBindingService(database.client, true))
   router.get('/api/workbench/v1/session', (_request, context) => envelope('workbench', requireRequestIdentity(context, 'workbench'), 'postgres'))
 })
 
@@ -351,4 +354,28 @@ test('钉钉不可用时明确报告不可用，不降级', async () => {
   } finally {
     dingtalk.failure = null
   }
+})
+
+test('用户中心 › 钉钉：查看本人绑定；自行解除后钉钉内登录立即失效，之后可重新绑定', async () => {
+  const { cookie, dingUserId, userId } = await bindNew()
+  const view = await call('/api/workbench/v1/me/dingtalk-binding', { public: true, cookie })
+  assert.equal(view.status, 200)
+  assert.equal(view.body.data.enabled, true)
+  assert.equal(view.body.data.status, 'bound')
+  assert.equal(view.body.data.binding.boundBy, 'self')
+  assert.equal(view.body.data.binding.dingtalkName, '赵宁')
+  assert.equal(view.body.data.binding.dingtalkDepartment, '销售部、华东区')
+
+  const unbound = await call('/api/workbench/v1/me/dingtalk-binding', { public: true, cookie, method: 'DELETE' })
+  assert.equal(unbound.status, 200)
+  assert.equal(unbound.body.data.status, 'invalid')
+  assert.equal(unbound.body.data.invalid.reason, 'self_unbind')
+  assert.equal(unbound.body.data.selfRebindLocked, false)
+  assert.equal((await sessionOf(cookie)).status, 401, '当前钉钉会话随解绑撤销')
+  const [audit] = await database.client<{ count: number }[]>`select count(*)::integer as count from audit_events where actor_id = ${userId} and action = 'identity.dingtalk.self_unbind'`
+  assert.equal(audit!.count, 1)
+
+  const desktop = await call('/auth/workbench/login', { body: { username: (await database.client<{ username: string }[]>`select username from local_user_credentials where user_id = ${userId}`)[0]!.username, password } })
+  assert.equal((await call('/api/workbench/v1/me/dingtalk-binding', { cookie: desktop.cookie, method: 'DELETE' })).status, 404, '没有有效绑定时不能再解绑')
+  assert.equal((await dingtalkLogin(dingUserId)).body.status, 'binding_required', '解绑后在钉钉内登录一次可重新绑定')
 })

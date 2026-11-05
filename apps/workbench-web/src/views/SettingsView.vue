@@ -2,6 +2,7 @@
 import { onMounted, ref } from 'vue'
 import { workbenchApi } from '@/api/client'
 import PageHeader from '@/components/PageHeader.vue'
+import DingTalkSettingsSection from '@/components/DingTalkSettingsSection.vue'
 import { User } from '@element-plus/icons-vue'
 
 import { roleLabels, useAuthStore } from '@/stores/auth'
@@ -35,6 +36,8 @@ onMounted(() => { void loadPolicy() })
           <div class="identity-grid__wide"><dt>数据范围</dt><dd>{{ authStore.user.dataScopes.join('、') }}</dd></div>
         </dl>
       </section>
+
+      <DingTalkSettingsSection v-if="authStore.identityProvider === 'local-password' || authStore.identityProvider === 'dingtalk' || authStore.identityProvider === 'prototype-sso'" />
 
       <section class="panel settings-section retention-notice">
         <h2>内容保留与账号停用</h2>

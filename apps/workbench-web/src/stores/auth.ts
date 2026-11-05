@@ -68,7 +68,8 @@ export const useAuthStore = defineStore('workbench-auth', () => {
   }
 
   async function logout() {
-    if (identityProvider.value === 'local-password') {
+    // 钉钉会话与密码会话同为本地会话，退出登录撤销该账号全部来源的会话（钉钉接入方案 4.3）。
+    if (identityProvider.value === 'local-password' || identityProvider.value === 'dingtalk') {
       try {
         const response = await fetch('/auth/workbench/logout', { method: 'POST', credentials: 'same-origin' })
         if (!response.ok) throw new Error('退出登录失败，请重试')
