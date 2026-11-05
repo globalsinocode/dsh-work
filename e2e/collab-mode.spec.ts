@@ -324,6 +324,8 @@ test('MODE-E2E-09/10: a group shows its chat timeline, the shared tabs and the g
   const answered = chat.locator('.conversation-message--assistant', { hasText: '本月华东区共有 126 张在制订单' })
   await expect(answered).toContainText('由 林岚 发起')
   await expect(answered.getByRole('button', { name: '查看执行详情' })).toBeVisible()
+  // EX-STYLE-01：群聊是多人对话，每条消息都显示发送人，不使用一对一对话中只留气泡的样式。
+  await expect(chat.getByRole('article', { name: /^我的消息，/ })).toHaveCount(0)
   const running = chat.getByTestId('group-run-entry')
   await expect(running).toHaveCount(1)
   await expect(running).toContainText('由 林岚 发起')

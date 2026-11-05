@@ -25,6 +25,11 @@ test('P1: stopped and failed rounds keep a note after later rounds, and the fail
   // 个人对话只有本人发起，不标“由某人发起”；底部不再出现“自动”占位。
   await expect(firstReply).not.toContainText('发起')
   await expect(firstReply).not.toContainText('自动')
+  // EX-STYLE-01：一对一对话中员工自己的消息只有气泡，没有名字，仍有可访问名称；标题栏显示正在对话的 AI 同事。
+  const ownMessage = page.getByRole('article', { name: /^我的消息，/ }).filter({ hasText: first })
+  await expect(ownMessage).toBeVisible()
+  await expect(ownMessage).not.toContainText('林岚')
+  await expect(page.locator('header').getByText(agentName, { exact: true })).toBeVisible()
 
   // 执行中的名称与完成后回复的名称一致。
   await send(page, stopped)

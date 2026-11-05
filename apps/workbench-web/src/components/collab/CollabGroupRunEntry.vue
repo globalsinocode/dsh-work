@@ -136,7 +136,7 @@ const liveAnnouncement = computed(() => showSteps.value
   flex-wrap: wrap;
   align-items: flex-end;
   gap: 4px 20px;
-  margin: 6px 0 0 34px;
+  margin: 6px 0 0 42px;
 }
 
 .collab-run-entry__body--live .run-progress-steps {

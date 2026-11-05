@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, defineComponent, Fragment, h, type PropType, type VNodeChild } from 'vue'
+import { computed, defineComponent, Fragment, h, onBeforeUnmount, reactive, type PropType, type VNodeChild } from 'vue'
+import { CopyDocument, Download } from '@element-plus/icons-vue'
 
 interface ListItem { text: string; children: ListBlock[] }
 type ListBlock =
@@ -21,6 +22,97 @@ type Block =
 
 const props = defineProps<{ text: string }>()
 const blocks = computed(() => parseBlocks(props.text))
+/** 每个表格是回答中的第几个表格（从 1 起），用于下载文件名；与其他内容块的位置无关。 */
+const tableNumbers = computed(() => {
+  const numbers = new Map<number, number>()
+  blocks.value.forEach((block, index) => { if (block.type === 'table') numbers.set(index, numbers.size + 1) })
+  return numbers
+})
+
+/*
+ * EX-STYLE-01：表格工具栏。复制为制表符分隔（粘贴到表格软件按列分开），下载为带 UTF-8 BOM 的 CSV
+ * （Excel 打开中文不乱码）；单元格去掉 Markdown 标记。剪贴板不可用（如 HTTP 内网）时退回选区复制，
+ * 仍失败就明确提示，不静默。
+ */
+const tableStatus = reactive<Record<number, string>>({})
+const statusTimers = new Map<number, ReturnType<typeof setTimeout>>()
+onBeforeUnmount(() => statusTimers.forEach(timer => clearTimeout(timer)))
+
+function showTableStatus(index: number, message: string) {
+  tableStatus[index] = message
+  clearTimeout(statusTimers.get(index))
+  statusTimers.set(index, setTimeout(() => { delete tableStatus[index] }, 2400))
+}
+
+function plainCell(value: string) {
+  return value.replace(/\*\*([^*\n]+)\*\*/g, '$1').replace(/`([^`\n]+)`/g, '$1').replace(/[\t\r\n]+/g, ' ').trim()
+}
+
+function tableMatrix(block: TableBlock) {
+  return [block.headers, ...block.rows].map(row => row.map(plainCell))
+}
+
+function tableTsv(block: TableBlock) {
+  return tableMatrix(block).map(row => row.join('\t')).join('\n')
+}
+
+function tableCsv(block: TableBlock) {
+  // 以 = + - @ 开头的单元格在表格软件中会被当作公式执行；表格内容来自模型输出，加前导单引号按文本处理。
+  const neutralize = (cell: string) => /^[=+\-@]/.test(cell) ? `'${cell}` : cell
+  const quote = (raw: string) => {
+    const cell = neutralize(raw)
+    return /[",\n]/.test(cell) ? `"${cell.replaceAll('"', '""')}"` : cell
+  }
+  return `\uFEFF${tableMatrix(block).map(row => row.map(quote).join(',')).join('\r\n')}`
+}
+
+function copyWithSelection(text: string) {
+  // 选区复制会移走焦点，复制后还给原来的按钮，键盘用户不会被带回页面开头。
+  const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null
+  const area = document.createElement('textarea')
+  area.value = text
+  area.setAttribute('readonly', '')
+  area.style.position = 'fixed'
+  area.style.opacity = '0'
+  document.body.appendChild(area)
+  area.select()
+  try {
+    return document.execCommand('copy')
+  } catch {
+    return false
+  } finally {
+    area.remove()
+    previous?.focus()
+  }
+}
+
+async function copyTable(block: TableBlock, index: number) {
+  const text = tableTsv(block)
+  let copied = false
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text)
+      copied = true
+    }
+  } catch {
+    copied = false
+  }
+  if (!copied) copied = copyWithSelection(text)
+  showTableStatus(index, copied ? `已复制 ${block.rows.length} 行，可直接粘贴到表格` : '复制失败，请手动选中表格复制')
+}
+
+function downloadTable(block: TableBlock, index: number) {
+  const url = URL.createObjectURL(new Blob([tableCsv(block)], { type: 'text/csv;charset=utf-8' }))
+  const link = document.createElement('a')
+  link.href = url
+  link.download = `表格-${tableNumbers.value.get(index) ?? 1}.csv`
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+  // 立即释放会让部分浏览器（如 Safari）取消下载，稍后再释放。
+  setTimeout(() => URL.revokeObjectURL(url), 1000)
+  showTableStatus(index, '已开始下载 CSV')
+}
 
 const InlineMarkdown = defineComponent({
   props: { text: { type: String as PropType<string>, required: true } },
@@ -200,7 +292,14 @@ function inlineNodes(value: string): VNodeChild[] {
         <span v-if="block.language">{{ block.language }}</span>
         <pre><code>{{ block.text }}</code></pre>
       </div>
-      <div v-else-if="block.type === 'table'" class="assistant-table-wrap">
+      <div v-else-if="block.type === 'table'" class="assistant-table" data-testid="assistant-table">
+        <div class="assistant-table-bar">
+          <span>{{ block.rows.length }} 行 · {{ block.headers.length }} 列</span>
+          <span class="assistant-table-status" role="status">{{ tableStatus[index] ?? '' }}</span>
+          <button type="button" @click="copyTable(block, index)"><CopyDocument aria-hidden="true" />复制表格</button>
+          <button type="button" @click="downloadTable(block, index)"><Download aria-hidden="true" />下载 CSV</button>
+        </div>
+        <div class="assistant-table-wrap">
         <table>
           <thead>
             <tr>
@@ -213,6 +312,7 @@ function inlineNodes(value: string): VNodeChild[] {
             </tr>
           </tbody>
         </table>
+        </div>
       </div>
       <MarkdownList v-else-if="block.type === 'unordered-list' || block.type === 'ordered-list'" :block="block" />
       <p v-else><template v-for="(line, lineIndex) in block.lines" :key="lineIndex"><br v-if="lineIndex"><InlineMarkdown :text="line" /></template></p>
@@ -224,12 +324,13 @@ function inlineNodes(value: string): VNodeChild[] {
 .assistant-message-content { color: var(--dsh-color-text, var(--color-text-primary)); font-size: var(--dsh-font-size-body, var(--font-size-body)); line-height: 1.75; overflow-wrap: anywhere; }
 .assistant-message-content > :first-child { margin-top: 0; }
 .assistant-message-content > :last-child { margin-bottom: 0; }
-.assistant-message-content p { margin: 8px 0; }
-.assistant-message-content h3, .assistant-message-content h4 { margin: 18px 0 8px; color: var(--dsh-color-ink, var(--color-text-heading)); font-weight: 650; line-height: 1.45; }
-.assistant-message-content h3 { font-size: var(--dsh-font-size-subheading, var(--font-size-title)); }
-.assistant-message-content h4 { font-size: var(--dsh-font-size-title, var(--font-size-body)); }
-.assistant-message-content ul, .assistant-message-content ol { margin: 8px 0; padding-left: 24px; }
-.assistant-message-content li + li { margin-top: 5px; }
+.assistant-message-content p { margin: 12px 0; }
+.assistant-message-content h3, .assistant-message-content h4 { margin: 22px 0 8px; color: var(--dsh-color-ink, var(--color-text-heading)); font-weight: 650; line-height: 1.45; }
+.assistant-message-content h3 { font-size: var(--dsh-font-size-section, var(--font-size-title)); }
+.assistant-message-content h4 { font-size: var(--dsh-font-size-subheading, var(--font-size-body)); }
+.assistant-message-content ul, .assistant-message-content ol { margin: 12px 0; padding-left: 24px; }
+.assistant-message-content li > ul, .assistant-message-content li > ol { margin: 6px 0 4px; }
+.assistant-message-content li + li { margin-top: 8px; }
 .assistant-message-content li::marker { color: var(--dsh-color-subtle, #98a2b3); }
 .assistant-message-content :deep(.assistant-inline-code) { padding: 2px 6px; border-radius: var(--dsh-radius-sm, var(--radius-tag)); background: var(--dsh-color-canvas, var(--color-bg-page)); color: var(--dsh-color-brand, var(--color-primary)); font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: .92em; }
 .assistant-message-content :deep(a) { color: var(--dsh-color-brand, var(--color-primary)); text-decoration: none; }
@@ -238,7 +339,14 @@ function inlineNodes(value: string): VNodeChild[] {
 .assistant-code-block > span { display: block; padding: 7px 12px; border-bottom: 1px solid var(--dsh-color-border, #e4e8ef); color: var(--dsh-color-muted, #667085); font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: var(--dsh-font-size-micro, 11px); }
 .assistant-code-block pre { margin: 0; padding: 12px 14px; overflow-x: auto; white-space: pre; }
 .assistant-code-block code { color: var(--dsh-color-ink, #172033); background: transparent; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: var(--dsh-font-size-caption, 13px); line-height: 1.65; }
-.assistant-table-wrap { margin: 12px 0; overflow-x: auto; border: 1px solid var(--dsh-color-border, #e4e8ef); border-radius: var(--dsh-radius-md, 12px); }
+.assistant-table { margin: 12px 0; overflow: hidden; border: 1px solid var(--dsh-color-border, #e4e8ef); border-radius: var(--dsh-radius-md, 12px); }
+.assistant-table-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; min-height: 40px; padding: 0 6px 0 14px; border-bottom: 1px solid var(--dsh-color-border, #e4e8ef); color: var(--dsh-color-muted, #667085); background: var(--dsh-color-surface-subtle, #f8fafc); font-size: var(--dsh-font-size-micro, 12px); }
+.assistant-table-status { flex: 1; min-width: 0; color: var(--dsh-color-success, #16825d); }
+.assistant-table-bar button { display: inline-flex; align-items: center; gap: 5px; height: 30px; padding: 0 10px; border: 0; border-radius: 8px; color: var(--dsh-color-text, #344054); background: transparent; font: inherit; cursor: pointer; }
+.assistant-table-bar button:hover { background: var(--dsh-color-canvas, #eef2f6); }
+.assistant-table-bar button:focus-visible { outline: 2px solid var(--dsh-color-brand, #3564e8); outline-offset: -2px; }
+.assistant-table-bar svg { width: 14px; height: 14px; }
+.assistant-table-wrap { overflow-x: auto; }
 .assistant-table-wrap table { width: 100%; min-width: 480px; border-spacing: 0; border-collapse: separate; color: inherit; font-size: inherit; line-height: 1.55; }
 .assistant-table-wrap th, .assistant-table-wrap td { padding: 10px 12px; border-right: 1px solid var(--dsh-color-border, #e4e8ef); border-bottom: 1px solid var(--dsh-color-border, #e4e8ef); vertical-align: top; }
 .assistant-table-wrap th { color: var(--dsh-color-ink, #172033); background: var(--dsh-color-canvas, #f3f5f8); font-weight: 650; }

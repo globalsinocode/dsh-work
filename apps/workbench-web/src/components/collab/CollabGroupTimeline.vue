@@ -498,12 +498,13 @@ onBeforeUnmount(() => {
   min-height: 0;
   flex: 1;
   overflow-y: auto;
-  padding: 16px 24px 24px;
+  padding: 16px 40px 24px;
+  container-type: inline-size;
 }
 
 .collab-group-timeline__thread {
   display: flex;
-  width: min(100%, 860px);
+  width: min(100%, 1040px);
   flex-direction: column;
   gap: 14px;
   margin: 0 auto;
@@ -607,14 +608,14 @@ onBeforeUnmount(() => {
 }
 
 .collab-group-timeline__dock {
-  padding: 8px 24px 12px;
+  padding: 8px 40px 12px;
   border-top: 1px solid var(--dsh-color-border);
   background: #fff;
 }
 
 .collab-group-timeline__dock-inner {
   display: flex;
-  width: min(100%, 860px);
+  width: min(100%, 1040px);
   flex-direction: column;
   gap: 8px;
   margin: 0 auto;

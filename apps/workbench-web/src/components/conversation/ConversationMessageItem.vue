@@ -31,18 +31,27 @@ const props = withDefaults(defineProps<{
   tag?: string
   /** Agent 回复是否显示“由某人发起”。 */
   showRequester?: boolean
-}>(), { own: false, meta: undefined, tag: undefined, showRequester: true })
+  /** 名称旁的结论标记（如“目标已达成”）。 */
+  badge?: string
+  /**
+   * 一对一对话（员工与 AI 同事）中本人的消息只显示气泡，不显示头像与名字，时间在悬停或聚焦时出现；
+   * 多人对话（群聊、团队与任务对话）不传，每条消息都显示发送人。
+   */
+  compactOwn?: boolean
+}>(), { own: false, meta: undefined, tag: undefined, showRequester: true, badge: undefined, compactOwn: false })
 
 const isUser = computed(() => props.message.role === 'user')
 const name = computed(() => isUser.value ? props.message.senderName ?? '我' : props.message.agentName ?? 'dsh-work')
+const compact = computed(() => props.compactOwn && props.own && isUser.value)
 </script>
 
 <template>
   <article
     class="conversation-message"
-    :class="[`conversation-message--${message.role}`, { 'conversation-message--own': own }]"
+    :class="[`conversation-message--${message.role}`, { 'conversation-message--own': own, 'conversation-message--compact': compact }]"
+    :aria-label="compact ? `我的消息，${message.createdAt}` : undefined"
   >
-    <div class="assistant-identity">
+    <div v-if="!compact" class="assistant-identity">
       <span class="assistant-avatar" :class="{ 'assistant-avatar--user': isUser }">{{ name.slice(0, 1) }}</span>
       <div>
         <strong>{{ name }}</strong>
@@ -52,10 +61,11 @@ const name = computed(() => isUser.value ? props.message.senderName ?? '我' : p
           <template v-if="!isUser && showRequester && message.runRequesterName"> · 由 {{ message.runRequesterName }} 发起</template>
         </span>
       </div>
+      <span v-if="badge" class="message-badge" data-testid="message-badge">{{ badge }}</span>
       <span v-if="tag" class="task-conversation-tag" data-testid="task-conversation-tag">{{ tag }}</span>
     </div>
     <slot v-if="!isUser" name="before" />
-    <div v-if="isUser" class="assistant-answer user-message">
+    <div v-if="isUser" class="assistant-answer user-message message-bubble">
       <p>{{ message.content }}</p>
       <ul v-if="message.attachments?.length" class="message-attachments" aria-label="附带文件">
         <li v-for="(fileName, index) in message.attachments" :key="`${index}:${fileName}`" class="message-attachment" :title="fileName">
@@ -64,7 +74,8 @@ const name = computed(() => isUser.value ? props.message.senderName ?? '我' : p
         </li>
       </ul>
     </div>
-    <div v-else class="assistant-answer">
+    <span v-if="compact" class="message-time">{{ message.createdAt }}</span>
+    <div v-else-if="!isUser" class="assistant-answer assistant-reply">
       <AssistantMessageContent :text="message.content" />
       <slot />
     </div>

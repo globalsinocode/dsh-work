@@ -149,15 +149,13 @@ const unknownExternalEffects = computed(() => task.value.result.pendingItems.fil
 const showRequester = computed(() => task.value.workspaceType === 'team')
 
 /**
- * 回复身份行统一显示发送时间；本轮最后一条回复在目标已达成时追加结论（I-06）。待核验不在消息流提示，
- * 未达成由下方说明给出，用时见回答上方的步骤摘要，都不再挤进身份行。
+ * 本轮最后一条回复在目标已达成时，名称旁显示结论标记（I-06、EX-STYLE-01）。待核验不在消息流提示，
+ * 未达成由下方说明给出，用时见回答上方的步骤摘要。
  */
-function messageMeta(message: ChatMessage) {
+function messageBadge(message: ChatMessage) {
   const achieved = message.id === lastAssistantMessageId.value && belongsToCurrentRun(message)
     && isTerminalRun.value && task.value.result.outcome === 'achieved'
-  if (!achieved) return undefined
-  const requester = showRequester.value && message.runRequesterName ? `由 ${message.runRequesterName} 发起` : ''
-  return [message.createdAt, requester, resultOutcomeLabels.achieved].filter(Boolean).join(' · ')
+  return achieved ? resultOutcomeLabels.achieved : undefined
 }
 </script>
 
@@ -166,8 +164,10 @@ function messageMeta(message: ChatMessage) {
     <ConversationMessageItem
       :message="message"
       :own="isOwn(message)"
-      :meta="messageMeta(message)"
+      :badge="messageBadge(message)"
       :show-requester="showRequester"
+      :compact-own="!showRequester"
+      :class="{ 'conversation-message--latest': message.id === lastAssistantMessageId }"
       :tag="!isOwn(message) && mentionsUser(message, authStore.user.id) ? '@了你' : undefined"
     >
       <template v-if="isTerminalRun && message.id === firstAssistantMessageId" #before>

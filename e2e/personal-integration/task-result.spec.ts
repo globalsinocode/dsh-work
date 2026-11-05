@@ -24,8 +24,8 @@ test('P1: verified result separates business outcome from execution state', asyn
   const runId = await sendTask(page, `P1-成果达成-${crypto.randomUUID().slice(0, 8)}`)
   await expect(page.getByText(/受控测试运行已完成/).first()).toBeVisible()
   // 业务核验状态独立于执行状态呈现：当前 Attempt 已登记成果 → 目标已达成
-  // 结论与发送时间同在回复身份行（EX-STATE-01）：“时间 · 目标已达成”。
-  await expect(page.getByText(/^\d{1,2}:\d{2} · 目标已达成$/).first()).toBeVisible()
+  // 结论以标记显示在回复名称旁（EX-STYLE-01）。
+  await expect(page.getByText('目标已达成', { exact: true }).first()).toBeVisible()
 
   const result = await runResult(page, runId)
   expect(result.execution).toBe('succeeded')

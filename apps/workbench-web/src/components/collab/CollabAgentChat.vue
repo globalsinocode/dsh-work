@@ -509,12 +509,13 @@ watch(() => [latestTask.value?.messages.length, latestTask.value?.status] as con
   min-height: 0;
   flex: 1;
   overflow-y: auto;
-  padding: 20px 24px 24px;
+  padding: 20px 40px 24px;
+  container-type: inline-size;
 }
 
 .collab-agent-chat__thread {
   display: flex;
-  width: min(100%, 860px);
+  width: min(100%, 1040px);
   flex-direction: column;
   gap: 18px;
   margin: 0 auto;
@@ -570,14 +571,14 @@ watch(() => [latestTask.value?.messages.length, latestTask.value?.status] as con
 }
 
 .collab-agent-chat__dock {
-  padding: 8px 24px 12px;
+  padding: 8px 40px 12px;
   border-top: 1px solid var(--dsh-color-border);
   background: #fff;
 }
 
 .collab-agent-chat__dock-inner {
   display: flex;
-  width: min(100%, 860px);
+  width: min(100%, 1040px);
   flex-direction: column;
   gap: 8px;
   margin: 0 auto;

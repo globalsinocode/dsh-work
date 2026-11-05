@@ -42,6 +42,7 @@ import KnowledgeBaseChips from '@/components/knowledge/KnowledgeBaseChips.vue'
 import KnowledgeBasePicker from '@/components/knowledge/KnowledgeBasePicker.vue'
 import { useKnowledgeStore } from '@/stores/knowledge'
 import type { SessionKnowledgeBase } from '@/types/knowledge'
+import { runAgentName } from '@/utils/run-agent-name'
 
 const route = useRoute()
 const router = useRouter()
@@ -114,6 +115,8 @@ function conversationPath(target: string) {
 }
 
 const task = computed(() => taskStore.getTask(routeTargetId.value))
+/** 一对一对话的标题栏显示正在对话的 AI 同事，与执行中卡片同一取值（runAgentName）；团队对话不显示。 */
+const headerAgentName = computed(() => task.value && task.value.workspaceType !== 'team' ? runAgentName(task.value) : '')
 /**
  * 归档只读态（design §2.7 / 3-T1 执行轨）：运行所属团队空间归档后，续写（发送消息）
  * 与重试入口隐藏；内容、来源与成果下载保持可读。个人空间不会命中（AC-23）。
@@ -1275,7 +1278,15 @@ watch(
             <el-icon><ArrowLeft /></el-icon>
           </button>
           <!-- 任务详情内：标题与所属空间已由外层任务信息与面包屑给出。 -->
-          <template v-if="!isTaskThreadRoute">
+          <!-- EX-STYLE-01：一对一对话在标题栏显示正在对话的 AI 同事，对话标题在下一行。 -->
+          <template v-if="!isTaskThreadRoute && headerAgentName">
+            <span class="assistant-avatar" aria-hidden="true">{{ headerAgentName.slice(0, 1) }}</span>
+            <div class="conversation-header__titles">
+              <strong>{{ headerAgentName }}</strong>
+              <h1>{{ task.title }}</h1>
+            </div>
+          </template>
+          <template v-else-if="!isTaskThreadRoute">
             <h1>{{ task.title }}</h1><span v-if="currentWorkspace?.type === 'team'">项目空间：{{ currentWorkspace.name }}</span>
           </template>
           <span v-if="task.skill" class="conversation-skill">
@@ -1331,9 +1342,10 @@ watch(
           v-if="showJumpToLatest"
           class="jump-latest"
           type="button"
+          aria-label="回到最新消息"
+          title="回到最新消息"
           @click="scrollToBottom()"
         >
-          回到最新消息
           <el-icon><ArrowDown /></el-icon>
         </button>
         <div v-if="isTaskThreadRoute" class="conversation-composer-dock__inner" data-testid="run-view-task-return">
@@ -1528,6 +1540,27 @@ watch(
   gap: 6px;
 }
 
+.conversation-header__titles {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+}
+
+.conversation-header__titles strong {
+  overflow: hidden;
+  color: #242624;
+  font-size: var(--dsh-font-size-body);
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.conversation-header__left .conversation-header__titles h1 {
+  color: #6b716b;
+  font-size: var(--dsh-font-size-micro);
+  font-weight: 400;
+}
+
 .conversation-header__left h1 {
   margin: 0;
   overflow: hidden;
@@ -1581,14 +1614,17 @@ watch(
 
 .conversation-scroll {
   height: 100vh;
-  padding: 94px 28px 226px;
+  padding: 94px 40px 226px;
   overflow-y: auto;
   scroll-behavior: smooth;
   scrollbar-gutter: stable;
+  /* EX-STYLE-01：回答中的表格按对话区宽度展开（conversation-thread.css 用容器单位计算）。 */
+  container-type: inline-size;
 }
 
+/* EX-STYLE-01：对话列随对话区变宽，左右至少留 40px，最宽 1040px。 */
 .conversation-thread {
-  width: min(100%, 920px);
+  width: min(100%, 1040px);
   min-height: calc(100vh - 330px);
   margin: 0 auto;
 }
@@ -1632,6 +1668,8 @@ watch(
 /* 项目空间 S3：任务详情内的任务对话——没有会话标题栏，时间线与系统记录。 */
 .conversation-page--task .conversation-scroll {
   padding-top: 8px;
+  /* 与下方任务对话的列宽一致，回答中的表格按此计算可展开的宽度（conversation-thread.css）。 */
+  --conversation-column-max: 760px;
 }
 
 .conversation-page--task .conversation-thread {
@@ -1653,7 +1691,7 @@ watch(
 }
 
 .task-conversation-quiet__body {
-  margin: 10px 0 0 34px;
+  margin: 10px 0 0 42px;
 }
 
 .task-conversation-record {
@@ -1810,13 +1848,13 @@ watch(
   right: 0;
   bottom: 0;
   left: 0;
-  padding: 48px 28px 13px;
+  padding: 48px 40px 13px;
   background: linear-gradient(to bottom, rgb(255 255 255 / 0%), #fff 31%, #fff 100%);
   pointer-events: none;
 }
 
 .conversation-composer-dock__inner {
-  width: min(100%, 920px);
+  width: min(100%, 1040px);
   margin: 0 auto;
   pointer-events: auto;
 }
@@ -1859,16 +1897,16 @@ watch(
   font-size: var(--dsh-font-size-body);
 }
 
+/* EX-STYLE-01：回到最新为对话列右下角的圆形按钮。 */
 .jump-latest {
-  display: flex;
-  align-items: center;
-  width: max-content;
-  min-height: 29px;
-  gap: 5px;
-  margin: 0 auto 9px;
-  padding: 0 10px;
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  margin: 0 max(0px, calc((100% - 1040px) / 2)) 10px auto;
+  padding: 0;
   border: 1px solid #dedfdd;
-  border-radius: 999px;
+  border-radius: 50%;
   color: #626762;
   background: #fff;
   box-shadow: 0 5px 16px rgb(25 30 26 / 7%);

@@ -4,6 +4,7 @@ import { computed, onBeforeUnmount, ref } from 'vue'
 import RunProgressSteps from './RunProgressSteps.vue'
 import type { TaskRun } from '@/types/domain'
 import { elapsedMs, formatElapsed, projectRunProgress } from '@/utils/run-progress-steps'
+import { runAgentName } from '@/utils/run-agent-name'
 
 /**
  * EX-PROGRESS-01：执行中（排队或运行）的“正在处理”卡片——逐条列出已完成的步骤与耗时，
@@ -28,13 +29,8 @@ const showTotal = computed(() => {
   return only!.startMs === undefined || progress.value.startMs === undefined || only!.startMs - progress.value.startMs > 2000
 })
 const activeLabels = computed(() => progress.value.rows.filter(row => row.state === 'active').map(row => row.label).join('，'))
-/**
- * 执行中的 AI 同事名称与完成后的回复一致：agentVersion 为“名称@版本”（无版本时为空串），
- * 取不到时退回本轮已有回复的 agentName（不取其他轮，避免共享对话里借用别的同事），再退回 dsh-work。
- */
-const agentName = computed(() => props.task.agentVersion.split('@')[0]
-  || props.task.messages.find(message => message.role === 'assistant' && message.runId === props.task.id && message.agentName)?.agentName
-  || 'dsh-work')
+/** 执行中的 AI 同事名称与完成后的回复、标题栏一致（runAgentName）。 */
+const agentName = computed(() => runAgentName(props.task))
 </script>
 
 <template>

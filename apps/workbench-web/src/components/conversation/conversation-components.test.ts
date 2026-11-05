@@ -148,12 +148,21 @@ describe('RunMessageList', () => {
       props: { task: run({ result: result({ artifacts: [file] }) }), isOwn: m => m.role === 'user', canFollowUp: true },
     })
     // 身份行保留时间并追加结论；个人对话不标“由某人发起”；底部只留 Token 用量，不重复同事名称。
-    expect(wrapper.text()).toContain('10:01 · 目标已达成')
+    expect(wrapper.get('[data-testid="message-badge"]').text()).toBe('目标已达成')
     expect(wrapper.text()).not.toContain('由 林岚 发起')
+    // EX-STYLE-01：一对一对话中本人的消息只留气泡，没有头像与名字，时间在气泡下（悬停时显示），仍有可访问名称。
+    const own = wrapper.get('.conversation-message--compact')
+    expect(own.find('.assistant-identity').exists()).toBe(false)
+    expect(own.attributes('aria-label')).toBe('我的消息，10:00')
+    expect(own.get('.message-time').text()).toBe('10:00')
+    expect(wrapper.findAll('.conversation-message--latest')).toHaveLength(1)
     expect(wrapper.get('.assistant-run-meta').text()).toBe('1,200 Token')
 
     const team = mount(RunMessageList, { global, props: { task: run({ workspaceType: 'team', tokenUsage: undefined }), isOwn: m => m.role === 'user' } })
     expect(team.text()).toContain('由 林岚 发起')
+    // 多人对话中本人的消息仍显示头像与名字。
+    expect(team.find('.conversation-message--compact').exists()).toBe(false)
+    expect(team.findAll('.assistant-identity strong').map(item => item.text())).toContain('林岚')
     expect(team.find('.assistant-run-meta').exists()).toBe(false)
 
     const unverified = mount(RunMessageList, { global, props: { task: run({ result: result({ outcome: 'unverified' }) }), isOwn: m => m.role === 'user' } })
