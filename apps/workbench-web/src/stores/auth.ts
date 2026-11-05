@@ -73,7 +73,8 @@ export const useAuthStore = defineStore('workbench-auth', () => {
       try {
         const response = await fetch('/auth/workbench/logout', { method: 'POST', credentials: 'same-origin' })
         if (!response.ok) throw new Error('退出登录失败，请重试')
-        window.location.assign('/login')
+        // 带 logged_out：钉钉容器内的登录页不再自动免登，否则刚退出就被重新登录。
+        window.location.assign('/login?logged_out=1')
       } catch (cause) {
         ElMessage.error(cause instanceof Error ? cause.message : '退出登录失败')
       }

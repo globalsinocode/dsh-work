@@ -26,19 +26,35 @@ export function isDingTalkContainer(userAgent = typeof navigator === 'undefined'
 export function loadDingTalkJsApi(): Promise<DingTalkJsApi | null> {
   if (!isDingTalkContainer()) return Promise.resolve(null)
   if (window.dd) return Promise.resolve(window.dd)
-  loading ??= new Promise(resolve => {
+  loading ??= new Promise<DingTalkJsApi | null>(resolve => {
     const script = document.createElement('script')
     script.src = jsApiUrl
     script.async = true
     script.onload = () => resolve(window.dd ?? null)
     script.onerror = () => resolve(null)
     document.head.appendChild(script)
+  }).then(dd => {
+    // 加载失败不缓存：“重新在钉钉中登录”与之后的页面可以重试。
+    if (!dd) loading = undefined
+    return dd
   })
   return loading
 }
 
-/** 免登：取一次性授权码。失败（不在钉钉内、JSAPI 不可用、用户取消）时抛错。 */
-export async function requestDingTalkAuthCode(corpId: string): Promise<string> {
+/** 免登：取一次性授权码。失败（不在钉钉内、JSAPI 不可用、用户取消、超时）时抛错，不会一直停在加载中。 */
+export async function requestDingTalkAuthCode(corpId: string, timeoutMs = 15_000): Promise<string> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const timeout = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => reject(new Error('钉钉授权超时')), timeoutMs)
+  })
+  try {
+    return await Promise.race([authCode(corpId), timeout])
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+async function authCode(corpId: string): Promise<string> {
   const dd = await loadDingTalkJsApi()
   if (!dd) throw new Error('无法加载钉钉能力，请在钉钉中重新打开')
   await new Promise<void>(resolve => (dd.ready ? dd.ready(resolve) : resolve()))
@@ -50,7 +66,8 @@ export async function requestDingTalkAuthCode(corpId: string): Promise<string> {
       return
     }
     if (dd.requestAuthCode) {
-      dd.requestAuthCode({ corpId, clientId: corpId, onSuccess: result => {
+      // 新版接口的 clientId 含义待真机确认（DT-P2），只传 corpId。
+      dd.requestAuthCode({ corpId, onSuccess: result => {
         const code = result.code ?? result.authCode
         if (code) resolve(code)
         else onFail(new Error('钉钉没有返回授权码'))

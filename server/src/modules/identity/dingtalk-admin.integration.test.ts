@@ -176,7 +176,15 @@ test('不能为管理类账号代绑；非平台管理员不能代绑；单个�
     await bind(user, phone, secondAdminId)
   }
   const overflow = await employee()
-  assert.equal(await code(service.preview(overflow, { mobile: member('超额').phone }, secondAdminId)), 'dingtalk_admin_daily_limit')
+  const preview = await service.preview(overflow, { mobile: member('超额').phone }, secondAdminId)
+  assert.equal(await code(service.confirm(overflow, { confirmationToken: preview.confirmationToken, identityConfirmed: true }, secondAdminId)), 'dingtalk_admin_daily_limit')
+  // 预览另有上限（代绑上限的 4 倍）：按手机号查钉钉成员不能无限次。
+  await database.client`
+    insert into audit_events (id, tenant_id, actor_type, actor_id, action, object_type, object_id, result, trace_id)
+    select 'audit-preview-fill-' || g, 'tenant-dsh-work', 'user', ${secondAdminId}, 'identity.dingtalk.admin_bind.preview', 'dingtalk_binding', ${overflow}, 'success', 'trace-fill'
+      from generate_series(1, 24) g
+  `
+  assert.equal(await code(service.preview(overflow, { mobile: member('超额2').phone }, secondAdminId)), 'dingtalk_admin_preview_limit')
 })
 
 test('钉钉账号已绑定其他员工时提示冲突；改绑使原绑定失效、撤销其钉钉会话并通知原员工', async () => {
@@ -349,6 +357,30 @@ test('离职检查中途中断留下的 running 记录超过 6 小时后不阻�
   `
   assert.equal(await service.runDepartureCheck(), null, '仍在进行中的检查不重复开始')
   await database.client`delete from dingtalk_departure_checks where id = 'dtcheck-active'`
+})
+
+test('并发确认不能越过每日代绑上限；被暂停的离职检查在之后的检查完成后仍可确认', async () => {
+  await database.client`update audit_events set occurred_at = now() - interval '2 days' where action like 'identity.dingtalk.admin_bind%'`
+  const previews = []
+  for (let index = 0; index < 8; index += 1) {
+    const userId = await employee()
+    const preview = await service.preview(userId, { mobile: member(`并发${index}`).phone }, adminId)
+    previews.push({ userId, token: preview.confirmationToken })
+  }
+  const results = await Promise.all(previews.map(item => code(service.confirm(item.userId, { confirmationToken: item.token, identityConfirmed: true }, adminId))))
+  assert.equal(results.filter(result => result === 'ok').length, 6, '上限为 6')
+  assert.equal(results.filter(result => result === 'dingtalk_admin_daily_limit').length, 2)
+
+  await database.client`
+    insert into dingtalk_departure_checks (id, tenant_id, status, started_at, finished_at, bound_count, pending_binding_ids)
+    values ('dtcheck-old-paused', 'tenant-dsh-work', 'paused', now() - interval '1 day', now() - interval '1 day', 20, '{}')
+  `
+  await service.runDepartureCheck()
+  const overview = await service.overview(adminId)
+  assert.equal(overview.departureCheck.lastRun!.status, 'completed')
+  assert.equal(overview.departureCheck.pausedRun!.id, 'dtcheck-old-paused', '较早被暂停的批次仍显示待确认')
+  await service.decideDepartureBatch('dtcheck-old-paused', { decision: 'dismiss' }, adminId)
+  assert.equal((await service.overview(adminId)).departureCheck.pausedRun, null)
 })
 
 test('停用账号使代绑失效；停用后不能再代绑', async () => {

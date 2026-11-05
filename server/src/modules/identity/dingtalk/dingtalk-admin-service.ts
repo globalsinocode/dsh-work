@@ -88,7 +88,7 @@ export class DingTalkAdministrationService {
     const target = await this.database.begin(async transaction => {
       await assertPlatformAdmin(transaction, actorId)
       const user = await requireLocalUser(transaction, userId)
-      await this.assertBindable(transaction, userId, actorId, configuration)
+      await this.assertBindable(transaction, userId, actorId, configuration, 'preview')
       const [own] = await transaction`
         select 1 from external_account_bindings where tenant_id = ${tenantId} and channel = ${DINGTALK_CHANNEL} and user_id = ${userId} and status = 'valid'
       `
@@ -173,7 +173,7 @@ export class DingTalkAdministrationService {
       }
       // 锁定目标员工后复核：账号有效、非管理类账号、尚未绑定、每日上限。
       const target = await requireLocalUser(transaction, userId, true)
-      await this.assertBindable(transaction, userId, actorId, configuration)
+      await this.assertBindable(transaction, userId, actorId, configuration, 'confirm')
       const [own] = await transaction`
         select 1 from external_account_bindings where tenant_id = ${tenantId} and channel = ${DINGTALK_CHANNEL} and user_id = ${userId} and status = 'valid' for update
       `
@@ -393,7 +393,9 @@ export class DingTalkAdministrationService {
            and not exists (select 1 from external_account_bindings b where b.tenant_id = u.tenant_id and b.user_id = u.id and b.channel = ${DINGTALK_CHANNEL} and (b.status = 'valid' or b.self_rebind_locked))
            and (${all} or u.id = any(${userIds}::text[]))
       `
-      const day = new Date().toISOString().slice(0, 10)
+      // 按服务器本地日期去重（部署在企业所在时区），不按 UTC。
+      const now = new Date()
+      const day = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
       for (const target of targets) {
         await recordUserNotification(transaction, {
           recipientUserId: target.id, kind: 'dingtalk_bind_reminder', workspaceId: null,
@@ -537,6 +539,12 @@ export class DingTalkAdministrationService {
        order by started_at desc limit ${departureWarningRuns}
     `
     const latest = runs[0]
+    // 被暂停的批次在之后的检查完成后仍须可确认或忽略：取最近一次仍为 paused 的检查，而不只看最新一次。
+    const [paused] = await this.database<{ id: string; pending: number; bound: number }[]>`
+      select id, cardinality(pending_binding_ids)::integer as pending, bound_count as bound
+        from dingtalk_departure_checks where tenant_id = ${tenantId} and status = 'paused'
+       order by started_at desc limit 1
+    `
     const persistentWarning = runs.length >= departureWarningRuns
       && runs.every(run => run.status === 'configuration_error' || run.status === 'failed' || (run.bound > 0 && run.failed > run.bound * departureWarningRatio))
     return {
@@ -544,24 +552,39 @@ export class DingTalkAdministrationService {
         id: latest.id, startedAt: latest.startedAt.toISOString(), status: latest.status, checked: latest.checked,
         departed: latest.departed, failed: latest.failed, bound: latest.bound, errorCodes: latest.errorCodes,
       } : null,
-      pausedRun: latest?.status === 'paused' ? { id: latest.id, pending: latest.pending, bound: latest.bound } : null,
+      pausedRun: paused ? { id: paused.id, pending: paused.pending, bound: paused.bound } : null,
       persistentWarning,
     }
   }
 
-  private async assertBindable(transaction: DatabaseTransaction, userId: string, actorId: string, configuration: DingTalkConfiguration) {
-    const authorization = await this.repository.resolveAuthorization(userId, transaction).catch(() => null)
-    if (!authorization) throw new IdentityAccessError(422, 'account_inactive', '该账号已停用，不能绑定钉钉')
+  /**
+   * 目标员工可被代绑：账号有效、非管理类账号，且发起管理员 24 小时内未超出次数上限。按管理员加事务级咨询锁后再计数，
+   * 并发的确认请求不能越过上限；预览另有上限（代绑上限的 4 倍），避免按手机号批量查询钉钉成员。
+   */
+  private async assertBindable(transaction: DatabaseTransaction, userId: string, actorId: string, configuration: DingTalkConfiguration, kind: 'preview' | 'confirm') {
+    const [user] = await transaction<{ active: boolean }[]>`
+      select (u.status = 'active' and u.business_user and t.status = 'active') as active
+        from users u join tenants t on t.id = u.tenant_id
+       where u.tenant_id = ${tenantId} and u.id = ${userId}
+    `
+    if (!user?.active) throw new IdentityAccessError(422, 'account_inactive', '该账号已停用，不能绑定钉钉')
+    const authorization = await this.repository.resolveAuthorization(userId, transaction)
     if (authorization.permissions.some(permission => administrativePermissions.includes(permission))) {
       throw new IdentityAccessError(422, 'dingtalk_admin_account', '拥有管理权限的账号只能由本人在钉钉内登录绑定')
     }
+    await transaction`select pg_advisory_xact_lock(hashtext(${`dingtalk-admin-bind:${tenantId}:${actorId}`}))`
+    const action = kind === 'confirm' ? 'identity.dingtalk.admin_bind' : 'identity.dingtalk.admin_bind.preview'
+    const limit = kind === 'confirm' ? configuration.adminDailyBindLimit : configuration.adminDailyBindLimit * 4
     const [usage] = await transaction<{ count: number }[]>`
       select count(*)::integer as count from audit_events
-       where tenant_id = ${tenantId} and actor_id = ${actorId} and action = 'identity.dingtalk.admin_bind'
+       where tenant_id = ${tenantId} and actor_id = ${actorId} and action = ${action}
          and result = 'success' and occurred_at > now() - interval '1 day'
     `
-    if ((usage?.count ?? 0) >= configuration.adminDailyBindLimit) {
-      throw new IdentityAccessError(429, 'dingtalk_admin_daily_limit', `今天的代绑次数已达上限（${configuration.adminDailyBindLimit} 次），请明天再试`)
+    if ((usage?.count ?? 0) >= limit) {
+      throw new IdentityAccessError(429, kind === 'confirm' ? 'dingtalk_admin_daily_limit' : 'dingtalk_admin_preview_limit',
+        kind === 'confirm'
+          ? `24 小时内的代绑次数已达上限（${limit} 次），请稍后再试`
+          : `24 小时内的钉钉成员查找次数已达上限（${limit} 次），请稍后再试`)
     }
   }
 

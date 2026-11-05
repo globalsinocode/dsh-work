@@ -36,12 +36,17 @@ test('开放平台客户端：access_token 缓存复用，授权码换 userid �
   const { fetcher, calls } = fakeFetch((url, body) => {
     if (url.pathname === '/gettoken') return { errcode: 0, access_token: 'token-1', expires_in: 7200 }
     assert.equal(url.searchParams.get('access_token'), 'token-1')
-    if (url.pathname === '/topapi/v2/user/getuserinfo') return body?.code === 'good' ? { errcode: 0, result: { userid: 'u1', unionid: 'n1', name: '赵宁' } } : { errcode: 40078, errmsg: '不存在的临时授权码' }
+    if (url.pathname === '/topapi/v2/user/getuserinfo') {
+      if (body?.code === 'scope') return { errcode: 60011, errmsg: '没有调用该接口的权限' }
+      return body?.code === 'good' ? { errcode: 0, result: { userid: 'u1', unionid: 'n1', name: '赵宁' } } : { errcode: 40078, errmsg: '不存在的临时授权码' }
+    }
     return { errcode: 0, result: {} }
   })
   const client = new DingTalkOpenApiDirectory(loadDingTalkConfiguration(env)!, fetcher)
   assert.deepEqual(await client.exchangeAuthCode('good'), { userId: 'u1', unionId: 'n1', name: '赵宁', corpId: 'ding-corp' })
   await assert.rejects(client.exchangeAuthCode('bad'), (error: unknown) => error instanceof DingTalkDirectoryError && error.code === 'auth_code_invalid')
+  // 应用缺少权限是配置问题，不能报成授权码无效（员工端据此显示“钉钉暂不可用”而不是让员工反复重开）。
+  await assert.rejects(client.exchangeAuthCode('scope'), (error: unknown) => error instanceof DingTalkDirectoryError && error.code === 'permission_denied')
   assert.equal(calls.filter(path => path === '/gettoken').length, 1)
 })
 

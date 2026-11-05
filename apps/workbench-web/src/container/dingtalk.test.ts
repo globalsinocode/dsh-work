@@ -27,6 +27,12 @@ describe('DingTalk container adapter', () => {
     await expect(requestDingTalkAuthCode('ding-corp')).rejects.toThrow('用户取消')
   })
 
+  it('gives up instead of waiting forever when the client never answers', async () => {
+    vi.stubGlobal('navigator', { userAgent: 'AliApp(DingTalk/7.6.0)' })
+    window.dd = { runtime: { permission: { requestAuthCode: () => undefined } } }
+    await expect(requestDingTalkAuthCode('ding-corp', 20)).rejects.toThrow('钉钉授权超时')
+  })
+
   it('refuses outside the DingTalk client', async () => {
     vi.stubGlobal('navigator', { userAgent: 'Chrome/130' })
     await expect(requestDingTalkAuthCode('ding-corp')).rejects.toThrow('无法加载钉钉能力')

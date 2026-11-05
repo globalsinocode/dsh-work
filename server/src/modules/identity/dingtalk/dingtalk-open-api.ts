@@ -36,7 +36,8 @@ export class DingTalkOpenApiDirectory implements DingTalkDirectory {
   async exchangeAuthCode(authCode: string): Promise<DingTalkAuthCodeIdentity> {
     const result = await this.call<{ userid?: string; unionid?: string; name?: string }>('/topapi/v2/user/getuserinfo', { code: authCode }, code => {
       // 授权码无效、过期、已使用或属于其他企业应用时，钉钉返回非零错误码（如 40078）。
-      if (retryableCodes.has(code)) return null
+      // 限流、权限与凭据问题交给通用分类：它们是配置或可用性问题，不能报成“授权码无效”。
+      if (retryableCodes.has(code) || permissionCodes.has(code) || tokenCodes.has(code)) return null
       return new DingTalkDirectoryError('auth_code_invalid', '钉钉授权码无效或已过期', code)
     })
     if (!result.userid) throw new DingTalkDirectoryError('auth_code_invalid', '钉钉授权码未返回成员身份')
