@@ -11,7 +11,7 @@
 - 服务端只提供 Workbench API（`/api/workbench/v1`），不为移动端新增第二套执行链路。
 - 所有 Agent 交互必须经 Run/Attempt API 发起；禁止绕过 dsh-work 直连模型 API。
 - 管理平台 API（`/api/admin/v1`）不属于移动端接入范围。
-- **认证优先使用平台独立账号（账号密码）**；移动端接入**不集成 AI Hub**，不配置、不引导、不依赖 OIDC 回调。
+- **认证优先使用平台独立账号（账号密码）**；移动端接入**不集成 AI Hub**，不配置、不引导、不依赖 OIDC 回调。员工端在钉钉客户端内运行时，另可用钉钉免登（附加方式，见 §9）。
 
 ## 2. 部署形态与同源访问
 
@@ -23,7 +23,7 @@
 ### 部署清单
 
 1. nginx 为移动端 origin 新增 server block：`/` 指移动端静态产物；`location /api/`、`location /auth/` proxy_pass 到 dsh-work 服务端，并 `proxy_buffering off`（SSE 必需）。
-2. 服务端 `DSH_WORK_WORKBENCH_ORIGINS` 追加移动端 origin（所有 origin 须同端口）。
+2. 服务端 `DSH_WORK_WORKBENCH_ORIGINS` 追加移动端 origin。只有配置了 AI Hub（任一 `AI_HUB_*` 接入变量）时才要求所有员工端 origin 与 `DSH_WORK_WORKBENCH_PORT` 同端口；校验不过时服务**不报错，而是静默回退为本地模式并关闭 AI Hub 登录**（启动日志 `AI Hub 登录未启用：…`）。不使用 AI Hub 时删除全部 `AI_HUB_*` 变量，或让移动端 origin 使用与 `DSH_WORK_WORKBENCH_PORT` 相同的端口。
 3. **不要**为移动端配置 AI Hub 应用回调；独立登录不依赖 OIDC。账号由平台管理员在管理端「员工与权限」开通，详见 [独立账号登录](../release/local-authentication.md)。
 
 ## 3. 认证与会话
@@ -82,3 +82,14 @@ data: {"runId":"run-…","step":"…"}
 2. `GET /auth/workbench/login` 或自建表单 `POST /auth/workbench/login` 完成独立登录；必要时改密。随后 `GET /api/workbench/v1/session` 拿当前用户。
 3. `POST /api/workbench/v1/sessions` 建会话 → `POST /sessions/{id}/runs` 发起任务 → `GET /runs/{runId}/events` 订阅 SSE 渲染进度。
 4. 列表、详情、文件下载等按需调用 `openapi-mobile-h5.json` 中的对应端点（完整工作台端点见 `openapi-workbench.json`，移动端不需要）。
+
+## 9. 钉钉容器内（H5 微应用，钉钉接入 DT-S1）
+
+钉钉作为移动端时，员工端本身以 H5 微应用运行在钉钉客户端内（[钉钉接入方案](../design/dingtalk-integration-plan.md) 4.3）。这是本规范“认证优先使用独立账号”之外的**附加方式**，只在钉钉客户端内生效；其余约束（同源、只用 Workbench API、经 Run/Attempt 执行、不集成 AI Hub）不变。
+
+- **公网入口：** 员工端独立域名 + 公网受信证书（Mac mini 部署下公网 origin 使用员工端端口 4174，例如 `https://m.example.com:4174`，入口脚本据此生成 `server_name`；网关须保留原始 Host），反向代理只转发员工端页面、`/api/workbench/` 与 `/auth/workbench/` 下显式列出的路径（登录、钉钉免登、绑定登录、改密、退出、配置查询），按客户端 IP 限流；管理端不上公网。公网 origin 加入 `DSH_WORK_WORKBENCH_ORIGINS`。操作见 [Mac mini 部署手册第 14 节](../release/mac-mini-deployment-runbook.md#14-钉钉移动端公网员工端入口与钉钉应用dt-s1)。
+- **免登：** `GET /auth/workbench/configuration` 在已配置钉钉时返回 `dingtalk.corpId`；页面用钉钉 JSAPI `requestAuthCode` 取一次性授权码，`POST /auth/workbench/dingtalk/login`（`authCode`、`returnTo`）。有效绑定时签发员工端会话（来源 `dingtalk`，默认 12 小时，Cookie 名不变）；否则返回 `binding_required` 与服务端保存的单次待绑定凭证（约 5 分钟）、钉钉姓名与部门，页面显示账号密码登录并说明“登录后将绑定此钉钉账号”，提交 `POST /auth/workbench/dingtalk/bind-login`（`username`、`password`、`bindingToken`）。客户端不能提交或指定钉钉 userid。
+- **拒绝与改密：** `bind-login` 的 `binding.status` 为 `refused` 时已签发普通密码会话，按 `reason` 说明（钉钉账号已绑定其他员工 / 本账号已绑定其他钉钉 / 管理员锁定），允许“不绑定，继续使用”；为 `password_change_required` 时先改密，改密请求带 `dingtalkBindingToken` 后绑定。凭证过期返回 409 `dingtalk_ticket_invalid`，重新取授权码。
+- **会话：** 钉钉会话与桌面密码会话并存；钉钉会话不能修改密码；解绑、改绑、停用、管理员重置密码、离职检查后立即失效，过期后在钉钉内自动重新免登。退出登录撤销该账号全部来源的会话。
+- **界面：** 钉钉容器内一律使用协作模式（B），不修改员工的模式偏好。容器能力（导航栏标题、关闭页面等）封装在员工端 `src/container/dingtalk.ts`，钉钉外退回浏览器默认行为；容器识别（User-Agent）只用于界面，不作为安全依据。
+- **未真机验收（DT-P2）：** 返回键（聊天页返回列表、列表页关闭微应用）、软键盘、选图与上传、文件预览与下载、安全区在 iOS/Android 钉钉中的表现，以真机验收为准。
