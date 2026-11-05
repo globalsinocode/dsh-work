@@ -15,9 +15,10 @@ import {
 const route = useRoute()
 const changePassword = computed(() => route.path === '/change-password')
 const inContainer = isDingTalkContainer()
-const phase = ref<'checking' | 'form'>(inContainer && !changePassword.value ? 'checking' : 'form')
+const loggedOut = new URLSearchParams(window.location.search).get('logged_out') === '1'
+const phase = ref<'checking' | 'form'>(inContainer && !changePassword.value && !loggedOut ? 'checking' : 'form')
 const pending = ref<{ bindingToken: string; name: string | null; department: string | null } | null>(null)
-const message = ref('')
+const message = ref(inContainer && loggedOut ? '已退出登录。从钉钉工作台重新打开 dsh-work 时会再次自动登录。' : '')
 const changeTicket = ref<string | null>(changePassword.value && inContainer ? peekBindingTicket() : null)
 const returnTo = (() => {
   const value = new URLSearchParams(window.location.search).get('return_to') ?? '/workbench'
@@ -33,7 +34,7 @@ async function dingtalkLogin() {
   pending.value = null
   try {
     const configurationResponse = await fetch('/auth/workbench/configuration', { credentials: 'same-origin' })
-    const configuration: { dingtalk?: { corpId: string } } = configurationResponse.ok ? await configurationResponse.json() : {}
+    const configuration: { dingtalk?: { corpId: string } } = configurationResponse.ok ? await configurationResponse.json().catch(() => ({})) : {}
     // 部署未配置钉钉：照常显示账号密码登录。
     const corpId = configuration.dingtalk?.corpId
     if (!corpId) return
@@ -42,7 +43,8 @@ async function dingtalkLogin() {
       method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ authCode, returnTo }),
     })
-    const result = await response.json() as {
+    // 网关返回 HTML 错误页（502/504）时不显示原始解析错误。
+    const result = await response.json().catch(() => ({})) as {
       status?: 'signed_in' | 'binding_required'; location?: string; bindingToken?: string
       dingtalkName?: string | null; dingtalkDepartment?: string | null; error?: { message?: string }
     }

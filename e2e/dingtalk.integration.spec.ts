@@ -207,6 +207,19 @@ test.describe('DT-EMP-01 钉钉内首次登录即绑定与拒绝情形', () => {
     await context.close()
   })
 
+  test('在钉钉内退出登录后不会被立即自动登录回去', async ({ browser }) => {
+    const { context, page } = await dingTalkPage(browser, 'ding-heqing')
+    await page.goto(`${workbenchOrigin}/c/chats`)
+    await expectCollabShell(page)
+    await page.getByRole('button', { name: '打开用户菜单' }).click()
+    await page.getByRole('menuitem', { name: '退出登录' }).click()
+    await expect(page).toHaveURL(/\/login\?logged_out=1/)
+    await expect(page.getByText('已退出登录。从钉钉工作台重新打开 dsh-work 时会再次自动登录。')).toBeVisible()
+    await expect(page.getByLabel('登录账号', { exact: true })).toBeVisible()
+    await expect(page.getByRole('navigation', { name: '协作模式主导航' })).toHaveCount(0)
+    await context.close()
+  })
+
   test('默认工作模式的员工在钉钉内进入协作模式，桌面浏览器仍是工作模式且偏好不变', async ({ browser }) => {
     const { context, page } = await dingTalkPage(browser, 'ding-linlan')
     await page.goto(`${workbenchOrigin}/workbench`)
