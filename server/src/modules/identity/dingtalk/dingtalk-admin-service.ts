@@ -412,6 +412,11 @@ export class DingTalkAdministrationService {
   async runDepartureCheck(options: { delayMs?: number } = {}) {
     if (!this.configuration) return null
     const runId = `dtcheck-${randomUUID()}`
+    // 进程在检查中途退出（重启、发布）会留下 running 记录；超过 6 小时未结束的视为中断，否则唯一索引会让检查永久停止。
+    await this.database`
+      update dingtalk_departure_checks set status = 'failed', finished_at = now()
+       where tenant_id = ${tenantId} and status = 'running' and started_at < now() - interval '6 hours'
+    `
     const [started] = await this.database`
       insert into dingtalk_departure_checks (id, tenant_id, status) values (${runId}, ${tenantId}, 'running')
       on conflict do nothing returning id
