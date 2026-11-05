@@ -251,6 +251,15 @@ test('并发绑定同一钉钉账号只有一个成功', async () => {
   assert.equal(count, 1)
 })
 
+test('同一员工并发绑定同一个钉钉账号：两次都视为已绑定', async () => {
+  const account = await employee()
+  const dingUserId = member()
+  const tickets = [await dingtalkLogin(dingUserId), await dingtalkLogin(dingUserId)]
+  const results = await Promise.all(tickets.map(ticket => bindLogin(account.username, ticket.body.bindingToken)))
+  assert.deepEqual(results.map(result => result.body.binding), [{ status: 'bound' }, { status: 'bound' }])
+  assert.equal((await bindings(account.userId)).filter(row => row.status === 'valid').length, 1)
+})
+
 test('需改初始密码时先改密再绑定：改密请求带回凭证后才写入绑定', async () => {
   const account = await employee({ mustChangePassword: true })
   const dingUserId = member()

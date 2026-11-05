@@ -48,7 +48,7 @@ export interface LocalAccountInput {
 /** 钉钉内登录即绑定的结果（4.2 方式一）；未带待绑定凭证时为 undefined。 */
 export type DingTalkLoginBinding =
   | { status: 'bound' }
-  | { status: 'refused'; reason: Extract<SelfBindOutcome, { status: 'refused' }>['reason'] }
+  | { status: 'refused'; reason: Extract<SelfBindOutcome, { status: 'refused' }>['reason'] | 'ticket_invalid' }
   | { status: 'password_change_required' }
 
 export class LocalAuthService {
@@ -337,7 +337,7 @@ export class LocalAuthService {
         if (binding?.status === 'bound') return { binding }
         if (!binding) await localAudit(transaction, identity.userId, 'identity.dingtalk.bind', 'failed', { reason: 'ticket_invalid' }, 'dingtalk')
         await this.insertPasswordSession(transaction, identity.userId, audience, sessionHash, authorization.authorizationVersion)
-        return { binding: binding ?? { status: 'refused' as const, reason: 'ticket_invalid' as const } }
+        return { binding: binding ?? ({ status: 'refused', reason: 'ticket_invalid' } satisfies DingTalkLoginBinding) }
       }
       await this.insertPasswordSession(transaction, identity.userId, audience, sessionHash, authorization.authorizationVersion)
       return { binding: undefined }
