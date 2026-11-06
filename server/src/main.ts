@@ -155,17 +155,20 @@ async function start() {
   const directorySync = identityConfiguration.mode === 'oidc'
     ? new IdentityDirectorySyncService(identityConfiguration, database)
     : null
+  // 平台加密凭据（DSH_CREDENTIAL_MASTER_KEY）：钉钉 AppSecret、MCP Bearer Token 与模型厂商密钥共用一个实例；
+  // 未配置主密钥时为 undefined，对应功能明确拒绝保存密钥。
+  const credentialSecrets = process.env.DSH_CREDENTIAL_MASTER_KEY
+    ? new PostgresEncryptedCredentialStore(database, {
+        masterKeyBase64: process.env.DSH_CREDENTIAL_MASTER_KEY,
+        keyId: process.env.DSH_CREDENTIAL_MASTER_KEY_ID,
+      })
+    : undefined
   // 钉钉企业内部应用（钉钉接入方案 DT-S1）：配置在管理端“钉钉集成”页填写，AppSecret 以 DSH_CREDENTIAL_MASTER_KEY
   // 加密入库；DSH_WORK_DINGTALK_* 只在页面从未保存过时作为初始配置。未配置时免登接口明确返回不可用；
   // 测试替身不在生产启动中接线。
   const dingtalkSettings = new DingTalkSettingsService(database, {
     deployment: loadDingTalkDeploymentSettings(process.env),
-    ...(process.env.DSH_CREDENTIAL_MASTER_KEY ? {
-      credentials: new PostgresEncryptedCredentialStore(database, {
-        masterKeyBase64: process.env.DSH_CREDENTIAL_MASTER_KEY,
-        keyId: process.env.DSH_CREDENTIAL_MASTER_KEY_ID,
-      }),
-    } : {}),
+    ...(credentialSecrets ? { credentials: credentialSecrets } : {}),
   })
   await dingtalkSettings.ensureBootstrap()
   const localAuthentication = new LocalAuthService(localIdentityConfiguration(identityConfiguration), database, dingtalkSettings)
@@ -198,7 +201,8 @@ async function start() {
   )
   registerOrganizationRoutes(router, new PostgresOrganizationService(database))
   const directorySyncTimer = directorySync?.startScheduler() ?? null
-  const modelRepository = new PostgresModelGovernanceRepository(database)
+  // 管理端录入的厂商密钥以 DSH_CREDENTIAL_MASTER_KEY 加密保存；未配置时不能录入，只能登记 DSH 受管引用。
+  const modelRepository = new PostgresModelGovernanceRepository(database, credentialSecrets)
 
   let orchestration: RunOrchestrationService | null = null
   let revocationSweep: RunRevocationSweep | null = null
@@ -423,12 +427,6 @@ async function start() {
   )
   const runtimePolicy = await operations.getRuntimePolicy('runtime-local-01')
   await runtime.configureScheduling(runtimePolicy.schedulingStatus)
-  const credentialSecrets = process.env.DSH_CREDENTIAL_MASTER_KEY
-    ? new PostgresEncryptedCredentialStore(database, {
-        masterKeyBase64: process.env.DSH_CREDENTIAL_MASTER_KEY,
-        keyId: process.env.DSH_CREDENTIAL_MASTER_KEY_ID,
-      })
-    : undefined
   const mcpService = new PostgresMcpConnectorService(database, runtime, operations, credentialSecrets)
   mcpServiceRef.current = mcpService
   // 内置工具由代码注册表管理；启动时尽力比对 DSH 当前工具目录，结果只用于 Runtime 详情展示，

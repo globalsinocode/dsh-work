@@ -113,7 +113,7 @@ export class AdminRunEntry implements AdminRunLauncher {
   }
 
   private async dispatchAdmin(run: RunRecord, prompt: string, source: string, purpose: AdminRunPurpose, testSkill?: RuntimeSkillConfiguration, history?: RuntimeManifest['input']['conversation_history']) {
-    const route = await this.deps.models.resolveRoute('default')
+    const route = await this.deps.models.resolveDefaultRoute()
     const runtimePolicy = await this.deps.operations?.getRuntimePolicy(runtimeId)
     const limits = { timeout_seconds: Math.min(180, runtimePolicy?.timeoutSeconds ?? 180), max_output_bytes: 65536, max_tool_calls: purpose === 'admin-assistant' ? 5 : 4 }
     const manifest: RuntimeManifest = {

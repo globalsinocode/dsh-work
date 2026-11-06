@@ -1,6 +1,6 @@
 # 平台模型路由生效方案
 
-**状态：** 已评审（2026-11-06），尚未实施。本文所述能力在实施并通过第 8 节验收前均不可用。<br>
+**状态：** 已评审（2026-11-06）。MR-S1 已达到代码级（2026-11-06，迁移 `0120_model_routing_governance.sql`，单元与 PostgreSQL 集成测试）；MR-S2 起尚未实施，路由仍只记录、不决定执行模型。本文其余能力在实施并通过第 8 节验收前均不可用。<br>
 **更新日期：** 2026-11-06（简化：路由用途只保留 `default`，取消备用路由与备用重试；DeepSeek 统一以 `openai-completions` 接入；模型校验只保留网关一道，取消 `currentValue` 校验与会话日志核对；快照去掉 `data_policy_version`；移除推理强度）；2026-11-06（网关计量增加缓存读写 token；PR 81 评审修订：升级前 Manifest 不再按默认模型执行、按用途解析路由、重试重新解析而恢复沿用快照、复用 `postgres-encrypted` 凭据、错误按网关记录分类；不做 DSH 持有凭据的阶段，路由生效与模型网关同批实施）；2026-10-26（第 7 节与执行隔离方案对齐）<br>
 **依据：** 当前 Model 模块、Run 编排与 Runtime Adapter 代码；DSH `0.1.2-rc.1`（`76fda72979`）的 `dsh-acp`、`dsh-llm-pi-ai`、`dsh-settings-file`、`dsh-credentials-local` 源码与 README；2026-10-25 本地探针（第 3 节）；[发往模型的数据防护方案](model-data-protection-plan.md)。<br>
 **执行基线：** 每个 Attempt 一个独立 DSH ACP Worker（`--profile acp --patch`），不改变进程模型。
@@ -135,6 +135,7 @@ Adapter 目前有三条启动 DSH 的路径，只有正式执行使用路由：
 ### 4.5 凭据与令牌（R1）
 
 - 厂商密钥复用现有的平台加密凭据：`credential_refs.backend = 'postgres-encrypted'`，密文保存在 `credential_secrets`（迁移 `0054_encrypted_connector_credentials.sql`），读写经 `PostgresEncryptedCredentialStore`，与 MCP、WeKnora、钉钉连接器的凭据同一机制。明文只在网关转发时解析（[数据防护方案 5.2](model-data-protection-plan.md#52-模型网关最小范围)）。Model Provider 的新配置只接受 `postgres-encrypted`，存量 `dsh-managed` 记录由管理员重新录入密钥。
+- **管理端录入密钥已在 MR-S1 提前提供**（2026-11-06）：新建 Provider 时可一并填写 API Key，或在“密钥”中录入、替换；以 `postgres-encrypted` 保存，只显示末尾 4 位，切换回 DSH 受管引用时删除密文。MR-S2 之前执行仍使用 `DSH_HOME` 中的凭据，录入的密钥在网关上线后生效。
 - Adapter 为每个 Attempt 签发短期令牌，通过环境变量交给 DSH；Attempt 终态即失效。
 - **两道检查：**
   - **创建 Attempt 前**：保留现有 `resolveRoute` 的检查（[postgres-model-governance-repository.ts](../../server/src/modules/model/postgres-model-governance-repository.ts)）：Provider 或模型停用、凭据引用缺失或状态不是 `configured` 时直接报依赖不可用，不创建 Attempt（4.7 第一行）。
@@ -236,7 +237,7 @@ Mock 或 P1 通过不能代替 P2，未完成 P2 前总览仍须标注路由生�
 
 | 阶段 | 内容 | 依赖 | 完成标志 |
 | --- | --- | --- | --- |
-| MR-S1 治理数据补强 | `provider_type` 枚举与 `deepseek-official` 迁移、`trust_level`、用途收敛与按用途解析、路由编辑与模型启停；不改变执行行为 | 无，可先行 | 管理端与接口用例通过；执行仍按 Profile 默认模型 |
+| MR-S1 治理数据补强（代码级已完成） | `provider_type` 枚举与历史取值迁移、`trust_level`、用途收敛与按用途解析、路由编辑与模型启停、管理端录入厂商密钥（加密保存，MR-S2 起生效）；不改变执行行为 | 无，可先行 | 管理端与接口用例通过；执行仍按 Profile 默认模型 |
 | DLP-S0 探针 | 见数据防护方案第 7 节；本方案关心 pi-ai 接 DeepSeek 的推理内容与工具调用兼容性、4xx 与 429 重试行为 | 无 | R4 可行性定论 |
 | MR-S2 + DLP-S1 路由生效与网关 | Manifest `model_route`、统一 patch 生成器、令牌、网关校验转发与计量、平台加密凭据、模型错误细分 | MR-S1、DLP-S0 | 所有正式执行经网关，路由决定实际模型；第 8 节 P1（MR-S2）通过 |
 | MR-S3 证据与展示 | `effective_model` 与用量归属、运行详情、文档更新 | MR-S2 | 第 8 节 P1（MR-S3）与管理端用例通过 |

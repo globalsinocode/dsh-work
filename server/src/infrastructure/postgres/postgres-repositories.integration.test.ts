@@ -62,7 +62,7 @@ test('model governance resolves the DSH default route without secret material', 
   assert.equal(provider?.credential?.externalRef, 'DEEPSEEK_API_KEY')
   assert.equal('secret' in (provider?.credential ?? {}), false)
 
-  const snapshot = await service.resolveRoute('default')
+  const snapshot = await service.resolveDefaultRoute()
   assert.equal(snapshot.providerKey, 'deepseek-official')
   assert.equal(snapshot.modelKey, 'deepseek-v4-pro')
   assert.equal('secret' in snapshot, false)
@@ -261,7 +261,7 @@ test('retry creates a new immutable Attempt and events are idempotent', async ()
     requestedBy: 'U00001',
     idempotencyKey: 'm2-retry-001',
   })
-  const route = await new ModelGovernanceService(new PostgresModelGovernanceRepository(database)).resolveRoute()
+  const route = await new ModelGovernanceService(new PostgresModelGovernanceRepository(database)).resolveDefaultRoute()
   const routeSnapshot = JSON.parse(JSON.stringify(route)) as JsonObject
   const first = await runs.createAttempt({
     tenantId: run.tenantId,

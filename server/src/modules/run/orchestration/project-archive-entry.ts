@@ -87,7 +87,7 @@ export class ProjectArchiveEntry {
 
   private async dispatch(run: RunRecord, update: ArchiveUpdate) {
     const prompt = archivistRunPrompt({ brief: update.brief, items: update.items, materials: update.materials })
-    const route = await this.deps.models.resolveRoute('default')
+    const route = await this.deps.models.resolveDefaultRoute()
     const runtimePolicy = await this.deps.operations?.getRuntimePolicy(runtimeId)
     const limits = {
       ...archivistLimits,

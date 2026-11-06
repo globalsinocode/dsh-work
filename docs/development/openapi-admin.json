@@ -1426,7 +1426,16 @@
       },
       "post": {
         "operationId": "createModelProvider",
-        "summary": "创建平台级模型 Provider",
+        "summary": "创建平台级模型 Provider；必须选择协议类型（首批仅 openai-completions）与信任级别，可同时录入厂商密钥（加密保存）",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          }
+        }
+      },
+      "patch": {
+        "operationId": "updateModelProvider",
+        "summary": "修改 Provider 名称、服务地址与信任级别",
         "responses": {
           "200": {
             "$ref": "#/components/responses/Ok"
@@ -1438,6 +1447,17 @@
       "patch": {
         "operationId": "setModelProviderStatus",
         "summary": "启用或停用 Provider",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          }
+        }
+      }
+    },
+    "/model-providers/api-key": {
+      "patch": {
+        "operationId": "setModelProviderApiKey",
+        "summary": "录入或替换厂商密钥，以平台主密钥加密保存；响应只含末尾 4 位提示，不返回密钥",
         "responses": {
           "200": {
             "$ref": "#/components/responses/Ok"
@@ -1467,6 +1487,17 @@
         }
       }
     },
+    "/provider-models/status": {
+      "patch": {
+        "operationId": "setProviderModelStatus",
+        "summary": "启用或停用 Provider 下的单个模型",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          }
+        }
+      }
+    },
     "/model-routes": {
       "get": {
         "operationId": "listModelRoutes",
@@ -1479,7 +1510,16 @@
       },
       "post": {
         "operationId": "createModelRoute",
-        "summary": "创建平台模型路由；Agent 不配置模型策略",
+        "summary": "创建默认模型路由；启用时自动停用其余默认路由；Agent 不配置模型策略",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          }
+        }
+      },
+      "patch": {
+        "operationId": "updateModelRoute",
+        "summary": "修改路由名称、目标模型与启停；启用时自动停用其余默认路由",
         "responses": {
           "200": {
             "$ref": "#/components/responses/Ok"
@@ -1490,7 +1530,7 @@
     "/model-routes/resolve": {
       "post": {
         "operationId": "resolveModelRoute",
-        "summary": "诊断路由解析并返回不含密钥的快照",
+        "summary": "诊断当前启用的默认路由解析并返回不含密钥的快照",
         "responses": {
           "200": {
             "$ref": "#/components/responses/Ok"

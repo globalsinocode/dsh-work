@@ -848,7 +848,7 @@ test('compilation failure converges the Run instead of leaving it queued without
 
 test('model admission rejects employee, automation and release trial preparation without ghost Attempts', async t => {
   const models = new ModelGovernanceService(new PostgresModelGovernanceRepository(database))
-  const route = await models.resolveRoute('default')
+  const route = await models.resolveDefaultRoute()
   try {
     for (const stage of ['model', 'runtime'] as const) {
       await database`update provider_models set capabilities = ${database.json(stage === 'model' ? [] : ['structured-output'])}
@@ -917,7 +917,7 @@ test('restart recovery rejects pinned model requirements when the current Runtim
     },
   } as RuntimeManifest
   const compiled = compileRuntimeManifest(manifest)
-  const route = await new ModelGovernanceService(new PostgresModelGovernanceRepository(database)).resolveRoute()
+  const route = await new ModelGovernanceService(new PostgresModelGovernanceRepository(database)).resolveDefaultRoute()
   await runs.createAttempt({ tenantId: 'tenant-dsh-work', runId: run.id, attemptId, runtimeId: 'runtime-local-01',
     manifest: JSON.parse(compiled.canonicalJson), manifestSha256: compiled.sha256,
     modelRouteSnapshot: JSON.parse(JSON.stringify({ ...route, modelCapabilities: ['long-context'] })),

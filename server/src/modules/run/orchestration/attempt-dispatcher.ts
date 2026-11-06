@@ -100,7 +100,7 @@ export class AttemptDispatcher {
           maxToolCalls: 20,
           timeoutSeconds: 300,
         }
-    const route = await this.deps.models.resolveRoute('default', agent.modelRequirements)
+    const route = await this.deps.models.resolveDefaultRoute(agent.modelRequirements)
     await assertRuntimeModelRequirements(this.deps.runtime, agent.modelRequirements, route)
     // Whose grants bound the run is the one thing entry points choose: employees run within
     // their own access, release trials within the Agent's own grants.

@@ -96,7 +96,7 @@ export class SessionSummaryEntry {
 
   private async dispatch(run: RunRecord, sessionId: string, request: SummaryRequest) {
     const prompt = summaryRunPrompt(request)
-    const route = await this.deps.models.resolveRoute('default')
+    const route = await this.deps.models.resolveDefaultRoute()
     const runtimePolicy = await this.deps.operations?.getRuntimePolicy(runtimeId)
     const limits = {
       ...summaryLimits,
