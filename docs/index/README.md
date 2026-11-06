@@ -14,6 +14,7 @@
 | 设计和评审 Agent，区分现行规则与扩展门槛 | [Agent 设计规范](../development/agent-design-standard.md) |
 | 按统一阶段定义、发布、运行和退役 Agent | [通用 Agent 全生命周期模板](../development/agent-lifecycle-template.md) |
 | 移动端 H5 接入 | [移动端接入规范](../development/mobile-integration-guide.md) |
+| 已评审、未实施：平台路由决定实际模型，与模型网关同批交付 | [模型路由方案](../design/model-routing-plan.md) |
 | 决策已确认、未实施：模型网关与发往模型的数据防护（敏感值遮盖与还原、密钥拦截、按 Provider 信任级别分策略） | [发往模型的数据防护方案](../design/model-data-protection-plan.md) |
 | 待评审：钉钉工作通知、工作台免登与机器人对话 | [钉钉接入方案](../design/dingtalk-integration-plan.md) |
 | 实施中（WK-S1～S3 代码级已实施，WK-S4 真实验收未做）：企业知识库改用 WeKnora，员工端管理知识库与文档，按角色与部门授权 | [企业知识库接入 WeKnora 方案](../design/weknora-knowledge-plan.md) |
