@@ -16,6 +16,8 @@ function fixture(t) {
     'config/target-environment/2026-10-17.json',
     'server/package.json', 'server/config', 'server/src', 'server/migrations', 'server/scripts/convert-agency-agents.mjs', 'server/scripts/package-agency-agent-fixtures.mjs',
     'deploy/runtime.env.example', 'deploy/execution-image', '.github/workflows/execution-image.yml', 'scripts/deploy/preflight.sh',
+    // 43c822c1 的 Docker 部署文档被 README 与开发文档链接，夹具必须同样提供。
+    'deploy/docker', 'deploy/dsh-work.compose.yaml',
     'scripts/release/build-release.sh', 'scripts/acceptance/c-tier-p2.mjs', 'scripts/runtime/probe.ts', 'scripts/runtime/run-timings.ts',
     'scripts/checks/contracts.mjs', 'scripts/testing/p0-smoke-server.ts',
     'apps/workbench-web/vitest.config.ts', 'apps/admin-web/vitest.config.ts', 'playwright.config.ts',
