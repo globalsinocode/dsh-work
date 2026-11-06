@@ -102,6 +102,13 @@ pnpm install --frozen-lockfile
 pnpm dev:all
 ```
 
+**Windows（AI 对话 / 执行容器）：**
+
+- **跑全站（生产形态，三个容器）**：[`deploy/docker/README.md`](deploy/docker/README.md) → `pnpm docker:up`  
+- **改代码热更新**：`pnpm dev:docker`（单容器 `dsh-work-dev-hot`）
+
+二者不要同时占用 4174/4180 端口。
+
 也可分别启动：
 
 ```bash

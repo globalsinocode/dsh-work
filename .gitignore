@@ -15,6 +15,14 @@ blob-report/
 .env.*
 !.env.example
 deploy/runtime.env
+deploy/docker/stack.env
+deploy/docker/tls/*.pem
+deploy/docker/tls/*.key
+deploy/docker/tls/*.crt
+!deploy/docker/tls/.gitkeep
+.dsh-harness-linux-install
+.dsh-harness-linux-build
+.dsh-harness-linux-build.inprogress
 deploy/certs/
 /runtime.env
 /certs/

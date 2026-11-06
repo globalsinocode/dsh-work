@@ -28,6 +28,10 @@ pnpm test:e2e
 4. 不设置 `DSH_WORK_AUTH_MODE`。按 [独立登录指南](../release/local-authentication.md) 初始化首个管理员账号；AI Hub 按 [接入指南](../release/ai-hub-sso-integration.md) 配置后自动可用。若已同步 AI Hub 演示员工但希望**仅用独立密码**联调（不依赖 OIDC），在非生产库执行一次 `pnpm --filter @dsh-work/server auth:import-ai-hub-local -- <密码>`（或设置 `DSH_WORK_IMPORT_PASSWORD`），会把 `identity_provider=ai-hub` 的业务用户转为 `local` 并写入统一密码；生产环境该命令会拒绝运行。
 5. 执行 `pnpm dev:all`，默认入口为员工端 `http://localhost:4174/workbench`、管理端 `http://localhost:4180/overview`、后端 `http://localhost:4190/health`。服务启动会自动运行 SQL 迁移并预检 DSH/Python；执行能力故障隔离见 [内部契约](internal-ports.md#执行能力故障隔离c9)；也可单独执行 `pnpm --filter @dsh-work/server db:migrate`。
 
+**Windows / 执行容器（推荐 Docker 单容器）：** 本机 Node 无法满足执行容器 `uid/gid`，请用容器 **`dsh-work-dev-hot`** 跑全栈开发（仓库源码 bind mount，改代码热更新）：`pnpm dev:docker`。配置见 [`deploy/dsh-work.compose.yaml`](../../deploy/dsh-work.compose.yaml)。**与 `pnpm docker:up` 不要同时占用 4174/4180。**
+
+**Docker 全栈（生产形态，全在容器内）：** 见 [`deploy/docker/README.md`](../../deploy/docker/README.md)。`pnpm docker:init-env` → 编辑 `deploy/docker/stack.env` → `pnpm docker:tls` → `pnpm docker:up`。Docker Desktop 里启停 `dsh-work-postgres` / `dsh-work-server` / `dsh-work-web`。
+
 独立调试 DSH 浏览器 UI 时，在仓库根目录执行 `pnpm run dsh web`（转发到 `deploy/deepseek-harness` 或 `DSH_RUNTIME_HOME` 指向的 checkout；首次使用前需在该 checkout 内 `pnpm install` 与 `pnpm run build`，详见上游 CLI 文档）。
 
 使用 Bearer 认证的 MCP Connector 前，开发和生产都必须配置 `DSH_CREDENTIAL_MASTER_KEY`。执行 `openssl rand -base64 32` 生成 32 字节 Base64 密钥，并设置 `DSH_CREDENTIAL_MASTER_KEY_ID`（默认 `v1`）。密钥不进入 PostgreSQL 或 Git；数据库只保存 AES-256-GCM 密文、随机 nonce、认证标签和密钥版本。备份或恢复数据库时必须同时通过独立安全渠道备份或恢复对应主密钥，否则已有 Token 无法解密。

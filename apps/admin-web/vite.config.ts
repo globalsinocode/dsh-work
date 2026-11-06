@@ -7,6 +7,7 @@ import { VitePWA } from 'vite-plugin-pwa'
 import { defineConfig } from 'vite'
 
 import { resolveBrandPublicDir } from '../shared/vite-brand-public.ts'
+import { createDockerDevServerOptions } from '../shared/vite-docker-dev.ts'
 import { createDshWorkPwaOptions } from '../shared/vite-pwa-options.ts'
 
 interface ServerPackageMetadata {
@@ -59,18 +60,5 @@ export default defineConfig({
   resolve: {
     alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) },
   },
-  server: {
-    port: adminPort,
-    strictPort: true,
-    proxy: {
-      '/api': {
-        target: `http://127.0.0.1:${serverPort}`,
-        changeOrigin: false,
-      },
-      '/auth': {
-        target: `http://127.0.0.1:${serverPort}`,
-        changeOrigin: false,
-      },
-    },
-  },
+  server: createDockerDevServerOptions({ port: adminPort, serverPort }),
 })

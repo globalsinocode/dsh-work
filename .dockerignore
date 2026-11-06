@@ -1,0 +1,24 @@
+# Docker build context — keep images smaller and avoid leaking local state.
+.git
+**/.git
+**/node_modules
+**/.runtime
+**/dist
+**/.turbo
+**/.vite
+**/coverage
+**/playwright-report
+**/test-results
+e2e
+docs
+agent-transcripts
+.cursor
+*.md
+!deploy/docker/README.md
+.env
+.env.*
+!.env.example
+deploy/docker/stack.env
+deploy/docker/tls/*.pem
+deploy/docker/tls/*.key
+!deploy/docker/tls/.gitkeep

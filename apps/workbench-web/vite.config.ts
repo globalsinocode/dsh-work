@@ -7,6 +7,7 @@ import { defineConfig } from 'vite'
 
 import { resolveBrandPublicDir } from '../shared/vite-brand-public.ts'
 import { copyAppPublic } from '../shared/vite-app-public.ts'
+import { createDockerDevServerOptions } from '../shared/vite-docker-dev.ts'
 import { createDshWorkPwaOptions } from '../shared/vite-pwa-options.ts'
 
 const workbenchPort = Number(process.env.DSH_WORK_WORKBENCH_PORT ?? 4174)
@@ -35,18 +36,5 @@ export default defineConfig({
       '@': fileURLToPath(new URL('./src', import.meta.url)),
     },
   },
-  server: {
-    port: workbenchPort,
-    strictPort: true,
-    proxy: {
-      '/api': {
-        target: `http://127.0.0.1:${serverPort}`,
-        changeOrigin: false,
-      },
-      '/auth': {
-        target: `http://127.0.0.1:${serverPort}`,
-        changeOrigin: false,
-      },
-    },
-  },
+  server: createDockerDevServerOptions({ port: workbenchPort, serverPort }),
 })

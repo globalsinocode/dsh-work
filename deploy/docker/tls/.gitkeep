@@ -1,0 +1,3 @@
+# TLS for local / Docker stack (self-signed). Generate once:
+#   pnpm docker:tls
+# Or: bash deploy/docker/generate-tls.sh
