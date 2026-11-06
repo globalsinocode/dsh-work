@@ -9,6 +9,7 @@ import { IdentityAdministrationService } from './administration-service.ts'
 import { bindFromSelfTicket } from './dingtalk/dingtalk-bindings.ts'
 import { DingTalkAdministrationService } from './dingtalk/dingtalk-admin-service.ts'
 import { loadDingTalkConfiguration } from './dingtalk/dingtalk-config.ts'
+import { DingTalkSettingsService } from './dingtalk/dingtalk-settings.ts'
 import { DingTalkDirectoryError } from './dingtalk/dingtalk-directory.ts'
 import { LocalAuthService } from './local-auth-service.ts'
 import { loadIdentityConfiguration } from './config.ts'
@@ -37,9 +38,14 @@ before(async () => {
     DSH_WORK_DINGTALK_ADMIN_DAILY_BIND_LIMIT: '6',
   })!
   dingtalk = new DingTalkDirectoryDouble('ding-corp-test').addDepartment(11, '销售部').addDepartment(12, '华东区')
-  local = new LocalAuthService(config, database.client, dingtalkConfig)
+  // 走真实的配置服务：部署配置作为初始配置写入（页面从未保存过），目录实现换成测试替身。
+  const settings = new DingTalkSettingsService(database.client, {
+    deployment: { apiBaseUrl: dingtalkConfig.apiBaseUrl, bootstrap: dingtalkConfig }, directoryFactory: () => dingtalk,
+  })
+  await settings.ensureBootstrap()
+  local = new LocalAuthService(config, database.client, settings)
   administration = new IdentityAdministrationService(database.client, true)
-  service = new DingTalkAdministrationService(database.client, dingtalk, dingtalkConfig, { secret: config.sessionSecret, workbenchOrigins: config.audiences.workbench.allowedOrigins })
+  service = new DingTalkAdministrationService(database.client, settings, { manager: settings, secret: config.sessionSecret, workbenchOrigins: config.audiences.workbench.allowedOrigins })
   adminId = (await local.bootstrap({ username: 'dt.admin@example.invalid', name: '陈默', password })).userId
   const second = await local.createAccount({ username: 'dt.admin2@example.invalid', name: '第二管理员', password }, adminId)
   await administration.grantRole({ userId: second.userId, roleId: 'role-platform-admin', actorId: adminId })

@@ -18,7 +18,7 @@ import {
   bindFromSelfTicket, consumeSelfBindTicket, insertDingTalkSession, invalidateUserBindings,
   peekSelfBindTicket, type SelfBindOutcome,
 } from './dingtalk/dingtalk-bindings.ts'
-import type { DingTalkConfiguration } from './dingtalk/dingtalk-config.ts'
+import type { DingTalkSettingsProvider } from './dingtalk/dingtalk-settings.ts'
 
 const tenantId = 'tenant-dsh-work'
 interface ValidatedSession {
@@ -56,9 +56,10 @@ export class LocalAuthService {
   private readonly database: DatabaseClient
   private readonly repository: IdentitySessionRepository
   private readonly limiter: LoginRateLimiter
-  private readonly dingtalk: Pick<DingTalkConfiguration, 'sessionTtlSeconds'> | null
+  /** 钉钉应用配置在每次使用时读取：管理端保存后立即生效。 */
+  private readonly dingtalk: DingTalkSettingsProvider | null
 
-  constructor(configuration: LocalIdentityConfiguration, database: DatabaseClient, dingtalk: Pick<DingTalkConfiguration, 'sessionTtlSeconds'> | null = null) {
+  constructor(configuration: LocalIdentityConfiguration, database: DatabaseClient, dingtalk: DingTalkSettingsProvider | null = null) {
     this.configuration = configuration
     this.database = database
     this.repository = new IdentitySessionRepository(database)
@@ -94,7 +95,8 @@ export class LocalAuthService {
     validateRequestOrigin(request, settings)
     const origin = resolveRequestOrigin(request, settings)
     const ticket = options.dingtalkTicket
-    if (ticket !== undefined && (audience !== 'workbench' || !this.dingtalk)) {
+    const dingtalkConfiguration = ticket !== undefined ? await this.dingtalk?.current() ?? null : null
+    if (ticket !== undefined && (audience !== 'workbench' || !dingtalkConfiguration)) {
       throw new IdentityAccessError(503, 'dingtalk_not_configured', '钉钉登录未启用')
     }
     const username = normalizeUsername(input.username)
@@ -135,7 +137,7 @@ export class LocalAuthService {
           if (!await peekSelfBindTicket(transaction, ticket, origin)) return ticketRejected(transaction, credential.userId)
           binding = { status: 'password_change_required' }
         } else {
-          const bound = await this.completeSelfBinding(transaction, credential.userId, ticket, origin, sessionHash, authorization.authorizationVersion)
+          const bound = await this.completeSelfBinding(transaction, credential.userId, ticket, origin, sessionHash, authorization.authorizationVersion, dingtalkConfiguration!.sessionTtlSeconds)
           if (!bound) return ticketRejected(transaction, credential.userId)
           binding = bound
           if (bound.status === 'bound') {
@@ -157,7 +159,7 @@ export class LocalAuthService {
     const location = result.mustChangePassword
       ? new URL(`/change-password?return_to=${encodeURIComponent(returnTo)}`, origin).toString()
       : returnTo
-    const ttl = result.binding?.status === 'bound' ? this.dingtalk!.sessionTtlSeconds : this.configuration.sessionTtlSeconds
+    const ttl = result.binding?.status === 'bound' ? dingtalkConfiguration!.sessionTtlSeconds : this.configuration.sessionTtlSeconds
     return {
       location,
       sessionCookie: serializeCookie(settings.sessionCookieName, sessionToken, ttl, this.configuration.cookieSecure),
@@ -168,7 +170,7 @@ export class LocalAuthService {
   /** 消费待绑定凭证并写入绑定；绑定成功时签发 dingtalk 会话。凭证无效返回 null。 */
   private async completeSelfBinding(
     transaction: DatabaseTransaction, userId: string, ticket: string, origin: string,
-    sessionHash: string, authorizationVersion: number,
+    sessionHash: string, authorizationVersion: number, dingtalkSessionTtlSeconds: number,
   ): Promise<DingTalkLoginBinding | null> {
     const consumed = await consumeSelfBindTicket(transaction, ticket, origin)
     if (!consumed) return null
@@ -179,7 +181,7 @@ export class LocalAuthService {
     }
     await insertDingTalkSession(transaction, {
       sessionHash, userId, bindingId: outcome.bindingId, authorizationVersion,
-      ttlSeconds: this.dingtalk!.sessionTtlSeconds,
+      ttlSeconds: dingtalkSessionTtlSeconds,
     })
     if (outcome.created) {
       await localAudit(transaction, userId, 'identity.dingtalk.bind', 'success', { bindingId: outcome.bindingId, boundBy: 'self' }, 'dingtalk')
@@ -287,7 +289,8 @@ export class LocalAuthService {
     const settings = this.configuration.audiences[audience]
     const origin = resolveRequestOrigin(request, settings)
     const ticket = typeof input.dingtalkTicket === 'string' && input.dingtalkTicket ? input.dingtalkTicket : undefined
-    if (ticket !== undefined && (audience !== 'workbench' || !this.dingtalk)) {
+    const dingtalkConfiguration = ticket !== undefined ? await this.dingtalk?.current() ?? null : null
+    if (ticket !== undefined && (audience !== 'workbench' || !dingtalkConfiguration)) {
       throw new IdentityAccessError(503, 'dingtalk_not_configured', '钉钉登录未启用')
     }
     const passwordKey = `password:${identity.userId}`
@@ -333,7 +336,7 @@ export class LocalAuthService {
       await revokeUserSessions(transaction, identity.userId)
       await localAudit(transaction, identity.userId, 'identity.password.change', 'success', { audience })
       if (ticket !== undefined) {
-        const binding = await this.completeSelfBinding(transaction, identity.userId, ticket, origin, sessionHash, authorization.authorizationVersion)
+        const binding = await this.completeSelfBinding(transaction, identity.userId, ticket, origin, sessionHash, authorization.authorizationVersion, dingtalkConfiguration!.sessionTtlSeconds)
         if (binding?.status === 'bound') return { binding }
         if (!binding) await localAudit(transaction, identity.userId, 'identity.dingtalk.bind', 'failed', { reason: 'ticket_invalid' }, 'dingtalk')
         await this.insertPasswordSession(transaction, identity.userId, audience, sessionHash, authorization.authorizationVersion)
@@ -344,7 +347,7 @@ export class LocalAuthService {
     })
     if (!changed) throw new IdentityAccessError(401, 'invalid_credentials', '当前密码错误或会话已过期')
     await this.limiter.clear(passwordKey)
-    const ttl = changed.binding?.status === 'bound' ? this.dingtalk!.sessionTtlSeconds : this.configuration.sessionTtlSeconds
+    const ttl = changed.binding?.status === 'bound' ? dingtalkConfiguration!.sessionTtlSeconds : this.configuration.sessionTtlSeconds
     return {
       location: normalizeReturnTo(typeof input.returnTo === 'string' ? input.returnTo : null, origin),
       sessionCookie: serializeCookie(settings.sessionCookieName, sessionToken, ttl, this.configuration.cookieSecure),

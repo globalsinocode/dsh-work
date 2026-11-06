@@ -13,6 +13,7 @@ import type { LocalIdentityConfiguration } from '../types.ts'
 import { DINGTALK_CHANNEL, insertDingTalkSession } from './dingtalk-bindings.ts'
 import type { DingTalkConfiguration } from './dingtalk-config.ts'
 import { DingTalkDirectoryError, type DingTalkDirectory } from './dingtalk-directory.ts'
+import type { DingTalkSettingsProvider } from './dingtalk-settings.ts'
 
 const tenantId = 'tenant-dsh-work'
 
@@ -33,34 +34,29 @@ export type DingTalkLoginResult =
 export class DingTalkAuthService {
   private readonly local: LocalIdentityConfiguration
   private readonly database: DatabaseClient
-  private readonly directory: DingTalkDirectory
-  private readonly configuration: DingTalkConfiguration | null
+  private readonly settings: DingTalkSettingsProvider
   private readonly repository: IdentitySessionRepository
   private readonly limiter: LoginRateLimiter
 
-  constructor(local: LocalIdentityConfiguration, database: DatabaseClient, directory: DingTalkDirectory, configuration: DingTalkConfiguration | null) {
+  constructor(local: LocalIdentityConfiguration, database: DatabaseClient, settings: DingTalkSettingsProvider) {
     this.local = local
     this.database = database
-    this.directory = directory
-    this.configuration = configuration
+    this.settings = settings
     this.repository = new IdentitySessionRepository(database)
     this.limiter = new LoginRateLimiter(database, local.sessionSecret)
-  }
-
-  get enabled() {
-    return this.configuration !== null
   }
 
   async login(request: IncomingMessage, input: { authCode?: unknown; returnTo?: unknown }): Promise<DingTalkLoginResult> {
     const settings = this.local.audiences.workbench
     validateRequestOrigin(request, settings)
     const origin = resolveRequestOrigin(request, settings)
-    const configuration = this.requireConfiguration()
+    const configuration = await this.requireConfiguration()
+    const directory = this.settings.directory(configuration)
     if (typeof input.authCode !== 'string' || !/^[A-Za-z0-9_-]{1,256}$/.test(input.authCode)) {
       throw new IdentityAccessError(422, 'invalid_request', '缺少钉钉授权码')
     }
     // 授权码一次性：服务端不缓存、不重放，每次都向钉钉换取。非本企业或已使用的授权码在换取时失败。
-    const identity = await this.exchange(input.authCode)
+    const identity = await this.exchange(directory, input.authCode)
     if (identity.corpId !== configuration.corpId) {
       await this.audit(this.database, 'anonymous', 'identity.dingtalk.login', 'failed', { reason: 'foreign_corp' })
       throw new IdentityAccessError(401, 'dingtalk_auth_code_invalid', '钉钉登录凭证无效，请在本企业钉钉中重新打开')
@@ -124,7 +120,7 @@ export class DingTalkAuthService {
         sessionCookie: serializeCookie(settings.sessionCookieName, sessionToken, configuration.sessionTtlSeconds, this.local.cookieSecure),
       }
     }
-    const department = await this.departmentLabel(identity.userId)
+    const department = await this.departmentLabel(directory, identity.userId)
     const ticket = randomOpaque()
     await this.database`
       insert into external_binding_tickets (
@@ -146,14 +142,15 @@ export class DingTalkAuthService {
     }
   }
 
-  private requireConfiguration() {
-    if (!this.configuration) throw new IdentityAccessError(503, 'dingtalk_not_configured', '钉钉登录未启用')
-    return this.configuration
+  private async requireConfiguration(): Promise<DingTalkConfiguration> {
+    const configuration = await this.settings.current()
+    if (!configuration) throw new IdentityAccessError(503, 'dingtalk_not_configured', '钉钉登录未启用')
+    return configuration
   }
 
-  private async exchange(authCode: string) {
+  private async exchange(directory: DingTalkDirectory, authCode: string) {
     try {
-      return await this.directory.exchangeAuthCode(authCode)
+      return await directory.exchangeAuthCode(authCode)
     } catch (error) {
       if (error instanceof DingTalkDirectoryError && error.code === 'auth_code_invalid') {
         await this.audit(this.database, 'anonymous', 'identity.dingtalk.login', 'failed', { reason: 'auth_code_invalid' })
@@ -165,10 +162,10 @@ export class DingTalkAuthService {
   }
 
   /** 登录页提示“当前钉钉账号：姓名（部门）”用；任何失败只省略部门，不影响登录。 */
-  private async departmentLabel(userId: string) {
+  private async departmentLabel(directory: DingTalkDirectory, userId: string) {
     try {
-      const member = await this.directory.getMember(userId)
-      const names = await Promise.all(member.departmentIds.slice(0, 2).map(id => this.directory.getDepartmentName(id)))
+      const member = await directory.getMember(userId)
+      const names = await Promise.all(member.departmentIds.slice(0, 2).map(id => directory.getDepartmentName(id)))
       return names.length ? names.join('、') : null
     } catch {
       return null

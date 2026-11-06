@@ -30,5 +30,5 @@
 | [站内通知](catalog/notifications.md) | 与本人相关事件的通知记录、读取时权限解析、未读、已读与静音；员工端通知入口与面板。 | `NC-01`、`NC-02`、`NC-03`、`NC-04`、`NC-05` |
 | [组织架构](catalog/organization.md) | 管理端部门树维护、成员与主部门、新建账号选择部门（ORG-S1）；按部门授予角色与角色来源（ORG-S2）。 | `ORG-P0-01`、`ORG-P0-02`、`ORG-01`、`ORG-02`、`ORG-03`、`ORG-04`、`ORG-05`、`ORG-06`、`ORG-07` |
 | [企业知识库](catalog/knowledge.md) | 员工端“知识库”：按部门可见、三级操作权限、新建与授权调整、文档管理、对话中添加知识库、服务不可用（WK-S2）；管理端连接配置、全部知识库与跨部门授权、验证页提示（WK-S3）；真实 WeKnora 验收（WK-S4）。 | `KB-P0-01`、`KB-P0-02`、`KB-01`、`KB-02`、`KB-03`、`KB-04`、`KB-05`、`KB-06`、`KB-ADM-P0`、`KB-ADM-01`、`KB-ADM-02`、`KB-ADM-03`、`KB-P2` |
-| [钉钉接入](catalog/dingtalk.md) | 钉钉内登录即绑定与免登、`dingtalk` 会话、管理员代绑与解绑、钉钉集成页与离职检查、个人设置 › 钉钉、钉钉容器内协作模式（DT-S1）；真实钉钉验收。 | `DT-ID-01`、`DT-ADM-01`、`DT-ADM-02`、`DT-ADM-03`、`DT-EMP-01`、`DT-EMP-02`、`DT-EMP-P0`、`DT-P2` |
+| [钉钉接入](catalog/dingtalk.md) | 钉钉内登录即绑定与免登、`dingtalk` 会话、管理员代绑与解绑、钉钉集成页（含页面配置钉钉应用）与离职检查、个人设置 › 钉钉、钉钉容器内协作模式（DT-S1）；真实钉钉验收。 | `DT-ID-01`、`DT-ADM-01`、`DT-ADM-02`、`DT-ADM-03`、`DT-ADM-04`、`DT-EMP-01`、`DT-EMP-02`、`DT-EMP-P0`、`DT-P2` |
 | [验证记录](catalog/verification-log.md) | 留证约定（非验收标准）；不在工作树堆积某次跑测长文。 | — |

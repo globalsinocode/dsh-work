@@ -137,3 +137,19 @@ export async function revokeBindingSessions(transaction: DatabaseTransaction, bi
      where tenant_id = ${tenantId} and binding_id = any(${bindingIds}::text[]) and revoked_at is null
   `
 }
+
+/**
+ * 钉钉应用换到另一个企业（CorpId 变化）时调用：钉钉 userid 只在企业内唯一，旧企业的有效绑定全部失效
+ * （revoke_reason = corp_changed），撤销对应钉钉会话，删除尚未使用的待绑定与代绑确认凭证。返回失效的绑定数。
+ */
+export async function invalidateAllBindingsForCorpChange(transaction: DatabaseTransaction) {
+  const rows = await transaction<{ id: string }[]>`
+    update external_account_bindings
+       set status = 'invalid', revoked_at = now(), revoke_reason = 'corp_changed', updated_at = now()
+     where tenant_id = ${tenantId} and channel = ${DINGTALK_CHANNEL} and status = 'valid'
+    returning id
+  `
+  await revokeBindingSessions(transaction, rows.map(row => row.id))
+  await transaction`delete from external_binding_tickets where tenant_id = ${tenantId} and channel = ${DINGTALK_CHANNEL} and consumed_at is null`
+  return rows.length
+}

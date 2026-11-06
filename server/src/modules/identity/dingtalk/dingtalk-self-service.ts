@@ -4,6 +4,7 @@ import type { DatabaseClient } from '../../../infrastructure/postgres/database.t
 import { notFound } from '../../../domain/request-errors.ts'
 import { invalidateUserBindings } from './dingtalk-bindings.ts'
 import { readOwnBinding, type DingTalkBindingView } from './dingtalk-admin-service.ts'
+import type { DingTalkSettingsProvider } from './dingtalk-settings.ts'
 
 const tenantId = 'tenant-dsh-work'
 
@@ -22,11 +23,11 @@ const emptyView: DingTalkBindingView = { status: 'unbound', binding: null, inval
 /** 员工只能查看与解除本人的绑定；不能自行绑定（绑定只在钉钉内登录或由管理员代绑）。 */
 export class PostgresDingTalkSelfBindingService implements DingTalkSelfBindingStore {
   private readonly database: DatabaseClient
-  private readonly enabled: boolean
+  private readonly settings: DingTalkSettingsProvider
 
-  constructor(database: DatabaseClient, enabled: boolean) {
+  constructor(database: DatabaseClient, settings: DingTalkSettingsProvider) {
     this.database = database
-    this.enabled = enabled
+    this.settings = settings
   }
 
   async get(userId: string): Promise<DingTalkSelfBindingView> {
@@ -35,7 +36,7 @@ export class PostgresDingTalkSelfBindingService implements DingTalkSelfBindingSt
       select 1 from users where tenant_id = ${tenantId} and id = ${userId} and identity_provider = 'local'
     `
     if (!local) return { ...emptyView, enabled: false }
-    return { ...await readOwnBinding(this.database, userId), enabled: this.enabled }
+    return { ...await readOwnBinding(this.database, userId), enabled: await this.settings.current() !== null }
   }
 
   /** 员工自行解绑：绑定失效、按 binding_id 撤销钉钉会话（含当前的钉钉会话），同一事务；不锁定自行绑定。 */

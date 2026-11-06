@@ -19,6 +19,9 @@ export function registerDingTalkAdminRoutes(router: Router, dingtalk: DingTalkAd
   router.post(`${binding}/unlock`, async (_request, context) => envelope('admin', await dingtalk.unlock(context.params.userId!, actor(context)), 'postgres'))
 
   const root = '/api/admin/v1/dingtalk'
+  router.get(`${root}/settings`, async (_request, context) => envelope('admin', await dingtalk.getSettings(actor(context)), 'postgres'))
+  router.put(`${root}/settings`, async (request, context) => envelope('admin', await dingtalk.saveSettings(await readObject(request), actor(context)), 'postgres'))
+  router.delete(`${root}/settings`, async (_request, context) => envelope('admin', await dingtalk.clearSettings(actor(context)), 'postgres'))
   router.get(`${root}/overview`, async (_request, context) => envelope('admin', await dingtalk.overview(actor(context)), 'postgres'))
   router.post(`${root}/connection-check`, async (_request, context) => envelope('admin', await dingtalk.checkConnection(actor(context)), 'postgres'))
   router.get(`${root}/unbound`, async (_request, context) => envelope('admin', await dingtalk.listUnbound({

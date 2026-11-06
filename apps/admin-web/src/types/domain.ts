@@ -1078,3 +1078,33 @@ export interface AgentVersionHistoryItem {
   publishedBy: string | null
   active: boolean
 }
+
+/** 钉钉集成 › 应用配置（2026-11-06 起在页面填写；AppSecret 加密保存，不回显）。 */
+export interface DingTalkSettings {
+  configured: boolean
+  source: 'deployment-config' | 'admin' | null
+  corpId: string | null
+  agentId: string | null
+  appKey: string | null
+  secretHint: string | null
+  secretReadable: boolean
+  secretProblem: 'deployment_secret_missing' | 'master_key' | null
+  sessionTtlSeconds: number
+  bindingTicketTtlSeconds: number
+  adminDailyBindLimit: number
+  timeoutMs: number
+  canStoreSecret: boolean
+  updatedAt: string | null
+  updatedByName: string | null
+}
+
+export interface DingTalkSettingsInput {
+  corpId: string
+  agentId: string
+  appKey: string
+  appSecret?: string
+  sessionTtlSeconds: number
+  bindingTicketTtlSeconds: number
+  adminDailyBindLimit: number
+  timeoutMs: number
+}

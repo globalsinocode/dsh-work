@@ -2,8 +2,11 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
+import { ElMessageBox } from 'element-plus'
+
 import { adminApi } from '@/api/client'
-import type { DingTalkIntegrationOverview, DingTalkUnboundEmployee } from '@/types/domain'
+import DingTalkSettingsDialog from '@/components/dingtalk/DingTalkSettingsDialog.vue'
+import type { DingTalkIntegrationOverview, DingTalkSettings, DingTalkUnboundEmployee } from '@/types/domain'
 import { dingtalkRevokeReason } from '@/utils/dingtalk'
 
 /**
@@ -15,6 +18,9 @@ const route = useRoute()
 const router = useRouter()
 const tab = ref<Tab>(route.query.tab === 'unbound' ? 'unbound' : route.query.tab === 'delivery' ? 'delivery' : 'overview')
 const overview = ref<DingTalkIntegrationOverview>()
+const settings = ref<DingTalkSettings>()
+const editing = ref(false)
+const clearing = ref(false)
 const unbound = ref<DingTalkUnboundEmployee[]>([])
 const unboundTotal = ref(0)
 const unboundPage = ref(1)
@@ -52,7 +58,37 @@ const connectionTag = computed(() => {
 })
 
 async function loadOverview() {
-  overview.value = await adminApi.getDingTalkOverview()
+  ;[overview.value, settings.value] = await Promise.all([adminApi.getDingTalkOverview(), adminApi.getDingTalkSettings()])
+}
+
+async function settingsSaved(saved: DingTalkSettings) {
+  settings.value = saved
+  checkMessage.value = '已保存，立即生效。'
+  try {
+    overview.value = await adminApi.getDingTalkOverview()
+  } catch (cause) {
+    error.value = cause instanceof Error ? `配置已保存，但刷新概况失败：${cause.message}` : '配置已保存，但刷新概况失败，请刷新页面'
+  }
+}
+
+async function clearSettings() {
+  try {
+    await ElMessageBox.confirm('清除后钉钉内免登、管理员代绑与离职检查立即停用，已加密保存的 AppSecret 会被删除；已有的绑定记录保留。重新填写配置即可恢复。', '清除钉钉应用配置？', { confirmButtonText: '清除配置', cancelButtonText: '取消', type: 'warning' })
+  } catch { return }
+  clearing.value = true
+  try {
+    settings.value = await adminApi.clearDingTalkSettings()
+    overview.value = await adminApi.getDingTalkOverview()
+    checkMessage.value = '已清除钉钉应用配置。'
+  } catch (cause) {
+    error.value = cause instanceof Error ? cause.message : '清除失败'
+  } finally {
+    clearing.value = false
+  }
+}
+
+function hours(seconds: number) {
+  return seconds % 3600 === 0 ? `${seconds / 3600} 小时` : `${Math.round(seconds / 60)} 分钟`
 }
 
 async function loadUnbound() {
@@ -144,11 +180,39 @@ onMounted(load)
               <h2>应用配置</h2>
               <el-tag :type="connectionTag.type" effect="plain">{{ connectionTag.label }}</el-tag>
             </div>
+            <el-alert
+              v-if="settings?.configured && !settings.secretReadable"
+              type="error"
+              :closable="false"
+              show-icon
+              :title="settings.secretProblem === 'deployment_secret_missing'
+                ? 'AppSecret 原来来自部署配置，但部署配置中已没有它，钉钉功能已停用。请编辑配置并重新填写 AppSecret。'
+                : '已保存的 AppSecret 无法读取（凭据主密钥可能已更换），钉钉功能已停用。请编辑配置并重新填写 AppSecret。'"
+            />
             <dl class="dingtalk-kv">
-              <dt>企业内部应用</dt>
-              <dd>{{ overview.configured ? `AgentId ${overview.agentId}` : '未配置' }}</dd>
-              <dt>应用凭据</dt>
-              <dd>{{ overview.configured ? '已在服务端配置' : '未配置' }} <small>（由部署人员在环境变量中设置，此处不可查看）</small></dd>
+              <dt>CorpId</dt>
+              <dd>{{ settings?.corpId ?? '未配置' }}</dd>
+              <dt>AgentId</dt>
+              <dd>{{ settings?.agentId ?? '未配置' }}</dd>
+              <dt>AppKey</dt>
+              <dd>{{ settings?.appKey ?? '未配置' }}</dd>
+              <dt>AppSecret</dt>
+              <dd>
+                <template v-if="settings?.configured">已保存{{ settings.secretHint ? `（尾号 ${settings.secretHint}）` : '' }} <small>（加密保存，不可查看）</small></template>
+                <template v-else>未配置</template>
+              </dd>
+              <template v-if="settings?.configured">
+                <dt>钉钉会话有效期</dt>
+                <dd>{{ hours(settings.sessionTtlSeconds) }}</dd>
+                <dt>待绑定凭证有效期</dt>
+                <dd>{{ hours(settings.bindingTicketTtlSeconds) }}</dd>
+                <dt>每日代绑上限</dt>
+                <dd>每位管理员 {{ settings.adminDailyBindLimit }} 次</dd>
+                <dt>钉钉接口超时</dt>
+                <dd>{{ settings.timeoutMs / 1000 }} 秒</dd>
+                <dt>配置来源</dt>
+                <dd>{{ settings.source === 'deployment-config' ? '部署配置（尚未在页面保存过）' : `管理端${settings.updatedByName ? ` · ${settings.updatedByName}` : ''} · ${formatDate(settings.updatedAt)}` }}</dd>
+              </template>
               <dt>钉钉内入口</dt>
               <dd>
                 <template v-if="overview.publicEntries.length">{{ overview.publicEntries.join('、') }}</template>
@@ -171,7 +235,11 @@ onMounted(load)
                 </dd>
               </template>
             </dl>
-            <div><el-button :loading="checking" :disabled="!overview.configured" @click="check">重新检查连接</el-button></div>
+            <div class="dingtalk-actions">
+              <el-button type="primary" :disabled="!settings" @click="editing = true">{{ settings?.configured ? '编辑配置' : '填写配置' }}</el-button>
+              <el-button :loading="checking" :disabled="!overview.configured" @click="check">重新检查连接</el-button>
+              <el-button v-if="settings?.configured" type="danger" plain :loading="clearing" @click="clearSettings">清除配置</el-button>
+            </div>
             <p v-if="checkMessage" role="status" class="dingtalk-status">{{ checkMessage }}</p>
           </section>
 
@@ -259,6 +327,7 @@ onMounted(load)
         </section>
       </el-tab-pane>
     </el-tabs>
+    <DingTalkSettingsDialog v-if="settings" v-model="editing" :settings="settings" @saved="settingsSaved" />
   </div>
 </template>
 

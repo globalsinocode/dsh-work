@@ -52,7 +52,12 @@ async function json(request: IncomingMessage) {
 const fake = createServer(async (request, response) => {
   const url = new URL(request.url ?? '/', `http://127.0.0.1:${fakePort}`)
   if (request.method === 'OPTIONS') return send(response, {})
-  if (url.pathname === '/gettoken') return send(response, { errcode: 0, access_token: 'fake-token', expires_in: 7200 })
+  // 与真实钉钉一致：AppKey/AppSecret 不对时拒绝换取 access_token（页面“验证并保存”据此不保存）。
+  if (url.pathname === '/gettoken') {
+    return url.searchParams.get('appkey') === 'fixture-app-key' && url.searchParams.get('appsecret') === 'fixture-app-secret-not-real'
+      ? send(response, { errcode: 0, access_token: 'fake-token', expires_in: 7200 })
+      : send(response, { errcode: 40089, errmsg: '不合法的corpid或corpsecret' })
+  }
   // 测试专用：钉钉容器替身向这里申请一次性授权码（真实环境由钉钉 JSAPI 签发）。
   if (url.pathname === '/__test/auth-code') {
     const body = await json(request)
@@ -97,6 +102,8 @@ const environment: NodeJS.ProcessEnv = {
   DSH_WORK_SESSION_SECRET: 'dingtalk-browser-fixture-secret-not-for-deployment',
   DSH_WORK_COOKIE_SECURE: 'false',
   DSH_RUNTIME_HOME: join(dataRoot, 'runtime-unavailable'),
+  // 页面保存 AppSecret 需要凭据主密钥（仅测试值）。DSH_WORK_DINGTALK_* 作为初始配置（页面从未保存过）。
+  DSH_CREDENTIAL_MASTER_KEY: Buffer.alloc(32, 7).toString('base64'),
   DSH_WORK_DINGTALK_CORP_ID: corpId,
   DSH_WORK_DINGTALK_AGENT_ID: '3189001',
   DSH_WORK_DINGTALK_APP_KEY: 'fixture-app-key',

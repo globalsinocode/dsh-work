@@ -8,6 +8,7 @@ const revokeReasons: Record<string, string> = {
   departed: '钉钉中已不是企业成员',
   account_disabled: '账号已停用',
   admin_password_reset: '管理员重置了密码',
+  corp_changed: '钉钉应用换到了其他企业',
 }
 
 export function dingtalkRevokeReason(reason: string | null | undefined) {

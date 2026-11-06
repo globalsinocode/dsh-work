@@ -13,6 +13,7 @@ import { IdentityAdministrationService } from './administration-service.ts'
 import { loadIdentityConfiguration } from './config.ts'
 import { DingTalkAuthService } from './dingtalk/dingtalk-auth-service.ts'
 import { loadDingTalkConfiguration } from './dingtalk/dingtalk-config.ts'
+import { staticDingTalkSettings } from './dingtalk/dingtalk-settings.ts'
 import { LocalAuthService } from './local-auth-service.ts'
 import type { LocalIdentityConfiguration } from './types.ts'
 
@@ -47,12 +48,13 @@ before(async () => {
     DSH_WORK_DINGTALK_CORP_ID: 'ding-corp-test', DSH_WORK_DINGTALK_AGENT_ID: '3189', DSH_WORK_DINGTALK_APP_KEY: 'key', DSH_WORK_DINGTALK_APP_SECRET: 'secret',
   })!
   dingtalk = new DingTalkDirectoryDouble('ding-corp-test').addDepartment(11, '销售部').addDepartment(12, '华东区')
-  local = new LocalAuthService(config, database.client, dingtalkConfig)
+  const settings = staticDingTalkSettings(dingtalkConfig, dingtalk)
+  local = new LocalAuthService(config, database.client, settings)
   administration = new IdentityAdministrationService(database.client, true)
   adminId = (await local.bootstrap({ username: 'dt.admin@example.invalid', name: '钉钉管理员', password })).userId
   registerLocalAuthRoutes(router, local)
-  registerDingTalkAuthRoutes(router, new DingTalkAuthService(config, database.client, dingtalk, dingtalkConfig), local)
-  registerDingTalkBindingRoutes(router, new PostgresDingTalkSelfBindingService(database.client, true))
+  registerDingTalkAuthRoutes(router, new DingTalkAuthService(config, database.client, settings), local)
+  registerDingTalkBindingRoutes(router, new PostgresDingTalkSelfBindingService(database.client, settings))
   router.get('/api/workbench/v1/session', (_request, context) => envelope('workbench', requireRequestIdentity(context, 'workbench'), 'postgres'))
 })
 

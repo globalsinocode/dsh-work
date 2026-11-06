@@ -8,7 +8,8 @@ import { IdentitySessionRepository } from '../session-repository.ts'
 import { LOCAL_PERMISSIONS } from '../types.ts'
 import { DINGTALK_CHANNEL, invalidateUserBindings, revokeBindingSessions } from './dingtalk-bindings.ts'
 import type { DingTalkConfiguration } from './dingtalk-config.ts'
-import { DingTalkDirectoryError, type DingTalkDirectory } from './dingtalk-directory.ts'
+import { DingTalkDirectoryError } from './dingtalk-directory.ts'
+import type { DingTalkSettingsInput, DingTalkSettingsManager, DingTalkSettingsProvider, DingTalkSettingsView } from './dingtalk-settings.ts'
 
 const tenantId = 'tenant-dsh-work'
 /** 代绑确认凭证有效期（4.2 方式二：单次有效、短时过期）。 */
@@ -58,19 +59,41 @@ interface ConfirmationPayload {
 
 export class DingTalkAdministrationService {
   private readonly database: DatabaseClient
-  private readonly directory: DingTalkDirectory
-  private readonly configuration: DingTalkConfiguration | null
+  /** 钉钉应用配置在每次使用时读取（管理端保存后立即生效）。 */
+  private readonly settings: DingTalkSettingsProvider
+  private readonly manager: DingTalkSettingsManager | null
   private readonly secret: string
   private readonly publicOrigins: string[]
   private readonly repository: IdentitySessionRepository
 
-  constructor(database: DatabaseClient, directory: DingTalkDirectory, configuration: DingTalkConfiguration | null, options: { secret: string; workbenchOrigins: string[] }) {
+  constructor(database: DatabaseClient, settings: DingTalkSettingsProvider, options: { secret: string; workbenchOrigins: string[]; manager?: DingTalkSettingsManager }) {
     this.database = database
-    this.directory = directory
-    this.configuration = configuration
+    this.settings = settings
+    this.manager = options.manager ?? null
     this.secret = options.secret
     this.publicOrigins = options.workbenchOrigins.filter(origin => origin.startsWith('https://'))
     this.repository = new IdentitySessionRepository(database)
+  }
+
+  /** “钉钉集成 › 应用配置”：查看、保存（先向钉钉验证凭据）与清除。只有平台管理员可用。 */
+  async getSettings(actorId: string): Promise<DingTalkSettingsView> {
+    await this.database.begin(transaction => assertPlatformAdmin(transaction, actorId))
+    return this.requireManager().view()
+  }
+
+  async saveSettings(input: DingTalkSettingsInput, actorId: string): Promise<DingTalkSettingsView> {
+    await this.database.begin(transaction => assertPlatformAdmin(transaction, actorId))
+    return this.requireManager().save(input, actorId)
+  }
+
+  async clearSettings(actorId: string): Promise<DingTalkSettingsView> {
+    await this.database.begin(transaction => assertPlatformAdmin(transaction, actorId))
+    return this.requireManager().clear(actorId)
+  }
+
+  private requireManager() {
+    if (!this.manager) throw new IdentityAccessError(503, 'dingtalk_settings_unavailable', '钉钉应用配置不可用')
+    return this.manager
   }
 
   async getBinding(userId: string, actorId: string): Promise<DingTalkBindingView> {
@@ -83,7 +106,8 @@ export class DingTalkAdministrationService {
 
   /** 代绑预览：按手机号在钉钉中查成员与部门，返回服务端保存的确认凭证（4.2 方式二第 2 步）。 */
   async preview(userId: string, input: { mobile?: unknown }, actorId: string): Promise<AdminBindPreview> {
-    const configuration = this.requireConfiguration()
+    const configuration = await this.requireConfiguration()
+    const directory = this.settings.directory(configuration)
     const mobile = normalizeMobile(input.mobile)
     const target = await this.database.begin(async transaction => {
       await assertPlatformAdmin(transaction, actorId)
@@ -96,11 +120,11 @@ export class DingTalkAdministrationService {
       return user
     })
     // 钉钉调用在事务之外。
-    const dingUserId = await this.call(() => this.directory.findUserIdByMobile(mobile))
-    const member = await this.call(() => this.directory.getMember(dingUserId))
+    const dingUserId = await this.call(() => directory.findUserIdByMobile(mobile))
+    const member = await this.call(() => directory.getMember(dingUserId))
     let department: string | null = null
     try {
-      const names = await Promise.all(member.departmentIds.slice(0, 2).map(id => this.directory.getDepartmentName(id)))
+      const names = await Promise.all(member.departmentIds.slice(0, 2).map(id => directory.getDepartmentName(id)))
       department = names.length ? names.join('、') : null
     } catch {
       department = null
@@ -124,7 +148,7 @@ export class DingTalkAdministrationService {
           external_department, corp_id, target_user_id, actor_id, payload, expires_at
         ) values (
           ${hashOpaque(token)}, ${tenantId}, ${DINGTALK_CHANNEL}, 'admin-confirm', ${dingUserId}, ${member.unionId}, ${member.name},
-          ${department}, ${this.directory.corpId}, ${userId}, ${actorId}, ${transaction.json({ ...payload })},
+          ${department}, ${configuration.corpId}, ${userId}, ${actorId}, ${transaction.json({ ...payload })},
           now() + make_interval(secs => ${confirmationTtlSeconds})
         )
       `
@@ -148,7 +172,7 @@ export class DingTalkAdministrationService {
 
   /** 代绑确认：只接受确认凭证，不接受 userid（4.2 方式二第 3～5 步）。 */
   async confirm(userId: string, input: { confirmationToken?: unknown; identityConfirmed?: unknown; rebind?: unknown }, actorId: string) {
-    const configuration = this.requireConfiguration()
+    const configuration = await this.requireConfiguration()
     if (typeof input.confirmationToken !== 'string' || !input.confirmationToken) {
       throw new IdentityAccessError(422, 'invalid_request', '缺少确认凭证，请重新查找')
     }
@@ -299,9 +323,10 @@ export class DingTalkAdministrationService {
              count(*) filter (where not any_record)::integer as unbound
         from states
     `
+    const configuration = await this.settings.current()
     return {
-      configured: this.configuration !== null,
-      agentId: this.configuration?.agentId ?? null,
+      configured: configuration !== null,
+      agentId: configuration?.agentId ?? null,
       publicEntries: this.publicOrigins,
       connection: status ? {
         checkedAt: status.checkedAt?.toISOString() ?? null, status: status.status,
@@ -321,16 +346,18 @@ export class DingTalkAdministrationService {
     const capabilities: Record<string, 'ok' | 'denied' | 'unknown'> = {}
     let status: 'ok' | 'configuration_error' | 'unavailable' = 'ok'
     let message: string | null = null
-    if (!this.configuration) {
+    const configuration = await this.settings.current()
+    if (!configuration) {
       status = 'configuration_error'
-      message = '钉钉应用未配置：请部署人员在环境变量中设置 DSH_WORK_DINGTALK_*'
+      message = '钉钉应用未配置：请在“应用配置”中填写，或已保存的 AppSecret 无法读取'
     } else {
+      const directory = this.settings.directory(configuration)
       try {
-        await this.directory.checkCredentials()
+        await directory.checkCredentials()
         capabilities.credentials = 'ok'
-        capabilities.mobileLookup = await probe(() => this.directory.findUserIdByMobile('10000000000'), ['member_not_found', 'invalid_mobile'])
-        capabilities.memberRead = await probe(() => this.directory.getMember('dsh-work-connection-probe'), ['member_not_found'])
-        capabilities.departmentRead = await probe(() => this.directory.getDepartmentName(1), ['department_not_found'])
+        capabilities.mobileLookup = await probe(() => directory.findUserIdByMobile('10000000000'), ['member_not_found', 'invalid_mobile'])
+        capabilities.memberRead = await probe(() => directory.getMember('dsh-work-connection-probe'), ['member_not_found'])
+        capabilities.departmentRead = await probe(() => directory.getDepartmentName(1), ['department_not_found'])
         if (Object.values(capabilities).includes('denied')) {
           status = 'configuration_error'
           message = '部分接口权限未开通，或通讯录权限范围不是“全部员工”'
@@ -412,7 +439,9 @@ export class DingTalkAdministrationService {
    * 权限或范围错误记为配置异常、不计入单个员工的检查失败；判为离职的超过有效绑定 10% 时整批暂停。
    */
   async runDepartureCheck(options: { delayMs?: number } = {}) {
-    if (!this.configuration) return null
+    const configuration = await this.settings.current()
+    if (!configuration) return null
+    const directory = this.settings.directory(configuration)
     const runId = `dtcheck-${randomUUID()}`
     // 进程在检查中途退出（重启、发布）会留下 running 记录；超过 6 小时未结束的视为中断，否则唯一索引会让检查永久停止。
     await this.database`
@@ -436,7 +465,7 @@ export class DingTalkAdministrationService {
       let configurationError = false
       for (const binding of bindings) {
         try {
-          await this.directory.getMember(binding.externalUserId)
+          await directory.getMember(binding.externalUserId)
         } catch (error) {
           const code = error instanceof DingTalkDirectoryError ? `${error.code}${error.upstreamCode === null ? '' : `:${error.upstreamCode}`}` : 'unknown'
           errorCodes[code] = (errorCodes[code] ?? 0) + 1
@@ -491,13 +520,13 @@ export class DingTalkAdministrationService {
     })
   }
 
-  /** 每天检查一次：当天（服务器时区）03:00 之后、当天还没有检查时运行。 */
+  /** 每天检查一次：当天（服务器时区）03:00 之后、当天还没有检查时运行；未配置钉钉时跳过（配置随时可在页面保存）。 */
   startDailyDepartureCheck(options: { hour?: number; intervalMs?: number } = {}) {
-    if (!this.configuration) return null
     const hour = options.hour ?? 3
     const tick = async () => {
       const now = new Date()
       if (now.getHours() < hour) return
+      if (!await this.settings.current()) return
       const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate())
       const [recent] = await this.database`
         select 1 from dingtalk_departure_checks where tenant_id = ${tenantId} and started_at >= ${startOfDay} limit 1
@@ -588,9 +617,10 @@ export class DingTalkAdministrationService {
     }
   }
 
-  private requireConfiguration() {
-    if (!this.configuration) throw new IdentityAccessError(503, 'dingtalk_not_configured', '钉钉应用未配置')
-    return this.configuration
+  private async requireConfiguration(): Promise<DingTalkConfiguration> {
+    const configuration = await this.settings.current()
+    if (!configuration) throw new IdentityAccessError(503, 'dingtalk_not_configured', '钉钉应用未配置')
+    return configuration
   }
 
   private async call<T>(operation: () => Promise<T>) {

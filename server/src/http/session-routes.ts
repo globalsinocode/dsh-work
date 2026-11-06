@@ -25,12 +25,14 @@ export function registerSessionRoutes(router: Router) {
   })
 }
 
+interface AuthConfiguration { mode: string; localEnabled: boolean; aiHubEnabled: boolean; dingtalk?: { corpId: string } }
+
 /** Login options for both portals; the login pages read it before showing the AI Hub entry. */
 export function registerAuthConfigurationRoutes(
   router: Router,
-  describe: (audience: 'workbench' | 'admin') => { mode: string; localEnabled: boolean; aiHubEnabled: boolean; dingtalk?: { corpId: string } },
+  describe: (audience: 'workbench' | 'admin') => Promise<AuthConfiguration> | AuthConfiguration,
 ) {
   for (const audience of ['workbench', 'admin'] as const) {
-    router.get(`/auth/${audience}/configuration`, () => describe(audience))
+    router.get(`/auth/${audience}/configuration`, async () => describe(audience))
   }
 }

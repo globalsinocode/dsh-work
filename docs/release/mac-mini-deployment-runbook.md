@@ -788,26 +788,17 @@ AI Hub 登录（`/auth/workbench/oidc/*`、`/auth/workbench/callback`）与切�
 1. 在钉钉开放平台创建**企业内部应用**，开通 H5 微应用：首页地址为公网员工端（例如 `https://m.example.com:4174/c/chats`），可信域名为 `m.example.com:4174`（以开发者后台对端口的要求为准，P2 确认）。
 2. 按方案 8.1 开通权限：免登（默认）、工作通知（默认，DT-S2 使用）、根据手机号获取成员基本信息、成员信息读权限、通讯录部门信息读权限；**通讯录权限范围设为“全部员工”**。不申请“企业员工手机号信息”与“邮箱等个人信息”。开始前在开发者后台逐项核对权限当前名称，与方案不同以后台为准并回写方案。
 3. 在“服务器出口 IP”登记 Mac mini 的公网出口 IP；服务器出站放行 `oapi.dingtalk.com:443`（与出口 IP 白名单是两件事）。
-4. 把应用凭据写入 `runtime.env`（mode 600，不入库、不进 Git；四项必须同时设置，只设一部分时服务拒绝启动）：
+4. 确认 `runtime.env` 已配置凭据主密钥 `DSH_CREDENTIAL_MASTER_KEY`（与 MCP Bearer Token、企业知识库 API Key 共用；没有时生成 `openssl rand -base64 32` 写入并重启后端）。没有主密钥时页面不能保存 AppSecret。
+5. 平台管理员在管理端“钉钉集成 › 应用配置”点“填写配置”：填写 CorpId、AgentId、AppKey、AppSecret，按需调整钉钉会话有效期（默认 12 小时）、待绑定凭证有效期（默认 5 分钟）、每位管理员每日代绑上限（默认 50）与接口超时（默认 10 秒），点“验证并保存”。服务端先用这组凭据向钉钉换取 access_token，失败（凭据错误、出口 IP 未登记）不保存；成功后 AppSecret 加密保存、不再显示，配置立即生效，无需重启。
 
-```bash
-DSH_WORK_DINGTALK_CORP_ID=dingxxxxxxxxxxxxxxxx
-DSH_WORK_DINGTALK_AGENT_ID=3189xxxxx
-DSH_WORK_DINGTALK_APP_KEY=replace-me
-DSH_WORK_DINGTALK_APP_SECRET=replace-me
-# 可选：钉钉会话有效期（默认 12 小时）、单个管理员每日代绑上限（默认 50）
-# DSH_WORK_DINGTALK_SESSION_TTL_SECONDS=43200
-# DSH_WORK_DINGTALK_ADMIN_DAILY_BIND_LIMIT=50
-```
-
-5. 重启后端（`launchctl kickstart -k gui/$(id -u)/com.company.dsh-work.server`，或随下一次发布生效）。
+   已在 `runtime.env` 设置 `DSH_WORK_DINGTALK_*` 的环境：它们只在页面从未保存过时作为初始配置（页面显示“部署配置”），页面保存或清除后不再生效，之后可从 `runtime.env` 删除。钉钉开放平台地址 `DSH_WORK_DINGTALK_API_BASE_URL` 只能由部署配置决定，生产保持默认。
 
 ### 14.5 上线验证（DT-P2 的前置检查）
 
-1. 管理端“钉钉集成”：应用配置显示 AgentId，“钉钉内入口”列出公网 origin；“重新检查连接”后凭据与各项接口权限为“已开通”。“配置异常”时按提示检查权限、通讯录范围与出口 IP。
+1. 管理端“钉钉集成”：应用配置显示 CorpId、AgentId 与配置来源，“钉钉内入口”列出公网 origin；“重新检查连接”后凭据与各项接口权限为“已开通”。“配置异常”时按提示检查权限、通讯录范围与出口 IP。
 2. 公网入口：`curl -sS -o /dev/null -w '%{http_code}\n' https://m.example.com:4174/auth/admin/configuration` 返回 404；`/api/admin/v1/session` 返回 404；`/auth/workbench/configuration` 返回 200 且含 `dingtalk.corpId`。
 3. 用未登记的 Host 访问后端返回 421；跨站 `Origin` 的登录请求返回 403。
 4. 启动日志没有 `AI Hub 登录未启用`（或确认这是预期的本地模式）。
 5. 在 iOS 与 Android 钉钉中从工作台打开 dsh-work：未绑定时显示“当前钉钉账号”与“登录并绑定”，登录后进入协作模式；再次打开免登。按 `e2e/catalog/dingtalk.md` 的 DT-P2 记录真机结果（返回键、软键盘、上传下载、安全区）。
 
-回退：网关先撤下公网入口；用 `set-macmini-endpoints.sh` 去掉公网 origin（`plan`、`check`、`apply --confirm`，参数中不再包含 `https://m.example.com:4174`），或在刚变更后用 `rollback --confirm` 恢复上一份入口配置——不要手改 `DSH_WORK_WORKBENCH_ORIGINS`，否则与生成的 Nginx `server_name` 不一致；再删除 `runtime.env` 中的 `DSH_WORK_DINGTALK_*` 并重启后端。已写入的绑定记录保留，钉钉免登接口返回“未启用”。
+回退：网关先撤下公网入口；用 `set-macmini-endpoints.sh` 去掉公网 origin（`plan`、`check`、`apply --confirm`，参数中不再包含 `https://m.example.com:4174`），或在刚变更后用 `rollback --confirm` 恢复上一份入口配置——不要手改 `DSH_WORK_WORKBENCH_ORIGINS`，否则与生成的 Nginx `server_name` 不一致；再在“钉钉集成 › 应用配置”点“清除配置”（删除已加密的 AppSecret，立即生效）。已写入的绑定记录保留，钉钉免登接口返回“未启用”。

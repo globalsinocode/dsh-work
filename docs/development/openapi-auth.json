@@ -594,7 +594,7 @@
           "钉钉"
         ],
         "summary": "钉钉容器内免登：一次性授权码换取钉钉 userid；有有效绑定时签发 dingtalk 会话，否则返回待绑定凭证",
-        "description": "钉钉接入方案 4.3。授权码由钉钉 JSAPI requestAuthCode 取得，一次性，服务端不缓存、不重放；只能用本企业应用的 access_token 换取，非本企业授权码换取失败。dingtalk 会话默认 12 小时（DSH_WORK_DINGTALK_SESSION_TTL_SECONDS），只撤销该账号此前的 dingtalk 会话，与桌面密码会话并存。没有有效绑定时不自动建账号。",
+        "description": "钉钉接入方案 4.3。授权码由钉钉 JSAPI requestAuthCode 取得，一次性，服务端不缓存、不重放；只能用本企业应用的 access_token 换取，非本企业授权码换取失败。dingtalk 会话有效期默认 12 小时（钉钉集成 › 应用配置），只撤销该账号此前的 dingtalk 会话，与桌面密码会话并存。没有有效绑定时不自动建账号。",
         "parameters": [
           {
             "name": "Origin",

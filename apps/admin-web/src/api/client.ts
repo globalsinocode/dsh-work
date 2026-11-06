@@ -32,6 +32,8 @@ import type {
   DingTalkBindingView,
   DingTalkBindPreview,
   DingTalkIntegrationOverview,
+  DingTalkSettings,
+  DingTalkSettingsInput,
   DingTalkUnboundEmployee,
   EmployeeModelUsageSummary,
   GrantSourceReconciliationView,
@@ -512,6 +514,9 @@ export const adminApi = {
   unlockDingTalkSelfBinding: (userId: string) =>
     request<DingTalkBindingView>(`/identity/users/${encodeURIComponent(userId)}/dingtalk-binding/unlock`, { method: 'POST' }),
   getDingTalkOverview: () => request<DingTalkIntegrationOverview>('/dingtalk/overview'),
+  getDingTalkSettings: () => request<DingTalkSettings>('/dingtalk/settings'),
+  saveDingTalkSettings: (input: DingTalkSettingsInput) => request<DingTalkSettings>('/dingtalk/settings', { method: 'PUT', body: JSON.stringify(input) }),
+  clearDingTalkSettings: () => request<DingTalkSettings>('/dingtalk/settings', { method: 'DELETE' }),
   checkDingTalkConnection: () => request<DingTalkIntegrationOverview>('/dingtalk/connection-check', { method: 'POST' }),
   getDingTalkUnbound: (page = 1) => request<{ items: DingTalkUnboundEmployee[]; total: number; page: number; pageSize: number }>(`/dingtalk/unbound?page=${page}&page_size=50`),
   remindDingTalkBinding: (input: { userIds?: string[]; all?: boolean }) =>

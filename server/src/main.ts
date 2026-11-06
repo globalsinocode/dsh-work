@@ -39,9 +39,8 @@ import { DingTalkAdministrationService } from './modules/identity/dingtalk/dingt
 import { registerAuthConfigurationRoutes, registerSessionRoutes } from './http/session-routes.ts'
 import { LocalAuthService } from './modules/identity/local-auth-service.ts'
 import { DingTalkAuthService } from './modules/identity/dingtalk/dingtalk-auth-service.ts'
-import { loadDingTalkConfiguration } from './modules/identity/dingtalk/dingtalk-config.ts'
-import { UnconfiguredDingTalkDirectory } from './modules/identity/dingtalk/dingtalk-directory.ts'
-import { DingTalkOpenApiDirectory } from './modules/identity/dingtalk/dingtalk-open-api.ts'
+import { loadDingTalkDeploymentSettings } from './modules/identity/dingtalk/dingtalk-config.ts'
+import { DingTalkSettingsService } from './modules/identity/dingtalk/dingtalk-settings.ts'
 import { checkDatabase, createDatabase } from './infrastructure/postgres/database.ts'
 import { runMigrations } from './infrastructure/postgres/migration-runner.ts'
 import { PostgresOperationsService } from './modules/admin/application/postgres-operations-service.ts'
@@ -156,28 +155,42 @@ async function start() {
   const directorySync = identityConfiguration.mode === 'oidc'
     ? new IdentityDirectorySyncService(identityConfiguration, database)
     : null
-  // 钉钉企业内部应用（钉钉接入方案 DT-S1）：未配置时免登接口明确返回不可用；测试替身不在生产启动中接线。
-  const dingtalkConfiguration = loadDingTalkConfiguration(process.env)
-  const dingtalkDirectory = dingtalkConfiguration ? new DingTalkOpenApiDirectory(dingtalkConfiguration) : new UnconfiguredDingTalkDirectory()
-  const localAuthentication = new LocalAuthService(localIdentityConfiguration(identityConfiguration), database, dingtalkConfiguration)
-  const dingtalkAuthentication = new DingTalkAuthService(localIdentityConfiguration(identityConfiguration), database, dingtalkDirectory, dingtalkConfiguration)
+  // 钉钉企业内部应用（钉钉接入方案 DT-S1）：配置在管理端“钉钉集成”页填写，AppSecret 以 DSH_CREDENTIAL_MASTER_KEY
+  // 加密入库；DSH_WORK_DINGTALK_* 只在页面从未保存过时作为初始配置。未配置时免登接口明确返回不可用；
+  // 测试替身不在生产启动中接线。
+  const dingtalkSettings = new DingTalkSettingsService(database, {
+    deployment: loadDingTalkDeploymentSettings(process.env),
+    ...(process.env.DSH_CREDENTIAL_MASTER_KEY ? {
+      credentials: new PostgresEncryptedCredentialStore(database, {
+        masterKeyBase64: process.env.DSH_CREDENTIAL_MASTER_KEY,
+        keyId: process.env.DSH_CREDENTIAL_MASTER_KEY_ID,
+      }),
+    } : {}),
+  })
+  await dingtalkSettings.ensureBootstrap()
+  const localAuthentication = new LocalAuthService(localIdentityConfiguration(identityConfiguration), database, dingtalkSettings)
+  const dingtalkAuthentication = new DingTalkAuthService(localIdentityConfiguration(identityConfiguration), database, dingtalkSettings)
   const router = new Router({ authenticateApi: portalAuthenticator(localAuthentication, oidcAuthentication) })
   if (oidcAuthentication) registerOidcRoutes(router, oidcAuthentication, localAuthentication)
   registerLocalAuthRoutes(router, localAuthentication, oidcAuthentication)
   registerDingTalkAuthRoutes(router, dingtalkAuthentication, localAuthentication, oidcAuthentication)
-  const dingtalkAdministration = new DingTalkAdministrationService(database, dingtalkDirectory, dingtalkConfiguration, {
+  const dingtalkAdministration = new DingTalkAdministrationService(database, dingtalkSettings, {
+    manager: dingtalkSettings,
     secret: identityConfiguration.sessionSecret,
     workbenchOrigins: localIdentityConfiguration(identityConfiguration).audiences.workbench.allowedOrigins,
   })
   registerDingTalkAdminRoutes(router, dingtalkAdministration)
-  // 每日离职检查（钉钉接入方案 4.2）：只在配置了钉钉应用时启动；单进程部署，进行中的检查由唯一索引互斥。
+  // 每日离职检查（钉钉接入方案 4.2）：每次检查前读取当前配置，未配置时跳过；单进程部署，进行中的检查由唯一索引互斥。
   const dingtalkDepartureTimer = dingtalkAdministration.startDailyDepartureCheck()
   registerSessionRoutes(router)
   // 钉钉只对员工端提供 corpId（容器内 requestAuthCode 需要），不是秘密，也不暴露 AppKey/AppSecret。
-  registerAuthConfigurationRoutes(router, audience => ({
-    mode: identityConfiguration.mode, localEnabled: true, aiHubEnabled: Boolean(oidcAuthentication),
-    ...(audience === 'workbench' && dingtalkConfiguration ? { dingtalk: { corpId: dingtalkConfiguration.corpId } } : {}),
-  }))
+  registerAuthConfigurationRoutes(router, async audience => {
+    const dingtalk = audience === 'workbench' ? await dingtalkSettings.current() : null
+    return {
+      mode: identityConfiguration.mode, localEnabled: true, aiHubEnabled: Boolean(oidcAuthentication),
+      ...(dingtalk ? { dingtalk: { corpId: dingtalk.corpId } } : {}),
+    }
+  })
   registerIdentityAdministrationRoutes(
     router,
     new IdentityAdministrationService(database, true),
@@ -619,7 +632,7 @@ async function start() {
   registerWorkspaceLifecycleRoutes(router, workspaceLifecycle, authorization)
   registerWorkspaceActivityRoutes(router, workspaceActivity, authorization)
   registerUserPreferenceRoutes(router, new PostgresUserPreferenceService(database))
-  registerDingTalkBindingRoutes(router, new PostgresDingTalkSelfBindingService(database, dingtalkConfiguration !== null))
+  registerDingTalkBindingRoutes(router, new PostgresDingTalkSelfBindingService(database, dingtalkSettings))
   registerConversationTargetRoutes(router, new PostgresConversationTargetService(database, agents), authorization)
   const userNotifications = new PostgresUserNotificationService(database)
   registerUserNotificationRoutes(router, userNotifications, authorization)

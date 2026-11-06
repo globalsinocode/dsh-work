@@ -25,6 +25,7 @@ const reasons: Record<string, string> = {
   departed: '钉钉中已不是企业成员',
   account_disabled: '账号曾被停用',
   admin_password_reset: '管理员重置了你的密码',
+  corp_changed: '钉钉应用已换到其他企业，请重新绑定',
 }
 const visible = computed(() => Boolean(view.value && (view.value.enabled || view.value.status !== 'unbound')))
 const account = computed(() => {

@@ -45,6 +45,7 @@ flowchart LR
 | `external_binding_tickets` | 服务端短时单次凭证：钉钉内待绑定凭证与管理员代绑确认凭证（迁移 0117） | 只存凭证哈希；原子消费，重复使用、过期、来源或目标员工 / 管理员不符一律无效；代绑凭证只存脱敏手机号与 HMAC |
 | `external_channel_status` | 外部渠道连接检查结果（迁移 0118，钉钉集成页） | 每租户每渠道一行；只存检查时间、结论与各接口权限探测结果，不存凭据 |
 | `dingtalk_departure_checks` | 每日钉钉离职检查记录（迁移 0118） | 同一租户至多一条 `running`（部分唯一索引），超过 6 小时未结束的视为中断并标为 `failed` 后再开始新检查；只有明确“用户不存在”才判为离职；判为离职超过有效绑定 10% 时 `paused` 并保存待确认的绑定 ID，管理员确认或忽略后结束 |
+| `dingtalk_app_configurations` | 钉钉企业内部应用配置（迁移 0119，DT30） | 每租户一行；`configured` 时 CorpId、AgentId、AppKey 必填；AppSecret 不存本表，页面保存的以 `credential_ref` 指向 `credential_secrets` 中的加密值，来自部署配置时 `credential_ref` 为空、只在内存使用；`cleared` 后部署配置不再自动生效 |
 | `oidc_login_transactions` | OIDC 登录事务 | state、nonce 与入口绑定，一次性使用 |
 | `application_admin_bootstrap_claims` | AI Hub 初始管理员认领 | 按应用/环境幂等消费 |
 | `identity_directory_sync_state` | AI Hub 员工目录同步游标 | 持久化 opaque cursor；员工停用即撤销其 Session，保留本地角色历史 |
