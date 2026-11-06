@@ -1,7 +1,7 @@
 # 发往模型的数据防护方案
 
 **状态：** 决策已确认，尚未实施。本文所述能力在实施并通过第 9 节验收前均不可用。<br>
-**更新日期：** 2026-11-06（简化 D11：不做策略版本、第一期不做自定义规则、去掉 Run 内已识别值集合、输入预检只查消息正文、租户密钥不分版本；DeepSeek 统一经 pi-ai 接入）；2026-11-06（按 PR 评审修订：新增 D10，密钥只拦截本轮新输入、其余位置遮盖；思考内容原样透传；补充前置条件、拒绝传递、JSON 转义与短码碰撞）<br>
+**更新日期：** 2026-11-06（DLP-S0 探针结论写入 4.1；新增 D12：联网搜索经网关并遮盖）；2026-11-06（简化 D11：不做策略版本、第一期不做自定义规则、去掉 Run 内已识别值集合、输入预检只查消息正文、租户密钥不分版本；DeepSeek 统一经 pi-ai 接入）；2026-11-06（按 PR 评审修订：新增 D10，密钥只拦截本轮新输入、其余位置遮盖；思考内容原样透传；补充前置条件、拒绝传递、JSON 转义与短码碰撞）<br>
 **依据：** 当前 Model 模块、Runtime Adapter 与 [模型路由方案](model-routing-plan.md)；参考开源项目 [yetone/magpie](https://github.com/yetone/magpie)（MIT）的网关脱敏设计（`internal/redact`、`internal/gateway/masked.go`），只借鉴设计，不复制代码。<br>
 **关联：** [模型路由方案](model-routing-plan.md) 第 7 节（本方案将其提前立项）、[执行隔离方案](execution-isolation-plan.md) 第 10 节、[WeKnora 接入方案](weknora-knowledge-plan.md)。
 
@@ -31,6 +31,7 @@
 | D9 | **任何路由都不允许绕过网关**；DeepSeek 统一以 `openai-completions` 经 pi-ai 接入（模型路由方案 R4） |
 | D10 | **拦截只作用于员工本条消息正文**：命中密钥则不创建运行，消息标记为“未发送给模型”，此后不进入会话历史。上传文件、历史消息、工具结果、执行中读取的文件里出现的密钥一律**遮盖**，不拦截 |
 | D11 | **第一期简化**（2026-11-06）：不做策略版本，网关按请求时的当前词表处理；不做管理员自定义规则；不保留跨请求的已识别值集合；租户密钥不分版本 |
+| D12 | **联网搜索经网关并遮盖**（2026-11-06）：`web_search` 插件的 `baseURL` 指向网关、`apiKeyEnv` 指向 Attempt 令牌；网关为 DeepSeek 的 Anthropic 兼容搜索接口（`/anthropic/v1/messages`）做透传，搜索请求按与模型请求相同的策略遮盖与审计。只为这一个接口提供透传，不等于开放 `anthropic-messages` 路由类型 |
 
 D10 的理由：平台每一轮都会把会话历史随 Manifest 重新发给模型（[attempt-dispatcher.ts](../../server/src/modules/run/orchestration/attempt-dispatcher.ts) 的 `conversation_history`、Adapter 的 `renderUserPrompt`），审批后恢复还会携带已完成的工具结果。若在网关按请求拦截，一条含密钥的历史消息会让此后每一轮都失败，而历史与工具结果中的内容员工无法移除。
 
@@ -50,8 +51,23 @@ D10 的理由：平台每一轮都会把会话历史随 Manifest 重新发给模
 | --- | --- | --- |
 | DSH → `deepseek-official`（`dsh-llm-deepseek` 适配器） | DSH 直连厂商，凭据在 `DSH_HOME` | 改为 `openai-completions` 经 pi-ai 指向网关（D9） |
 | DSH → pi-ai 路由（模型路由方案 4.3） | 方案未实施 | `baseURL` 指向网关，`apiKeyEnv` 为 Attempt 短期令牌 |
-| WeKnora → 在线嵌入模型 | 文档全文发往在线服务 | 改内网嵌入模型（D2） |
-| 其他直接调用模型的组件 | 未盘点 | DLP-S0 盘点；发现即纳入网关或改内网 |
+| WeKnora → 嵌入模型 | 本地开发使用在线嵌入服务：入库时文档全文、检索时员工提问都会发往在线服务 | 改内网嵌入模型（D2）。重排序模型按 [WeKnora 方案](weknora-knowledge-plan.md) 4.1 的生产要求同样使用内网服务；dsh-work 不调用 WeKnora 的问答、对话等由 WeKnora 调用大模型的接口（WeKnora 方案 WK5） |
+| DSH 内置 `web_search`（`dsh-web-search-deepseek`） | Agent 勾选“联网搜索”后，DSH 以**一次模型调用**完成搜索：向 DeepSeek 的 Anthropic 兼容接口 `/anthropic/v1/messages` 发送 `Perform a web search for the query: <搜索词>`，模型 `deepseek-v4-flash`，凭据取 `DSH_HOME` 中的 `DEEPSEEK_API_KEY`，**不经网关**；插件的 `baseURL` 与 `apiKeyEnv` 可配置 | 经网关并遮盖（D12），随 DLP-S1 实施 |
+| dsh-work 服务端与前端 | DLP-S0 盘点：没有直接调用模型 API 的代码 | 无需处理 |
+
+### 4.1 DLP-S0 探针结论（2026-11-06）
+
+在本机 DSH `0.1.2-rc.1`（`76fda72979`）上以 `--profile acp --patch <探针 patch>` 启动，patch 声明 pi-ai 路由 `dshw-probe`（`api: openai-completions`、`compat.thinkingFormat: deepseek`、显式 `retryPolicy`），`baseURL` 指向探针网关，`apiKeyEnv` 指向进程环境中的令牌变量，`settings.path` 指向独立文件。探针网关分两种：记录请求并返回固定流式回复的假网关；记录请求后原样转发到 DeepSeek 官方的透传网关（凭据由 DSH 按引用解析，探针不读取密钥值）。探针脚本保存在会话 scratchpad，未进入仓库。
+
+| # | 问题 | 结论 |
+| --- | --- | --- |
+| 1 | pi-ai 能否指向网关 | **能。** 本轮全部模型请求都发到 `baseURL`，令牌以 `Authorization: Bearer` 发送；`session/new` 的 `currentValue` 为 `["dshw-probe", <模型>]` |
+| 2 | 用 `openai-completions` 接 DeepSeek（R4） | **可行。** `deepseek-v4-pro` 经透传网关完成一轮“思考 → 调用 `read` 工具 → 回答”：默认开启思考（返回推理内容与 `reasoning_tokens`），工具调用参数按流式片段拼接正确，下一次请求原样带回上一轮的 `reasoning_content` 与 `tool_calls`，DeepSeek 返回 200。DeepSeek 模型须设置 `compat.thinkingFormat: deepseek`（pi-ai 支持路由级默认与模型级覆盖，平台按模型设置，见模型路由方案 4.3） |
+| 3 | 思考内容经网关 | DSH 在下一次请求中把上一轮的 `reasoning_content` **逐字原样回传**，网关可以按 5.4 对思考内容双向透传、不做改动。探针网关没有做遮盖，占位符在思考内容中的往返由 DLP-S2 的 P1 用例验证。Anthropic 思考块签名未验证（该协议首批不开放） |
+| 4 | 4xx 与 429 的重试 | 探针设置 `retryPolicy: { mode: normal, maxRetries: 2 }`，重试码沿用默认集合（空回复、限流、服务端错误、超时、传输错误）：403、400 **只请求 1 次、不重试**；429、500 各请求 3 次（1 次 + 2 次重试）。408 未验证。平台生成路由时应显式设置 `retryableCodes`（模型路由方案 4.3），不依赖默认值 |
+| 5 | 拒绝如何到达 Adapter | ACP 返回 JSON-RPC 错误 `-32603`，消息为 `turn failed: <状态码>: <响应体 JSON>`，网关响应体中的 `code` 原样保留。Adapter 仍以网关记录为准分类、不解析 DSH 错误文本，记录缺失时按 Runtime 不可用处理（5.2、模型路由方案 4.7）；错误文本中保留 `code` 只便于排障 |
+| 6 | DSH 以外的出口 | dsh-work 服务端、前端与脚本没有直接调用模型 API 的代码。DSH 侧唯一绕过网关的出口是 `web_search`：它本身就是一次模型调用（见第 4 节），搜索词以原文发给 DeepSeek，凭据在 `DSH_HOME`。MR-S2 上线后 `DSH_HOME` 不再保存厂商密钥，`web_search` 将不可用。可选做法：**(a) 经网关**：把插件 `baseURL` 指向网关、`apiKeyEnv` 指向 Attempt 令牌，网关为这一个 Anthropic 兼容的搜索接口做透传与遮盖（搜索词同样按策略处理），不等于开放 `anthropic-messages` 路由类型；**(b) 停用联网搜索**。保留单独的搜索凭据、让搜索词绕过网关违反 D9 与 D5，**不作为选项**。已决定按 (a) 实施（D12）。其余：子 Agent 默认模型（`agent-default-model: deepseek-official`）因平台不放行子 Agent 工具而不可达；`session-title-llm` 在 ACP 配置中已停用；上下文压缩沿用会话当前路由，不是绕过；启动检查与两条探测路径只到 `session/new`，不发出模型请求 |
+| 7 | 缓存用量字段 | DeepSeek 同时返回 `prompt_tokens_details.cached_tokens` 与 `prompt_cache_hit_tokens` / `prompt_cache_miss_tokens`，两者一致（第二次请求命中 8448 / 8600） |
 
 ## 5. 方案
 
@@ -80,7 +96,7 @@ DSH Worker ──请求──> 模型网关
 - **令牌：** Adapter 为每个 Attempt 签发短期令牌，绑定租户、Run、Attempt、路由与模型，Attempt 终态即失效。DSH 只持有该令牌，不再持有厂商密钥。
 - **厂商密钥：** 复用平台加密凭据（`postgres-encrypted` 后端，见模型路由方案 4.5；与 MCP Bearer Token 同一机制，[总览第 9 节](../development/overview.md#9-身份安全与数据边界)），明文只在网关转发时解析，不进入 Manifest、patch、日志或 API 响应。
 - **只转发、不改造：** 网关保持厂商协议原样，只替换文本内容中的敏感值；不做协议互转、不做回退。
-- **拒绝的传递与重试：** 网关拒绝以 HTTP 403 返回，响应体为厂商兼容的错误结构，`code` 取 5.6.2 的错误码，并带响应头 `x-dshw-origin: gateway`，与厂商透传的 403 区分（模型路由方案 4.7）。平台为 pi-ai 路由显式设置的 `retryPolicy`（模型路由方案 4.3）不重试这类 4xx。Attempt 失败时，Adapter 以网关对该 Attempt 的请求记录为准映射错误码，不依赖 DSH 错误文本（模型路由方案 4.7）。
+- **拒绝的传递与重试：** 网关拒绝以 HTTP 403 返回，响应体为厂商兼容的错误结构，`code` 取 5.6.2 的错误码，并带响应头 `x-dshw-origin: gateway`，与厂商透传的 403 区分（模型路由方案 4.7）。平台为 pi-ai 路由显式设置的 `retryPolicy`（模型路由方案 4.3）不重试这类 4xx（DLP-S0 已确认 403、400 只请求一次，4.1）。Attempt 失败时，Adapter 以网关对该 Attempt 的请求记录为准映射错误码，不依赖 DSH 错误文本（模型路由方案 4.7）。
 - **计量：** 网关按请求记录 token 用量（含缓存读写，模型路由方案 4.6）；`effective_model` 以网关实际转发的模型为准。
 
 ### 5.3 识别范围
@@ -203,9 +219,9 @@ DSH Worker ──请求──> 模型网关
 
 | 阶段 | 内容 | 完成标志 |
 | --- | --- | --- |
-| DLP-S0 探针 | pi-ai 指向网关；pi-ai 以 `openai-completions` 接 DeepSeek 时推理内容与工具调用的兼容性；流式、工具调用、思考内容经网关的兼容性；pi-ai 对 4xx 与 429 的重试行为；盘点 DSH 以外直接调用模型的组件 | 结论写回本文第 4 节与 5.2 |
-| DLP-S1 网关最小链路 | 短期令牌、令牌与模型校验、转发、计量、平台加密凭据；Adapter patch 改指向网关；拒绝传递与错误码映射 | 所有路由经网关，DSH 不再持有厂商密钥 |
-| DLP-S2 识别与还原 | 5.3 内置规则与企业词表、遮盖与流式还原、思考内容透传、输入预检与“未发送给模型”标记（含会话历史排除）、审计、`trust_level` | P1 场景全部通过；员工端标记的验收条目写入 `e2e/catalog/` |
+| DLP-S0 探针（已完成，2026-11-06） | pi-ai 指向网关；pi-ai 以 `openai-completions` 接 DeepSeek 时推理内容与工具调用的兼容性；流式、工具调用、思考内容经网关的兼容性；pi-ai 对 4xx 与 429 的重试行为；盘点 DSH 以外直接调用模型的组件 | 结论见 4.1；`web_search` 出口已决定（D12） |
+| DLP-S1 网关最小链路 | 短期令牌、令牌与模型校验、转发、计量、平台加密凭据；Adapter patch 改指向网关；拒绝传递与错误码映射；`web_search` 插件改指向网关，网关透传其搜索接口（D12） | 所有路由与 `web_search`（D12）经网关，DSH 不再持有厂商密钥 |
+| DLP-S2 识别与还原 | 5.3 内置规则与企业词表、遮盖与流式还原、思考内容透传、输入预检与“未发送给模型”标记（含会话历史排除）、审计、`trust_level`、搜索请求的遮盖 | P1 场景全部通过；员工端标记的验收条目写入 `e2e/catalog/` |
 | DLP-S3 管理端 | 数据防护页、词表与白名单、权限、检测试用、命中统计（先原型） | P0 冒烟与 P1 用例通过 |
 | DLP-P2 真实验收 | 真实外部厂商与内部部署模型各一 | 见第 9 节 |
 
