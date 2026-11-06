@@ -77,10 +77,13 @@ try {
   await verifyEndpointConfigurator(join(fixtureRoot, 'endpoint-config'))
   await verifyEndpointRestartFailure(join(fixtureRoot, 'endpoint-restart'))
   await verifyNativeCertificateIssuance(join(fixtureRoot, 'certificates'))
+  const dockerDevServer = await readFile(join(projectRoot, 'apps', 'shared', 'vite-docker-dev.ts'), 'utf8')
+  assert.doesNotMatch(dockerDevServer, /changeOrigin: true/, 'development proxy must preserve the portal Host')
+  assert.equal(dockerDevServer.match(/changeOrigin: false/g)?.length, 2)
   for (const app of ['admin-web', 'workbench-web']) {
     const vite = await readFile(join(projectRoot, 'apps', app, 'vite.config.ts'), 'utf8')
     assert.doesNotMatch(vite, /changeOrigin: true/, 'development proxy must preserve the portal Host')
-    assert.equal(vite.match(/changeOrigin: false/g)?.length, 2)
+    assert.match(vite, /server: createDockerDevServerOptions\(\{ port: \w+, serverPort \}\)/)
   }
 } finally {
   await rm(fixtureRoot, { recursive: true, force: true })
