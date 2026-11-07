@@ -27,6 +27,7 @@ import { PostgresWorkspaceMemberService } from '../modules/workbench/application
 import { PostgresWorkspaceService } from '../modules/workbench/application/postgres-workspace-service.ts'
 import type { DatabaseClient } from '../infrastructure/postgres/database.ts'
 import { createThrowawayDatabase, type ThrowawayDatabase } from '../infrastructure/postgres/test-database.ts'
+import { bindTestWorkspaceNotificationRecipients } from '../infrastructure/postgres/workspace-notification-recipient-test-fixture.ts'
 import { LocalObjectStorage } from '../infrastructure/storage/local-object-storage.ts'
 import { Router } from './router.ts'
 import { registerConversationRoutes } from './workbench/conversation-routes.ts'
@@ -50,6 +51,7 @@ let server: Server
 let baseUrl = ''
 let orchestration: RunOrchestrationService
 let projects: PostgresProjectService
+let unbindRecipients: (() => void) | undefined
 
 interface NotificationView {
   id: string
@@ -524,6 +526,7 @@ const unusedRuntime = {
 before(async () => {
   throwaway = await createThrowawayDatabase({ namePrefix: 'dsh_work_user_notifications_test', maxConnections: 8 })
   database = throwaway.client
+  unbindRecipients = bindTestWorkspaceNotificationRecipients(database)
   storageRoot = await mkdtemp(join(tmpdir(), 'dsh-work-user-notifications-'))
   const authorization = new PostgresAuthorizationService(database)
   const agents = new PostgresAgentService(database)
@@ -557,6 +560,7 @@ before(async () => {
 })
 
 after(async () => {
+  unbindRecipients?.()
   if (orchestration) await orchestration.close()
   if (server?.listening) await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()))
   await throwaway.dispose()

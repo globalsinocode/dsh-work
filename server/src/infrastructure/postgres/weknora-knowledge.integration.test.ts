@@ -116,6 +116,7 @@ async function publishedAgent(executionRoleIds: string[]) {
     welcomeMessage: '', examplePrompts: ['安全库存怎么算？'], systemPrompt: '你是制度问答助手，只依据当前员工已授权的企业知识回答制度问题。',
     maxOutputBytes: 65536, maxToolCalls: 20, timeoutSeconds: 300, skills: [],
     changeSummary: '知识库测试', actor: ADMIN,
+    dataScopes: ['workspace:authorized'],
     executionRoleIds, executionDataScopes: ['workspace:authorized'],
   })
   await database`update agent_versions set status = 'published' where tenant_id = ${tenantId} and id = ${created.version.id}`

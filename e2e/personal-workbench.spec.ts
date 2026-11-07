@@ -7,7 +7,7 @@ test.beforeEach(async ({ page }) => {
 
 /** SKC-04：冒烟数据中的 Skill 创建专家默认停用，经管理端接口启用（冒烟服务只有一个测试身份）。 */
 async function enableSkillCreator(page: Page) {
-  const enabled = await page.request.patch('/api/admin/v1/agents/skill-creator/status', { data: { status: 'published' } })
+  const enabled = await page.request.patch('/api/admin/v1/agents/status', { data: { agentId: 'skill-creator', status: 'published' } })
   expect(enabled.ok()).toBeTruthy()
 }
 

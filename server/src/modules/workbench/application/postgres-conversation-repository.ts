@@ -1577,8 +1577,11 @@ export class PostgresConversationRepository {
     const attachmentsByRun = await this.loadRunAttachments(pageRunIds)
     // 本页各 Run 当前 Attempt 登记的成果（带 runId），供任务对话把成果卡挂在对应回复下；
     // 与 Run 详情的成果同源，读取权限由调用方对会话的校验覆盖。
-    const artifacts = (await this.loadThreadArtifactsForRuns(pageRunIds))
-      .map(artifact => mapArtifactRow(artifact, artifact.sourceRunId))
+    // 只有任务对话带回成果卡；普通讨论线程恒为空数组（D37）。
+    const artifacts = row.isProjectTaskThread
+      ? (await this.loadThreadArtifactsForRuns(pageRunIds))
+        .map(artifact => mapArtifactRow(artifact, artifact.sourceRunId))
+      : []
     const runs = await this.database<{
       id: string
       status: RunState

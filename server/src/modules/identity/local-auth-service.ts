@@ -275,6 +275,7 @@ export class LocalAuthService {
     validateRequestOrigin(request, settings)
     const origin = resolveRequestOrigin(request, settings)
     const token = parseCookies(request.headers.cookie)[settings.sessionCookieName]
+    // 退出结束本设备会话并清掉另一认证来源（密码↔钉钉）的会话；同来源其他设备保留。
     if (token) await this.repository.logoutSession(hashOpaque(token), audience, { allSources: true })
     return { location: new URL('/login', origin).toString(), clearSessionCookie: clearCookie(settings.sessionCookieName, this.configuration.cookieSecure) }
   }

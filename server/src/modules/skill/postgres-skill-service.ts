@@ -1,4 +1,4 @@
-import { adminAccessDenied, authorizationDenied } from '../../domain/authorization-errors.ts'
+import { adminAccessDenied, permissionDenied } from '../../domain/authorization-errors.ts'
 import { RequestError } from '../../domain/request-errors.ts'
 import { SkillError, skillNotFound, skillConflict, skillInvalid, skillUnavailable, skillInternalFailure } from './skill-errors.ts'
 import { ExecutionCapabilityUnavailableError } from '../runtime/execution-capabilities.ts'
@@ -293,7 +293,7 @@ export class PostgresSkillService {
     if (!row) {
       throw new RequestError(409, 'selected_version_unavailable', '所选版本已不可用，请重新选择')
     }
-    if (!row.visible) throw authorizationDenied('当前用户角色不可使用所选 Skill')
+    if (!row.visible) throw permissionDenied('当前用户角色不可使用所选 Skill')
     return { id: row.id, reference: `${row.skillId}@${row.version}` }
   }
 
@@ -316,7 +316,7 @@ export class PostgresSkillService {
          )
     `
     if (!row) throw skillNotFound('Skill 不存在、未发布或已停用')
-    if (!row.visible) throw authorizationDenied('当前用户角色不可使用所选 Skill')
+    if (!row.visible) throw permissionDenied('当前用户角色不可使用所选 Skill')
     return { id: row.id, reference: `${row.skillId}@${row.version}` }
   }
 

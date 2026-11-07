@@ -659,7 +659,7 @@ export class PostgresAuthorizationService {
     `
     if (!row) throw authorizationDenied(`所选 Skill 不存在：${id}`)
     if (row.visibleRoleIds && !intersects(roleIds, row.visibleRoleIds)) {
-      throw authorizationDenied('当前用户角色不可使用所选 Skill')
+      throw permissionDenied('当前用户角色不可使用所选 Skill')
     }
   }
 

@@ -115,13 +115,14 @@ async function insertPublishedSkill(name: string) {
   return { skillId, versionId, reference: `${skillId}@1.0.0` }
 }
 
-async function publishedAgent(agentSkills: string[] = []) {
+async function publishedAgent(agentSkills: string[] = [], agentTools: string[] = []) {
   const created = await agents.createAgent({
     id: `agent-vis-${randomUUID().slice(0, 8)}`,
     name: '周报助手', description: '整理员工提供的日报。', owner: '平台治理', department: '平台治理',
     welcomeMessage: '', examplePrompts: ['整理周报'], systemPrompt: '你是周报助手，只处理当前工作区中已经授权的资料。',
-    maxOutputBytes: 65536, maxToolCalls: 20, timeoutSeconds: 300, skills: agentSkills,
+    maxOutputBytes: 65536, maxToolCalls: 20, timeoutSeconds: 300, skills: agentSkills, tools: agentTools,
     changeSummary: 'Skill 可见范围测试', actor: ADMIN,
+    dataScopes: ['workspace:authorized'],
     executionRoleIds: ['role-employee'], executionDataScopes: ['workspace:authorized'],
   })
   await database`update agent_versions set status = 'published' where tenant_id = ${tenantId} and id = ${created.version.id}`
@@ -174,7 +175,8 @@ test('Skill 广场与会话选择按员工当前角色过滤', async () => {
 
 test('员工失去角色后，发送与执行前复核都拒绝所选 Skill；恢复全员后放行', async () => {
   const skill = await insertPublishedSkill('周报汇总-复核')
-  const agentVersionId = await publishedAgent()
+  // 会话里自选的 Skill 依赖 read@1.0.0：Agent 必须显式授权该工具（m4 的不兼容配对用例）。
+  const agentVersionId = await publishedAgent([], ['read@1.0.0'])
   await restrict(skill.skillId, [SALES])
   await setSales(true)
   const service = orchestration()
@@ -195,7 +197,8 @@ test('员工失去角色后，发送与执行前复核都拒绝所选 Skill；�
     service.startRun({ userId: EMPLOYEE, sessionId: session.id, prompt: '再汇总一次', idempotencyKey: randomUUID() }),
     { code: 'permission_denied' },
   )
-  await assert.rejects(assertCurrentExecutionAuthorization(authorization, undefined, attempt.manifest), { code: 'permission_denied' })
+  // 执行前复核统一收敛为 authorization_denied（current-execution-authorization 的封装口径）。
+  await assert.rejects(assertCurrentExecutionAuthorization(authorization, undefined, attempt.manifest), { code: 'authorization_denied' })
 
   await restrict(skill.skillId, null)
   await assertCurrentExecutionAuthorization(authorization, undefined, attempt.manifest)

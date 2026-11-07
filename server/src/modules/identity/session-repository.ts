@@ -479,10 +479,13 @@ export class IdentitySessionRepository {
       `
       if (!session) return false
       if (options.allSources) {
+        // 退出登录结束本设备会话，并清掉同一入口下其他认证来源的会话（密码↔钉钉），
+        // 避免另一来源的旧会话残留；同来源的其他设备会话保留（多端并行登录）。
         await transaction`
           update authentication_sessions set revoked_at = now()
            where tenant_id = ${tenantId} and user_id = ${session.userId}
              and audience = ${audience} and revoked_at is null
+             and authentication_provider <> ${session.provider}
         `
       }
       await appendIdentityAudit(transaction, {

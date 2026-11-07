@@ -120,6 +120,7 @@ async function publishedAgent(skillCreationEnabled: boolean) {
     welcomeMessage: '', examplePrompts: ['帮我做一个 Skill'], systemPrompt: '你是 Skill 创建专家，帮员工把反复做的工作写成 Skill 草稿。',
     maxOutputBytes: 65536, maxToolCalls: 20, timeoutSeconds: 300, skills: [],
     skillCreationEnabled, changeSummary: 'Skill 创建测试', actor: ADMIN,
+    dataScopes: ['workspace:authorized'],
     executionRoleIds: ['role-employee'], executionDataScopes: ['workspace:authorized'],
   })
   await database`update agent_versions set status = 'published' where tenant_id = ${tenantId} and id = ${created.version.id}`
