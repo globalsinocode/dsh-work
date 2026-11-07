@@ -44,6 +44,20 @@ export function isAdminRunPurpose(purpose: RuntimeManifest['purpose']): purpose 
   return purpose !== undefined && (purpose.startsWith('admin-') || purpose === 'agent-release-trial')
 }
 
+/** 模型路由方案 4.2：Manifest 中的路由快照，按使用方区分字段；不含密钥值。 */
+export interface RuntimeModelRoute {
+  route_id: string
+  route_key: string
+  provider_key: string
+  provider_type: 'openai-completions'
+  model_key: string
+  /** 厂商地址，只供网关转发；不写入 DSH patch。 */
+  base_url: string
+  /** 平台加密凭据引用，只供网关解析；不含密钥值。 */
+  credential_ref_id: string
+  trust_level: 'internal' | 'external'
+}
+
 export interface RuntimeManifest {
   manifest_version: '1.0'
   /** Admin-authored, immutable expectations for one trial scenario. */
@@ -139,6 +153,11 @@ export interface RuntimeManifest {
     }
   }
   model_route_id?: string | null
+  /**
+   * 模型路由方案 4.2：本 Attempt 固定的模型路由快照（不含密钥）。Adapter 据此生成 pi-ai 路由，
+   * 模型网关据此校验请求模型、解析平台加密凭据并转发。升级后新建的 Attempt 必须携带。
+   */
+  model_route?: RuntimeModelRoute
   /** Agent 的声明随 Attempt 固定；省略仅表示没有额外能力要求。 */
   model_requirements?: Array<'long-context' | 'structured-output'>
   input: {

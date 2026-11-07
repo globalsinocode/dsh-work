@@ -411,6 +411,42 @@ describe('Runtime Manifest Schema / compiler boundary', () => {
     assert.throws(() => compileRuntimeManifest(both), /both excluded and assembled/)
   })
 
+  it('模型路由方案 4.2：固定不含密钥的路由快照，拒绝未知字段、不安全取值与路由编号不一致', () => {
+    const route = {
+      route_id: 'route-default', route_key: 'default', provider_key: 'deepseek-official',
+      provider_type: 'openai-completions' as const, model_key: 'deepseek-v4-pro',
+      base_url: 'https://api.deepseek.com', credential_ref_id: 'credential-deepseek', trust_level: 'external' as const,
+    }
+    const pinned = baseManifest()
+    pinned.model_route_id = 'route-default'
+    pinned.model_route = { ...route }
+    assertBothAccept(pinned, 'model route snapshot')
+
+    const withSecret = structuredClone(pinned)
+    Object.assign(withSecret.model_route!, { api_key: 'sk-secret' })
+    assertBothReject(withSecret, /unsupported field: api_key/, 'model route with a secret field')
+
+    const badKey = structuredClone(pinned)
+    badKey.model_route!.provider_key = 'Bad Key\nid: x'
+    assertBothReject(badKey, /provider_key is invalid/, 'model route with an unsafe provider key')
+
+    const badProtocol = structuredClone(pinned)
+    ;(badProtocol.model_route as { provider_type: string }).provider_type = 'anthropic-messages'
+    assertBothReject(badProtocol, /provider_type is not supported/, 'model route with a closed protocol')
+
+    const badUrl = structuredClone(pinned)
+    badUrl.model_route!.base_url = 'file:///etc/passwd'
+    assertBothReject(badUrl, /base_url is invalid/, 'model route with a non-http base url')
+
+    const badModel = structuredClone(pinned)
+    badModel.model_route!.model_key = 'model"\n- id: acp'
+    assert.throws(() => compileRuntimeManifest(badModel), /model_key is invalid/)
+
+    const mismatch = structuredClone(pinned)
+    mismatch.model_route_id = 'route-other'
+    assert.throws(() => compileRuntimeManifest(mismatch), /does not match model_route_id/)
+  })
+
   it('pins model requirements and rejects unknown, repeated or malformed declarations', () => {
     assertBothAccept({ ...baseManifest(), model_requirements: ['long-context', 'structured-output'] }, 'declared requirements')
     assertBothAccept({ ...baseManifest(), model_requirements: [] }, 'no extra requirements')

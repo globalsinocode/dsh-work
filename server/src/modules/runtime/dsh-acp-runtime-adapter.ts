@@ -35,7 +35,8 @@ import {
   type PlatformToolRegistration,
 } from './platform-tool-contract.ts'
 import { compileRuntimeManifest } from './manifest-compiler.ts'
-import { canonicalJson, mcpToolSchemaDigest } from './canonical-json.ts'
+import { prepareMcpProcess } from './dsh-attempt-patch.ts'
+import { canonicalJson } from './canonical-json.ts'
 import { isSafeResumeWorkspacePath } from './resume-workspace-path.ts'
 import { ExecutionCapabilityUnavailableError } from './execution-capabilities.ts'
 import { redactSensitiveText, sanitizeSafeMetadata } from '../../security/safe-observability.ts'
@@ -2170,6 +2171,8 @@ type FetchLike = (input: string | URL | Request, init?: RequestInit) => Promise<
  * Recover only the authentication classification with a side-effect-free ping;
  * capability discovery and all successful MCP traffic remain DSH-owned.
  */
+export { prepareMcpProcess }
+
 export async function diagnoseMcpAuthenticationFailure(
   connection: McpRuntimeConnection,
   failureText: string,
@@ -2203,57 +2206,6 @@ function mcpAuthenticationFailure(authType: McpRuntimeConnection['snapshot']['au
   return authType === 'none'
     ? new RequestError(422, 'MCP_AUTHENTICATION_REQUIRED', 'MCP 认证失败：该服务要求 Bearer Token，请选择 Bearer Token 认证并填写有效 Token') as McpAuthenticationFailure
     : new RequestError(422, 'MCP_AUTHENTICATION_FAILED', 'MCP 认证失败：Bearer Token 无效、已过期或无权访问该服务，请检查 Token 后重试') as McpAuthenticationFailure
-}
-
-export async function prepareMcpProcess(
-  base: DshAcpRuntimeAdapterConfiguration['process'],
-  connections: McpRuntimeConnection[],
-  patchPath: string,
-  extraEnvironment: Record<string, string> = {},
-): Promise<AcpProcessConfiguration> {
-  if (!connections.length) return { ...base, env: { ...base.env, ...extraEnvironment } }
-  if (!base.args.includes('--profile')) throw invalidRequest('当前 DSH 兼容模式不支持受控 MCP Patch')
-  const environment: Record<string, string> = { ...base.env, ...extraEnvironment }
-  const rows: string[] = ['- insert:']
-  connections.forEach((connection, connectionIndex) => {
-    const snapshot = connection.snapshot
-    rows.push(
-      `    - id: ${JSON.stringify(`mcp-${snapshot.server_name}`)}`,
-      "      name: '@deepseek-ai/dsh-mcp-client'",
-      '      config:',
-      "        transport: 'streamable-http'",
-      `        serverName: ${JSON.stringify(snapshot.server_name)}`,
-      `        url: ${JSON.stringify(snapshot.endpoint)}`,
-    )
-    const headers = Object.entries(connection.headers)
-    if (!headers.length) rows.push('        headers: {}')
-    else {
-      rows.push('        headers:')
-      headers.forEach(([name, value], headerIndex) => {
-        if (!/^[A-Za-z0-9-]{1,80}$/.test(name) || /[\r\n]/.test(value)) throw invalidRequest('MCP 请求头配置无效')
-        const environmentName = `DSH_MCP_VALUE_${connectionIndex}_${headerIndex}`
-        environment[environmentName] = value
-        rows.push(`          ${JSON.stringify(name)}: !!js process.env.${environmentName}`)
-      })
-    }
-    rows.push(
-      '        toolCallTimeoutMs: 60000',
-      '        failOnStartupError: true',
-      '        reconnect:',
-      '          enabled: false',
-    )
-  })
-  await writeFile(patchPath, `${rows.join('\n')}\n`, { encoding: 'utf8', mode: 0o600 })
-  environment['DSH_ALLOWED_MCP_SERVERS_JSON'] = JSON.stringify(connections.map(connection => connection.snapshot.server_name))
-  // 生效清单逐工具下发：策略只放行清单内、且当前加载的输入 Schema 摘要一致的 Tool。
-  environment['DSH_APPROVED_MCP_CAPABILITIES_JSON'] = JSON.stringify(connections.flatMap(connection => connection.capabilities ? [{
-    serverName: connection.snapshot.server_name,
-    tools: connection.capabilities.map(capability => ({
-      name: capability.name,
-      schemaDigest: mcpToolSchemaDigest(capability.inputSchema),
-    })),
-  }] : []))
-  return { ...base, args: [...base.args, '--patch', patchPath], env: environment }
 }
 
 async function findSessionLogs(directory: string): Promise<string[]> {
