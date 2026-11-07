@@ -28,6 +28,35 @@ function assertId(name: string, value: string): void {
   if (typeof value !== 'string' || !ID_PATTERN.test(value)) throw new TypeError(`${name} is invalid`)
 }
 
+const MODEL_ROUTE_FIELDS = new Set(['route_id', 'route_key', 'provider_key', 'provider_type', 'model_key', 'base_url', 'credential_ref_id', 'trust_level'])
+const PROVIDER_KEY_PATTERN = /^[a-z][a-z0-9-]{2,47}$/
+// 模型 id 会进入 DSH patch（JSON 字符串）与网关校验，只允许常见的模型名字符。
+const MODEL_KEY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,199}$/
+
+/** 模型路由方案 4.2：路由快照的内容校验；结构由 Schema 约束，这里保证生成 patch 与网关转发时安全。 */
+function assertModelRoute(route: NonNullable<RuntimeManifest['model_route']>, routeId: RuntimeManifest['model_route_id']): void {
+  for (const key of Object.keys(route)) {
+    if (!MODEL_ROUTE_FIELDS.has(key)) throw new TypeError(`model_route contains unsupported field: ${key}`)
+  }
+  assertId('model_route.route_id', route.route_id)
+  if (typeof route.route_key !== 'string' || !route.route_key.trim()) throw new TypeError('model_route.route_key is invalid')
+  if (routeId !== undefined && routeId !== null && routeId !== route.route_id) throw new TypeError('model_route does not match model_route_id')
+  if (typeof route.provider_key !== 'string' || !PROVIDER_KEY_PATTERN.test(route.provider_key)) throw new TypeError('model_route.provider_key is invalid')
+  if (route.provider_type !== 'openai-completions') throw new TypeError('model_route.provider_type is not supported')
+  if (typeof route.model_key !== 'string' || !MODEL_KEY_PATTERN.test(route.model_key)) throw new TypeError('model_route.model_key is invalid')
+  let baseUrl: URL
+  try {
+    baseUrl = new URL(route.base_url)
+  } catch {
+    throw new TypeError('model_route.base_url is invalid')
+  }
+  if ((baseUrl.protocol !== 'https:' && baseUrl.protocol !== 'http:') || baseUrl.username || baseUrl.password) {
+    throw new TypeError('model_route.base_url is invalid')
+  }
+  assertId('model_route.credential_ref_id', route.credential_ref_id)
+  if (route.trust_level !== 'internal' && route.trust_level !== 'external') throw new TypeError('model_route.trust_level is invalid')
+}
+
 export function compileRuntimeManifest(input: RuntimeManifest): CompiledRuntimeManifest {
   if (input.manifest_version !== '1.0') throw new TypeError('manifest_version must be 1.0')
   if (input.model_requirements !== undefined && (!Array.isArray(input.model_requirements)
@@ -35,6 +64,7 @@ export function compileRuntimeManifest(input: RuntimeManifest): CompiledRuntimeM
     || new Set(input.model_requirements).size !== input.model_requirements.length)) {
     throw new TypeError('model_requirements must contain unique supported requirement names')
   }
+  if (input.model_route !== undefined) assertModelRoute(input.model_route, input.model_route_id)
   assertId('run_id', input.run_id)
   assertId('attempt_id', input.attempt_id)
   assertId('task_id', input.task_id)

@@ -11,7 +11,8 @@ import { invalidRequest } from '../../../domain/request-errors.ts'
 import type { JsonObject, RunRecord } from '../run-types.ts'
 import type { AttemptBudget } from './attempt-budget.ts'
 import type { AttemptScheduler } from './attempt-scheduler.ts'
-import { toCapabilityReference, toRuntimeManifestSkill } from './manifest-helpers.ts'
+import { toCapabilityReference, toRuntimeManifestSkill, toRuntimeModelRoute } from './manifest-helpers.ts'
+import type { ModelRouteSnapshot } from '../../model/model-types.ts'
 import { tenantId, runtimeId, type OrchestrationDependencies } from './orchestration-dependencies.ts'
 
 /** Turns an accepted request into a persisted, queued Attempt with an immutable Manifest. */
@@ -262,7 +263,6 @@ export class AttemptDispatcher {
         excerpt: memory.excerpt,
       })) } : {}),
       ...(thread?.projectContext ? { project_context: thread.projectContext } : {}),
-      model_route_id: route.routeId,
       input: {
         message: (input.message ?? input.prompt).trim(),
         file_mounts: preparedFiles.flatMap(file => file.mount ? [file.mount] : []),
@@ -297,10 +297,12 @@ export class AttemptDispatcher {
    */
   async submit(
     run: RunRecord,
-    manifest: RuntimeManifest,
-    route: unknown,
+    input: RuntimeManifest,
+    route: ModelRouteSnapshot,
     sources: Pick<Parameters<OrchestrationDependencies['runs']['createAttempt']>[0], 'knowledgeCitations' | 'memorySources' | 'inputFiles'> = {},
   ): Promise<void> {
+    // 模型路由方案 4.2：路由快照随 Manifest 固定（进入 SHA-256），Adapter 与网关只读这份快照。
+    const manifest: RuntimeManifest = { ...input, model_route_id: route.routeId, model_route: toRuntimeModelRoute(route) }
     this.assertPrincipalContextForDispatch(manifest)
     await this.deps.runtime.assertAvailable?.(manifest)
     const compiled = compileRuntimeManifest(manifest)

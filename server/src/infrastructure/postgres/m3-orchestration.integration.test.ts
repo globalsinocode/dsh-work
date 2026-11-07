@@ -242,6 +242,14 @@ test('PF-02 HTTP contract clamps the Attempt, exposes cumulative usage, and reje
     tool_calls: 5,
     output_bytes: 4096,
   })
+  // 模型路由方案 4.2：Dispatcher 把启用的默认路由写成不含密钥的快照，随 Manifest 固定。
+  const route = attempt?.manifest.model_route
+  assert.ok(route, 'new Attempts must carry model_route')
+  assert.equal(attempt?.manifest.model_route_id, route.route_id)
+  assert.equal(route.provider_type, 'openai-completions')
+  assert.deepEqual(Object.keys(route).sort(), [
+    'base_url', 'credential_ref_id', 'model_key', 'provider_key', 'provider_type', 'route_id', 'route_key', 'trust_level',
+  ])
 
   const readResponse = await fetch(`${apiBaseUrl}/api/workbench/v1/task-executions/${createdEnvelope.data.task.id}`)
   assert.equal(readResponse.status, 200)
