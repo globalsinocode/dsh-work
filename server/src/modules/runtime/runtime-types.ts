@@ -102,6 +102,14 @@ export interface RuntimeManifest {
     reason: 'python_dependency_missing'
     missing: string[]
   }>
+  /**
+   * 平台工具本次未装配的原因（数据防护方案 D12 补充）：默认路由不是 DeepSeek 官方时联网搜索不可用。
+   * 运行说明告知模型，避免假装已经搜索。
+   */
+  unavailable_tools?: Array<{
+    tool: 'web_search'
+    reason: 'model_route_unsupported'
+  }>
   user_context: {
     user_id: string
     tenant_id: string
@@ -416,4 +424,34 @@ export interface AgentRuntimePort {
   /** Mirror scheduler state for health reporting; admission remains database-owned. */
   configureScheduling?(status: 'accepting' | 'draining' | 'disabled'): Promise<void>
   close(): Promise<void>
+}
+
+/** Attempt 令牌绑定（与模型网关模块的 ModelGatewayBinding 结构一致；runtime 不依赖网关模块）。 */
+export interface RuntimeModelGatewayBinding {
+  tenantId: string
+  runId: string
+  attemptId: string
+  route: {
+    routeId: string
+    providerKey: string
+    modelKey: string
+    baseUrl: string
+    credentialRefId: string
+    trustLevel: 'internal' | 'external'
+  }
+  expiresAt: number
+}
+
+/**
+ * 平台模型网关端口（模型路由方案 4.4～4.7）：Adapter 为正式执行签发令牌、终态吊销，并在失败时按网关记录分类。
+ */
+export interface RuntimeModelGatewayPort {
+  readonly baseUrl: string
+  issueToken(binding: RuntimeModelGatewayBinding): string
+  revokeToken(attemptId: string): void
+  /** 按本 Attempt 的对话请求记录分类，一次查询同时给出对话请求数（不含联网搜索）。 */
+  inspectAttemptFailure(tenantId: string, attemptId: string): Promise<{
+    failure: { code: string; message: string } | undefined
+    chatRequests: number
+  }>
 }

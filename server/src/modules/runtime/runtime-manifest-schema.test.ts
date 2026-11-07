@@ -447,6 +447,18 @@ describe('Runtime Manifest Schema / compiler boundary', () => {
     assert.throws(() => compileRuntimeManifest(mismatch), /does not match model_route_id/)
   })
 
+  it('数据防护方案 D12 补充：记录未装配的联网搜索，拒绝同时装配或未知原因', () => {
+    const unavailable = baseManifest()
+    unavailable.unavailable_tools = [{ tool: 'web_search', reason: 'model_route_unsupported' }]
+    assertBothAccept(unavailable, 'unavailable web search')
+    const assembled = structuredClone(unavailable)
+    assembled.tools.push({ id: 'web_search', version: '1.0.0' })
+    assert.throws(() => compileRuntimeManifest(assembled), /both unavailable and assembled: web_search/)
+    const unknown = structuredClone(unavailable)
+    ;(unknown.unavailable_tools![0] as { reason: string }).reason = 'other'
+    assert.throws(() => compileRuntimeManifest(unknown), /unavailable_tools.reason is invalid/)
+  })
+
   it('pins model requirements and rejects unknown, repeated or malformed declarations', () => {
     assertBothAccept({ ...baseManifest(), model_requirements: ['long-context', 'structured-output'] }, 'declared requirements')
     assertBothAccept({ ...baseManifest(), model_requirements: [] }, 'no extra requirements')

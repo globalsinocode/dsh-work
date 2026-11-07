@@ -10,7 +10,6 @@ import type {
   SetProviderModelStatusInput,
   UpdateModelRouteInput,
   UpdateProviderInput,
-  UpsertCredentialReferenceInput,
 } from './model-types.ts'
 
 export interface ModelGovernanceRepository {
@@ -27,10 +26,6 @@ export interface ModelGovernanceRepository {
   setProviderModelStatus(tenantId: string, input: SetProviderModelStatusInput): Promise<ModelProvider>
   /** 录入或轮换平台加密保存的厂商密钥（backend = postgres-encrypted）。 */
   setProviderApiKey(tenantId: string, input: SetProviderApiKeyInput): Promise<ModelProvider>
-  upsertCredentialReference(
-    tenantId: string,
-    input: UpsertCredentialReferenceInput,
-  ): Promise<ModelProvider>
   listRoutes(tenantId: string): Promise<ModelRoute[]>
   createRoute(tenantId: string, input: CreateModelRouteInput): Promise<ModelRoute>
   updateRoute(tenantId: string, input: UpdateModelRouteInput): Promise<ModelRoute>

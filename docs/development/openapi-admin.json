@@ -1465,17 +1465,6 @@
         }
       }
     },
-    "/model-providers/credential-reference": {
-      "patch": {
-        "operationId": "updateModelCredentialReference",
-        "summary": "登记外部密钥引用和状态；请求不得包含密钥正文",
-        "responses": {
-          "200": {
-            "$ref": "#/components/responses/Ok"
-          }
-        }
-      }
-    },
     "/provider-models": {
       "post": {
         "operationId": "createProviderModel",

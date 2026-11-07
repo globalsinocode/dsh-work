@@ -1682,6 +1682,43 @@ export function toRunError(runId: string, errorCode: string | null | undefined):
       suggestion: '稍后重新执行；若持续失败，请管理员检查模型服务商和密钥引用状态。',
       retryable: true,
     },
+    // 模型路由方案 4.7：四类模型错误分开提示——限流与上游故障可稍后重试，凭据与额度需要管理员处理。
+    MODEL_ROUTE_UNAVAILABLE: {
+      message: '模型路由不可用',
+      reason: '本轮请求的模型与平台为本次运行固定的模型路由不符，或本次运行创建于模型路由生效之前。',
+      suggestion: '重新执行即可按当前默认模型路由运行；若持续失败，请管理员检查模型管理中的默认路由。',
+      retryable: true,
+    },
+    MODEL_CREDENTIAL_INVALID: {
+      message: '模型厂商密钥不可用',
+      reason: '平台保存的模型厂商密钥缺失、无效或已被吊销。',
+      suggestion: '请管理员在模型管理中重新录入该厂商的 API Key，修复后重新执行。',
+      retryable: true,
+    },
+    MODEL_QUOTA_EXHAUSTED: {
+      message: '模型厂商额度已用尽',
+      reason: '模型厂商返回额度或余额不足。',
+      suggestion: '请管理员充值或更换默认模型路由，处理后重新执行。',
+      retryable: true,
+    },
+    MODEL_RATE_LIMITED: {
+      message: '模型厂商限流',
+      reason: '模型厂商限制了请求频率，自动重试后仍未成功。',
+      suggestion: '稍后重新执行；若频繁出现，请管理员检查厂商配额。',
+      retryable: true,
+    },
+    MODEL_UPSTREAM_UNAVAILABLE: {
+      message: '模型服务暂时不可用',
+      reason: '连接模型厂商失败、超时或厂商服务端出错。',
+      suggestion: '稍后重新执行；若持续失败，请管理员检查模型厂商状态或更换默认模型路由。',
+      retryable: true,
+    },
+    RUNTIME_UNAVAILABLE: {
+      message: '执行服务暂时不可用',
+      reason: '执行服务（DSH 或平台模型网关）暂时不可用，本轮没有完成。',
+      suggestion: '稍后重新执行；若持续失败，请把运行编号交给管理员检查执行服务。',
+      retryable: true,
+    },
     TOOL_TIMEOUT: {
       message: '工具调用超时',
       reason: '调用工具时超过了允许时限，本轮已安全停止。',

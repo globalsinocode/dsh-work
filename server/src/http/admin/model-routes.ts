@@ -31,10 +31,6 @@ export function registerModelGovernanceRoutes(router: Router, service: ModelGove
     const input = await readJsonBody<WithoutActor<ModelGovernanceService['setProviderApiKey']>>(request)
     return envelope('admin', await service.setProviderApiKey({ ...input, actor: requireRequestIdentity(context, 'admin').userId }))
   })
-  router.patch(`${basePath}/model-providers/credential-reference`, async (request, context) => {
-    const input = await readJsonBody<WithoutActor<ModelGovernanceService['upsertCredentialReference']>>(request)
-    return envelope('admin', await service.upsertCredentialReference({ ...input, actor: requireRequestIdentity(context, 'admin').userId }))
-  })
   router.get(`${basePath}/model-routes`, async () => envelope('admin', await service.listRoutes()))
   router.post(`${basePath}/model-routes`, async (request, context) => {
     const input = await readJsonBody<WithoutActor<ModelGovernanceService['createRoute']>>(request)

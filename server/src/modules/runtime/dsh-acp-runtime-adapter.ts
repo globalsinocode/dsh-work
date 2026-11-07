@@ -35,7 +35,7 @@ import {
   type PlatformToolRegistration,
 } from './platform-tool-contract.ts'
 import { compileRuntimeManifest } from './manifest-compiler.ts'
-import { prepareMcpProcess } from './dsh-attempt-patch.ts'
+import { prepareAttemptProcess, prepareMcpProcess, type AttemptModelRoutePatch } from './dsh-attempt-patch.ts'
 import { canonicalJson } from './canonical-json.ts'
 import { isSafeResumeWorkspacePath } from './resume-workspace-path.ts'
 import { ExecutionCapabilityUnavailableError } from './execution-capabilities.ts'
@@ -54,6 +54,7 @@ import type {
   RuntimeRunStatus,
   RuntimeResumeCheckpointContext,
   RuntimeToolDescriptor,
+  RuntimeModelGatewayPort,
 } from './runtime-types.ts'
 import { isAdminRunPurpose } from './runtime-types.ts'
 import { RequestError, dependencyTimeout, dependencyUnavailable, invalidRequest, stateConflict } from '../../domain/request-errors.ts'
@@ -68,6 +69,19 @@ const EXECUTION_CONTAINER_IDLE_WAIT_MS = 3_000
 const EXECUTION_CONTAINER_SETTLE_WAIT_MS = 30_000
 /** Tools that can write output/: the system prompt explains artifacts and the Attempt collects them when any is assembled. */
 const ARTIFACT_WRITING_TOOLS = new Set(['write', 'bash', 'python_execute'])
+/** DSH 失败可能来自模型调用的通用错误码：只有这些才按网关记录改判（模型路由方案 4.7）。 */
+const MODEL_RELATED_FAILURES = new Set(['MODEL_INVOCATION_FAILED', 'RUNTIME_EXECUTION_FAILED', 'NETWORK_UNAVAILABLE'])
+
+/** Attempt 令牌在启动与执行时限之外多留的余量，覆盖收尾阶段；终态即吊销。 */
+const MODEL_GATEWAY_TOKEN_GRACE_MS = 60_000
+
+/** 升级前创建、缺少 model_route 的 Manifest 不能再按 Profile 默认模型执行（模型路由方案 4.2）。 */
+class ModelRouteMissingError extends Error {
+  constructor() {
+    super('本次运行创建于模型路由生效之前，缺少模型路由快照，不能执行；请重新执行')
+    this.name = 'ModelRouteMissingError'
+  }
+}
 
 interface ExecutionRecord {
   manifest: RuntimeManifest
@@ -98,6 +112,8 @@ interface ExecutionRecord {
   liveToolCalls: Map<string, { toolName: string; completed: boolean }>
   /** `tool.completed` events emitted so far (live and end-of-run), bounded per Attempt. */
   toolEventsEmitted: number
+  /** 已为本 Attempt 签发网关令牌；终态吊销，失败时据此按网关记录分类。 */
+  modelGatewayTokenIssued?: boolean
 }
 
 export interface DurablePermissionContext {
@@ -200,6 +216,12 @@ export interface DshAcpRuntimeAdapterConfiguration {
     /** 启动检查在执行镜像中找到的程序（2b-1），写入 Runtime 说明。 */
     readonly toolchain?: readonly ExecutionTool[]
   }
+  /**
+   * 平台模型网关（模型路由方案 4.4～4.7、数据防护方案 DLP-S1）：正式执行签发 Attempt 令牌、patch 指向网关，
+   * 失败按网关记录细分模型错误。生产启动总是配置；未配置只用于不发出模型请求的 Worker 替身测试。
+   * 配置后缺少 model_route 的 Manifest（升级前创建）以 MODEL_ROUTE_UNAVAILABLE 失败，不回退到 Profile 默认模型。
+   */
+  modelGateway?: RuntimeModelGatewayPort
   /** 执行容器内每条命令的审计摘要；不含输出正文。 */
   recordContainerCommand?: (manifest: RuntimeManifest, audit: ContainerCommandAudit) => Promise<void>
   /**
@@ -711,13 +733,13 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
       if (record.manifest.mcp_connections?.length && !mcpConnections) {
         throw new Error('MCP 连接解析服务未接入')
       }
-      const processConfiguration = await prepareMcpProcess(
+      const processConfiguration = await prepareAttemptProcess(
         {
           ...this.configuration.process,
           env: withoutToolCatalogEnvironment(this.configuration.process.env),
         },
-        mcpConnections ?? [],
-        join(record.snapshot.attemptDirectory, 'mcp.cordis.patch.yml'),
+        { connections: mcpConnections ?? [], modelRoute: this.issueModelGatewayToken(record) },
+        join(record.snapshot.attemptDirectory, 'attempt.cordis.patch.yml'),
       )
       const client = AcpJsonRpcClient.launch(
         {
@@ -865,7 +887,7 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
       if (record.durableWait) this.finishWaiting(record)
       else if (record.cancelCause !== undefined) this.finishFromCancellationCause(record)
       else {
-        const failure = classifyRuntimeFailure(error)
+        const failure = await this.classifyFailure(record, error)
         await this.reportToolCallsBestEffort(record)
         this.finishFailed(record, failure.code, failure.message)
       }
@@ -873,6 +895,8 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
       if (record.authorizationTimer !== undefined) clearTimeout(record.authorizationTimer)
       if (record.timeout !== undefined) clearTimeout(record.timeout)
       await record.client?.close().catch(() => undefined)
+      // 模型路由方案 4.5：Attempt 终态即吊销令牌；Worker 已关闭，不会再有模型请求。
+      if (record.modelGatewayTokenIssued) this.configuration.modelGateway?.revokeToken(record.manifest.attempt_id)
       await record.bridge?.close()
       // The bridge is closed, so no further command can reach this Attempt's container.
       await this.configuration.remoteExecution?.release(record.manifest.attempt_id).catch(error => {
@@ -890,6 +914,63 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
         }
       }
     }
+  }
+
+  /**
+   * 模型路由方案 4.2、4.5：正式执行签发 Attempt 令牌并生成带路由的 patch 输入。令牌有效期覆盖启动与执行时限，
+   * Attempt 终态即吊销。未配置网关（Worker 替身测试）时不生成路由。
+   */
+  private issueModelGatewayToken(record: ExecutionRecord): AttemptModelRoutePatch | undefined {
+    const gateway = this.configuration.modelGateway
+    if (!gateway) return undefined
+    const route = record.manifest.model_route
+    if (!route) throw new ModelRouteMissingError()
+    const lifetimeMs = (this.configuration.setupTimeoutMs ?? DEFAULT_SETUP_TIMEOUT_MS)
+      + record.manifest.limits.timeout_seconds * 1000
+      + MODEL_GATEWAY_TOKEN_GRACE_MS
+    const token = gateway.issueToken({
+      tenantId: record.manifest.user_context.tenant_id,
+      runId: record.manifest.run_id,
+      attemptId: record.manifest.attempt_id,
+      route: {
+        routeId: route.route_id,
+        providerKey: route.provider_key,
+        modelKey: route.model_key,
+        baseUrl: route.base_url,
+        credentialRefId: route.credential_ref_id,
+        trustLevel: route.trust_level,
+      },
+      expiresAt: Date.now() + lifetimeMs,
+    })
+    record.modelGatewayTokenIssued = true
+    return {
+      route,
+      gatewayBaseUrl: gateway.baseUrl,
+      token,
+      settingsPath: join(record.snapshot.attemptDirectory, 'dsh-settings.yaml'),
+    }
+  }
+
+  /**
+   * 模型路由方案 4.7：Attempt 失败时以网关对本 Attempt 最后一个对话请求的记录为准细分模型错误，不解析 DSH 错误文本。
+   * 只在 DSH 的失败本身可能来自模型调用时改判（工具超时、Worker 崩溃等保留原错误码）；DSH 报告模型错误而网关
+   * 没有收到任何对话请求（如网关不可用）时按 Runtime 不可用处理。
+   */
+  private async classifyFailure(record: ExecutionRecord, error: unknown): Promise<{ code: string; message: string }> {
+    if (error instanceof ModelRouteMissingError) return { code: 'MODEL_ROUTE_UNAVAILABLE', message: error.message }
+    const generic = classifyRuntimeFailure(error)
+    const gateway = this.configuration.modelGateway
+    if (!gateway || !record.modelGatewayTokenIssued || !MODEL_RELATED_FAILURES.has(generic.code)) return generic
+    try {
+      const inspected = await gateway.inspectAttemptFailure(record.manifest.user_context.tenant_id, record.manifest.attempt_id)
+      if (inspected.failure) return inspected.failure
+      if (generic.code === 'MODEL_INVOCATION_FAILED' && inspected.chatRequests === 0) {
+        return { code: 'RUNTIME_UNAVAILABLE', message: `模型网关没有收到本次运行的模型请求：${generic.message}` }
+      }
+    } catch (classificationError) {
+      console.warn('model gateway failure classification failed', safeErrorMessage(classificationError))
+    }
+    return generic
   }
 
   /**
@@ -1600,6 +1681,12 @@ export function renderSystemPrompt(manifest: RuntimeManifest, options: { executi
       ...manifest.unavailable_skills.map(item => `- ${item.name}：缺少 ${item.missing.join('、') || 'Python 依赖'}`),
     ].join('\n\n'))
   }
+  if (manifest.unavailable_tools?.some(item => item.tool === 'web_search')) {
+    sections.push([
+      '# 本次不可用的工具',
+      '当前 AI 同事开启了联网搜索，但平台当前的默认模型不支持联网搜索，本次没有装配。用户的请求需要联网查询时，说明联网搜索暂时不可用、需要平台管理员处理，不要假装已经搜索，也不要编造搜索结果。',
+    ].join('\n\n'))
+  }
   if (manifest.knowledge_context.length > 0) {
     sections.push([
       '# 企业知识上下文',
@@ -2171,8 +2258,6 @@ type FetchLike = (input: string | URL | Request, init?: RequestInit) => Promise<
  * Recover only the authentication classification with a side-effect-free ping;
  * capability discovery and all successful MCP traffic remain DSH-owned.
  */
-export { prepareMcpProcess }
-
 export async function diagnoseMcpAuthenticationFailure(
   connection: McpRuntimeConnection,
   failureText: string,

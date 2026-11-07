@@ -10,7 +10,6 @@ import {
   type SetProviderModelStatusInput,
   type UpdateModelRouteInput,
   type UpdateProviderInput,
-  type UpsertCredentialReferenceInput,
 } from './model-types.ts'
 import { invalidRequest, stateConflict } from '../../domain/request-errors.ts'
 
@@ -86,19 +85,6 @@ export class ModelGovernanceService {
     assertActor(input.actor)
     if (!['active', 'disabled'].includes(input.status)) throw invalidRequest('模型状态无效')
     return this.repository.setProviderModelStatus(this.tenantId, input)
-  }
-
-  upsertCredentialReference(input: UpsertCredentialReferenceInput) {
-    assertActor(input.actor)
-    if (!['dsh-managed', 'keychain', 'secret-manager'].includes(input.backend)) {
-      throw invalidRequest('密钥后端无效；平台加密保存的密钥请直接录入密钥')
-    }
-    if (!input.externalRef.trim()) throw stateConflict('密钥引用不能为空')
-    if (!['configured', 'missing', 'revoked'].includes(input.status)) throw invalidRequest('凭据状态无效')
-    return this.repository.upsertCredentialReference(this.tenantId, {
-      ...input,
-      externalRef: input.externalRef.trim(),
-    })
   }
 
   listRoutes() {

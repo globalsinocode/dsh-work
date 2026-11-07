@@ -53,15 +53,15 @@ function buttonByText(wrapper: VueWrapper, text: string) {
 }
 
 describe('ModelGovernanceView', () => {
-  it('states that model routes are recorded only and do not choose the executing model', async () => {
+  it('states that the default route chooses the model of new runs through the model gateway', async () => {
     const wrapper = await render()
-    const notice = wrapper.find('.record-only-notice')
+    const notice = wrapper.find('.route-effect-notice')
     expect(notice.exists()).toBe(true)
-    expect(notice.text()).toContain('模型路由目前仅记录')
-    expect(notice.text()).toContain('DSH Profile')
+    expect(notice.text()).toContain('默认路由决定新运行使用的模型')
+    expect(notice.text()).toContain('平台模型网关')
     expect(notice.text()).toContain('新运行会被拒绝')
-    expect(wrapper.text()).toContain('模型路由（仅记录）')
-    expect(wrapper.text()).toContain('仅记录到运行快照')
+    expect(wrapper.text()).not.toContain('仅记录')
+    expect(wrapper.text()).not.toContain('DSH Profile')
   })
 
   it('shows the provider protocol and trust level and the current default route', async () => {
@@ -145,28 +145,29 @@ describe('ModelGovernanceView', () => {
     expect(update).not.toHaveBeenCalled()
   })
 
-  it('asks before switching a provider with a stored key back to a DSH reference', async () => {
-    const keyed: ModelProvider = { ...provider, credential: { id: 'c1', backend: 'postgres-encrypted', externalRef: 'model-provider:deepseek-official:api-key', status: 'configured', hint: 'wxyz', lastVerifiedAt: null, updatedAt: '2026-11-06T00:00:00.000Z' } }
+  it('flags a legacy DSH reference as needing an API key and offers only platform-encrypted keys', async () => {
+    const legacy: ModelProvider = { ...provider, credential: { id: 'c1', backend: 'dsh-managed', externalRef: 'DEEPSEEK_API_KEY', status: 'configured', hint: null, lastVerifiedAt: null, updatedAt: '2026-11-06T00:00:00.000Z' } }
     const pinia = createPinia()
     setActivePinia(pinia)
     useAuthStore().$patch({ permissions: ['admin:write'] })
-    vi.spyOn(adminApi, 'getModelProviders').mockResolvedValue([keyed])
+    vi.spyOn(adminApi, 'getModelProviders').mockResolvedValue([legacy])
     vi.spyOn(adminApi, 'getModelRoutes').mockResolvedValue([route])
     const wrapper = mount(ModelGovernanceView, { attachTo: document.body, global: { plugins: [pinia, ElementPlus], stubs: { teleport: true, ElSelect: { template: '<div><slot /></div>' }, ElOption: true } } })
     wrappers.push(wrapper)
     await flushPromises()
-    const { ElMessageBox } = await import('element-plus')
-    const confirm = vi.spyOn(ElMessageBox, 'confirm').mockRejectedValue('cancel')
-    const update = vi.spyOn(adminApi, 'updateCredentialReference').mockResolvedValue(keyed)
+    expect(wrapper.text()).toContain('需录入 API Key')
+    expect(wrapper.text()).toContain('已不生效')
+    const stat = wrapper.findAll('.overview-stat').find(item => item.text().includes('凭据已配置'))!
+    expect(stat.find('.overview-stat__value').text()).toBe('0')
+    const setKey = vi.spyOn(adminApi, 'setModelProviderApiKey').mockResolvedValue(legacy)
     await buttonByText(wrapper, '密钥').trigger('click')
     await flushPromises()
     const dialog = wrapper.findAll('.el-dialog').find(item => item.text().includes('的密钥'))!
-    await dialog.findAll('input[type="radio"]').find(item => item.attributes('value') === 'dsh')!.setValue(true)
-    await flushPromises()
-    await dialog.findAll('input').find(item => item.attributes('placeholder') === '例如：DEEPSEEK_API_KEY')!.setValue('DEEPSEEK_API_KEY')
+    expect(dialog.text()).not.toContain('DSH 受管引用')
+    expect(dialog.find('.credential-legacy').text()).toContain('DEEPSEEK_API_KEY')
+    await dialog.find('input[type="password"]').setValue('sk-new-key')
     await buttonByText(wrapper, '保存').trigger('click')
     await flushPromises()
-    expect(confirm).toHaveBeenCalledWith(expect.stringContaining('无法恢复'), '改为 DSH 受管引用', expect.anything())
-    expect(update).not.toHaveBeenCalled()
+    expect(setKey).toHaveBeenCalledWith({ providerId: legacy.id, apiKey: 'sk-new-key' })
   })
 })

@@ -10,7 +10,6 @@ import { AcpJsonRpcClient, buildAcpChildEnvironment } from './acp-json-rpc-clien
 import {
   diagnoseMcpAuthenticationFailure,
   DshAcpRuntimeAdapter,
-  prepareMcpProcess,
   renderMemoryProjection,
   renderSystemPrompt,
   renderUserPrompt,
@@ -18,6 +17,9 @@ import {
   type DurablePermissionContext,
 } from './dsh-acp-runtime-adapter.ts'
 import { createManagedDshAcpProcessConfiguration } from './dsh-acp-process-configuration.ts'
+import { prepareMcpProcess } from './dsh-attempt-patch.ts'
+import { ModelGateway } from '../model-gateway/model-gateway.ts'
+import { MemoryModelGatewayRequestLog } from '../model-gateway/model-gateway-request-log.ts'
 import { preflightDshRuntime, resolveDshRuntimeInstallation } from './dsh-runtime-installation.ts'
 import { compileRuntimeManifest } from './manifest-compiler.ts'
 import { canonicalJson, mcpToolSchemaDigest } from './canonical-json.ts'
@@ -2114,3 +2116,127 @@ async function waitForCondition(predicate: () => boolean, timeoutMs = 5_000) {
     await new Promise(resolve => setTimeout(resolve, 10))
   }
 }
+
+describe('模型路由生效与模型网关（MR-S2 / DLP-S1）', () => {
+  const route = {
+    route_id: 'route-default', route_key: 'default', provider_key: 'deepseek-official', provider_type: 'openai-completions' as const,
+    model_key: 'deepseek-v4-pro', base_url: 'https://api.deepseek.com', credential_ref_id: 'credential-deepseek', trust_level: 'external' as const,
+  }
+  const gateways: ModelGateway[] = []
+  afterEach(async () => {
+    await Promise.all(gateways.splice(0).map(gateway => gateway.stop()))
+  })
+
+  async function setup(respond: () => Response = () => new Response('data: [DONE]\n\n', { headers: { 'content-type': 'text/event-stream' } })) {
+    const log = new MemoryModelGatewayRequestLog()
+    const upstream: Array<{ url: string; authorization: string; model: string }> = []
+    const gateway = new ModelGateway({
+      log,
+      credentials: { readSecret: async () => 'sk-vendor' },
+      fetch: async (url, init) => {
+        upstream.push({
+          url,
+          authorization: (init.headers as Record<string, string>)['authorization']!,
+          model: (JSON.parse(Buffer.from(init.body as Uint8Array).toString('utf8')) as { model: string }).model,
+        })
+        return respond()
+      },
+    })
+    await gateway.start()
+    gateways.push(gateway)
+    const revoked: string[] = []
+    const revoke = gateway.revokeToken.bind(gateway)
+    gateway.revokeToken = (attemptId: string) => { revoked.push(attemptId); revoke(attemptId) }
+    const runtimeRoot = await mkdtemp(join(tmpdir(), 'dsh-work-gateway-adapter-'))
+    const adapter = new DshAcpRuntimeAdapter({
+      runtimeId: 'runtime-gateway-test',
+      runtimeRoot,
+      dshRepository: process.cwd(),
+      process: { command: process.execPath, args: ['--experimental-strip-types', mockWorker, '--profile', 'acp'], cwd: process.cwd() },
+      shutdownGraceMs: 500,
+      modelGateway: gateway,
+    })
+    adapters.push(adapter)
+    return { adapter, gateway, log, upstream, revoked }
+  }
+
+  const routed = (runId: string, message: string): RuntimeManifest => ({ ...manifest(runId, 'attempt-1', message), model_route_id: route.route_id, model_route: route })
+
+  it('正式执行经网关调用路由中的模型，DSH 只持有令牌，终态后令牌失效', async () => {
+    const { adapter, log, upstream, revoked } = await setup()
+    const result = await (await adapter.execute(routed('run-gateway-ok', '[gateway-call] 你好'))).done
+    assert.equal(result.status, 'completed', result.errorMessage ?? undefined)
+    assert.equal(upstream.length, 1)
+    assert.equal(upstream[0]!.url, 'https://api.deepseek.com/chat/completions')
+    assert.equal(upstream[0]!.authorization, 'Bearer sk-vendor')
+    assert.equal(upstream[0]!.model, 'deepseek-v4-pro')
+    assert.equal(log.records[0]?.outcome, 'succeeded')
+    assert.equal(log.records[0]?.attemptId, 'attempt-1')
+
+    assert.deepEqual(revoked, ['attempt-1'], 'Attempt 终态即吊销令牌')
+  })
+
+  it('厂商限流按网关记录归为 MODEL_RATE_LIMITED，不解析 DSH 错误文本', async () => {
+    const { adapter } = await setup(() => new Response(JSON.stringify({ error: { code: 'rate_limit_exceeded' } }), { status: 429, headers: { 'content-type': 'application/json' } }))
+    const result = await (await adapter.execute(routed('run-gateway-429', '[gateway-call]'))).done
+    assert.equal(result.status, 'failed')
+    assert.equal(result.errorCode, 'MODEL_RATE_LIMITED')
+  })
+
+  it('请求模型与路由不符被网关拒绝，Attempt 以 MODEL_ROUTE_UNAVAILABLE 结束', async () => {
+    const { adapter, upstream } = await setup()
+    const result = await (await adapter.execute(routed('run-gateway-wrong-model', '[gateway-call][gateway-wrong-model]'))).done
+    assert.equal(result.errorCode, 'MODEL_ROUTE_UNAVAILABLE')
+    assert.equal(upstream.length, 0)
+  })
+
+  it('升级前缺少路由快照的 Manifest 不启动 Worker，以 MODEL_ROUTE_UNAVAILABLE 失败', async () => {
+    const { adapter, upstream } = await setup()
+    const result = await (await adapter.execute(manifest('run-gateway-legacy', 'attempt-1', '[gateway-call]'))).done
+    assert.equal(result.status, 'failed')
+    assert.equal(result.errorCode, 'MODEL_ROUTE_UNAVAILABLE')
+    assert.equal(upstream.length, 0)
+  })
+
+  it('DSH 报告模型错误而网关没有收到请求时按 Runtime 不可用处理', async () => {
+    const { adapter } = await setup()
+    const result = await (await adapter.execute(routed('run-gateway-missing', '[model-failure]'))).done
+    assert.equal(result.errorCode, 'RUNTIME_UNAVAILABLE')
+  })
+
+  it('工具超时、Worker 崩溃等非模型错误保留原错误码，不被网关的失败记录改判', async () => {
+    const runtimeRoot = await mkdtemp(join(tmpdir(), 'dsh-work-gateway-classify-'))
+    const adapter = new DshAcpRuntimeAdapter({
+      runtimeId: 'runtime-gateway-classify',
+      runtimeRoot,
+      dshRepository: process.cwd(),
+      process: { command: process.execPath, args: ['--experimental-strip-types', mockWorker, '--profile', 'acp'], cwd: process.cwd() },
+      shutdownGraceMs: 500,
+      modelGateway: {
+        baseUrl: 'http://127.0.0.1:1',
+        issueToken: () => 'dshwg_test',
+        revokeToken: () => undefined,
+        inspectAttemptFailure: async () => ({ failure: { code: 'MODEL_RATE_LIMITED', message: 'limited' }, chatRequests: 1 }),
+      },
+    })
+    adapters.push(adapter)
+    const timeout = await (await adapter.execute(routed('run-gateway-tool-timeout', '[tool-timeout]'))).done
+    assert.equal(timeout.errorCode, 'TOOL_TIMEOUT')
+    const crash = await (await adapter.execute(routed('run-gateway-crash', '[crash]'))).done
+    assert.equal(crash.errorCode, 'RUNTIME_WORKER_CRASH')
+    const model = await (await adapter.execute(routed('run-gateway-model', '[model-failure]'))).done
+    assert.equal(model.errorCode, 'MODEL_RATE_LIMITED')
+  })
+
+  it('联网搜索未装配时运行说明告知模型', async () => {
+    const promptLog = join(await mkdtemp(join(tmpdir(), 'dsh-work-prompt-log-')), 'prompt.txt')
+    const { adapter } = await setup()
+    ;(adapter as unknown as { configuration: { process: { env?: Record<string, string> } } }).configuration.process.env = { MOCK_SYSTEM_PROMPT_LOG: promptLog }
+    const result = await (await adapter.execute({
+      ...routed('run-gateway-no-search', 'hello'),
+      unavailable_tools: [{ tool: 'web_search', reason: 'model_route_unsupported' }],
+    })).done
+    assert.equal(result.status, 'completed', result.errorMessage ?? undefined)
+    assert.match(await readFile(promptLog, 'utf8'), /本次不可用的工具[\s\S]*联网搜索暂时不可用/)
+  })
+})

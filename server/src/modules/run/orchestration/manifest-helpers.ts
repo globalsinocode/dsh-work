@@ -4,6 +4,7 @@ import type { AdminRunPurpose, RuntimeManifest } from '../../runtime/runtime-typ
 import type { TaskBudgetLimits } from '../../task/task-budget-types.ts'
 import type { ModelRouteSnapshot } from '../../model/model-types.ts'
 import { dependencyUnavailable } from '../../../domain/request-errors.ts'
+import { isDeepSeekOfficialBaseUrl } from '../../../domain/deepseek-official.ts'
 import { platformToolsForPurpose } from '../../runtime/platform-tool-contracts.ts'
 import { requestInvalid } from '../../../domain/authorization-errors.ts'
 
@@ -104,4 +105,18 @@ export function toRuntimeModelRoute(route: ModelRouteSnapshot): NonNullable<Runt
     credential_ref_id: route.credentialRefId,
     trust_level: route.trustLevel,
   }
+}
+
+/**
+ * 数据防护方案 D12 补充：联网搜索经网关透传 DeepSeek 官方的搜索接口，并使用默认路由 Provider 的密钥。
+ * 默认路由不是 DeepSeek 官方时本轮不装配 web_search（就地移除），返回写入 Manifest 的不可用说明。
+ */
+export function removeUnsupportedWebSearch(
+  toolNames: string[],
+  route: Pick<ModelRouteSnapshot, 'baseUrl'>,
+): NonNullable<RuntimeManifest['unavailable_tools']> {
+  const index = toolNames.indexOf('web_search')
+  if (index < 0 || isDeepSeekOfficialBaseUrl(route.baseUrl)) return []
+  toolNames.splice(index, 1)
+  return [{ tool: 'web_search', reason: 'model_route_unsupported' }]
 }

@@ -1,6 +1,6 @@
 # 平台模型路由生效方案
 
-**状态：** 已评审（2026-11-06）。MR-S1 已达到代码级（2026-11-06，迁移 `0120_model_routing_governance.sql`，单元与 PostgreSQL 集成测试）；MR-S2 起尚未实施，路由仍只记录、不决定执行模型。本文其余能力在实施并通过第 8 节验收前均不可用。<br>
+**状态：** 已评审（2026-11-06）。MR-S1 已达到代码级（2026-11-06，迁移 `0120_model_routing_governance.sql`）；MR-S2 与数据防护方案 DLP-S1 已达到代码级（2026-11-07，迁移 `0121_model_gateway_requests.sql`；单元、PostgreSQL 集成与 Worker 替身用例），第 8 节 P1 已在本机受控 DSH `0.1.2-rc.1` 上执行主要场景（`test:model-gateway:e2e`：路由生效、共享 settings.yaml 隔离、401/400/402 不重试、429 与 5xx 重试后分类、联网搜索经网关），“停用路由不影响进行中 Attempt”“更换默认路由后重试与 PF-04 恢复”“探测路径不发出模型请求”尚无受控 DSH 用例；P2 未执行，不得视为已验收。MR-S3 起尚未实施。<br>
 **更新日期：** 2026-11-06（DLP-S0：R4 验证可行，补充 `compat.thinkingFormat` 与 `web_search` 风险）；2026-11-06（简化：路由用途只保留 `default`，取消备用路由与备用重试；DeepSeek 统一以 `openai-completions` 接入；模型校验只保留网关一道，取消 `currentValue` 校验与会话日志核对；快照去掉 `data_policy_version`；移除推理强度）；2026-11-06（网关计量增加缓存读写 token；PR 81 评审修订：升级前 Manifest 不再按默认模型执行、按用途解析路由、重试重新解析而恢复沿用快照、复用 `postgres-encrypted` 凭据、错误按网关记录分类；不做 DSH 持有凭据的阶段，路由生效与模型网关同批实施）；2026-10-26（第 7 节与执行隔离方案对齐）<br>
 **依据：** 当前 Model 模块、Run 编排与 Runtime Adapter 代码；DSH `0.1.2-rc.1`（`76fda72979`）的 `dsh-acp`、`dsh-llm-pi-ai`、`dsh-settings-file`、`dsh-credentials-local` 源码与 README；2026-10-25 本地探针（第 3 节）；[发往模型的数据防护方案](model-data-protection-plan.md)。<br>
 **执行基线：** 每个 Attempt 一个独立 DSH ACP Worker（`--profile acp --patch`），不改变进程模型。
@@ -145,7 +145,7 @@ Adapter 目前有三条启动 DSH 的路径，只有正式执行使用路由：
 ### 4.6 校验与证据（R5）
 
 - **模型校验：** 网关校验每个请求的令牌与模型：令牌须属于本 Attempt，请求模型须等于快照 `model_key`，否则拒绝，Attempt 以 `MODEL_ROUTE_UNAVAILABLE` 结束。patch 配置错误（如模型未声明）在 `session/new` 时已由 DSH 报错；其余配置错误在首个模型请求时由网关发现，不另做 `currentValue` 校验。
-- **网关计量字段：** 每个请求一条记录，包括输入、输出、**缓存读取**、**缓存写入** token，以及尝试次数。缓存字段从厂商响应的用量中读取：OpenAI 兼容协议取 `prompt_tokens_details.cached_tokens`，DeepSeek 取 `prompt_cache_hit_tokens` / `prompt_cache_miss_tokens`，Anthropic 取 `cache_read_input_tokens` / `cache_creation_input_tokens`。厂商没有返回时记为 `null`，不记为 0，以免把“未知”统计成“未命中”。输入 token 是否已包含缓存部分按各厂商口径换算，统一为“输入总量 + 其中缓存读取量”。缓存数据用于观察提示词缓存命中率，包括数据防护遮盖带来的变化（[数据防护方案第 8 节](model-data-protection-plan.md#8-风险)）；第一期只记录与展示，不参与计费。
+- **网关计量字段：** 每个请求一条记录，包括输入、输出、**缓存读取**、**缓存写入** token。DSH 的每次重试都是一个独立请求、各有一条记录，尝试次数按同一 Attempt 的记录条数统计，不另设字段。缓存字段从厂商响应的用量中读取：OpenAI 兼容协议取 `prompt_tokens_details.cached_tokens`，DeepSeek 取 `prompt_cache_hit_tokens` / `prompt_cache_miss_tokens`，Anthropic 取 `cache_read_input_tokens` / `cache_creation_input_tokens`。厂商没有返回时记为 `null`，不记为 0，以免把“未知”统计成“未命中”。输入 token 是否已包含缓存部分按各厂商口径换算，统一为“输入总量 + 其中缓存读取量”。缓存数据用于观察提示词缓存命中率，包括数据防护遮盖带来的变化（[数据防护方案第 8 节](model-data-protection-plan.md#8-风险)）；第一期只记录与展示，不参与计费。
 - **实际模型与用量：** 终态时以网关记录的模型与 token 用量写入终态事件的 `effective_model` 并用于用量归属。
 - 管理端运行详情展示路由快照与实际模型；不展示凭据。
 
@@ -165,9 +165,9 @@ Adapter 目前有三条启动 DSH 的路径，只有正式执行使用路由：
 
 **错误的来源与传递：**
 
-- **记录：** 网关为每个请求记录结果：来源（网关自身拒绝或厂商返回）、HTTP 状态、厂商错误码、是否经过重试，按 Attempt 关联。
+- **记录：** 网关为每个请求记录结果：来源（网关自身拒绝、厂商返回或连接失败）、结果（成功、失败、中止）、HTTP 状态、厂商错误码，按 Attempt 关联；重试即同一 Attempt 的后续记录。200 流中途出现的厂商错误事件记为失败。
 - **区分来源：** 网关自身的拒绝在响应体 `code` 中给出平台错误码（如 `MODEL_ROUTE_UNAVAILABLE`、数据防护方案 5.6.2 的错误码），并带响应头 `x-dshw-origin: gateway`；厂商的错误原样透传给 DSH。两者都是 403 时，以网关记录的来源区分，不靠状态码猜测。
-- **分类：** Attempt 失败时，Adapter 以网关对该 Attempt 最后一个失败请求的记录为准做分类，不解析 DSH 的错误文本。记录缺失（如网关不可用）时按 Runtime 不可用处理；无法归入四类的厂商错误保留 `MODEL_INVOCATION_FAILED`。
+- **分类：** Attempt 失败时，Adapter 以网关对该 Attempt 最后一个**对话**请求的记录为准做分类（联网搜索失败由 DSH 作为工具失败处理，不参与），不解析 DSH 的错误文本；只在 DSH 的失败本身可能来自模型调用时改判，工具超时、Worker 崩溃等保留原错误码；DSH 断开导致的中止不是模型错误。记录缺失（如网关不可用）时按 Runtime 不可用处理；无法归入四类的厂商错误保留 `MODEL_INVOCATION_FAILED`。
 - **四类不得合并：** 员工端提示与管理员排障据此区分：限流与上游故障可以稍后重试，凭据与额度问题需要管理员处理（修复凭据或更换默认路由后重试）。
 
 任何情形都不回退到 Profile 默认模型（升级前旧 Manifest 的处理见 4.2）。
@@ -241,7 +241,7 @@ Mock 或 P1 通过不能代替 P2，未完成 P2 前总览仍须标注路由生�
 | --- | --- | --- | --- |
 | MR-S1 治理数据补强（代码级已完成） | `provider_type` 枚举与历史取值迁移、`trust_level`、用途收敛与按用途解析、路由编辑与模型启停、管理端录入厂商密钥（加密保存，MR-S2 起生效）；不改变执行行为 | 无，可先行 | 管理端与接口用例通过；执行仍按 Profile 默认模型 |
 | DLP-S0 探针（已完成，2026-11-06） | 见数据防护方案 4.1：pi-ai 接 DeepSeek 的推理内容与工具调用兼容、4xx 不重试、429 与 5xx 按次数重试 | 无 | R4 可行；`web_search` 经网关（D12） |
-| MR-S2 + DLP-S1 路由生效与网关 | Manifest `model_route`、统一 patch 生成器、令牌、网关校验转发与计量、平台加密凭据、模型错误细分 | MR-S1、DLP-S0（`web_search` 按数据防护方案 D12 经网关） | 所有正式执行经网关，路由决定实际模型；第 8 节 P1（MR-S2）通过 |
+| MR-S2 + DLP-S1 路由生效与网关（代码级，2026-11-07） | Manifest `model_route`、统一 patch 生成器、令牌、网关校验转发与计量、平台加密凭据、模型错误细分 | MR-S1、DLP-S0（`web_search` 按数据防护方案 D12 经网关） | 所有正式执行经网关，路由决定实际模型；第 8 节 P1（MR-S2）通过（主要场景已在受控 DSH 通过，余项见状态行） |
 | MR-S3 证据与展示 | `effective_model` 与用量归属、运行详情、文档更新 | MR-S2 | 第 8 节 P1（MR-S3）与管理端用例通过 |
 | MR-P2 真实验收 | 第 8 节 P2 | MR-S3 | 留证完成，总览去掉“未真实验收” |
 

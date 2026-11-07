@@ -1,6 +1,6 @@
 # 发往模型的数据防护方案
 
-**状态：** 决策已确认，尚未实施。本文所述能力在实施并通过第 9 节验收前均不可用。<br>
+**状态：** 决策已确认。DLP-S1（网关最小链路）已达到代码级（2026-11-07，与模型路由方案 MR-S2 同批）；DLP-S2 起（识别、遮盖与拦截）尚未实施，发往模型的请求目前不做遮盖或拦截。本文其余能力在实施并通过第 9 节验收前均不可用。<br>
 **更新日期：** 2026-11-06（DLP-S0 探针结论写入 4.1；新增 D12：联网搜索经网关并遮盖）；2026-11-06（简化 D11：不做策略版本、第一期不做自定义规则、去掉 Run 内已识别值集合、输入预检只查消息正文、租户密钥不分版本；DeepSeek 统一经 pi-ai 接入）；2026-11-06（按 PR 评审修订：新增 D10，密钥只拦截本轮新输入、其余位置遮盖；思考内容原样透传；补充前置条件、拒绝传递、JSON 转义与短码碰撞）<br>
 **依据：** 当前 Model 模块、Runtime Adapter 与 [模型路由方案](model-routing-plan.md)；参考开源项目 [yetone/magpie](https://github.com/yetone/magpie)（MIT）的网关脱敏设计（`internal/redact`、`internal/gateway/masked.go`），只借鉴设计，不复制代码。<br>
 **关联：** [模型路由方案](model-routing-plan.md) 第 7 节（本方案将其提前立项）、[执行隔离方案](execution-isolation-plan.md) 第 10 节、[WeKnora 接入方案](weknora-knowledge-plan.md)。
@@ -31,7 +31,7 @@
 | D9 | **任何路由都不允许绕过网关**；DeepSeek 统一以 `openai-completions` 经 pi-ai 接入（模型路由方案 R4） |
 | D10 | **拦截只作用于员工本条消息正文**：命中密钥则不创建运行，消息标记为“未发送给模型”，此后不进入会话历史。上传文件、历史消息、工具结果、执行中读取的文件里出现的密钥一律**遮盖**，不拦截 |
 | D11 | **第一期简化**（2026-11-06）：不做策略版本，网关按请求时的当前词表处理；不做管理员自定义规则；不保留跨请求的已识别值集合；租户密钥不分版本 |
-| D12 | **联网搜索经网关并遮盖**（2026-11-06）：`web_search` 插件的 `baseURL` 指向网关、`apiKeyEnv` 指向 Attempt 令牌；网关为 DeepSeek 的 Anthropic 兼容搜索接口（`/anthropic/v1/messages`）做透传，搜索请求按与模型请求相同的策略遮盖与审计。只为这一个接口提供透传，不等于开放 `anthropic-messages` 路由类型 |
+| D12 | **联网搜索经网关并遮盖**（2026-11-06）：`web_search` 插件的 `baseURL` 指向网关、`apiKeyEnv` 指向 Attempt 令牌；网关为 DeepSeek 的 Anthropic 兼容搜索接口（`/anthropic/v1/messages`）做透传，搜索请求按与模型请求相同的策略遮盖与审计。只为这一个接口提供透传，不等于开放 `anthropic-messages` 路由类型。**补充（2026-11-07）：** 搜索使用默认路由 Provider 的平台密钥，只在默认路由的 Provider 是 DeepSeek 官方（`base_url` 为 `https://api.deepseek.com`）时可用，网关只放行插件的搜索模型 `deepseek-v4-flash`；默认路由不是 DeepSeek 官方时本轮不装配 `web_search`，Manifest 以 `unavailable_tools` 记录，运行说明告知模型不可用 |
 
 D10 的理由：平台每一轮都会把会话历史随 Manifest 重新发给模型（[attempt-dispatcher.ts](../../server/src/modules/run/orchestration/attempt-dispatcher.ts) 的 `conversation_history`、Adapter 的 `renderUserPrompt`），审批后恢复还会携带已完成的工具结果。若在网关按请求拦截，一条含密钥的历史消息会让此后每一轮都失败，而历史与工具结果中的内容员工无法移除。
 
@@ -220,7 +220,7 @@ DSH Worker ──请求──> 模型网关
 | 阶段 | 内容 | 完成标志 |
 | --- | --- | --- |
 | DLP-S0 探针（已完成，2026-11-06） | pi-ai 指向网关；pi-ai 以 `openai-completions` 接 DeepSeek 时推理内容与工具调用的兼容性；流式、工具调用、思考内容经网关的兼容性；pi-ai 对 4xx 与 429 的重试行为；盘点 DSH 以外直接调用模型的组件 | 结论见 4.1；`web_search` 出口已决定（D12） |
-| DLP-S1 网关最小链路 | 短期令牌、令牌与模型校验、转发、计量、平台加密凭据；Adapter patch 改指向网关；拒绝传递与错误码映射；`web_search` 插件改指向网关，网关透传其搜索接口（D12） | 所有路由与 `web_search`（D12）经网关，DSH 不再持有厂商密钥 |
+| DLP-S1 网关最小链路（代码级，2026-11-07） | 短期令牌、令牌与模型校验、转发、计量、平台加密凭据；Adapter patch 改指向网关；拒绝传递与错误码映射；`web_search` 插件改指向网关，网关透传其搜索接口（D12） | 所有路由与 `web_search`（D12）经网关，DSH 不再持有厂商密钥 |
 | DLP-S2 识别与还原 | 5.3 内置规则与企业词表、遮盖与流式还原、思考内容透传、输入预检与“未发送给模型”标记（含会话历史排除）、审计、`trust_level`、搜索请求的遮盖 | P1 场景全部通过；员工端标记的验收条目写入 `e2e/catalog/` |
 | DLP-S3 管理端 | 数据防护页、词表与白名单、权限、检测试用、命中统计（先原型） | P0 冒烟与 P1 用例通过 |
 | DLP-P2 真实验收 | 真实外部厂商与内部部署模型各一 | 见第 9 节 |
