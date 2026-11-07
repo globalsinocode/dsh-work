@@ -13,21 +13,76 @@
 }
 
 /*
- * 人员消息与 Agent 回复共用「身份行 + 卡片」样式；本人消息镜像到右侧
- * （头像在右、卡片右对齐缩进），其他成员/Agent 保持在左。
+ * EX-STYLE-01：人员消息是气泡，Agent 回复不套卡片、正文直接排在身份行下。多人对话中每条消息都有
+ * 头像与名字，本人的镜像到右侧；一对一对话（compactOwn）中本人的消息只留气泡，时间悬停或聚焦时出现。
  */
-.assistant-avatar--user {
+.assistant-avatar.assistant-avatar--user {
+  border-radius: 50%;
   background: #6b736d;
 }
 
-.user-message {
-  padding-bottom: 16px;
+.assistant-answer.message-bubble {
+  width: fit-content;
+  max-width: 72%;
+  margin: 6px 0 0 42px;
+  padding: 10px 14px;
+  border: 0;
+  border-radius: 4px 16px 16px 16px;
+  color: #1f2622;
+  background: #f2f4f3;
+}
+
+.conversation-message--own .assistant-answer.message-bubble {
+  margin: 6px 42px 0 auto;
+  border-radius: 16px 4px 16px 16px;
+  color: #172033;
+  background: var(--dsh-color-brand-soft, #edf2ff);
+}
+
+.conversation-message--compact {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+}
+
+.conversation-message--compact .assistant-answer.message-bubble {
+  margin: 0;
+  border-radius: 16px 16px 4px 16px;
+}
+
+.message-time {
+  margin-top: 4px;
+  color: #646a65;
+  font-size: var(--dsh-font-size-badge);
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+/* 自己的消息没有可聚焦的元素：键盘焦点进入对话区（如回复的复制按钮）时一并显示所有时间。 */
+.conversation-message--compact:hover .message-time,
+.conversation-message--compact:focus-within .message-time,
+.conversation-thread:focus-within .conversation-message--compact .message-time,
+.collab-agent-chat__thread:focus-within .conversation-message--compact .message-time {
+  opacity: 1;
+}
+
+.message-badge {
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  padding: 0 8px;
+  border-radius: 11px;
+  color: var(--dsh-color-success, #16825d);
+  background: var(--dsh-color-success-soft, #eaf8f2);
+  font-size: var(--dsh-font-size-micro);
+  white-space: nowrap;
 }
 
 .user-message p {
   margin: 0;
-  font-size: var(--dsh-font-size-body);
-  line-height: 1.65;
+  /* EX-STYLE-01：对话内容（气泡与回答正文）15px，界面元素保持 14px 及以下。 */
+  font-size: var(--dsh-font-size-title);
+  line-height: 1.7;
   white-space: pre-wrap;
 }
 
@@ -66,13 +121,9 @@
 }
 
 .conversation-message--own .assistant-identity > div {
-  align-items: flex-end;
+  flex-direction: row-reverse;
 }
 
-.conversation-message--own .assistant-answer {
-  margin-right: 34px;
-  margin-left: 20%;
-}
 
 .thread-empty {
   margin: 48px 0;
@@ -133,60 +184,104 @@
 .assistant-identity {
   display: flex;
   align-items: center;
-  gap: 9px;
+  gap: 10px;
 }
 
 .assistant-avatar {
   display: grid;
-  width: 25px;
-  height: 25px;
+  width: 32px;
+  height: 32px;
   flex: 0 0 auto;
   place-items: center;
-  border-radius: 8px;
+  border-radius: 10px;
   color: #fff;
   background: #3e5f55;
   font-size: var(--dsh-font-size-body);
   font-weight: 750;
 }
 
+/* 名称与时间在同一行。 */
 .assistant-identity > div {
   display: flex;
-  flex-direction: column;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 8px;
 }
 
 .assistant-identity strong {
   color: #292c29;
-  font-size: var(--dsh-font-size-caption);
+  font-size: var(--dsh-font-size-body);
   font-weight: 650;
 }
 
-.assistant-identity span:not(.assistant-avatar) {
-  margin-top: 2px;
-  color: #9a9e9a;
-  font-size: var(--dsh-font-size-micro);
+.assistant-identity > div > span {
+  /* 时间与“由某人发起”：12px，颜色加深到对比度 4.5:1 以上。 */
+  color: #646a65;
+  font-size: var(--dsh-font-size-badge);
 }
 
 .assistant-answer {
-  margin: 12px 0 0 34px;
+  margin: 12px 0 0 42px;
   padding: 16px 18px 12px;
   border: 1px solid #e8ebe8;
   border-radius: 14px;
   background: #fcfdfc;
 }
 
+/* Agent 回复：正文直接排在身份行下，与名称对齐，不再套卡片。 */
+.assistant-reply {
+  margin-top: 6px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
 .assistant-answer .assistant-message-content {
   color: #303430;
 }
 
+/*
+ * EX-STYLE-01：回答正文 15px；文字段落、列表与小标题最宽 760px（约 50 字一行），
+ * 表格、代码块与成果卡片仍可占满对话列。表格保持 14px，信息密度高的内容不放大。
+ */
+.assistant-reply .assistant-message-content {
+  font-size: var(--dsh-font-size-title);
+  line-height: 1.75;
+}
+
+.assistant-reply .assistant-message-content > :is(p, ul, ol, h3, h4) {
+  max-width: 760px;
+}
+
+.assistant-reply .assistant-table {
+  font-size: var(--dsh-font-size-body);
+}
+
+/* 回复操作在悬停或键盘聚焦时出现；最新一条回复常显；触屏设备没有悬停，常显。 */
 .assistant-actions {
   display: flex;
   align-items: center;
   gap: 2px;
   min-height: 31px;
-  margin-top: 15px;
-  padding-top: 8px;
-  border-top: 1px solid #edf0ed;
+  margin: 6px 0 0 -6px;
   color: #888d88;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.conversation-message:hover .assistant-actions,
+.conversation-message:focus-within .assistant-actions,
+.conversation-message--latest .assistant-actions {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .assistant-actions,
+  .message-time {
+    opacity: 1;
+  }
 }
 
 .assistant-actions button {
@@ -229,11 +324,19 @@
   min-width: min(100%, 420px);
 }
 
+/* 一个成果一张卡：预览、下载、继续修改在同一边框内，以分隔线区分，不再是三个独立的框。 */
 .answer-artifact__row {
   display: flex;
   align-items: stretch;
-  flex-wrap: wrap;
-  gap: 6px;
+  overflow: hidden;
+  border: 1px solid #e2e4e1;
+  border-radius: 10px;
+  background: #fafbfa;
+}
+
+.answer-artifact__row.is-active {
+  border-color: #356858;
+  box-shadow: 0 0 0 2px rgb(53 104 88 / 12%);
 }
 
 
@@ -250,19 +353,19 @@
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  padding: 0 10px;
-  border: 1px solid #e2e4e1;
-  border-radius: 10px;
+  padding: 0 12px;
+  border: 0;
+  border-left: 1px solid #e2e4e1;
+  border-radius: 0;
   color: #356858;
-  background: #fafbfa;
+  background: transparent;
   cursor: pointer;
   font-size: var(--dsh-font-size-badge);
   white-space: nowrap;
 }
 
 .answer-artifact__revise:hover:not(:disabled) {
-  border-color: #bdcbc5;
-  background: #f5f8f6;
+  background: #f0f4f2;
 }
 
 .answer-artifact__revise:disabled {
@@ -285,27 +388,32 @@
   display: grid;
   grid-template-columns: 30px minmax(0, 1fr) auto;
   align-items: center;
-  min-width: 230px;
+  min-width: 140px;
   flex: 1 1 260px;
   gap: 8px;
   padding: 8px 12px 8px 10px;
-  border: 1px solid #e2e4e1;
-  border-radius: 10px;
+  border: 0;
+  border-radius: 0;
   color: #4c514c;
-  background: #fafbfa;
+  background: transparent;
   cursor: pointer;
   text-align: left;
 }
 
 .answer-artifact__open:hover {
-  border-color: #bdcbc5;
-  background: #f5f8f6;
+  background: #f0f4f2;
+}
+
+/* 卡片裁切圆角外的内容，焦点框画在按钮内侧，键盘切换时仍清晰可见。 */
+.answer-artifact__open:focus-visible,
+.answer-artifact__download:focus-visible,
+.answer-artifact__revise:focus-visible {
+  outline: 2px solid #356858;
+  outline-offset: -2px;
 }
 
 .answer-artifact__open.is-active {
-  border-color: #356858;
   background: #f2f7f5;
-  box-shadow: 0 0 0 2px rgb(53 104 88 / 12%);
 }
 
 .answer-artifact__open > span:first-child {
@@ -341,16 +449,16 @@
   flex: 0 0 40px;
   align-items: center;
   justify-content: center;
-  border: 1px solid #e2e4e1;
-  border-radius: 10px;
+  border: 0;
+  border-left: 1px solid #e2e4e1;
+  border-radius: 0;
   color: #356858;
-  background: #fafbfa;
+  background: transparent;
   cursor: pointer;
 }
 
 .answer-artifact__download:hover {
-  border-color: #bdcbc5;
-  background: #f5f8f6;
+  background: #f0f4f2;
 }
 
 .answer-artifacts strong {
@@ -367,10 +475,14 @@
 }
 
 .run-progress {
-  margin: 10px 0 0 34px;
+  /* 作为读屏播报区的定位祖先：否则它以文档为包含块、逃出对话滚动区，执行期间把整页撑高。 */
+  position: relative;
+  margin: 10px 0 0 42px;
 }
 
 .run-progress-steps {
+  /* 每步的读屏状态文字同理，步骤列表也出现在执行详情、群组时间线等 .run-progress 之外的位置。 */
+  position: relative;
   margin: 0;
   padding: 0;
   list-style: none;
@@ -461,7 +573,7 @@
 }
 
 .run-progress-summary {
-  margin: 8px 0 0 34px;
+  margin: 8px 0 0 42px;
   color: var(--dsh-color-muted);
   font-size: var(--dsh-font-size-caption);
 }
@@ -481,6 +593,8 @@
 
 .run-progress-sr {
   position: absolute;
+  top: 0;
+  left: 0;
   width: 1px;
   height: 1px;
   overflow: hidden;
@@ -500,8 +614,16 @@
   }
 }
 
+/* 历史轮次停止或失败、没有回复时，在员工问题下方（右对齐）留一行说明。 */
+.conversation-past-run {
+  margin: 6px 0 14px auto;
+  color: var(--dsh-color-muted);
+  font-size: var(--dsh-font-size-caption);
+  text-align: right;
+}
+
 .conversation-stopped-by {
-  margin: 24px 0 0 34px;
+  margin: 24px 0 0 42px;
   color: var(--dsh-color-muted);
   font-size: var(--dsh-font-size-caption);
 }
@@ -511,7 +633,7 @@
   grid-template-columns: 34px minmax(0, 1fr) auto;
   align-items: start;
   gap: 12px;
-  margin: 36px 0 0 34px;
+  margin: 36px 0 0 42px;
   padding: 14px;
   border: 1px solid #efd7b1;
   border-radius: 12px;
@@ -576,10 +698,24 @@
 }
 
 .error-notice code {
-  display: inline-block;
-  margin-top: 7px;
   color: #9b3c47;
   font-size: var(--dsh-font-size-micro);
+}
+
+/* 运行编号与错误码默认收起，供排查时展开复制。 */
+.error-notice__details {
+  margin-top: 6px;
+  color: #767069;
+  font-size: var(--dsh-font-size-badge);
+}
+
+.error-notice__details summary {
+  width: fit-content;
+  cursor: pointer;
+}
+
+.error-notice__details dl {
+  margin-top: 6px;
 }
 
 .verify-notice {
@@ -662,22 +798,21 @@
 }
 
 @media (max-width: 720px) {
-  .conversation-message--own .assistant-answer {
-    margin-right: 0;
-    margin-left: 12%;
+  .assistant-answer.message-bubble {
+    max-width: 85%;
   }
 
-  .assistant-answer,
+  .assistant-answer:not(.message-bubble),
   .run-progress,
   .run-progress-summary {
     margin-left: 0;
   }
 
-  .assistant-answer {
+  .assistant-answer:not(.assistant-reply, .message-bubble) {
     padding: 14px 14px 10px;
   }
 
-  .assistant-answer .assistant-message-content {
+  .assistant-answer:not(.assistant-reply) .assistant-message-content {
     font-size: var(--dsh-font-size-caption);
   }
 
@@ -730,4 +865,17 @@
 .answer-skipped ul {
   margin: 0;
   padding-left: 18px;
+}
+
+/*
+ * EX-STYLE-01：回答中的表格可超出对话列，最宽到对话区（滚动容器设 container-type: inline-size）。
+ * 对话列居中、回答缩进 42px；列宽上限取滚动容器上的 --conversation-column-max（默认 1040px，
+ * 任务详情内嵌的任务对话为 760px），与实际列宽一致才不会溢出。不支持容器单位时与对话列同宽并横向滚动。
+ */
+@supports (width: 1cqw) {
+  .assistant-reply .assistant-table {
+    width: max-content;
+    min-width: 100%;
+    max-width: calc(100cqw - (100cqw - min(100cqw, var(--conversation-column-max, 1040px))) / 2 - 42px);
+  }
 }

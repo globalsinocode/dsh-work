@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 
-import type { AgentRecommendationView, ChatMessage, RunStep, TaskRun, TaskRunError } from '../../../domain/types.ts'
+import type { AgentRecommendationView, ChatMessage, RunStep, SkillDraftView, TaskRun, TaskRunError } from '../../../domain/types.ts'
 import { deriveTaskResult, type TaskResult, type TaskResultEvidence, type TaskResultOutcome } from '../../../domain/task-result.ts'
 import { enrichTaskRunError } from '../../../domain/run-failure-reason.ts'
 import type { DatabaseClient, DatabaseTransaction } from '../../../infrastructure/postgres/database.ts'
@@ -13,6 +13,7 @@ import { stateConflict } from '../../../domain/request-errors.ts'
 import { writeNotifiableEvent } from './workspace-activity-writer.ts'
 import { getWebPushDispatch } from './web-push-dispatch.ts'
 import type { ContextMessage, MessagePosition, StoredConversationSummary } from '../../../domain/conversation-context.ts'
+import { recordMentionNotifications } from '../../notification/user-notification-writer.ts'
 
 const tenantId = 'tenant-dsh-work'
 const conversationHistoryMessageLimit = 12
@@ -167,17 +168,21 @@ interface ArtifactRow {
 interface SourceRow {
   id: string
   title: string
-  version: string
-  effectiveAt: Date
-  dataScope: string
+  fileName: string
+  knowledgeBaseName: string
+  updatedAt: Date
   excerpt: string
-  synthetic: boolean
 }
 
 interface AttachmentRow {
   id: string
   runId: string
   name: string
+}
+
+/** Skill 创建专家方案 4.3：草稿卡片只给提交人本人看。 */
+export interface SkillDraftReader {
+  loadForRuns(runIds: string[], viewerUserId: string): Promise<SkillDraftView[]>
 }
 
 /** 会话详情读取推荐卡片的端口（实现见 agent 模块的推荐服务）。 */
@@ -189,10 +194,15 @@ export class PostgresConversationRepository {
   private readonly database: DatabaseClient
   private readonly workspaces: PostgresWorkspaceService
   private recommendations?: AgentRecommendationReader
+  private skillDrafts?: SkillDraftReader
 
   constructor(database: DatabaseClient, workspaces = new PostgresWorkspaceService(database)) {
     this.database = database
     this.workspaces = workspaces
+  }
+
+  setSkillDraftReader(reader: SkillDraftReader) {
+    this.skillDrafts = reader
   }
 
   /** 推荐方案 4.2：会话详情装载推荐卡片。生产组装时接入；测试替身未接时详情不含推荐。 */
@@ -1538,11 +1548,15 @@ export class PostgresConversationRepository {
       creatorName: string
       lastActiveAt: Date
       createdAt: Date
+      isProjectTaskThread: boolean
     }[]>`
       select s.id, s.title, s.workspace_id as "workspaceId",
              w.workspace_type as "workspaceType", w.status as "workspaceStatus",
              s.created_by as "createdBy", u.display_name as "creatorName",
-             s.last_active_at as "lastActiveAt", s.created_at as "createdAt"
+             s.last_active_at as "lastActiveAt", s.created_at as "createdAt",
+             exists (
+               select 1 from project_tasks t where t.tenant_id = s.tenant_id and t.session_id = s.id
+             ) as "isProjectTaskThread"
         from sessions s
         join workspaces w on w.tenant_id = s.tenant_id and w.id = s.workspace_id
         join users u on u.tenant_id = s.tenant_id and u.id = s.created_by
@@ -1658,14 +1672,12 @@ export class PostgresConversationRepository {
       : []
     const sources = row.currentAttemptId
       ? await this.database<SourceRow[]>`
-          select kd.id, kd.title, kd.version, kd.effective_date as "effectiveAt",
-                 kd.data_scope as "dataScope", rks.excerpt, ks.synthetic
-            from run_knowledge_sources rks
-            join knowledge_documents kd on kd.tenant_id = rks.tenant_id and kd.id = rks.document_id
-            join knowledge_sources ks on ks.tenant_id = kd.tenant_id and ks.id = kd.source_id
-           where rks.tenant_id = ${tenantId} and rks.run_id = ${row.id}
-             and rks.attempt_id = ${row.currentAttemptId}
-           order by rks.relevance_score desc, kd.effective_date desc
+          select id, title, file_name as "fileName", knowledge_base_name as "knowledgeBaseName",
+                 document_updated_at as "updatedAt", excerpt
+            from run_knowledge_citations
+           where tenant_id = ${tenantId} and run_id = ${row.id}
+             and attempt_id = ${row.currentAttemptId}
+           order by ordinal
         `
       : []
     const toolAudits = row.currentAttemptId
@@ -1714,11 +1726,10 @@ export class PostgresConversationRepository {
         type: 'knowledge' as const,
         title: source.title,
         description: source.excerpt,
-        version: source.version,
-        effectiveAt: formatDate(source.effectiveAt),
-        dataScope: source.dataScope,
-        synthetic: source.synthetic,
-        updatedAt: formatDate(source.effectiveAt),
+        // 引用快照（weknora-knowledge-plan 第 6 节第 5 条）：WeKnora 文档没有版本号与数据范围。
+        fileName: source.fileName || undefined,
+        knowledgeBaseName: source.knowledgeBaseName,
+        updatedAt: formatDate(source.updatedAt),
       })),
       toolAudits: toolAudits.map(mapToolAuditRow),
       runError: row.status === 'failed'
@@ -1727,6 +1738,27 @@ export class PostgresConversationRepository {
     }
   }
 
+
+  /** 会话内各 Run 的状态与归因（按创建时间），共享线程的执行记录与个人多轮详情的历史轮次共用。 */
+  private async loadSessionRuns(sessionId: string) {
+    return this.database<{
+      id: string
+      status: RunState
+      requestedBy: string
+      requesterName: string
+      stoppedByName: string | null
+      createdAt: Date
+    }[]>`
+      select r.id, r.status, r.requested_by as "requestedBy",
+             ru.display_name as "requesterName", r.created_at as "createdAt",
+             case when r.status = 'cancelled' then stopper.display_name end as "stoppedByName"
+        from runs r
+        join users ru on ru.tenant_id = r.tenant_id and ru.id = r.requested_by
+        left join users stopper on stopper.tenant_id = r.tenant_id and stopper.id = r.cancel_requested_by
+       where r.tenant_id = ${tenantId} and r.session_id = ${sessionId}
+       order by r.created_at asc
+    `
+  }
 
   /**
    * 个人会话详情展示整段多轮消息时，按消息所属 Run 装载各自当前 Attempt 的成果，
@@ -1809,9 +1841,16 @@ export class PostgresConversationRepository {
       ? (await this.loadThreadArtifactsForRuns(threadRunIds)).map(artifact => mapArtifactRow(artifact, artifact.sourceRunId))
       : evidence.artifacts.map(item => item.artifact)
     const attachmentsByRun = await this.loadRunAttachments([...new Set([row.id, ...threadRunIds])])
+    // 个人多轮详情：各轮的执行状态，停止或失败且没有回复的历史轮次在其问题下标出，不随新一轮消失。
+    const threadRuns = row.workspaceType === 'personal' && threadRunIds.length > 1
+      ? (await this.loadSessionRuns(row.sessionId)).map(run => ({ runId: run.id, status: mapStatus(run.status), stoppedBy: run.stoppedByName }))
+      : undefined
     // 推荐只在个人对话中装配；列表不装载，只有查看单个会话详情时按查看者当前可用同事计算。
     const recommendations = viewerUserId && this.recommendations && row.workspaceType === 'personal'
       ? await this.recommendations.loadForRuns([...new Set([row.id, ...threadRunIds])], viewerUserId)
+      : []
+    const skillDrafts = viewerUserId && this.skillDrafts && row.workspaceType === 'personal'
+      ? await this.skillDrafts.loadForRuns([...new Set([row.id, ...threadRunIds])], viewerUserId)
       : []
     const prompt = runMessages.find((message) => message.role === 'user')?.content ?? row.title
     const result = deriveTaskResult(evidence)
@@ -1854,7 +1893,9 @@ export class PostgresConversationRepository {
       messages: withRunAttachments(messages.map(mapMessage), attachmentsByRun),
       steps: mapSteps(row.id, evidence.events, row.status),
       threadArtifacts,
+      ...(threadRuns ? { threadRuns } : {}),
       ...(recommendations.length ? { recommendations } : {}),
+      ...(skillDrafts.length ? { skillDrafts } : {}),
       result,
       artifacts: runArtifacts.map(artifact => mapArtifactRow(artifact, row.id)),
       // 顶层 attachments 只列本轮随消息发送的文件名。更早轮次已用过、本轮只是延续挂载的文件
@@ -1936,32 +1977,32 @@ export function toRunError(runId: string, errorCode: string | null | undefined):
     },
     TOOL_TIMEOUT: {
       message: '工具调用超时',
-      reason: 'DSH Worker 调用当前工具时超过了允许时限，本轮已安全停止。',
+      reason: '调用工具时超过了允许时限，本轮已安全停止。',
       suggestion: '稍后重新执行；若持续失败，请管理员检查工具健康状态和超时配置。',
       retryable: true,
     },
     NETWORK_UNAVAILABLE: {
       message: '运行网络暂时不可用',
-      reason: 'DSH Worker 与获准模型或服务之间的连接在本轮中断。',
+      reason: '执行过程中与模型或企业服务的连接中断。',
       suggestion: '网络恢复后重新执行；若持续失败，请管理员检查模型出口和代理配置。',
       retryable: true,
     },
     RUNTIME_WORKER_CRASH: {
-      message: 'DSH Worker 异常退出',
-      reason: '负责当前 Attempt 的隔离 Worker 在完成前退出。',
-      suggestion: '可重新执行创建新的 Attempt；若再次发生，请管理员根据运行编号检查 Runtime 日志。',
+      message: '执行进程异常退出',
+      reason: '负责本轮的执行进程在完成前意外退出。',
+      suggestion: '可以重新执行；若再次发生，请把运行编号交给管理员检查执行日志。',
       retryable: true,
     },
     SERVICE_SHUTDOWN: {
       message: '服务停止导致执行中断',
-      reason: 'dsh-work 或 Runtime 在当前 Attempt 执行期间停止。',
+      reason: '平台服务在本轮执行期间停止。',
       suggestion: '服务恢复后重新执行，本轮不会被误标为员工主动取消。',
       retryable: true,
     },
     SERVICE_RESTARTED: {
       message: '服务重启后执行已安全终止',
-      reason: '服务启动时发现上一个进程遗留的运行中 Attempt，无法安全续接原 Worker。',
-      suggestion: '重新执行以创建新的 Attempt；原 Attempt 和审计记录会继续保留。',
+      reason: '平台服务重启，本轮无法从中断处继续。',
+      suggestion: '可以重新执行；原有对话和审计记录会保留。',
       retryable: true,
     },
     RUNTIME_EXECUTION_FAILED: {
@@ -1973,7 +2014,7 @@ export function toRunError(runId: string, errorCode: string | null | undefined):
   }
   const detail = catalog[code] ?? {
     message: '本轮执行失败',
-    reason: `运行时返回错误码 ${code}。`,
+    reason: `执行服务返回了未识别的错误（错误码 ${code}）。`,
     suggestion: '可重新执行；若再次失败，请将运行编号和错误码交给管理员排查。',
     retryable: true,
   }
@@ -2183,4 +2224,5 @@ async function recordMentions(
        and wm.user_id in ${sql(candidates)}
     on conflict do nothing
   `
+  await recordMentionNotifications(sql, messageId)
 }

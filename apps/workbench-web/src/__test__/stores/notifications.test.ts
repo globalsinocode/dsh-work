@@ -42,8 +42,8 @@ describe('notification store', () => {
   it('refreshes counts and resumes from the last sequence', async () => {
     api.getNotificationCounts.mockResolvedValue({ total: 2, byWorkspace: { 'ws-b': 2 }, lastReadSequence: 10 })
     api.listNotifications.mockResolvedValue({ items: [{ id: 'n1', workspaceId: 'ws-b', sequence: 11 }], nextCursor: null })
-    const { useNotificationStore } = await import('@/stores/notifications')
-    const store = useNotificationStore()
+    const { useWorkspaceNotificationStore } = await import('@/stores/notifications')
+    const store = useWorkspaceNotificationStore()
     await store.load()
     FakeEventSource.instances[0]!.emit('notification.changed', { sequence: 42 })
     await vi.waitFor(() => expect(api.getNotificationCounts).toHaveBeenCalledTimes(2))

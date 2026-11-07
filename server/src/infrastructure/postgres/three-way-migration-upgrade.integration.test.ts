@@ -54,11 +54,11 @@ after(async () => {
   await freshThrowaway?.dispose()
 })
 
-test('empty database applies the full migration chain through 0117', async () => {
+test('empty database applies the full migration chain through 0131', async () => {
   const versions = await freshThrowaway.client<{ version: string }[]>`
     select version from schema_migrations order by version desc limit 1
   `
-  assert.equal(versions[0]?.version, '0117_direct_conversations.sql')
+  assert.equal(versions[0]?.version, '0131_dingtalk_app_configuration.sql')
   const applied = await freshThrowaway.client<{ version: string }[]>`
     select version from schema_migrations where version = '0111_web_push.sql'
   `
@@ -87,7 +87,7 @@ test('database stopped at 0084 upgrades through hardening and tonycc tail', asyn
     const [tail] = await throwaway.client<{ version: string }[]>`
       select version from schema_migrations order by version desc limit 1
     `
-    assert.equal(tail?.version, '0117_direct_conversations.sql')
+    assert.equal(tail?.version, '0131_dingtalk_app_configuration.sql')
     await assertGovernanceSurfaces(throwaway.client)
   } finally {
     await throwaway.dispose()
@@ -139,7 +139,7 @@ test('hardening midpoint 0088 upgrades without dropping governance tables', asyn
     const [tail] = await throwaway.client<{ version: string }[]>`
       select version from schema_migrations order by version desc limit 1
     `
-    assert.equal(tail?.version, '0117_direct_conversations.sql')
+    assert.equal(tail?.version, '0131_dingtalk_app_configuration.sql')
   } finally {
     await throwaway.dispose()
     await rm(baselineDir, { recursive: true, force: true })

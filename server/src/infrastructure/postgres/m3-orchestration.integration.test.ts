@@ -150,7 +150,8 @@ test('real PostgreSQL orchestration persists the assistant result without publis
   assert.ok(usageRecord && usageRecord.totalTokens > 0)
   assert.equal(usageRecord.employeeId, 'U00001')
   assert.equal(usageRecord.employeeName, '林岚')
-  assert.equal(usageRecord.department, '供应链中心')
+  // 组织架构 ORG-S1 迁移清空了种子员工的历史部门文本，未分配部门时显示“未归属部门”。
+  assert.equal(usageRecord.department, '未归属部门')
 })
 
 test('PF-01 API Task executes through the governed Runtime without creating a Session', async () => {
@@ -825,7 +826,7 @@ test('compilation failure converges the Run instead of leaving it queued without
     skills: ['first@1.0.0', 'second@1.0.0'],
     skillInstructions: ['first', 'second'].map(id => ({ id, version: '1.0.0', instructions: 'Read the packaged resources and summarize their contents.', tools: [], files: [resource('x'.repeat(600 * 1024))] })),
     coveringSkills: [],
-    runtimeTools: [], tools: [], toolBindings: [], dataScopes: ['enterprise:authorized'], projectTasksEnabled: false, agentRecommendationEnabled: false, mcpConnections: [], approvalMode: 'risk_based', roleIds: [], maxOutputBytes: 65536, maxToolCalls: 20, timeoutSeconds: 300,
+    runtimeTools: [], tools: [], toolBindings: [], dataScopes: ['enterprise:authorized'], projectTasksEnabled: false, agentRecommendationEnabled: false, skillCreationEnabled: false, mcpConnections: [], approvalMode: 'risk_based', roleIds: [], maxOutputBytes: 65536, maxToolCalls: 20, timeoutSeconds: 300,
   }
   snapshot.skillInstructions[0]!.files = [resource('x'.repeat(1024 * 1024 + 1))]
   const failing = new RunOrchestrationService(runs, conversations, models, runtime, undefined, undefined, {
@@ -865,7 +866,7 @@ test('model admission rejects employee, automation and release trial preparation
             versionId: session.agentVersionId, modelRequirements: ['structured-output'],
             systemPrompt: '请根据当前授权范围内的信息回答用户问题，并标注结论依据。',
             skills: [], skillInstructions: [], coveringSkills: [], runtimeTools: [], tools: [], toolBindings: [], dataScopes: ['enterprise:authorized'],
-            projectTasksEnabled: false, agentRecommendationEnabled: false, mcpConnections: [],
+            projectTasksEnabled: false, agentRecommendationEnabled: false, skillCreationEnabled: false, mcpConnections: [],
             approvalMode: 'risk_based', roleIds: [],
             maxOutputBytes: 65536, maxToolCalls: 20, timeoutSeconds: 300,
           }

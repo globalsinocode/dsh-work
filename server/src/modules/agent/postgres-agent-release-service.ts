@@ -176,6 +176,9 @@ interface DraftVersionShape {
   maxToolCalls: number
   timeoutSeconds: number
   agentRecommendationEnabled?: boolean
+  skillCreationEnabled?: boolean
+  webSearchEnabled?: boolean
+  projectTasksEnabled?: boolean
   skills: string[]
   tools: string[]
   mcpScope?: AgentMcpScope
@@ -384,6 +387,9 @@ function draftFingerprint(draft: DraftVersionShape) {
     maxToolCalls: draft.maxToolCalls,
     timeoutSeconds: draft.timeoutSeconds,
     agentRecommendationEnabled: draft.agentRecommendationEnabled === true,
+    skillCreationEnabled: draft.skillCreationEnabled ?? draft.agentSpec?.capabilities.skillCreation ?? false,
+    webSearchEnabled: draft.webSearchEnabled ?? draft.agentSpec?.capabilities.webSearch ?? false,
+    projectTasksEnabled: draft.projectTasksEnabled ?? draft.agentSpec?.capabilities.projectTasks ?? false,
     delegationPolicy: draft.delegationPolicy ?? {
       allowedAgentVersionIds: [], maxDepth: 1, maxParallel: 1, timeoutSeconds: 120,
     },

@@ -317,6 +317,8 @@ test('重叠触发被跳过并记录 overlap 原因', async () => {
   // I-06：未受理（无关联 Run）的执行没有结果核验状态。
   const listed = (await service.listExecutions(userId, created.id)).items
   assert.equal(listed.find(execution => execution.id === second.id)?.resultOutcome, null)
+  // NC-04：所有者本人“立即运行”被当场拒绝时页面已提示，不发站内通知。
+  assert.deepEqual(await automationNotifications(userId), [])
 })
 
 test('触发扫描受理到期槽位且推进游标；二次扫描不重复', async () => {
@@ -477,7 +479,77 @@ test('受理已提交但 Attempt 未建的执行在启动恢复时收敛为 inte
     select status from runs where tenant_id = ${tenantId} and id = ${run.id}
   `
   assert.equal(runRow?.status, 'failed')
+  // NC-04：受理后未能开始通知所有者一次（收敛 Run 为 failed 不再另发）。
+  assert.deepEqual(await automationNotifications(userId), [{ outcome: 'interrupted', sessionId: session.id }])
 })
+
+test('NC-04 定时执行失败、被跳过或错过时通知所有者；本人造成的跳过不通知', async () => {
+  const { userId, workspaceId, agentId, versionId } = await seedOwner('notify')
+  const created = await service.create(userId, {
+    name: '通知任务',
+    agentId,
+    workspaceId,
+    schedule: { kind: 'manual', timezone: 'UTC' },
+    inputTemplate: { prompt: '执行' },
+  })
+  await service.enable(userId, created.id)
+  const insert = (input: { kind: 'scheduled' | 'missed'; reasonCode: string }) => database.begin(tx => automations.insertExecution(tx, {
+    automationId: created.id,
+    triggerId: `${input.kind}|${created.id}|${randomUUID()}`,
+    kind: input.kind,
+    plannedSlotUtc: input.kind === 'scheduled' ? new Date().toISOString() : null,
+    missedFromUtc: input.kind === 'missed' ? new Date(Date.now() - 7_200_000).toISOString() : null,
+    missedToUtc: input.kind === 'missed' ? new Date(Date.now() - 3_600_000).toISOString() : null,
+    taskRevision: 1,
+    scheduleRevision: 1,
+    admissionStatus: 'skipped',
+    reasonCode: input.reasonCode,
+  }))
+
+  await insert({ kind: 'missed', reasonCode: 'slot_expired' })
+  await insert({ kind: 'scheduled', reasonCode: 'overlap' })
+  // 同一结果已有未读通知时合并为一条（长时间重叠不刷屏）。
+  await insert({ kind: 'scheduled', reasonCode: 'overlap' })
+  // 所有者自己暂停或改了计划而作废的时间点不通知。
+  await insert({ kind: 'scheduled', reasonCode: 'task_paused' })
+  await insert({ kind: 'scheduled', reasonCode: 'schedule_changed' })
+
+  // 已受理的执行之后失败：通知带这次执行的对话。
+  const session = await conversations.createSession({ userId, title: '失败现场', workspaceId, agentVersionId: versionId })
+  const run = await runs.createRun({ tenantId, sessionId: session.id, requestedBy: userId, idempotencyKey: randomUUID() })
+  await database.begin(tx => automations.insertExecution(tx, {
+    automationId: created.id,
+    triggerId: `scheduled|${created.id}|${randomUUID()}`,
+    kind: 'scheduled',
+    plannedSlotUtc: new Date().toISOString(),
+    taskRevision: 1,
+    scheduleRevision: 1,
+    sessionId: session.id,
+    runId: run.id,
+    admissionStatus: 'accepted',
+  }))
+  await runs.transitionRun(tenantId, run.id, 'failed')
+  await runs.transitionRun(tenantId, run.id, 'failed')
+
+  assert.deepEqual((await automationNotifications(userId)).map(item => item.outcome).sort(), ['failed', 'missed', 'skipped'])
+  assert.equal((await automationNotifications(userId)).find(item => item.outcome === 'failed')?.sessionId, session.id)
+
+  // 所有者读过之后再被跳过，另起一条。
+  await database`update user_notifications set read_at = now() where tenant_id = ${tenantId} and recipient_user_id = ${userId}`
+  await insert({ kind: 'scheduled', reasonCode: 'overlap' })
+  assert.equal((await automationNotifications(userId)).filter(item => item.outcome === 'skipped').length, 2)
+})
+
+/** 本人的定时任务通知（站内通知 NC-S3），按产生顺序。 */
+async function automationNotifications(userId: string) {
+  const rows = await database<{ outcome: string; sessionId: string | null }[]>`
+    select safe_metadata ->> 'outcome' as outcome, safe_metadata ->> 'sessionId' as "sessionId"
+      from user_notifications
+     where tenant_id = ${tenantId} and recipient_user_id = ${userId} and kind = 'automation_failed'
+     order by created_at, id
+  `
+  return rows.map(row => ({ outcome: row.outcome, sessionId: row.sessionId }))
+}
 
 test('暂停后触发跳过；非 owner 不可见', async () => {
   const { userId, workspaceId, agentId } = await seedOwner('pause')
@@ -731,4 +803,51 @@ test('sweep close 完整释放 advisory lock（无重入计数残留）', async 
   if (row?.ok) {
     await database`select pg_advisory_unlock(hashtext('dsh-work-automation-trigger-sweep'))`
   }
+})
+
+test('NC-04 服务重启后丢失的定时任务执行记为失败并通知所有者', async () => {
+  const { userId, workspaceId, agentId, versionId } = await seedOwner('restart')
+  const created = await service.create(userId, {
+    name: '重启任务',
+    agentId,
+    workspaceId,
+    schedule: { kind: 'manual', timezone: 'UTC' },
+    inputTemplate: { prompt: '执行' },
+  })
+  await service.enable(userId, created.id)
+  // 用单独的、不接受调度的 Runtime：重启恢复按 Runtime 收敛执行，不能波及其他用例仍在运行的执行。
+  const runtimeId = `runtime-restart-${randomUUID().slice(0, 8)}`
+  await database`
+    insert into runtimes (id, tenant_id, node_name, runtime_version, health_status, scheduling_status, capacity)
+    values (${runtimeId}, ${tenantId}, 'restart-test', 'test', 'offline', 'disabled', 1)`
+  const session = await conversations.createSession({ userId, title: '重启现场', workspaceId, agentVersionId: versionId })
+  const run = await runs.createRun({ tenantId, sessionId: session.id, requestedBy: userId, idempotencyKey: randomUUID() })
+  const attempt = await runs.createAttempt({
+    attemptId: `attempt-${randomUUID()}`,
+    tenantId,
+    runId: run.id,
+    runtimeId,
+    manifest: testAttemptManifest(run.taskId, run.id, { purpose: 'automation' }),
+    manifestSha256: 'test-manifest-sha',
+    modelRouteSnapshot: {},
+  })
+  await database.begin(async (tx) => {
+    await automations.insertExecution(tx, {
+      automationId: created.id,
+      triggerId: `scheduled|${created.id}|${randomUUID()}`,
+      kind: 'scheduled',
+      plannedSlotUtc: new Date().toISOString(),
+      taskRevision: 1,
+      scheduleRevision: 1,
+      sessionId: session.id,
+      runId: run.id,
+      admissionStatus: 'accepted',
+    })
+    await tx`update run_attempts set status = 'running' where tenant_id = ${tenantId} and id = ${attempt.id}`
+    await tx`update runs set status = 'running' where tenant_id = ${tenantId} and id = ${run.id}`
+  })
+
+  const recovered = await runs.recoverAfterRestart(tenantId, runtimeId)
+  assert.ok(recovered.failed.some(item => item.runId === run.id))
+  assert.deepEqual(await automationNotifications(userId), [{ outcome: 'failed', sessionId: session.id }])
 })

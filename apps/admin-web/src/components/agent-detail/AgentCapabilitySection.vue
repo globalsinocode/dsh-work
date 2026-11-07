@@ -15,6 +15,9 @@ const mcpToolsDialogOpen = ref(false)
 
 const publishedSkills = computed(() => contentStore.skills.filter(skill =>
   Boolean(skill.activeVersion) && skill.status !== 'disabled'))
+/** 选中的 Skill 中限定了可见角色的：固定引用不受可见范围限制，提示管理员会扩大使用范围。 */
+const restrictedSelectedSkills = computed(() => publishedSkills.value.filter(skill =>
+  skill.visibleRoleIds && form.skills.includes(`${skill.id}@${skill.activeVersion}`)).map(skill => skill.name))
 const mcpConnectors = computed(() => contentStore.connectors.filter(connector => connector.protocol === 'mcp'))
 const selectedMcpConnectors = computed(() => form.mcpScope.connectorIds.map(id =>
   mcpConnectors.value.find(connector => connector.id === id)))
@@ -51,6 +54,7 @@ function showMcpTools(connector: ConnectorDefinition) {
           <el-option v-for="skill in publishedSkills" :key="skill.id" :label="`${skill.name} · v${skill.activeVersion}`" :value="`${skill.id}@${skill.activeVersion}`" />
         </el-select>
         <p class="field-help">精确引用已发布版本；Skill 依赖的工具由平台自动装配。</p>
+        <p v-if="restrictedSelectedSkills.length" class="field-help field-help--warning" role="status" data-testid="agent-restricted-skill-hint">{{ restrictedSelectedSkills.join('、') }} 只对部分角色可见；加入后，能使用这个 Agent 的员工都能间接用到它。</p>
       </el-form-item>
 
       <el-form-item label="联网搜索">
@@ -65,6 +69,10 @@ function showMcpTools(connector: ConnectorDefinition) {
       <el-form-item label="推荐其他 AI 同事">
         <el-switch v-model="form.agentRecommendationEnabled" :disabled="readonly" active-text="可推荐其他 AI 同事" aria-label="可推荐其他 AI 同事" data-testid="agent-recommendation-switch" />
         <p class="field-help">开启后，员工在个人对话中问“该找谁”或问题更适合其他 AI 同事时，该 Agent 可在回复下推荐同事卡片，员工点击后与该同事开始新对话。只推荐员工本人可用的 AI 同事；团队空间、定时任务与发布验证不装配。</p>
+      </el-form-item>
+      <el-form-item label="创建 Skill">
+        <el-switch v-model="form.skillCreationEnabled" :disabled="readonly" active-text="可创建 Skill" aria-label="可创建 Skill" data-testid="agent-skill-creation-switch" />
+        <p class="field-help">开启后，该 Agent 可在员工个人对话中查看员工已能使用的 Skill，并把写好的 Skill 保存为草稿；草稿作为卡片显示在回复下，由员工决定是否提交平台管理员审核。团队空间、定时任务与发布验证不装配。</p>
       </el-form-item>
 
       <div class="subsection-heading"><strong>MCP 外部连接</strong><span>按整个 Connector 选择，不逐工具配置</span></div>
@@ -118,6 +126,7 @@ function showMcpTools(connector: ConnectorDefinition) {
 
 <style scoped>
 .field-help { width: 100%; margin: 5px 0 0; color: var(--color-text-muted); font-size: var(--font-size-badge); line-height: 1.5; }
+.field-help--warning { color: var(--color-warning-strong); }
 .subsection-heading { display: flex; align-items: baseline; flex-wrap: wrap; gap: 10px; margin: 6px 0 12px; padding-bottom: 8px; border-bottom: 1px solid var(--color-border); }
 .subsection-heading strong { color: var(--color-text-heading); font-size: var(--font-size-body); }
 .subsection-heading span { color: var(--color-text-muted); font-size: var(--font-size-badge); }

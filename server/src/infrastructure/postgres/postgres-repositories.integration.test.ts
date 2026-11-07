@@ -341,13 +341,21 @@ test('Attempt creation rolls back when an immutable input association cannot be 
       manifest: attemptManifest(run.taskId, run.id, 30, 10, 65536),
       manifestSha256: 'b'.repeat(64),
       modelRouteSnapshot: {},
-      knowledgeSources: [{
-        documentId: `missing-document-${suffix}`,
-        relevanceScore: 10,
+      // 序号必须为正：违反约束的引用快照让整个 Attempt 回滚。
+      knowledgeCitations: [{
+        ordinal: 0,
+        externalDocumentId: `missing-document-${suffix}`,
+        knowledgeBaseId: 'knowledge-base-missing',
+        knowledgeBaseName: '不存在的知识库',
+        title: '不可落库的知识快照',
+        fileName: '',
+        documentUpdatedAt: new Date().toISOString(),
+        contentChecksum: 'c'.repeat(64),
         excerpt: '不可落库的知识快照',
+        relevanceScore: 0.9,
       }],
     }),
-    /foreign key|violates/i,
+    /check constraint|violates/i,
   )
 
   assert.equal(await runs.getAttempt(run.tenantId, attemptId), null)

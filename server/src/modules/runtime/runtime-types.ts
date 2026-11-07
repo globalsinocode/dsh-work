@@ -91,6 +91,13 @@ export interface RuntimeManifest {
     reason: 'covered' | 'disabled'
     covered_by?: string
   }>
+  /** Agent 固定引用、但执行镜像缺少其 Python 依赖而本次未装配的 Skill；运行说明告知模型（2026-11-04 依赖登记）。 */
+  unavailable_skills?: Array<{
+    skill: string
+    name: string
+    reason: 'python_dependency_missing'
+    missing: string[]
+  }>
   user_context: {
     user_id: string
     tenant_id: string
@@ -119,6 +126,12 @@ export interface RuntimeManifest {
   mcp_connections?: McpConnectionSnapshot[]
   data_scopes: string[]
   knowledge_context: RuntimeKnowledgeDocument[]
+  /**
+   * 企业知识检索结果（weknora-knowledge-plan 4.5）。缺省即 not_applicable：本次执行不支持检索。
+   */
+  knowledge_status?: Exclude<RuntimeKnowledgeStatus, 'not_applicable'>
+  /** 所选但已删除或对员工不可见、本次跳过的知识库名称；只用于回答页脚，不进入提示词。 */
+  knowledge_skipped_bases?: string[]
   /** PF-05 reviewed, ACL-filtered memory versions fixed for this Attempt. */
   memory_context?: RuntimeControlledMemory[]
   /** PF-06 platform-owned delegation allow-list fixed with the Agent Version. */
@@ -286,6 +299,8 @@ export interface McpInspectionResult {
   latencyMs: number
   capabilities: Array<{ name: string; description: string; inputSchema: Record<string, unknown> }>
 }
+
+export type RuntimeKnowledgeStatus = 'not_applicable' | 'not_selected' | 'skipped' | 'ok' | 'unavailable'
 
 export interface RuntimeKnowledgeDocument {
   documentId: string

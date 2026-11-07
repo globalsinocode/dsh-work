@@ -3,12 +3,13 @@ import { defineStore } from 'pinia'
 
 import { workbenchApi } from '../api/client'
 import type { ConversationTarget } from '../types/domain'
+import { useNotificationStore } from './notifications'
 
 /**
  * 协作模式对话列表（S5c，D24）：本人的单聊（按 AI 同事聚合）与群组，按最近活动排序、服务端
  * 分页与搜索。聊天区发送消息或执行结束后调用 `refresh` 更新预览与排序；迟到的旧请求不覆盖新结果。
  * 未读（S5e）：服务端按本人已读位置计数；打开的对话对象经 `markRead` 前进已读位置。
- * @ 提醒（D38）：群组带 `mentioned`，打开群组时随已读一并清除；`hasMention` 供主导航显示提醒圆点。
+ * @ 提醒（D38）：群组带 `mentioned`，打开群组时随已读一并清除，并同步站内通知的 @ 已读；`hasMention` 供主导航显示提醒圆点。
  */
 export const useCollabConversationStore = defineStore('workbench-collab-conversations', () => {
   const targets = ref<ConversationTarget[]>([])
@@ -69,10 +70,13 @@ export const useCollabConversationStore = defineStore('workbench-collab-conversa
   async function markRead(type: ConversationTarget['type'], id: string) {
     const target = targets.value.find(item => item.type === type && item.id === id)
     if (!target || (target.unreadCount <= 0 && !target.mentioned)) return
+    const hadMention = target.mentioned
     target.unreadCount = 0
     target.mentioned = false
     try {
       await workbenchApi.markConversationTargetRead(type, id, target.lastMessage?.sentAt)
+      // 服务端已把该群的 @ 通知一并标为已读：铃铛与通知面板随之更新，不等下一次轮询。
+      if (type === 'group' && hadMention) await useNotificationStore().markWorkspaceMentionsRead(id)
     } catch {
       // 已读位置写入失败不打扰用户：下次刷新会重新显示未读并再次尝试。
     }

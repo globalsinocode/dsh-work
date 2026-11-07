@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { AttemptExecutionContainers } from './attempt-execution-containers.ts'
-import { buildToolchainProbeArguments, EXECUTION_COMMAND_ENV } from './docker-execution-backend.ts'
+import { buildToolchainProbeArguments, EXECUTION_COMMAND_ENV, parsePythonModulesProbe } from './docker-execution-backend.ts'
 import type { ExecutionBackend } from './execution-backend.ts'
 import { describeExecutionToolchain, parseToolchainProbe, TOOLCHAIN_PROBE_SCRIPT } from './execution-toolchain.ts'
 
@@ -116,4 +116,9 @@ test('Runtime instructions name the tools with platform text and the probed vers
   const withoutPython = describeExecutionToolchain(parseToolchainProbe('bash\t5\nrg\t15.0.0\nsoffice\t25.2\npdftoppm\t25.03.0\n'))
   assert.equal(withoutPython.some(line => line.includes('python')), false)
   assert.equal(withoutPython.some(line => line.includes('中文字体')), false, 'fonts are only claimed when the probe found them')
+})
+
+test('the module probe reports standard-library modules and which distributions provide each import', () => {
+  const index = parsePythonModulesProbe('S csv\nS os\nM docx python-docx\nM pandas pandas\nM bad name!\nS 1bad\n')
+  assert.deepEqual(index, { stdlib: ['csv', 'os'], modules: { docx: ['python-docx'], pandas: ['pandas'] } })
 })

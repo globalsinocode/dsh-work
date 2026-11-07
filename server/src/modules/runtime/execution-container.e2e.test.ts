@@ -332,3 +332,53 @@ test('1b②: a Skill script runs inside the Attempt container and finds its path
     await rm(root, { recursive: true, force: true })
   }
 })
+
+test('1b② + 2b-4: a Skill script reads the read-only original xlsx passed by absolute path', { skip: extractionSkip, timeout: 180_000 }, async () => {
+  const root = await mkdtemp(join(tmpdir(), 'dsh-py-original-e2e-'))
+  const workspace = join(root, 'workspace')
+  const backend = new DockerExecutionBackend()
+  await backend.detectFeatures()
+  const containers = new AttemptExecutionContainers(backend, {
+    image: image!, user: resolveExecutionContainerUser(),
+    usage: { measure: dir => measureWorkspace(dir), freeSpace: async () => ({ freeBytes: Number.MAX_SAFE_INTEGER, totalBytes: Number.MAX_SAFE_INTEGER, low: false }) },
+  })
+  const exec = (command: string) => containers.exec('py-original-e2e', workspace, {
+    argv: ['bash', '-c', command], cwd: workspace, maxOutputBytes: 4096, timeoutMs: 30_000, mayLeaveProcesses: true,
+  }, new AbortController().signal)
+  try {
+    const skillDir = skillDirectory(workspace, 'skill-summary')
+    await mkdir(join(skillDir, 'scripts'), { recursive: true })
+    await writeFile(join(skillDir, 'scripts', 'summarize.py'), [
+      'import os, sys',
+      'from openpyxl import Workbook, load_workbook',
+      'rows = list(load_workbook(sys.argv[1], read_only=True).worksheets[0].iter_rows(values_only=True))',
+      'totals = {}',
+      'for region, amount in rows[1:]: totals[region] = totals.get(region, 0) + amount',
+      'book = Workbook(); [book.active.append([k, v]) for k, v in totals.items()]',
+      'book.save(os.path.join(os.environ["DSH_OUTPUT_DIR"], "汇总.xlsx"))',
+      'print(sorted(totals.items()))',
+    ].join('\n'), { mode: 0o400 })
+    // A real workbook (openpyxl cannot load the minimal fixture), built in the container and then
+    // written read-only by the host, the way the Adapter materializes originals (2b-4).
+    await mkdir(join(workspace, 'work'), { recursive: true })
+    const prepared = await exec('python3 -c "from openpyxl import Workbook; b = Workbook(); [b.active.append(r) for r in [[\'区域\', \'金额\'], [\'华东\', 1200], [\'华南\', 800], [\'华东\', 300]]]; b.save(\'work/sales.xlsx\')"')
+    assert.equal(prepared.exitCode, 0, prepared.stderr)
+    await mkdir(join(workspace, 'input', 'original'), { recursive: true })
+    await writeFile(join(workspace, 'input', 'original', '01-销售.xlsx'), await readFile(join(workspace, 'work', 'sales.xlsx')), { mode: 0o400 })
+    const manifest = {
+      attempt_id: 'py-original-e2e',
+      agent_configuration: { skill_instructions: [{ id: 'skill-summary', name: 'summary', version: '1.0.0', files: [{ path: 'scripts/summarize.py', sha256: 'a'.repeat(64), size: 1 }] }] },
+    } as unknown as RuntimeManifest
+    const original = join(workspace, 'input', 'original', '01-销售.xlsx')
+    const result = await new ExecutionContainerPythonRunner(containers)
+      .execute({ skill: 'summary', entry: 'scripts/summarize.py', args: [original] }, manifest, workspace, new AbortController().signal)
+    assert.equal(result.exitCode, 0, result.stderr)
+    assert.equal(result.stdout.trim(), "[('华东', 1500), ('华南', 800)]", 'the script parses the original workbook, not extracted text')
+    assert.deepEqual(result.artifacts.map(file => file.name), ['汇总.xlsx'])
+    const overwrite = await exec('echo x > input/original/01-销售.xlsx 2>/dev/null && echo WRITABLE || echo READONLY')
+    assert.equal(overwrite.stdout.trim(), 'READONLY', 'the original stays read-only for scripts')
+  } finally {
+    await containers.release('py-original-e2e').catch(() => undefined)
+    await rm(root, { recursive: true, force: true })
+  }
+})

@@ -9,6 +9,12 @@ test.beforeEach(async ({ page }) => {
   await page.request.post('/api/testing/p0/reset')
 })
 
+/** SKC-04：冒烟数据中的 Skill 创建专家默认停用，经管理端接口启用（冒烟服务只有一个测试身份）。 */
+async function enableSkillCreator(page: Page) {
+  const enabled = await page.request.patch('/api/admin/v1/agents/skill-creator/status', { data: { status: 'published' } })
+  expect(enabled.ok()).toBeTruthy()
+}
+
 async function chooseMode(page: Page, label: '工作模式' | '协作模式') {
   await page.getByRole('button', { name: '切换模式' }).click()
   const item = page.getByRole('menuitem', { name: new RegExp(label) })
@@ -79,13 +85,13 @@ test('MODE-E2E-02: a failed save keeps the current mode', async ({ page }) => {
   await expect(page.getByRole('navigation', { name: '员工工作台主导航' })).toBeVisible()
 })
 
-test('MODE-E2E-03: collaboration shell has four entries and an avatar menu for shared pages', async ({ page }) => {
+test('MODE-E2E-03: collaboration shell has five entries and an avatar menu for shared pages', async ({ page }) => {
   await switchToCollab(page)
   const navigation = page.getByRole('navigation', { name: '协作模式主导航' })
   // 宽屏图标栏只显示图标：入口名称在可访问名称与悬停提示中。
   const entries = navigation.getByRole('button')
-  await expect(entries).toHaveCount(4)
-  for (const [index, label] of ['对话', 'AI 同事', '群组', '定时任务'].entries()) {
+  await expect(entries).toHaveCount(5)
+  for (const [index, label] of ['对话', 'AI 同事', '群组', '知识库', '定时任务'].entries()) {
     await expect(entries.nth(index)).toHaveAccessibleName(label)
   }
   await expect(navigation.getByText('对话', { exact: true })).toBeHidden()
@@ -121,12 +127,62 @@ test('MODE-E2E-03: collaboration shell has four entries and an avatar menu for s
   }
 })
 
+test('NC-03: the rail bell above the avatar opens notifications and a mention opens the group', async ({ page }) => {
+  await switchToCollab(page)
+  await expect(page.getByRole('navigation', { name: '协作模式主导航' }).getByRole('button')).toHaveCount(5)
+  const bell = page.getByRole('button', { name: '通知，2 条未读' })
+  const avatar = page.getByRole('button', { name: '打开用户菜单' })
+  const [bellBox, avatarBox] = [await bell.boundingBox(), await avatar.boundingBox()]
+  expect((bellBox?.y ?? 0) + (bellBox?.height ?? 0)).toBeLessThanOrEqual(avatarBox?.y ?? 0)
+
+  await bell.click()
+  const panel = page.getByRole('dialog', { name: '通知' })
+  await panel.getByRole('button', { name: /中 @ 了你/ }).click()
+  await expect(panel).toBeHidden()
+  await expect(page).toHaveURL(/\/c\/chats\/group\/ws-supply$/)
+  await expect(page.getByRole('button', { name: '通知，1 条未读' })).toBeVisible()
+
+  // 被加入项目进入群组；任务通知打开群组内的任务详情（A 地址经路由守卫映射）。
+  await page.getByRole('button', { name: '通知，1 条未读' }).click()
+  await panel.getByRole('button', { name: /把你加入了项目/ }).click()
+  await expect(page).toHaveURL(/\/c\/chats\/group\/ws-supply$/)
+  await page.getByRole('button', { name: '通知', exact: true }).click()
+  await panel.getByRole('button', { name: /指派给你/ }).click()
+  await expect(page).toHaveURL(/\/c\/chats\/group\/ws-supply\/tasks\/ptask-smoke-notification$/)
+})
+
+test('NC-03: on narrow screens the bell sits next to the avatar in the top bar', async ({ page }) => {
+  await page.setViewportSize({ width: 375, height: 760 })
+  await switchToCollab(page, { narrow: true })
+  const bell = page.getByRole('button', { name: '通知，2 条未读' })
+  const avatar = page.getByRole('button', { name: '打开用户菜单' })
+  const [bellBox, avatarBox] = [await bell.boundingBox(), await avatar.boundingBox()]
+  expect(bellBox?.y ?? 99).toBeLessThan(52)
+  expect((bellBox?.x ?? 0) + (bellBox?.width ?? 0)).toBeLessThanOrEqual(avatarBox?.x ?? 0)
+  await bell.click()
+  const panel = page.getByRole('dialog', { name: '通知' })
+  expect((await panel.boundingBox())?.width ?? 0).toBeGreaterThanOrEqual(370)
+  await panel.getByRole('button', { name: '关闭通知' }).click()
+  await expect(panel).toBeHidden()
+})
+
+test('SKC-04: in collaboration mode the Skill plaza opens a direct chat with the Skill creator', async ({ page }) => {
+  await enableSkillCreator(page)
+  await switchToCollab(page)
+  await page.getByRole('button', { name: '打开用户菜单' }).click()
+  await page.getByRole('menuitem', { name: 'Skill 广场' }).click()
+  await page.getByRole('button', { name: '创建 Skill' }).click()
+  await expect(page).toHaveURL(/\/c\/chats\/agent\/skill-creator$/)
+  await expect(page.getByRole('region', { name: '与 Skill 创建专家 的对话' })).toBeVisible()
+  await expect(page.getByLabel('对话输入')).toHaveValue('')
+})
+
 test('MODE-E2E-03: collaboration shell uses a bottom tab bar on narrow screens', async ({ page }) => {
   await page.setViewportSize({ width: 375, height: 760 })
   await switchToCollab(page, { narrow: true })
   const navigation = page.getByRole('navigation', { name: '协作模式主导航' })
   // 窄屏底部标签栏显示入口名称。
-  await expect(navigation.getByRole('button')).toHaveText(['对话', 'AI 同事', '群组', '定时任务'])
+  await expect(navigation.getByRole('button')).toHaveText(['对话', 'AI 同事', '群组', '知识库', '定时任务'])
   const box = await navigation.boundingBox()
   expect(box?.y ?? 0).toBeGreaterThan(600)
   await navigation.getByRole('button', { name: '群组' }).click()
@@ -271,11 +327,15 @@ test('MODE-E2E-09/10: a group shows its chat timeline, the shared tabs and the g
   const answered = chat.locator('.conversation-message--assistant', { hasText: '本月华东区共有 126 张在制订单' })
   await expect(answered).toContainText('由 林岚 发起')
   await expect(answered.getByRole('button', { name: '查看执行详情' })).toBeVisible()
+  // EX-STYLE-01：群聊是多人对话，每条消息都显示发送人，不使用一对一对话中只留气泡的样式。
+  await expect(chat.getByRole('article', { name: /^我的消息，/ })).toHaveCount(0)
   const running = chat.getByTestId('group-run-entry')
   await expect(running).toHaveCount(1)
   await expect(running).toContainText('由 林岚 发起')
-  await expect(running).toContainText(/执行中 · 已用/)
+  await expect(running).not.toContainText(/执行中 · 已用/)
   await expect(running.getByRole('list', { name: '执行步骤' })).toBeVisible()
+  await expect(running.getByTestId('run-progress-step')).toHaveCount(1)
+  await expect(running).toContainText(/已完成 \d+ 步/)
   await expect(running.getByRole('button', { name: '停止' })).toBeVisible()
   await running.getByRole('button', { name: '查看执行详情' }).click()
   await expect(page).toHaveURL(/\/c\/chats\/group\/ws-supply\/conversations\/run-/)
@@ -388,6 +448,7 @@ test('MODE-E2E-16: on narrow screens the task summary expands in place', async (
   const created = await page.request.post('/api/workbench/v1/workspaces/ws-supply/project-tasks', {
     data: { title: 'MODE-16 窄屏任务', assignee: { type: 'employee', id: 'U00001' } },
   })
+  expect(created.ok()).toBeTruthy()
   const taskId = (await created.json()).data.id as string
   await switchToCollab(page)
   await page.setViewportSize({ width: 1000, height: 760 })
@@ -399,6 +460,11 @@ test('MODE-E2E-16: on narrow screens the task summary expands in place', async (
   await expect(page.getByTestId('project-task-info')).toContainText('交付文件')
   await summary.getByRole('button', { name: '收起任务信息' }).click()
   await expect(page.getByTestId('project-task-info')).toHaveCount(0)
+
+  // 窄屏变宽：回到任务信息与任务对话并列的默认。
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await expect(page.getByRole('tab', { name: '任务信息' })).toHaveAttribute('aria-selected', 'true')
+  await expect(page.getByTestId('task-info-pane').getByTestId('project-task-info')).toBeVisible()
 })
 
 test('MODE-E2E-11: AI colleague and group directories open the matching chats', async ({ page }) => {

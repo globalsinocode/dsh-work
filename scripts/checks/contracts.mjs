@@ -55,7 +55,7 @@ export function checkContracts(check) {
     check.assert(Array.isArray(required) && required.includes(field), `FileMount 缺少必填字段 ${field}`)
   }
   const fixtures = check.json('docs/development/fixtures/mvp-fixtures.json')
-  for (const collection of ['users', 'roles', 'workspaces', 'businessRecords', 'knowledgeDocuments', 'files']) {
+  for (const collection of ['users', 'roles', 'workspaces', 'businessRecords', 'files']) {
     check.assert(Array.isArray(fixtures?.[collection]), `合成测试数据缺少数组 ${collection}`)
   }
 }

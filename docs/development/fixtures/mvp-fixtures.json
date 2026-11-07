@@ -80,10 +80,6 @@
       "attributes": { "supplier": "供应商乙", "quantity": 500, "expectedDate": "2026-09-02" }
     }
   ],
-  "knowledgeDocuments": [
-    { "id": "knowledge-supply-exception-v32", "title": "供应链异常管理办法 V3.2", "scope": "domain:supply-chain", "version": "3.2", "effectiveDate": "2026-06-01" },
-    { "id": "knowledge-inventory-policy-v21", "title": "库存安全水位管理规范 V2.1", "scope": "domain:supply-chain", "version": "2.1", "effectiveDate": "2026-03-15" }
-  ],
   "files": [
     {
       "id": "file-production-plan",

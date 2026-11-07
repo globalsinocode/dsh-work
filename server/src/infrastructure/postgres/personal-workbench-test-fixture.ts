@@ -50,6 +50,12 @@ import { registerWorkspaceUsageRoutes } from '../../http/workbench/workspace-usa
 import { registerWorkspaceTimelineRoutes } from '../../http/workbench/workspace-timeline-routes.ts'
 import { PostgresWorkspaceTimelineService } from '../../modules/workbench/application/postgres-workspace-timeline-service.ts'
 import { LocalObjectStorage } from '../storage/local-object-storage.ts'
+import { registerSkillSubmissionRoutes } from '../../http/workbench/skill-submission-routes.ts'
+import { registerUserNotificationRoutes } from '../../http/workbench/user-notification-routes.ts'
+import { PostgresUserNotificationService } from '../../modules/workbench/application/postgres-user-notification-service.ts'
+import { SkillSubmissionService } from '../../modules/skill/skill-submission-service.ts'
+import { SkillArtifactStore } from '../../modules/skill/skill-artifact-store.ts'
+import { PostgresSkillService } from '../../modules/skill/postgres-skill-service.ts'
 
 export const testTenant = 'tenant-dsh-work'
 export async function personalWorkbenchFixture(prefix: string, options: {
@@ -74,6 +80,14 @@ export async function personalWorkbenchFixture(prefix: string, options: {
   const agents = new PostgresAgentService(db.client)
   const recommendations = new AgentRecommendationService(db.client, agents, auth)
   conversations.setRecommendationReader(recommendations)
+  // SKC-01：Skill 草稿按真实包规则保存在本次夹具的临时目录中；合成运行经服务登记草稿。
+  const skillSubmissions = new SkillSubmissionService({
+    database: db.client, skills: new PostgresSkillService(db.client), authorization: auth,
+    artifactStore: new SkillArtifactStore(new LocalObjectStorage(join(root, 'skills'))),
+    // 合成环境没有执行容器；按“沙箱可用”核对，含脚本的样例草稿才不会被判为不兼容。
+    pythonSandboxAvailable: true,
+  })
+  conversations.setSkillDraftReader(skillSubmissions)
   const projectArchive = options.projectSpace ? new PostgresProjectArchiveService(db.client) : undefined
   const agentMembers = options.teamCollaboration || options.projectSpace
     ? new PostgresWorkspaceAgentMemberService(db.client, auth, agents)
@@ -113,6 +127,9 @@ export async function personalWorkbenchFixture(prefix: string, options: {
   } })
   registerConversationRoutes(router, conversations, orchestration, runs, agents, auth, undefined, undefined, agentMembers)
   registerContentRoutes(router, content, auth)
+  registerSkillSubmissionRoutes(router, skillSubmissions)
+  // 站内通知（NC-S1/S2）：两种模式的铃铛都会请求，与 main.ts 一致挂上。
+  registerUserNotificationRoutes(router, new PostgresUserNotificationService(db.client), auth)
   let lifecycle: PostgresWorkspaceLifecycleService | undefined
   if (options.projectSpace && projects && projectArchive && agentMembers) {
     const workspaceService = new PostgresWorkspaceService(db.client)
@@ -153,7 +170,7 @@ export async function personalWorkbenchFixture(prefix: string, options: {
   assert.ok(address && typeof address !== 'string')
   const origin = `http://127.0.0.1:${address.port}/api/workbench/v1`
   return {
-    db, root, auth, content, conversations, runs, orchestration, agents, recommendations, automationRepository,
+    db, root, auth, content, conversations, runs, orchestration, agents, recommendations, skillSubmissions, automationRepository,
     automationService, origin, router, projects, projectArchive, lifecycle,
     workspaceAgentMembers: agentMembers,
     async api(path: string, init?: RequestInit) {

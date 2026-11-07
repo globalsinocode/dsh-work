@@ -55,7 +55,9 @@ export interface TaskSource {
   version?: string
   effectiveAt?: string
   dataScope?: string
-  synthetic?: boolean
+  /** 企业知识引用快照：原文件名与所属知识库名称。 */
+  fileName?: string
+  knowledgeBaseName?: string
   updatedAt?: string
 }
 
@@ -149,8 +151,15 @@ export interface TaskRun {
    * 本轮核验仍只用 result.artifacts（当前 Run）。团队 Run 详情与本轮一致时可省略。
    */
   threadArtifacts?: Artifact[]
+  /**
+   * 个人会话多轮详情中各轮的执行状态（按创建时间）：前端在停止或失败、没有回复的历史轮次下标出结果，
+   * 不随新一轮消失。只有一轮或团队 Run 详情时省略。
+   */
+  threadRuns?: Array<{ runId: string; status: TaskRun['status']; stoppedBy: string | null }>
   /** 推荐方案 4.2：个人会话中各 Run 当前 Attempt 的推荐卡片，前端按 runId 挂到该 Run 的回复下。 */
   recommendations?: AgentRecommendationView[]
+  /** Skill 创建专家方案 4.3：各 Run 当前 Attempt 保存的 Skill 草稿，只给提交人本人看。 */
+  skillDrafts?: SkillDraftView[]
   attachments: string[]
   /** 本轮 Run 输入文件（含 file_objects.id），供客户端预览/下载；attachments 仍为文件名列表契约。 */
   inputFiles?: Array<{ id: string; name: string }>
@@ -357,6 +366,8 @@ export interface AgentDefinition {
   projectTasksEnabled: boolean
   /** 是否可推荐其他 AI 同事；仅个人对话的员工交互运行装配（推荐方案 R1/R3）。 */
   agentRecommendationEnabled: boolean
+  /** 是否可创建 Skill（Skill 创建专家方案 4.2）；仅个人对话的员工交互运行装配。 */
+  skillCreationEnabled: boolean
   mcpScope?: AgentMcpScope
   delegationPolicy?: AgentDelegationPolicy
   updatedAt: string
@@ -386,6 +397,8 @@ export interface AgentDraftConfiguration {
   projectTasksEnabled?: boolean
   /** 是否可推荐其他 AI 同事；编辑时省略则保留当前设置，新建时默认关闭。 */
   agentRecommendationEnabled?: boolean
+  /** 是否可创建 Skill；编辑时省略则保留当前设置，新建时默认关闭。 */
+  skillCreationEnabled?: boolean
   mcpScope?: AgentMcpScope
   /** Optional definition request; collection publication and grants remain platform-owned. */
   data?: { state: boolean; collections: Array<{
@@ -443,6 +456,8 @@ export interface AgentVersionRecord {
   projectTasksEnabled: boolean
   /** 是否可推荐其他 AI 同事。 */
   agentRecommendationEnabled: boolean
+  /** 是否可创建 Skill。 */
+  skillCreationEnabled: boolean
   mcpScope?: AgentMcpScope
   delegationPolicy?: AgentDelegationPolicy
 }
@@ -474,7 +489,63 @@ export interface SkillDefinition {
   testPrompt: string
   /** 管理员设置的“覆盖内置场景”：运行中有该 Skill 时去掉对应场景的平台内置 Skill。 */
   coveredBuiltinScenarios: string[]
+  /** Skill 可见范围：null 为全员；否则只有这些角色的员工能在 Skill 广场选用（Agent 固定引用不受限）。 */
+  visibleRoleIds: string[] | null
+  /** 待发布版本来自员工提交：只能在“待审核”中审核发布，详情页不提供发布。 */
+  submissionDraft?: boolean
+  /** 当前执行镜像缺少的、活动版本需要的 Python 依赖（包名或“模块 X”）；为空时不返回。 */
+  missingPythonDependencies?: string[]
   updatedAt: string
+}
+
+/** 管理员审核时看到的严格试运行状态：未开始、进行中、已结束待查看结果、通过、未通过。 */
+export type SkillSubmissionTrialStatus = 'not_started' | 'running' | 'unconfirmed' | 'passed' | 'failed'
+
+/** 管理端“待审核”列表中的一条员工 Skill 提交（Skill 创建专家方案 4.4）。 */
+export interface SkillSubmissionReviewItem {
+  id: string
+  name: string
+  description: string
+  submitter: { id: string; displayName: string }
+  source: 'conversation' | 'zip' | 'link'
+  sessionId: string | null
+  status: 'pending' | 'approved' | 'rejected'
+  versionId: string
+  versionNumber: number
+  scriptCount: number
+  /** 通过后的修订：已发布 Skill 的 ID 与当前可见范围（null 为全员），审核时默认沿用。 */
+  publishedSkillId?: string
+  publishedVisibleRoleIds?: string[] | null
+  trial: { status: SkillSubmissionTrialStatus; runId?: string; testedAt?: string }
+  submittedAt: string
+}
+
+/** 待审核详情：文件清单、包校验结论与最近一次严格试运行。 */
+export interface SkillSubmissionReviewDetail extends SkillSubmissionReviewItem {
+  files: Array<{ path: string; size: number; script: boolean }>
+  compatibility: SkillDraftView['compatibility']
+  trial: SkillSubmissionReviewItem['trial'] & { skillId?: string; resultSummary?: string }
+}
+
+/**
+ * 会话详情中的一张 Skill 草稿卡片（Skill 创建专家方案 4.3）：某个 Run 当前 Attempt 保存的草稿版本，
+ * 带所属提交的当前状态。只给提交人本人看。
+ */
+export interface SkillDraftView {
+  submissionId: string
+  versionId: string
+  versionNumber: number
+  runId: string
+  name: string
+  description: string
+  files: Array<{ path: string; size: number; script: boolean }>
+  compatibility: { status: 'compatible' | 'needs_review' | 'incompatible'; issues: Array<{ code: string; severity: 'warning' | 'error'; message: string }> }
+  status: 'draft' | 'pending' | 'approved' | 'rejected'
+  /** 是否为该提交的当前版本；被新版本替代的卡片只显示一行说明。 */
+  latest: boolean
+  reviewNote?: string
+  submittedAt?: string
+  reviewedAt?: string
 }
 
 /** 会话详情中的一张推荐卡片：名称与说明取同事当前启用版本，理由来自推荐时的模型输出。 */
@@ -485,6 +556,8 @@ export interface AgentRecommendationView {
   name: string
   description: string
   reason: string
+  /** 推荐时写给该同事的问题（员工口吻）；“去聊天”优先预填它，没有时预填该轮员工的原问题。 */
+  suggestedPrompt?: string
   /** 查看时该同事是否仍对查看者可用。 */
   available: boolean
 }

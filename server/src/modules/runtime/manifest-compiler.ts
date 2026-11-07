@@ -138,6 +138,20 @@ export function compileRuntimeManifest(input: RuntimeManifest): CompiledRuntimeM
       }
     }
   }
+  if (input.unavailable_skills !== undefined) {
+    const unavailable = input.unavailable_skills
+    if (!Array.isArray(unavailable) || unavailable.length === 0 || unavailable.length > 32) throw new TypeError('unavailable_skills must be a non-empty bounded array')
+    for (const item of unavailable) {
+      for (const key of Object.keys(item)) {
+        if (!['skill', 'name', 'reason', 'missing'].includes(key)) throw new TypeError(`unavailable_skills contains unsupported field: ${key}`)
+      }
+      if (typeof item.skill !== 'string' || !/^[^@]+@[^@]+$/.test(item.skill)) throw new TypeError('unavailable_skills.skill must be a Skill reference')
+      if (skillReferences.has(item.skill)) throw new TypeError(`Skill is both unavailable and assembled: ${item.skill}`)
+      if (typeof item.name !== 'string' || !item.name.trim() || item.name.length > 200) throw new TypeError('unavailable_skills.name is invalid')
+      if (item.reason !== 'python_dependency_missing') throw new TypeError('unavailable_skills.reason is invalid')
+      if (!Array.isArray(item.missing) || item.missing.length > 64 || item.missing.some(name => typeof name !== 'string' || name.length > 200)) throw new TypeError('unavailable_skills.missing is invalid')
+    }
+  }
   if (input.test_scenario !== undefined) {
     if (input.purpose !== 'admin-skill-test') throw new TypeError('test_scenario requires admin-skill-test purpose')
     normalizeSkillTestScenario(input.test_scenario, input.agent_configuration.skill_instructions)
@@ -280,6 +294,19 @@ export function compileRuntimeManifest(input: RuntimeManifest): CompiledRuntimeM
     if (!/^[a-f0-9]{32,64}$/.test(document.contentChecksum)) throw new TypeError('knowledge document contentChecksum is invalid')
     if (!document.excerpt.trim() || document.excerpt.length > 4000) throw new TypeError('knowledge document excerpt is invalid')
   }
+
+  if (input.knowledge_status !== undefined
+    && !['not_selected', 'skipped', 'ok', 'unavailable'].includes(input.knowledge_status)) {
+    throw new TypeError('knowledge_status is invalid')
+  }
+  // 旧 Attempt 没有 knowledge_status 但可能带知识片段；新写入的非 ok 状态不得带片段。
+  if (input.knowledge_status !== undefined && input.knowledge_status !== 'ok' && input.knowledge_context.length > 0) {
+    throw new TypeError('knowledge_context requires knowledge_status ok')
+  }
+  if (input.knowledge_skipped_bases !== undefined && (
+    input.knowledge_skipped_bases.length > 20
+    || input.knowledge_skipped_bases.some(name => !name.trim() || name.length > 60)
+  )) throw new TypeError('knowledge_skipped_bases is invalid')
 
   if ((input.memory_context?.length ?? 0) > 3) throw new RangeError('memory_context must contain at most 3 memories')
   const memoryVersions = new Set<string>()

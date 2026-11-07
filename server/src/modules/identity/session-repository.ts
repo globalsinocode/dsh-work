@@ -36,7 +36,6 @@ export interface ExternalIdentityProfile {
   subject: string
   displayName: string
   email: string | null
-  organizationName: string
   businessUser: boolean
   status: string
   tombstone?: boolean
@@ -172,12 +171,12 @@ export class IdentitySessionRepository {
 
       let applied = false
       let record: { id: string; authorizationVersion: number } | undefined
+      // 员工的“部门”由组织架构维护（显示为主部门名称），AI Hub 登录与目录同步不再写入 department_id。
       if (existing) {
         const [updated] = await transaction<{ id: string; authorizationVersion: number }[]>`
           update users
              set external_subject = ${input.subject},
                  display_name = ${input.displayName},
-                 department_id = ${input.organizationName},
                  status = ${normalizedStatus},
                  identity_provider = 'ai-hub',
                  external_user_id = ${input.externalUserId},
@@ -203,12 +202,12 @@ export class IdentitySessionRepository {
         const generatedId = `user-${randomUUID()}`
         const [inserted] = await transaction<{ id: string; authorizationVersion: number }[]>`
           insert into users (
-            id, tenant_id, external_subject, display_name, department_id, status,
+            id, tenant_id, external_subject, display_name, status,
             identity_provider, external_user_id, business_user, email, identity_updated_at,
             directory_synced_at
           ) values (
             ${generatedId}, ${tenantId}, ${input.subject}, ${input.displayName},
-            ${input.organizationName}, ${normalizedStatus}, 'ai-hub', ${input.externalUserId},
+            ${normalizedStatus}, 'ai-hub', ${input.externalUserId},
             ${input.businessUser}, ${input.email}, ${updatedAt}, ${updatedAt ? new Date() : null}
           )
           returning id, local_authorization_version::integer as "authorizationVersion"
@@ -417,7 +416,7 @@ export class IdentitySessionRepository {
         from users u
         join tenants t on t.id = u.tenant_id and t.status = 'active'
         left join user_roles ur on ur.tenant_id = u.tenant_id and ur.user_id = u.id
-          and ur.source_key = 'local'
+          and (ur.source_key = 'local' or ur.source_key like 'department:%')
           and (ur.valid_until is null or ur.valid_until > now())
         left join roles r on r.tenant_id = ur.tenant_id and r.id = ur.role_id
           and r.status = 'active'
@@ -466,7 +465,11 @@ export class IdentitySessionRepository {
     `
   }
 
-  async logoutSession(sessionHash: string, audience: ApiAudience) {
+  /**
+   * `allSources`：员工主动退出登录时撤销该账号在此 audience 的全部来源会话（密码与钉钉，钉钉接入方案 4.3）；
+   * 切换登录方式时只清理当前 Cookie 对应的会话。
+   */
+  async logoutSession(sessionHash: string, audience: ApiAudience, options: { allSources?: boolean } = {}) {
     return this.database.begin(async (transaction) => {
       const [session] = await transaction<{ userId: string; provider: string }[]>`
         update authentication_sessions set revoked_at = now()
@@ -475,6 +478,13 @@ export class IdentitySessionRepository {
         returning user_id as "userId", authentication_provider as provider
       `
       if (!session) return false
+      if (options.allSources) {
+        await transaction`
+          update authentication_sessions set revoked_at = now()
+           where tenant_id = ${tenantId} and user_id = ${session.userId}
+             and audience = ${audience} and revoked_at is null
+        `
+      }
       await appendIdentityAudit(transaction, {
         userId: session.userId,
         action: 'identity.logout',

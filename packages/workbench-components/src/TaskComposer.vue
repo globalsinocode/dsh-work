@@ -506,6 +506,9 @@ defineExpose({ getDraft, setDraft })
         </button>
       </div>
 
+      <!-- 调用方附加的输入上方内容（如对话中添加的知识库标签）。 -->
+      <slot name="attachments" />
+
       <textarea
         ref="inputRef"
         v-model="prompt"
@@ -555,6 +558,8 @@ defineExpose({ getDraft, setDraft })
               </el-dropdown-menu>
             </template>
           </el-dropdown>
+          <!-- 调用方附加的左侧操作（如“添加知识库”）。 -->
+          <slot name="leading-actions" />
           <span v-if="selectedAgentName" class="composer__agent-reference" aria-label="已选择 AI 同事">
             <span class="composer__agent-avatar" aria-hidden="true"><el-icon><Cpu /></el-icon></span>
             <span class="composer__agent-name">{{ selectedAgentName }}</span>

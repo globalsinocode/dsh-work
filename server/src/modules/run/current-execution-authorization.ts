@@ -32,7 +32,7 @@ export interface RuntimeFileRecheckPort {
 
 type AuthorizationPort = Pick<PostgresAuthorizationService,
   'workspaceTypeOf' | 'authorizeRuntime' | 'authorizeTeamRunExecution' | 'requireAdminReader' | 'requirePlatformAdmin' | 'requireActiveAgentPrincipal' | 'assertAgentPrincipalSnapshot'>
-  & Partial<Pick<PostgresAuthorizationService, 'assertAgentRoutineRun'>>
+  & Partial<Pick<PostgresAuthorizationService, 'assertAgentRoutineRun' | 'sessionSelectedSkillReference' | 'installedSkillReferences'>>
 
 type ExecutionBindingAuthorizationPort = Partial<Pick<PostgresToolConnectorService,
   'assertActiveToolBindings' | 'assertActiveMcpConnections'>>
@@ -100,11 +100,18 @@ export async function assertCurrentExecutionAuthorization(
           dataScopes: manifest.delegation_context.data_scope_ceiling,
         }
       : undefined
+    // Manifest 不区分员工选择的 Skill 与 Agent 固定引用；按会话记录取选择的根 Skill 复核可见范围。
+    if (manifest.session_id && !authorization.sessionSelectedSkillReference) throw new AuthorizationCheckUnavailableError()
+    const selectedSkillReference = manifest.session_id
+      ? await authorization.sessionSelectedSkillReference!(manifest.session_id)
+      : null
     const input = {
       userId: manifest.user_context.user_id,
       workspaceId: manifest.workspace_id,
       agentVersionId: manifest.agent_version_id,
-      additionalSkillReferences: installedSkillReferences(manifest.skills),
+      // 未接线内置 Skill 注册表时不认任何内置 Skill：全部按附加 Skill 复核（fail-closed）。
+      additionalSkillReferences: authorization.installedSkillReferences?.(manifest.skills) ?? installedSkillReferences(manifest.skills),
+      selectedSkillReference,
       ...(delegationCeiling ? { scopeCeiling: delegationCeiling } : {}),
     }
     const current = type === 'team'

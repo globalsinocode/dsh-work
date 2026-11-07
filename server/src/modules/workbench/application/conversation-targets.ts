@@ -106,9 +106,31 @@ export interface ConversationTargetStore {
 
 export const previewLength = 120
 
+/** 预览是单行纯文本：去掉 Markdown 标记（标题、列表、引用、表格、强调、行内代码、链接）再压缩空白并截断。 */
 export function previewText(content: string) {
-  const text = content.replace(/\s+/g, ' ').trim()
+  const text = markdownToPlainText(content).replace(/\s+/g, ' ').trim()
   return text.length > previewLength ? `${text.slice(0, previewLength - 1)}…` : text
+}
+
+function markdownToPlainText(content: string) {
+  return content.split(/\r?\n/).flatMap(line => {
+    if (/^\s*(```|~~~)/.test(line)) return []
+    if (/^\s*([-*_])(\s*\1){2,}\s*$/.test(line)) return []
+    if (/^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)*\|?\s*$/.test(line)) return []
+    const stripped = line
+      .replace(/^\s*>+\s?/, '')
+      .replace(/^\s*#{1,6}\s+/, '')
+      .replace(/^\s*(?:[-*+]|\d+[.)])\s+(?:\[[ xX]\]\s+)?/, '')
+      .replace(/^\s*\|(.*)\|\s*$/, '$1')
+      .replace(/\s*\|\s*/g, ' ')
+    return [stripped]
+  }).join('\n')
+    .replace(/!\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
+    .replace(/`+([^`]+)`+/g, '$1')
+    .replace(/(\*\*|__)(?=\S)([\s\S]*?\S)\1/g, '$2')
+    .replace(/~~(?=\S)([\s\S]*?\S)~~/g, '$1')
+    .replace(/(^|[^\w*])\*(?=\S)([^*\n]*?\S)\*(?![\w*])/g, '$1$2')
 }
 
 export function parseTargetLimit(raw: string | null, fallback: number): number {

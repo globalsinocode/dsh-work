@@ -936,6 +936,9 @@ test('任务对话：带回本页各次执行登记的成果（按 runId），�
   ])
   assert.equal(artifacts[0]!.fileId, `file-${ws.id}-weekly`)
   assert.equal((await api('GET', `${base}/sessions/${running.sessionId}`, { as: ws.outsider })).status, 403)
+  // 不是任务对话的会话不查成果：讨论线程恒为空数组。
+  const discussionThread = await api('GET', `${base}/sessions/${discussionId}`, { as: ws.other })
+  assert.deepEqual((discussionThread.body.data as { artifacts: unknown[] }).artifacts, [])
   // 任务对话展开执行步骤时读取 Run 详情：只读成员同样可读。
   assert.equal((await api('GET', `${base}/runs/${running.latestRunId}`, { as: ws.viewer })).status, 200)
 })

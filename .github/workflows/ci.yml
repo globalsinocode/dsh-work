@@ -154,6 +154,9 @@ jobs:
       - name: Run login options and independent accounts P1 browser journeys
         run: pnpm test:e2e:login-options
 
+      - name: Run DingTalk P1 browser journeys (fake DingTalk Open Platform, not a real DingTalk acceptance)
+        run: pnpm test:e2e:dingtalk
+
       - name: Run personal workbench P1 browser journeys
         run: pnpm test:e2e:personal
 
@@ -162,6 +165,9 @@ jobs:
 
       - name: Run MCP administration P1 browser journey
         run: pnpm test:e2e:mcp-admin
+
+      - name: Run Skill submission review P1 browser journey
+        run: pnpm test:e2e:skill-review
 
       - name: Run automation P1 browser journeys
         run: pnpm test:e2e:automation

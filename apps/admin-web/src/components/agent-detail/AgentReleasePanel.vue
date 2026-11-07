@@ -335,6 +335,14 @@ watch(() => props.active, (isActive) => {
   if (isActive) void loadAll()
   else stopPolling()
 })
+/** 企业知识库（weknora-knowledge-plan 2.1）：一期验证运行不检索企业知识，启用时提示，只提示不阻断。 */
+const knowledgeEnabled = ref(false)
+onMounted(() => {
+  void adminApi.getKnowledgeOverview()
+    .then(result => { knowledgeEnabled.value = result.connection.enabled })
+    .catch(() => { knowledgeEnabled.value = false })
+})
+
 onMounted(loadAll)
 /** 岗位权限在抽屉中修改后，由父组件触发重新读取摘要与验证前检查。 */
 defineExpose({ reload: loadAll })
@@ -392,6 +400,15 @@ onBeforeUnmount(stopPolling)
             </li>
           </ul>
           <el-alert v-if="overview.usesMcp" class="section-alert" type="info" :closable="false" show-icon title="验证运行不调用 MCP 连接器" description="MCP 的上游权限由连接器凭据决定；发布时会复核连接范围，正式运行才会调用。" />
+          <el-alert
+            v-if="knowledgeEnabled"
+            class="section-alert"
+            type="info"
+            :closable="false"
+            show-icon
+            title="验证不覆盖企业知识"
+            description="验证运行不检索企业知识库。员工在对话中添加知识库后，回答会引用知识库内容，这部分效果需要在员工端实际对话中确认。"
+          />
         </section>
 
         <section v-if="working" class="content-panel validation-card" aria-label="验证案例">

@@ -276,7 +276,8 @@ provide(projectTaskDetailKey, {
     if (detailTask.value) openComplete(detailTask.value)
   },
   refresh: () => refresh(),
-  completeInMenu: Boolean(props.collab),
+  // getter：切换工作/协作模式而面板不重挂载时，对话里的“标记完成”随之出现或收起。
+  get completeInMenu() { return Boolean(props.collab) },
 })
 
 // 任务线程里续接、重试会切换到新的 Run：任务状态随之变化，重新读取。
@@ -721,7 +722,12 @@ defineExpose({ reload: load })
             </el-button>
             <!-- 协作模式（D37）：编辑、标记完成 / 重新打开、移除收进一个菜单，任务信息只做展示。 -->
             <el-dropdown v-if="collab && detailMenuItems.length" trigger="click" @command="onDetailCommand">
-              <el-button data-testid="project-task-more" aria-label="更多任务操作" :icon="MoreFilled" />
+              <el-button
+                data-testid="project-task-more"
+                aria-label="更多任务操作"
+                :icon="MoreFilled"
+                :loading="busyTaskId === detailTask.id"
+              />
               <template #dropdown>
                 <el-dropdown-menu>
                   <el-dropdown-item
@@ -818,20 +824,19 @@ defineExpose({ reload: load })
                 <dt>最近执行</dt>
                 <dd :class="{ 'project-task-info__empty': !detailTask.latestRunStatus }" data-testid="project-task-latest-run">
                   <!-- “最近执行”进入该次执行详情（取代标题栏的“执行详情”按钮，D37）。 -->
-                  <RouterLink
-                    v-if="detailTask.latestRunStatus && detailTask.latestRunId"
-                    class="project-task-info__run-link"
-                    data-testid="project-task-latest-run-link"
-                    :to="latestRunPath(detailTask)"
-                    title="查看这次执行的详情"
+                  <component
+                    :is="detailTask.latestRunId ? RouterLink : 'span'"
+                    v-if="detailTask.latestRunStatus"
+                    v-bind="detailTask.latestRunId ? {
+                      class: 'project-task-info__run-link',
+                      'data-testid': 'project-task-latest-run-link',
+                      to: latestRunPath(detailTask),
+                      title: '查看这次执行的详情',
+                    } : {}"
                   >
                     <span class="project-task__run-dot" :class="`project-task__run-dot--${runOutcomeTone(detailTask.latestRunStatus)}`" aria-hidden="true"></span>
                     {{ runOutcomeLabel(detailTask.latestRunStatus) }} · {{ formatRunMoment(detailTask.latestRunAt) }}
-                  </RouterLink>
-                  <template v-else-if="detailTask.latestRunStatus">
-                    <span class="project-task__run-dot" :class="`project-task__run-dot--${runOutcomeTone(detailTask.latestRunStatus)}`" aria-hidden="true"></span>
-                    {{ runOutcomeLabel(detailTask.latestRunStatus) }} · {{ formatRunMoment(detailTask.latestRunAt) }}
-                  </template>
+                  </component>
                   <template v-else>尚未执行</template>
                 </dd>
               </template>

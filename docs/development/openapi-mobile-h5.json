@@ -3,7 +3,7 @@
   "info": {
     "title": "dsh-work 移动端 H5 API",
     "version": "0.6.0-m6",
-    "description": "面向移动端 H5 客户端的 Workbench API 子集契约：只收录移动端实际调用的端点，字段与 `apps/workbench-web` 消费的类型及 `server` 路由实现保持一致。完整工作台端点清单见 `openapi-workbench.json`；事件载荷结构见 `run-event.schema.json`。\n\n认证：AI Hub OIDC 登录后由 dsh-work 签发 HttpOnly Cookie `dsh_work_session`（SameSite=Lax, Path=/），浏览器同源自动携带，无需任何请求头；会话失效返回 401（error.code=`authentication_required`）。\n\n包络：成功 `{ data, meta }`，业务数据只读 `data`；失败 `{ error: { code, message, object?, suggestion?, traceId? } }`。\n\n边界：所有 Agent 交互必须经 Run/Attempt 链路发起，禁止直连模型 API；管理端 API（/api/admin/v1）不属于移动端范围。"
+    "description": "面向移动端 H5 客户端的 Workbench API 子集契约：只收录移动端实际调用的端点，字段与 `apps/workbench-web` 消费的类型及 `server` 路由实现保持一致。完整工作台端点清单见 `openapi-workbench.json`；事件载荷结构见 `run-event.schema.json`。\n\n认证：独立账号密码登录（`POST /auth/workbench/login`，见 `openapi-auth.json`）后由 dsh-work 签发 HttpOnly Cookie `dsh_work_local_session`（SameSite=Lax, Path=/），浏览器同源自动携带，无需任何请求头；会话失效返回 401（error.code=`authentication_required`）。员工端在钉钉客户端内运行时另可用钉钉免登（`POST /auth/workbench/dingtalk/login`、`POST /auth/workbench/dingtalk/bind-login`，会话来源 `dingtalk`、同一 Cookie），说明见移动端接入规范 §9。移动端不集成 AI Hub OIDC。\n\n包络：成功 `{ data, meta }`，业务数据只读 `data`；失败 `{ error: { code, message, object?, suggestion?, traceId? } }`。\n\n边界：所有 Agent 交互必须经 Run/Attempt 链路发起，禁止直连模型 API；管理端 API（/api/admin/v1）不属于移动端范围。"
   },
   "servers": [
     {

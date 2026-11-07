@@ -57,7 +57,7 @@ export interface BuiltinSkillExclusion {
   coveredBy?: string
 }
 
-/** 本次运行中由 Agent 固定或会话选择的 Skill（不含依赖），用于判断覆盖。 */
+/** 本次运行装配的 Skill（含依赖）：同名即覆盖；按场景覆盖只看 scenarios，依赖 Skill 的为空。 */
 export interface CoveringSkill {
   reference: string
   name: string
@@ -97,10 +97,17 @@ export interface BuiltinSkillStatus {
 
 export class BuiltinSkillCatalog {
   readonly skills: readonly BuiltinSkill[]
+  /** versions.lock.json 登记过的版本：已固定在 Manifest 中的旧版本在升级后仍可识别。 */
+  private readonly lockedVersions: ReadonlyMap<string, ReadonlySet<string>>
 
-  constructor(skills: readonly BuiltinSkill[]) {
+  constructor(skills: readonly BuiltinSkill[], lockedVersions: ReadonlyMap<string, ReadonlySet<string>> = new Map()) {
     this.skills = skills
+    this.lockedVersions = lockedVersions
   }
+
+  /** 注册表中的内置 Skill，且版本为当前版本或版本锁登记过的版本。 */
+  readonly isKnown = (id: string, version: string): boolean =>
+    this.get(id)?.version === version || Boolean(this.lockedVersions.get(id)?.has(version))
 
   get(id: string): BuiltinSkill | undefined {
     return this.skills.find(skill => skill.id === id)
@@ -173,7 +180,8 @@ export class BuiltinSkillCatalog {
 /** 启动时加载：任何内置 Skill 不合法都抛错，由调用方让服务启动失败。 */
 export function loadBuiltinSkillCatalog(root: string): BuiltinSkillCatalog {
   const lock = readLock(join(root, 'versions.lock.json'))
-  return new BuiltinSkillCatalog(definitions.map(definition => loadBuiltinSkill(root, definition, lock)))
+  const lockedVersions = new Map(definitions.map(({ id }) => [id, new Set(Object.keys(lock[id] ?? {}))]))
+  return new BuiltinSkillCatalog(definitions.map(definition => loadBuiltinSkill(root, definition, lock)), lockedVersions)
 }
 
 /** 与 versions.lock.json 一致：按 LF 文本计算摘要。 */

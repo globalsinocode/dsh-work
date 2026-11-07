@@ -149,11 +149,13 @@ onMounted(() => {
   <div class="ops-page audit-page">
     <el-alert v-if="eventsError || contentStore.error" :title="eventsError || contentStore.error" type="error" show-icon @close="eventsError = ''; contentStore.error = ''" />
 
-    <section v-loading="contentStore.loading" class="metric-grid audit-metrics">
-      <article class="metric-card"><div class="metric-label">近 24 小时运行</div><div class="metric-value">{{ summary?.runs24h ?? 0 }}</div><div class="metric-detail">成功 {{ summary?.successfulRuns24h ?? 0 }} · 失败 {{ summary?.failedRuns24h ?? 0 }}</div></article>
-      <article class="metric-card"><div class="metric-label">模型 Token</div><div class="metric-value">{{ (summary?.modelTokens24h ?? 0).toLocaleString() }}</div><div class="metric-detail">仅记录用量，不记录提示词正文</div></article>
-      <article class="metric-card"><div class="metric-label">工具与成果</div><div class="metric-value">{{ (summary?.toolCalls24h ?? 0) + (summary?.artifacts24h ?? 0) }}</div><div class="metric-detail">工具 {{ summary?.toolCalls24h ?? 0 }} · 成果 {{ summary?.artifacts24h ?? 0 }}</div></article>
-      <article class="metric-card"><div class="metric-label">需关注事件</div><div class="metric-value is-attention">{{ summary?.attentionEvents24h ?? 0 }}</div><div class="metric-detail">失败与已阻止事件</div></article>
+    <section v-loading="contentStore.loading" class="content-panel overview-strip" aria-label="近 24 小时概况">
+      <dl class="overview-strip__stats">
+        <div class="overview-stat"><dt>近 24 小时运行</dt><dd><strong class="overview-stat__value">{{ summary?.runs24h ?? 0 }}</strong><small>成功 {{ summary?.successfulRuns24h ?? 0 }} · 失败 {{ summary?.failedRuns24h ?? 0 }}</small></dd></div>
+        <div class="overview-stat"><dt>模型 Token</dt><dd><strong class="overview-stat__value">{{ (summary?.modelTokens24h ?? 0).toLocaleString() }}</strong><small>仅记录用量，不记录提示词正文</small></dd></div>
+        <div class="overview-stat"><dt>工具与成果</dt><dd><strong class="overview-stat__value">{{ (summary?.toolCalls24h ?? 0) + (summary?.artifacts24h ?? 0) }}</strong><small>工具 {{ summary?.toolCalls24h ?? 0 }} · 成果 {{ summary?.artifacts24h ?? 0 }}</small></dd></div>
+        <div class="overview-stat" :class="{ 'overview-stat--danger': (summary?.attentionEvents24h ?? 0) > 0 }"><dt>需关注事件</dt><dd><strong class="overview-stat__value">{{ summary?.attentionEvents24h ?? 0 }}</strong><small>失败与已阻止事件</small></dd></div>
+      </dl>
     </section>
 
     <section class="content-panel filter-panel">
@@ -220,8 +222,6 @@ onMounted(() => {
 .audit-panel code { color: var(--color-text-secondary); font-size: var(--font-size-badge); }
 .audit-footer { margin: 0; padding: 14px 16px; }
 .audit-footer span { color: var(--color-text-muted); font-size: var(--font-size-badge); }
-.audit-metrics { grid-template-columns: repeat(4, minmax(0, 1fr)); }
-.metric-value.is-attention { color: var(--color-danger-strong); }
 .audit-detail__hero { display: grid; grid-template-columns: 10px minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: var(--spacing-card); border-radius: var(--radius-card); background: var(--color-bg-subtle); }
 .audit-detail__hero > span { width: 8px; height: 36px; border-radius: 4px; background: var(--color-success); }
 .audit-detail__hero > span.is-failed { background: var(--color-danger); }
@@ -242,6 +242,5 @@ onMounted(() => {
 .related-events article div { display: flex; min-width: 0; flex-direction: column; gap: 4px; }
 .related-events strong { color: var(--color-text-heading); font-size: var(--font-size-caption); }
 .related-events small { color: var(--color-text-muted); font-size: var(--font-size-badge); }
-@media (max-width: 1080px) { .audit-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-@media (max-width: 760px) { .filter-bar, .filter-bar .el-input, .filter-bar .el-select { width: 100%; } .audit-metrics { grid-template-columns: 1fr; } }
+@media (max-width: 760px) { .filter-bar, .filter-bar .el-input, .filter-bar .el-select { width: 100%; } }
 </style>

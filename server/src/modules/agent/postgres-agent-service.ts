@@ -65,7 +65,10 @@ interface AgentRow {
   timeoutSeconds: number
   skills: string[]
   tools: string[]
+  webSearchEnabled: boolean
+  projectTasksEnabled: boolean
   agentRecommendationEnabled: boolean
+  skillCreationEnabled: boolean
   mcpScope: AgentMcpScope
   delegationPolicy: AgentDelegationPolicy
   updatedAt: Date
@@ -82,7 +85,10 @@ export type AgentFingerprintSource = Omit<Pick<AgentRow,
   | 'examplePrompts'
   | 'skills'
   | 'tools'
+  | 'webSearchEnabled'
+  | 'projectTasksEnabled'
   | 'agentRecommendationEnabled'
+  | 'skillCreationEnabled'
   | 'mcpScope'
   | 'delegationPolicy'
   | 'maxOutputBytes'
@@ -113,7 +119,10 @@ interface VersionRow {
   maxOutputBytes: number
   maxToolCalls: number
   timeoutSeconds: number
+  webSearchEnabled: boolean
+  projectTasksEnabled: boolean
   agentRecommendationEnabled: boolean
+  skillCreationEnabled: boolean
   skills: string[]
   tools: string[]
   mcpScope: AgentMcpScope
@@ -130,6 +139,8 @@ export interface WorkbenchAgentDefinition {
   description: string
   welcomeMessage: string
   examplePrompts: string[]
+  /** 当前启用版本开启了“可创建 Skill”：Skill 广场的“创建 Skill”入口据此找到 Skill 创建专家（方案 4.8）。 */
+  canCreateSkills: boolean
 }
 
 export interface WorkspaceAgentCandidate {
@@ -169,12 +180,16 @@ export interface RuntimeAgentSnapshot {
   skills: string[]
   skillInstructions: RuntimeSkillConfiguration[]
   tools: string[]
-  /** Agent 固定与会话选择的 Skill（不含依赖）及其“覆盖内置场景”，派发时据此去掉被覆盖的平台内置 Skill。 */
+  /** 本次全部 Skill（含依赖）及其“覆盖内置场景”（只有 Agent 固定与会话选择的 Skill 有），派发时据此去掉被覆盖或同名的平台内置 Skill。 */
   coveringSkills: CoveringSkill[]
+  /** Agent 固定引用、但执行镜像缺少其 Python 依赖而本次不装配的 Skill（2026-11-04 依赖登记）。 */
+  unavailableSkills?: Array<{ reference: string; name: string; missing: string[] }>
   /** 本 Agent 装配的内置工具（注册表默认工具、开启的联网搜索、平台工具），形如 name@version。 */
   runtimeTools: string[]
   /** B-03/I-04：发布版本固定绑定 + 当前语义解析出的 active 工具绑定修订。 */
   toolBindings: ResolvedToolBinding[]
+  /** Agent 版本是否可创建 Skill；实际工具由派发时按运行场景装配。 */
+  skillCreationEnabled: boolean
   /** PF-03 currently usable tenant MCP Connectors, fixed in the Attempt snapshot. */
   mcpConnections: McpConnectionSnapshot[]
   approvalMode: 'always' | 'risk_based' | 'never'
@@ -342,9 +357,11 @@ export class PostgresAgentService {
              av.system_prompt as "systemPrompt", av.max_output_bytes as "maxOutputBytes",
              av.max_tool_calls as "maxToolCalls",
              av.timeout_seconds as "timeoutSeconds", av.skill_refs as skills, av.tool_refs as tools,
+             av.web_search_enabled as "webSearchEnabled", av.project_tasks_enabled as "projectTasksEnabled",
              av.binding_refs as "bindingRefs", av.delegation_policy as "delegationPolicy",
              av.mcp_scope as "mcpScope",
              av.agent_recommendation_enabled as "agentRecommendationEnabled",
+             av.skill_creation_enabled as "skillCreationEnabled",
              av.agent_spec as "agentSpec"
         from agent_versions av
         join users creator on creator.tenant_id = av.tenant_id and creator.id = av.created_by
@@ -413,7 +430,7 @@ export class PostgresAgentService {
             id, tenant_id, agent_id, version, name, description, welcome_message,
             example_prompts, system_prompt, visible_role_ids, data_scopes, max_output_bytes,
             max_tool_calls, timeout_seconds, skill_refs, tool_refs, web_search_enabled, project_tasks_enabled,
-            agent_recommendation_enabled, mcp_scope, delegation_policy, agent_spec, status, created_by, change_summary
+            agent_recommendation_enabled, skill_creation_enabled, mcp_scope, delegation_policy, agent_spec, status, created_by, change_summary
           ) values (
             ${versionId}, ${tenantId}, ${configuration.id}, ${version}, ${configuration.name},
             ${configuration.description}, ${configuration.welcomeMessage}, ${transaction.json(configuration.examplePrompts)},
@@ -421,7 +438,7 @@ export class PostgresAgentService {
             ${transaction.json(configuration.dataScopes)}, ${configuration.maxOutputBytes},
             ${configuration.maxToolCalls}, ${configuration.timeoutSeconds}, ${transaction.json(configuration.skills)},
             ${transaction.json(effectiveTools)}, ${configuration.webSearchEnabled}, ${configuration.projectTasksEnabled},
-            ${configuration.agentRecommendationEnabled},
+            ${configuration.agentRecommendationEnabled}, ${configuration.skillCreationEnabled},
             ${transaction.json(asJson(configuration.mcpScope))},
             ${transaction.json(asJson(configuration.delegationPolicy))},
             ${transaction.json(asJson(spec))}, 'draft', ${actor.id}, ${configuration.changeSummary}
@@ -509,6 +526,10 @@ export class PostgresAgentService {
         // 管理端编辑器不再携带工具选择：省略时沿用版本上已有的 tool_refs，
         // 避免一次与工具无关的保存把历史 Agent 的工具引用清空。
         tools: input.tools ?? current.tools,
+        webSearchEnabled: input.webSearchEnabled ?? current.webSearchEnabled,
+        projectTasksEnabled: input.projectTasksEnabled ?? current.projectTasksEnabled,
+        agentRecommendationEnabled: input.agentRecommendationEnabled ?? current.agentRecommendationEnabled,
+        skillCreationEnabled: input.skillCreationEnabled ?? current.skillCreationEnabled,
       },
       current.owner,
       current.department,
@@ -546,6 +567,7 @@ export class PostgresAgentService {
                  web_search_enabled = ${configuration.webSearchEnabled},
                  project_tasks_enabled = ${configuration.projectTasksEnabled},
                  agent_recommendation_enabled = ${configuration.agentRecommendationEnabled},
+                 skill_creation_enabled = ${configuration.skillCreationEnabled},
                  mcp_scope = ${transaction.json(asJson(configuration.mcpScope))},
                  delegation_policy = ${transaction.json(asJson(configuration.delegationPolicy))},
                  agent_spec = ${transaction.json(asJson(agentSpecFromConfiguration(configuration, locked.version, locked.agentSpec)))},
@@ -570,7 +592,7 @@ export class PostgresAgentService {
             id, tenant_id, agent_id, version, name, description, welcome_message,
             example_prompts, system_prompt, visible_role_ids, data_scopes, max_output_bytes,
             max_tool_calls, timeout_seconds, skill_refs, tool_refs, web_search_enabled, project_tasks_enabled,
-            agent_recommendation_enabled, mcp_scope, delegation_policy, agent_spec, status, created_by, source_version, change_summary
+            agent_recommendation_enabled, skill_creation_enabled, mcp_scope, delegation_policy, agent_spec, status, created_by, source_version, change_summary
           ) values (
             ${draftVersionId}, ${tenantId}, ${input.agentId}, ${newVersion},
             ${configuration.name}, ${configuration.description}, ${configuration.welcomeMessage},
@@ -579,7 +601,7 @@ export class PostgresAgentService {
             ${configuration.maxOutputBytes}, ${configuration.maxToolCalls}, ${configuration.timeoutSeconds},
             ${transaction.json(configuration.skills)}, ${transaction.json(effectiveTools)},
             ${configuration.webSearchEnabled}, ${configuration.projectTasksEnabled},
-            ${configuration.agentRecommendationEnabled},
+            ${configuration.agentRecommendationEnabled}, ${configuration.skillCreationEnabled},
             ${transaction.json(asJson(configuration.mcpScope))},
             ${transaction.json(asJson(configuration.delegationPolicy))},
             ${transaction.json(asJson(agentSpecFromConfiguration(configuration, newVersion, locked.agentSpec)))},
@@ -678,7 +700,9 @@ export class PostgresAgentService {
              av.system_prompt as "systemPrompt", av.max_output_bytes as "maxOutputBytes",
              av.max_tool_calls as "maxToolCalls",
              av.timeout_seconds as "timeoutSeconds", av.skill_refs as skills, av.tool_refs as tools,
+             av.web_search_enabled as "webSearchEnabled", av.project_tasks_enabled as "projectTasksEnabled",
              av.agent_recommendation_enabled as "agentRecommendationEnabled",
+             av.skill_creation_enabled as "skillCreationEnabled",
              av.binding_refs as "bindingRefs", av.delegation_policy as "delegationPolicy"
         from agent_versions av
         join users creator on creator.tenant_id = av.tenant_id and creator.id = av.created_by
@@ -823,7 +847,8 @@ export class PostgresAgentService {
       publishedAt: Date | null
     })[]>`
       select a.id, av.id as "versionId", av.name, av.description, av.welcome_message as "welcomeMessage",
-             av.version, av.example_prompts as "examplePrompts", av.published_at as "publishedAt"
+             av.version, av.example_prompts as "examplePrompts", av.published_at as "publishedAt",
+             av.skill_creation_enabled as "canCreateSkills"
         from agents a
         join agent_versions av on av.tenant_id = a.tenant_id and av.id = a.active_version_id
         join execution_principals ep on ep.tenant_id = a.tenant_id and ep.agent_id = a.id
@@ -1043,6 +1068,7 @@ export class PostgresAgentService {
              av.name, av.description, av.welcome_message as "welcomeMessage",
              av.example_prompts as "examplePrompts", av.mcp_scope as "mcpScope",
              av.agent_recommendation_enabled as "agentRecommendationEnabled",
+             av.skill_creation_enabled as "skillCreationEnabled",
              av.system_prompt as "systemPrompt", av.skill_refs as skills,
              av.tool_refs as tools, av.visible_role_ids as "roleIds", av.data_scopes as "dataScopes",
              av.max_output_bytes as "maxOutputBytes", av.max_tool_calls as "maxToolCalls",
@@ -1071,8 +1097,15 @@ export class PostgresAgentService {
     if (principal.status !== 'active') throw authorizationDenied('Agent 执行身份已停用')
     const executionScopes = row.dataScopes.filter(scope => principal.dataScopes.includes(scope))
     await this.assertCapabilityReferences(skills, row.tools, principal.roleIds, executionScopes)
+    // 依赖登记（2026-11-04）：执行镜像缺少 Python 依赖时，Agent 固定引用的 Skill 本次不装配并告知模型，
+    // 其余照常运行；员工在会话中直接选用的 Skill 缺依赖时拒绝本次运行。
+    const unavailableSkills: Array<{ reference: string; name: string; missing: string[] }> = []
+    const { pinnedOnly, selected } = splitSkillReferences(skills, additionalSkillReferences)
     const skillInstructions = this.skillService
-      ? await this.skillService.resolveRuntimeSkills(skills)
+      ? uniqueSkills([
+          ...await this.skillService.resolveRuntimeSkills(pinnedOnly, { dependencyGaps: 'omit', omitted: unavailableSkills }),
+          ...await this.skillService.resolveRuntimeSkills(selected),
+        ])
       : []
     const executionTools = skillInstructions.flatMap(skill => skill.tools)
       .filter(reference => DSH_WORK_EXECUTION_TOOL_REFS.has(reference))
@@ -1120,17 +1153,18 @@ export class PostgresAgentService {
       : skills
     const rootIds = new Set(skills.map(reference => reference.slice(0, reference.lastIndexOf('@'))))
     const covered = this.skillService ? await this.skillService.readCoveredBuiltinScenarios([...rootIds]) : new Map<string, string[]>()
-    const coveringSkills: CoveringSkill[] = skillInstructions.filter(skill => rootIds.has(skill.id)).map(skill => ({
+    // 依赖 Skill 也参与同名判断（避免 Manifest 目录重名），但只有 Agent 固定与会话选择的 Skill 能按场景覆盖。
+    const coveringSkills: CoveringSkill[] = skillInstructions.map(skill => ({
       reference: `${skill.id}@${skill.version}`,
       name: skill.name ?? skill.id,
-      scenarios: covered.get(skill.id) ?? [],
+      scenarios: rootIds.has(skill.id) ? covered.get(skill.id) ?? [] : [],
       modelInvocable: !skill.disableModelInvocation,
     }))
     const systemPrompt = row.agentSpec
       ? assembleAgentInstructions(row.agentSpec)
       : row.systemPrompt
     const { agentId: _agentId, agentSpec: _agentSpec, bindingRefs: _bindingRefs, versionStatus: _versionStatus, ...snapshot } = row
-    return { ...snapshot, systemPrompt, skills: runtimeSkills, tools, skillInstructions, coveringSkills, runtimeTools, toolBindings, mcpConnections, approvalMode }
+    return { ...snapshot, systemPrompt, skills: runtimeSkills, tools, skillInstructions, coveringSkills, unavailableSkills, runtimeTools, toolBindings, mcpConnections, approvalMode }
   }
 
   /**
@@ -1267,8 +1301,11 @@ export class PostgresAgentService {
              a.allow_workspace_join as "allowWorkspaceJoin",
              av.max_output_bytes as "maxOutputBytes", av.max_tool_calls as "maxToolCalls",
              av.timeout_seconds as "timeoutSeconds",
-             av.skill_refs as skills, av.tool_refs as tools, av.mcp_scope as "mcpScope",
+             av.skill_refs as skills, av.tool_refs as tools,
+             av.web_search_enabled as "webSearchEnabled",
+             av.project_tasks_enabled as "projectTasksEnabled", av.mcp_scope as "mcpScope",
              av.agent_recommendation_enabled as "agentRecommendationEnabled",
+             av.skill_creation_enabled as "skillCreationEnabled",
              av.delegation_policy as "delegationPolicy",
              av.agent_spec as "agentSpec", a.updated_at as "updatedAt"
         from agents a
@@ -1294,8 +1331,11 @@ export class PostgresAgentService {
              a.allow_workspace_join as "allowWorkspaceJoin",
              av.max_output_bytes as "maxOutputBytes", av.max_tool_calls as "maxToolCalls",
              av.timeout_seconds as "timeoutSeconds",
-             av.skill_refs as skills, av.tool_refs as tools, av.mcp_scope as "mcpScope",
+             av.skill_refs as skills, av.tool_refs as tools,
+             av.web_search_enabled as "webSearchEnabled",
+             av.project_tasks_enabled as "projectTasksEnabled", av.mcp_scope as "mcpScope",
              av.agent_recommendation_enabled as "agentRecommendationEnabled",
+             av.skill_creation_enabled as "skillCreationEnabled",
              av.delegation_policy as "delegationPolicy",
              av.agent_spec as "agentSpec", a.updated_at as "updatedAt"
         from agents a
@@ -1368,6 +1408,8 @@ type NormalizedAgentDraftConfiguration = AgentDraftConfiguration & {
   tools: string[]
   webSearchEnabled: boolean
   projectTasksEnabled: boolean
+  agentRecommendationEnabled: boolean
+  skillCreationEnabled: boolean
 }
 
 function normalizeConfiguration(
@@ -1395,6 +1437,7 @@ function normalizeConfiguration(
     webSearchEnabled: input.webSearchEnabled ?? false,
     projectTasksEnabled: input.projectTasksEnabled ?? false,
     agentRecommendationEnabled: input.agentRecommendationEnabled === true,
+    skillCreationEnabled: input.skillCreationEnabled === true,
     mcpScope: normalizeAgentMcpScope(input.mcpScope),
     delegationPolicy: normalizeDelegationPolicy(input.delegationPolicy),
     changeSummary: input.changeSummary.trim() || '更新 Agent 配置',
@@ -1440,9 +1483,10 @@ function toAgentDefinition(row: AgentRow): AgentDefinition {
     timeoutSeconds: row.timeoutSeconds,
     skills: row.skills,
     tools: row.agentSpec?.capabilities.tools ?? row.tools,
-    webSearchEnabled: row.agentSpec?.capabilities.webSearch ?? false,
-    projectTasksEnabled: row.agentSpec?.capabilities.projectTasks ?? false,
+    webSearchEnabled: row.agentSpec?.capabilities.webSearch ?? row.webSearchEnabled ?? false,
+    projectTasksEnabled: row.agentSpec?.capabilities.projectTasks ?? row.projectTasksEnabled ?? false,
     agentRecommendationEnabled: row.agentRecommendationEnabled === true,
+    skillCreationEnabled: row.skillCreationEnabled === true,
     mcpScope: normalizeAgentMcpScope(row.mcpScope),
     delegationPolicy: row.delegationPolicy,
     updatedAt: formatDateTime(row.updatedAt),
@@ -1474,9 +1518,10 @@ function toVersionRecord(row: VersionRow): AgentVersionRecord {
     timeoutSeconds: row.timeoutSeconds,
     skills: row.skills,
     tools: row.tools,
-    webSearchEnabled: row.agentSpec?.capabilities.webSearch ?? false,
-    projectTasksEnabled: row.agentSpec?.capabilities.projectTasks ?? false,
+    webSearchEnabled: row.agentSpec?.capabilities.webSearch ?? row.webSearchEnabled ?? false,
+    projectTasksEnabled: row.agentSpec?.capabilities.projectTasks ?? row.projectTasksEnabled ?? false,
     agentRecommendationEnabled: row.agentRecommendationEnabled === true,
+    skillCreationEnabled: row.skillCreationEnabled === true,
     mcpScope: normalizeAgentMcpScope(row.mcpScope),
     delegationPolicy: row.delegationPolicy,
     ...(row.bindingRefs?.length ? { bindingRefs: row.bindingRefs } : {}),
@@ -1499,6 +1544,8 @@ export function configurationFingerprint(row: AgentFingerprintSource) {
     examplePrompts: [...row.examplePrompts],
     skills: [...row.skills].sort(),
     tools: [...row.tools].sort(),
+    webSearchEnabled: row.webSearchEnabled,
+    projectTasksEnabled: row.projectTasksEnabled,
     mcpScope: normalizeAgentMcpScope(row.mcpScope),
     delegationPolicy: {
       allowedAgentVersionIds: [...delegationPolicy.allowedAgentVersionIds].sort(),
@@ -1509,8 +1556,9 @@ export function configurationFingerprint(row: AgentFingerprintSource) {
     maxOutputBytes: row.maxOutputBytes,
     maxToolCalls: row.maxToolCalls,
     timeoutSeconds: row.timeoutSeconds,
-    // 推荐开关晚于既有证据加入：关闭时不进入指纹，升级不作废已有验证结果。
+    // 推荐与 Skill 创建开关晚于既有证据加入：关闭时不进入指纹，升级不作废已有验证结果。
     ...(row.agentRecommendationEnabled ? { agentRecommendationEnabled: true } : {}),
+    ...(row.skillCreationEnabled ? { skillCreationEnabled: true } : {}),
     ...((data?.state || data?.collections?.length) ? { data } : {}),
   })).digest('hex')
 }
@@ -1597,4 +1645,24 @@ function parseReference(reference: string) {
 
 function formatDateTime(value: Date) {
   return value.toISOString().slice(0, 16).replace('T', ' ')
+}
+
+/**
+ * 把合并后的 Skill 引用（同一 Skill 只留一个版本，会话选用优先）分成只由 AI 同事固定的与员工在会话中选用的。
+ * 员工选用的引用即使 AI 同事也固定了，也归入选用。
+ */
+export function splitSkillReferences(merged: string[], additional: string[]) {
+  const chosen = new Set(additional.map(reference => reference.trim()))
+  return { pinnedOnly: merged.filter(reference => !chosen.has(reference)), selected: merged.filter(reference => chosen.has(reference)) }
+}
+
+/** 按 `id@version` 去重，保留首次出现的顺序。 */
+function uniqueSkills<T extends { id: string; version: string }>(skills: T[]): T[] {
+  const seen = new Set<string>()
+  return skills.filter(skill => {
+    const key = `${skill.id}@${skill.version}`
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
 }

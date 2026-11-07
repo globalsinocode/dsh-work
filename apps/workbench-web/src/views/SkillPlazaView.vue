@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { ChatDotRound, MagicStick, Refresh } from '@element-plus/icons-vue'
+import { ChatDotRound, MagicStick, Plus, Refresh } from '@element-plus/icons-vue'
 
+import { useOpenAgentChat } from '@/composables/useOpenRecommendedAgent'
 import { useContentStore } from '@/stores/content'
 import type { WorkbenchSkill } from '@/types/domain'
 
@@ -18,6 +19,17 @@ const categories = computed(() => [
   '全部',
   ...new Set(contentStore.skills.map(skill => skill.category).filter(Boolean)),
 ])
+
+/**
+ * “创建 Skill”入口（Skill 创建专家方案 4.8）：员工可用的 AI 同事中第一个开启“可创建 Skill”的；
+ * 没有时不显示。AI 同事列表读取失败只是不显示入口，不影响 Skill 列表。
+ */
+const skillCreator = computed(() => contentStore.agents.find(agent => agent.canCreateSkills))
+const openAgentChat = useOpenAgentChat()
+
+function createSkill() {
+  if (skillCreator.value) void openAgentChat(skillCreator.value.id)
+}
 
 const visibleSkills = computed(() => contentStore.skills.filter((skill) =>
   activeCategory.value === '全部' || skill.category === activeCategory.value,
@@ -45,24 +57,32 @@ async function loadSkills() {
   }
 }
 
-onMounted(loadSkills)
+onMounted(() => {
+  void loadSkills()
+  void contentStore.refreshAgents().catch(() => undefined)
+})
 </script>
 
 <template>
   <div class="skill-plaza-page">
-    <nav class="skill-category-tabs" aria-label="Skill 分类筛选">
-      <button
-        v-for="category in categories"
-        :key="category"
-        type="button"
-        class="skill-category-tab"
-        :class="{ 'is-active': activeCategory === category }"
-        :aria-current="activeCategory === category ? 'page' : undefined"
-        @click="activeCategory = category"
-      >
-        {{ category }}
-      </button>
-    </nav>
+    <div class="skill-plaza-toolbar">
+      <nav class="skill-category-tabs" aria-label="Skill 分类筛选">
+        <button
+          v-for="category in categories"
+          :key="category"
+          type="button"
+          class="skill-category-tab"
+          :class="{ 'is-active': activeCategory === category }"
+          :aria-current="activeCategory === category ? 'page' : undefined"
+          @click="activeCategory = category"
+        >
+          {{ category }}
+        </button>
+      </nav>
+      <el-button v-if="skillCreator" class="skill-plaza-create" :icon="Plus" data-testid="skill-plaza-create" @click="createSkill">
+        创建 Skill
+      </el-button>
+    </div>
 
     <div v-if="loading" class="skill-card-grid" aria-label="正在加载 Skill">
       <div v-for="index in 6" :key="index" class="skill-card skill-card--skeleton">
@@ -121,7 +141,7 @@ onMounted(loadSkills)
           </div>
           <el-tag size="small" effect="plain">{{ detailSkill.category }}</el-tag>
           <p class="skill-detail__description">{{ detailSkill.description }}</p>
-          <div class="skill-detail__prompt">
+          <div v-if="detailSkill.testPrompt" class="skill-detail__prompt">
             <span>推荐提问</span>
             <p>{{ detailSkill.testPrompt }}</p>
           </div>
@@ -140,11 +160,20 @@ onMounted(loadSkills)
   background: #fff;
 }
 
+.skill-plaza-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 18px;
+}
+
+.skill-plaza-create { flex: 0 0 auto; }
+
 .skill-category-tabs {
   display: flex;
+  min-width: 0;
+  flex: 1 1 auto;
   gap: 4px;
-  width: 100%;
-  margin-bottom: 18px;
   overflow-x: auto;
   scrollbar-width: none;
 }

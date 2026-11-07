@@ -12,6 +12,7 @@ import { projectRunProgress } from '@/utils/run-progress-steps'
  * “已完成 N 个步骤（调用工具 M 次）”与步骤列表。
  */
 const props = defineProps<{ runId: string }>()
+const TERMINAL_STATUSES = ['succeeded', 'failed', 'cancelled']
 
 const run = ref<TaskRun | null>(null)
 const loading = ref(false)
@@ -29,7 +30,9 @@ const label = computed(() => {
 })
 
 async function onToggle(event: Event) {
-  if (!(event.target as HTMLDetailsElement).open || run.value || loading.value) return
+  // 已结束的执行步骤不再变化，读一次即可；仍在进行（或审批后续跑）的每次展开重新读取。
+  if (!(event.target as HTMLDetailsElement).open || loading.value) return
+  if (run.value && TERMINAL_STATUSES.includes(run.value.status)) return
   loading.value = true
   failed.value = false
   try {

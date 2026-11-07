@@ -103,6 +103,16 @@ test('abort stops the mock container before the call settles and a failed remova
   process.env.DSH_PY_SANDBOX_SENTINEL = 'sentinel'
   const user = `${process.getuid?.()}:${process.getgid?.()}`
   const executor = dockerExecutor(image, script)
+  // Mock `run` processes never exit on their own, and a live child keeps this test file (and the
+  // whole runner after it) from finishing, so every run started here is aborted before teardown.
+  const runs: Array<{ controller: AbortController; pending: Promise<unknown> }> = []
+  const start = (entry: string, shouldStop?: () => Promise<boolean>) => {
+    const controller = new AbortController()
+    const pending = sandbox(executor, workspace, entry, controller.signal, shouldStop)
+    runs.push({ controller, pending })
+    return { controller, pending }
+  }
+  const workspace = join(root, 'ws')
   try {
     await executor.preflight()
     const planted = `dsh-py-${'cd'.repeat(8)}`
@@ -113,9 +123,8 @@ test('abort stops the mock container before the call settles and a failed remova
     assert.ok(swept.some(call => call.args[0] === 'rm' && call.args.includes(planted)))
     assert.deepEqual(await readdir(join(root, 'state')).catch(() => []), [])
 
-    const workspace = join(root, 'ws')
     await mkdir(workspace, { recursive: true })
-    const ok = await sandbox(executor, workspace, 'ok.py', new AbortController().signal)
+    const ok = await start('ok.py').pending
     assert.equal(ok.exitCode, 0)
     const runCall = (await readCalls(root)).find(call => call.args[0] === 'run' && call.args.at(-1) === 'ok.py')
     assert.ok(runCall)
@@ -128,8 +137,7 @@ test('abort stops the mock container before the call settles and a failed remova
     assert.equal(runCall.args.includes('-e'), false, 'no environment variables')
     assert.equal(runCall.args[runCall.args.indexOf('--user') + 1], user)
 
-    const controller = new AbortController()
-    const pending = sandbox(executor, workspace, 'abort.py', controller.signal)
+    const { controller, pending } = start('abort.py')
     const leak = join(workspace, 'output', 'leak.bin')
     await waitForFile(leak)
     const beforeAbort = Date.now()
@@ -146,26 +154,26 @@ test('abort stops the mock container before the call settles and a failed remova
     const stamps = (await readFile(leak, 'utf8')).trim().split('\n').map(Number)
     assert.ok(stamps.every(stamp => stamp <= settledAt))
 
-    const failing = new AbortController()
-    const cleanup = sandbox(executor, workspace, 'failclean.py', failing.signal)
+    const { controller: failing, pending: cleanup } = start('failclean.py')
     await waitFor(() => existsCall(root, 'failclean.py'))
     failing.abort()
     await assert.rejects(cleanup, /清理失败/)
 
-    const quotaController = new AbortController()
-    const quotaPending = sandbox(executor, workspace, 'quota.py', quotaController.signal,
-      async () => (await readdir(join(workspace, 'output'))).length > PYTHON_SANDBOX_LIMITS.maxArtifactFiles)
+    const quotaPending = start('quota.py',
+      async () => (await readdir(join(workspace, 'output'))).length > PYTHON_SANDBOX_LIMITS.maxArtifactFiles).pending
+    let quotaTimer: NodeJS.Timeout | undefined
     try {
       const quota = await Promise.race([
         quotaPending,
-        new Promise<never>((_resolve, reject) => setTimeout(() => reject(new Error('quota stop timed out')), 5_000)),
+        new Promise<never>((_resolve, reject) => { quotaTimer = setTimeout(() => reject(new Error('quota stop timed out')), 5_000) }),
       ])
       assert.equal(quota.stoppedEarly, true, 'shouldStop ends the run')
     } finally {
-      quotaController.abort()
-      await quotaPending.catch(() => undefined)
+      clearTimeout(quotaTimer)
     }
   } finally {
+    for (const run of runs) run.controller.abort()
+    await Promise.all(runs.map(run => run.pending.catch(() => undefined)))
     if (previous === undefined) delete process.env.DSH_PY_SANDBOX_SENTINEL
     else process.env.DSH_PY_SANDBOX_SENTINEL = previous
     await rm(root, { recursive: true, force: true })
@@ -271,6 +279,8 @@ if (args[0] === 'run') {
   }
   process.on('SIGTERM', () => {})
   setInterval(() => {}, 1_000)
+  // Backstop: an orphaned mock must not hold the test file open forever.
+  setTimeout(() => process.exit(137), 30_000)
 }
 function mountSrc(argv, dst) {
   for (let index = 0; index < argv.length; index += 1) {
@@ -286,7 +296,9 @@ interface MockCall { t: number; args: string[]; sentinel: boolean; hasPath: bool
 
 async function readCalls(root: string): Promise<MockCall[]> {
   const text = await readFile(join(root, 'calls.ndjson'), 'utf8').catch(() => '')
-  return text.split('\n').filter(Boolean).map(line => JSON.parse(line) as MockCall)
+  // Another process may be mid-append: on Linux a read can see the first page of a line that
+  // crosses a 4 KiB boundary. Only newline-terminated lines are complete.
+  return text.slice(0, text.lastIndexOf('\n') + 1).split('\n').filter(Boolean).map(line => JSON.parse(line) as MockCall)
 }
 
 async function existsCall(root: string, entry: string): Promise<boolean> {

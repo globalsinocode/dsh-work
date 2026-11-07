@@ -8,6 +8,7 @@ import CapabilityManagementView from './CapabilityManagementView.vue'
 import { useAuthStore } from '../stores/auth'
 import { useContentStore } from '../stores/content'
 import { useToolGovernanceStore } from '../stores/toolGovernance'
+import { adminApi } from '../api/client'
 
 const wrappers: VueWrapper[] = []
 afterEach(() => {
@@ -24,8 +25,10 @@ async function render(canManage = true, initial = '/skills') {
   vi.spyOn(content, 'load').mockResolvedValue(undefined)
   const toolGovernance = useToolGovernanceStore()
   vi.spyOn(toolGovernance, 'loadBindings').mockResolvedValue(undefined)
+  vi.spyOn(adminApi, 'getSkillSubmissions').mockResolvedValue([])
   const router = createRouter({ history: createMemoryHistory(), routes: [
     { path: '/skills', component: CapabilityManagementView },
+    { path: '/skills/review', component: CapabilityManagementView },
     { path: '/skills/install', component: CapabilityManagementView },
     { path: '/tools', component: CapabilityManagementView },
     { path: '/connectors', component: CapabilityManagementView },
@@ -108,7 +111,7 @@ function offlinePendingMcp(): import('../types/domain').ConnectorDefinition {
 describe('Skill installation sibling tab', () => {
   it('opens the dedicated tab, removes the old create dialog, and preserves inputs across tabs', async () => {
     const { wrapper, router } = await render()
-    expect(wrapper.findAll('[role="tablist"][aria-label="Skill 管理"] [role="tab"]').map(tab => tab.text())).toEqual(['Skill 列表 0', '新增 Skill'])
+    expect(wrapper.findAll('[role="tablist"][aria-label="Skill 管理"] [role="tab"]').map(tab => tab.text())).toEqual(['Skill 列表 0', '待审核 0', '新增 Skill'])
     expect(wrapper.find('[data-action="create-skills"]').exists()).toBe(false)
     await wrapper.get('#capability-tab-install').trigger('click')
     await flushPromises()
@@ -144,11 +147,11 @@ describe('Skill installation sibling tab', () => {
     const { wrapper, router } = await render()
     await wrapper.get('#capability-tab-skills').trigger('keydown', { key: 'ArrowRight' })
     await flushPromises()
-    expect(router.currentRoute.value.path).toBe('/skills/install')
-    await wrapper.get('#capability-tab-install').trigger('keydown', { key: 'End' })
+    expect(router.currentRoute.value.path).toBe('/skills/review')
+    await wrapper.get('#capability-tab-review').trigger('keydown', { key: 'End' })
     await flushPromises()
     expect(router.currentRoute.value.path).toBe('/skills/install')
-    await wrapper.get('#capability-tab-install').trigger('keydown', { key: 'ArrowLeft' })
+    await wrapper.get('#capability-tab-install').trigger('keydown', { key: 'Home' })
     await flushPromises()
     expect(router.currentRoute.value.path).toBe('/skills')
   })
@@ -306,6 +309,33 @@ describe('Skill installation sibling tab', () => {
     expect(save).toHaveBeenCalledWith('skill-strict-test', ['html-page'])
   })
 
+  it('restores a role-limited Skill to everyone only with a reason', async () => {
+    vi.spyOn(adminApi, 'getIdentityRoles').mockResolvedValue([
+      { id: 'role-sales', code: 'sales', name: '销售部', description: '', status: 'active', permissions: [], dataScopes: [], userCount: 3, system: false, updatedAt: '2026-10-30 10:00' },
+    ])
+    const { wrapper, content } = await render()
+    content.skills.push({ ...strictDraftSkill(), status: 'published', visibleRoleIds: ['role-sales'] })
+    const save = vi.spyOn(content, 'setSkillVisibility').mockImplementation(async (_skillId, roleIds) => {
+      const skill = { ...content.skills[0]!, visibleRoleIds: roleIds }
+      content.skills.splice(0, 1, skill)
+      return skill
+    })
+    await flushPromises()
+    await wrapper.get('[data-action="view-skill"]').trigger('click')
+    await flushPromises()
+
+    const section = wrapper.get('[aria-labelledby="skill-visibility-title"]')
+    const button = () => section.get('[data-action="save-skill-visibility"]')
+    expect(button().attributes('disabled')).toBeDefined()
+    await section.findAll('input[type="radio"]')[0]!.setValue(true)
+    await flushPromises()
+    expect(button().attributes('disabled'), '没有原因不能保存').toBeDefined()
+    await section.get('input[aria-label="调整原因"]').setValue('改为全员试用')
+    await button().trigger('click')
+    await flushPromises()
+    expect(save).toHaveBeenCalledWith('skill-strict-test', null, '改为全员试用')
+  })
+
   it('keeps offline status ahead of a retained legacy MCP review state', async () => {
     const { wrapper, content } = await render(true, '/connectors')
     const connector = offlinePendingMcp()
@@ -415,6 +445,25 @@ describe('Skill installation sibling tab', () => {
     await wrapper.get('.skill-dependency-chip').trigger('click')
     await flushPromises()
     expect(wrapper.get('.el-drawer').text()).toContain('依赖 Skill（员工端不单独展示）')
+  })
+
+  it('flags a published Skill whose Python dependencies the execution image lacks', async () => {
+    const { wrapper, content } = await render()
+    const skill = { ...strictDraftSkill(), status: 'published' as const, activeVersion: '0.1.0', missingPythonDependencies: ['pandas', '模块 sklearn'] }
+    content.skills.splice(0, content.skills.length, skill)
+    await flushPromises()
+
+    const label = wrapper.get('.skill-dependency-gap-label')
+    expect(label.text()).toBe('依赖缺失')
+    expect(label.attributes('title')).toBe('执行镜像缺少：pandas、模块 sklearn')
+
+    await wrapper.get('[data-action="view-skill"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('.el-drawer [role="alert"]').text()).toContain('当前执行镜像缺少已发布版本需要的 Python 依赖：pandas、模块 sklearn')
+
+    content.skills.splice(0, content.skills.length, { ...skill, missingPythonDependencies: undefined })
+    await flushPromises()
+    expect(wrapper.find('.skill-dependency-gap-label').exists()).toBe(false)
   })
 
   it('opens a progress dialog immediately and polls the real strict test run', async () => {

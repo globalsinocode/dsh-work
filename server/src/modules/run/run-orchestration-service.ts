@@ -11,7 +11,7 @@ import type { PostgresConversationRepository } from '../workbench/application/po
 import type { PostgresContentService } from '../workbench/application/postgres-content-service.ts'
 import type { RunOperationsPort } from './run-operations-port.ts'
 import type { PostgresAgentService } from '../agent/postgres-agent-service.ts'
-import type { PostgresKnowledgeService } from '../knowledge/postgres-knowledge-service.ts'
+import type { KnowledgeProvider } from '../knowledge/knowledge-provider.ts'
 import type { PostgresControlledMemoryService } from '../memory/postgres-controlled-memory-service.ts'
 import type {
   PostgresAuthorizationService,
@@ -75,7 +75,7 @@ export class RunOrchestrationService {
     content?: PostgresContentService,
     operations?: RunOperationsPort,
     agents?: PostgresAgentService,
-    knowledge?: PostgresKnowledgeService,
+    knowledge?: KnowledgeProvider,
     authorization?: PostgresAuthorizationService,
     options?: {
       automationMaxConcurrent?: number
@@ -214,6 +214,7 @@ export class RunOrchestrationService {
         workspaceId,
         agentVersionId: input.agentVersionId,
         additionalSkillReferences,
+        selectedSkillReference: input.selectedSkillReference,
         ...input.authorizationContext,
       })
     } else {
@@ -408,6 +409,7 @@ export class RunOrchestrationService {
       workspaceId: session.workspaceId,
       agentVersionId,
       additionalSkillReferences,
+      selectedSkillReference: session.selectedSkillReference,
       ...input.authorizationContext,
     })
     await this.deps.runtime.assertAvailable?.()
@@ -650,6 +652,7 @@ export class RunOrchestrationService {
           workspaceId: session.workspaceId,
           agentVersionId,
           additionalSkillReferences,
+          selectedSkillReference: session.selectedSkillReference,
           ...authorizationContext,
         })
       : await this.deps.authorization?.authorizeRuntime({
@@ -657,6 +660,7 @@ export class RunOrchestrationService {
           workspaceId: session.workspaceId,
           agentVersionId,
           additionalSkillReferences,
+          selectedSkillReference: session.selectedSkillReference,
           ...authorizationContext,
         })
     const prompt = await this.deps.conversations.getRunPrompt(run.id)

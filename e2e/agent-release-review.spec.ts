@@ -85,6 +85,8 @@ test('旧发布地址落到草稿流程的验证与发布步骤，显示验证�
   // 版本历史属于详情页，不在发布流程中。
   await expect(page.getByRole('region', { name: '版本历史' })).toHaveCount(0)
   await expect(page.getByRole('region', { name: '验证前检查' })).toContainText('3/3 项通过')
+  // KB-ADM-03：企业知识库启用时提示验证不覆盖企业知识，只提示不阻断。
+  await expect(page.getByRole('region', { name: '验证前检查' })).toContainText('验证不覆盖企业知识')
   const cases = page.getByRole('region', { name: '验证案例' })
   await expect(cases.getByRole('list', { name: '本次将运行的案例' })).toContainText('请汇总本周供应异常')
   await expect(cases.getByRole('list', { name: '本次将运行的案例' })).toContainText('自定义问题')

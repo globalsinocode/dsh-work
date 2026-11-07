@@ -4,6 +4,7 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { workbenchApi } from '@/api/client'
+import { useUiModeStore } from '@/stores/ui-mode'
 import type { WorkbenchAgent, WorkbenchSkill } from '@/types/domain'
 import AgentPlazaView from './AgentPlazaView.vue'
 import SkillPlazaView from './SkillPlazaView.vue'
@@ -60,6 +61,7 @@ describe('员工能力目录', () => {
 
   it('按服务端分类展示 Skill，并从加号预选已有 Skill', async () => {
     vi.spyOn(workbenchApi, 'getSkills').mockResolvedValue(skills)
+    vi.spyOn(workbenchApi, 'getAgents').mockResolvedValue(agents)
     const wrapper = mount(SkillPlazaView, { global: { plugins: [ElementPlus] } })
     await flushPromises()
 
@@ -76,6 +78,34 @@ describe('员工能力目录', () => {
       path: '/workbench',
       query: { skill: 'skill-sheet', skillVersion: 'skill-version-sheet-11' },
     })
+    // 员工没有可用的 Skill 创建专家时不显示“创建 Skill”。
+    expect(wrapper.find('[data-testid="skill-plaza-create"]').exists()).toBe(false)
+  })
+
+  it('“创建 Skill”进入开启“可创建 Skill”的 AI 同事的新对话，不预填；B 模式进入单聊', async () => {
+    vi.spyOn(workbenchApi, 'getSkills').mockResolvedValue(skills)
+    vi.spyOn(workbenchApi, 'getAgents').mockResolvedValue([
+      ...agents,
+      { ...agents[0]!, id: 'agent-skill-creator', name: 'Skill 创建专家', canCreateSkills: true },
+    ])
+    const wrapper = mount(SkillPlazaView, { global: { plugins: [ElementPlus] } })
+    await flushPromises()
+
+    await wrapper.get('[data-testid="skill-plaza-create"]').trigger('click')
+    expect(router.push).toHaveBeenCalledWith({ path: '/workbench', query: { agent: 'agent-skill-creator' }, state: { agentRecommendationPrefill: '' } })
+
+    useUiModeStore().mode = 'collab'
+    await wrapper.get('[data-testid="skill-plaza-create"]').trigger('click')
+    expect(router.push).toHaveBeenLastCalledWith({ name: 'collab-agent-chat', params: { agentId: 'agent-skill-creator' }, state: { agentRecommendationPrefill: '' } })
+  })
+
+  it('AI 同事读取失败时只是不显示“创建 Skill”，Skill 列表照常', async () => {
+    vi.spyOn(workbenchApi, 'getSkills').mockResolvedValue(skills)
+    vi.spyOn(workbenchApi, 'getAgents').mockRejectedValue(new Error('network'))
+    const wrapper = mount(SkillPlazaView, { global: { plugins: [ElementPlus] } })
+    await flushPromises()
+    expect(wrapper.get('[aria-label="Skill 列表"]').text()).toContain('企业知识问答')
+    expect(wrapper.find('[data-testid="skill-plaza-create"]').exists()).toBe(false)
   })
 
   it('只展示员工接口返回的 AI 同事，并从加号预选 Agent', async () => {

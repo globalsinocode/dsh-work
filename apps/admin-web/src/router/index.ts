@@ -99,6 +99,12 @@ const router = createRouter({
       meta: { title: 'Skill 管理', requiresAdmin: true, requiredPermission: 'adminRead' },
     },
     {
+      path: '/skills/review',
+      name: 'skill-review',
+      component: () => import('@/views/CapabilityManagementView.vue'),
+      meta: { title: 'Skill 待审核', requiresAdmin: true, requiredPermission: 'adminRead' },
+    },
+    {
       path: '/skills/install',
       name: 'skill-install',
       component: () => import('@/views/CapabilityManagementView.vue'),
@@ -141,11 +147,45 @@ const router = createRouter({
       meta: { title: '工作空间', requiresAdmin: true, requiredPermission: 'adminRead' },
     },
     {
+      path: '/knowledge',
+      name: 'knowledge',
+      component: () => import('@/views/KnowledgeAdminView.vue'),
+      meta: {
+        title: '企业知识库',
+        subtitle: '管理 WeKnora 连接、全部知识库与跨部门授权。文档由归属部门的员工在员工端上传和维护。',
+        requiresAdmin: true,
+        requiredPermission: 'adminRead',
+      },
+    },
+    {
+      path: '/organization',
+      name: 'organization',
+      component: () => import('@/views/OrganizationView.vue'),
+      meta: {
+        title: '组织架构',
+        subtitle: '维护部门树和员工的部门归属；员工的“部门”显示为其主部门。',
+        requiresAdmin: true,
+        requiredPermission: 'adminRead',
+      },
+    },
+    {
       path: '/identity',
       name: 'identity',
       component: () => import('@/views/IdentityAccessView.vue'),
       meta: {
         title: '员工与权限',
+        requiresAdmin: true,
+        requiredPermission: 'adminRead',
+        requiresManagedIdentity: true,
+      },
+    },
+    {
+      path: '/dingtalk',
+      name: 'dingtalk',
+      component: () => import('@/views/DingTalkIntegrationView.vue'),
+      meta: {
+        title: '钉钉集成',
+        subtitle: '钉钉工作通知与钉钉内打开员工端：应用配置、绑定情况、离职检查与未绑定名单。',
         requiresAdmin: true,
         requiredPermission: 'adminRead',
         requiresManagedIdentity: true,

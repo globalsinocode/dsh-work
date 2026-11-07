@@ -155,8 +155,8 @@ export function registerConversationRoutes(
     // (AC-23).
     const selectedSkillVersion = skillId && skills
       ? skillVersionIdInput
-        ? await skills.resolveWorkbenchSkillVersionById({ skillId, versionId: skillVersionIdInput })
-        : await skills.resolveWorkbenchSkillVersion(skillId)
+        ? await skills.resolveWorkbenchSkillVersionById({ skillId, versionId: skillVersionIdInput, roleIds })
+        : await skills.resolveWorkbenchSkillVersion(skillId, roleIds)
       : undefined
     const workspaceType = await authorization.resolveWorkspaceType(workspaceId, userId)
     // TW-10：团队空间会话是全队共享讨论，创建时不再强制绑定 Agent 成员——
@@ -263,11 +263,11 @@ export function registerConversationRoutes(
   if (skills) {
     router.get(`${basePath}/skills`, async (_request, context) => {
       const identity = requireRequestIdentity(context, 'workbench')
-      await authorization.authorizeWorkbench({
+      const access = await authorization.authorizeWorkbench({
         userId: identity.userId,
         ...sessionAuthorizationContext(identity),
       })
-      return envelope('workbench', await skills.listWorkbenchSkills(), 'postgres')
+      return envelope('workbench', await skills.listWorkbenchSkills(access.roleIds), 'postgres')
     })
   }
 

@@ -114,6 +114,60 @@ export interface AgentAccessRoleOption {
   privileged?: boolean
 }
 
+/** 组织架构 ORG-S1：部门树、成员与员工清单；写操作返回同一结构。 */
+export interface OrganizationDepartment {
+  id: string
+  parentId: string | null
+  name: string
+  sortOrder: number
+}
+
+export interface OrganizationMember {
+  departmentId: string
+  userId: string
+  primary: boolean
+}
+
+export interface OrganizationEmployee {
+  id: string
+  name: string
+  email: string | null
+  loginAccount: string | null
+  status: 'active' | 'disabled'
+}
+
+export interface OrganizationGrant {
+  id: string
+  departmentId: string
+  departmentName: string
+  roleId: string
+  includeDescendants: boolean
+  status: 'active' | 'invalid'
+}
+
+export interface OrganizationRole {
+  id: string
+  code: string
+  name: string
+  status: 'active' | 'disabled'
+  assignable: boolean
+}
+
+export interface OrganizationRoleAssignment {
+  userId: string
+  roleId: string
+  source: 'direct' | { grantId: string }
+}
+
+export interface OrganizationSnapshot {
+  departments: OrganizationDepartment[]
+  members: OrganizationMember[]
+  employees: OrganizationEmployee[]
+  grants: OrganizationGrant[]
+  roles: OrganizationRole[]
+  roleAssignments: OrganizationRoleAssignment[]
+}
+
 export interface IdentityUserSummary {
   id: string
   externalUserId: string | null
@@ -127,9 +181,84 @@ export interface IdentityUserSummary {
   directorySyncedAt: string | null
   authorizationVersion: number
   roles: Array<Pick<IdentityRoleSummary, 'id' | 'code' | 'name' | 'status'>>
+  /** 来自部门授权的角色，只能在“组织架构”中修改。 */
+  departmentRoles?: Array<Pick<IdentityRoleSummary, 'id' | 'code' | 'name' | 'status'> & { departmentName: string; grantId: string }>
   dataScopes: string[]
   activeSessionCount: number
   lastSeenAt: string | null
+  /** 钉钉绑定（钉钉接入 DT-S1）：只对独立账号返回，AI Hub 账号为 null。 */
+  dingtalk?: {
+    status: DingTalkBindingStatus
+    boundBy: 'self' | 'admin' | null
+    dingtalkName: string | null
+    revokeReason: string | null
+    selfRebindLocked: boolean
+  } | null
+}
+
+export type DingTalkBindingStatus = 'bound' | 'unbound' | 'invalid'
+
+export interface DingTalkBindingCounts {
+  activeLocal: number
+  bound: number
+  selfBound: number
+  adminBound: number
+  unbound: number
+  invalid: number
+}
+
+export interface DingTalkBindingView {
+  status: DingTalkBindingStatus
+  binding: {
+    id: string
+    dingtalkName: string | null
+    dingtalkDepartment: string | null
+    boundBy: 'self' | 'admin'
+    boundByAdminName: string | null
+    boundAt: string
+  } | null
+  invalid: { reason: string | null; at: string } | null
+  selfRebindLocked: boolean
+}
+
+export interface DingTalkBindPreview {
+  confirmationToken: string
+  expiresInSeconds: number
+  dingtalkName: string | null
+  dingtalkDepartment: string | null
+  maskedMobile: string
+  platformName: string
+  nameMatches: boolean
+  requireIdentityConfirmation: boolean
+  conflict: { userId: string; name: string } | null
+}
+
+export interface DingTalkIntegrationOverview {
+  configured: boolean
+  agentId: string | null
+  publicEntries: string[]
+  connection: {
+    checkedAt: string | null
+    status: 'ok' | 'configuration_error' | 'unavailable' | null
+    capabilities: Record<string, 'ok' | 'denied' | 'unknown'>
+    message: string | null
+  } | null
+  counts: DingTalkBindingCounts
+  departureCheck: {
+    lastRun: { id: string; startedAt: string; status: string; checked: number; departed: number; failed: number; bound: number; errorCodes: Record<string, number> } | null
+    pausedRun: { id: string; pending: number; bound: number } | null
+    persistentWarning: boolean
+  }
+}
+
+export interface DingTalkUnboundEmployee {
+  id: string
+  name: string
+  loginAccount: string
+  department: string
+  status: 'unbound' | 'invalid'
+  revokeReason: string | null
+  selfRebindLocked: boolean
 }
 
 export interface IdentityUserPage {
@@ -141,6 +270,7 @@ export interface IdentityUserPage {
     synchronized: number
     active: number
     authorized: number
+    dingtalk?: DingTalkBindingCounts
   }
 }
 
@@ -327,6 +457,8 @@ export interface AgentDefinition {
   projectTasksEnabled: boolean
   /** 是否可推荐其他 AI 同事（只在员工个人对话中生效）。 */
   agentRecommendationEnabled?: boolean
+  /** 是否可创建 Skill（只在员工个人对话中生效，草稿由员工提交审核）。 */
+  skillCreationEnabled?: boolean
   mcpScope?: AgentMcpScope
   updatedAt: string
   /** 草稿编辑的乐观并发修订，保存时回传为 expectedRevision；原型模式不提供。 */
@@ -471,6 +603,7 @@ export interface AgentDraftConfiguration {
   projectTasksEnabled?: boolean
   /** 编辑时省略则保留当前设置，新建时默认关闭。 */
   agentRecommendationEnabled?: boolean
+  skillCreationEnabled?: boolean
   mcpScope?: AgentMcpScope
   changeSummary: string
 }
@@ -509,6 +642,7 @@ export interface AgentVersionRecord {
   webSearchEnabled: boolean
   projectTasksEnabled: boolean
   agentRecommendationEnabled?: boolean
+  skillCreationEnabled?: boolean
   mcpScope?: AgentMcpScope
 }
 
@@ -616,7 +750,40 @@ export interface SkillDefinition {
   testPrompt: string
   /** 管理员设置的“覆盖内置场景”：运行中有该 Skill 时去掉对应场景的平台内置 Skill。 */
   coveredBuiltinScenarios?: BuiltinSkillScenario[]
+  /** Skill 可见范围：null 为全员；否则只有这些角色的员工能在 Skill 广场选用（Agent 固定引用不受限）。 */
+  visibleRoleIds?: string[] | null
+  /** 待发布版本来自员工提交：只能在“待审核”中审核发布。 */
+  submissionDraft?: boolean
+  /** 当前执行镜像缺少的、活动版本需要的 Python 依赖；为空时不返回。 */
+  missingPythonDependencies?: string[]
   updatedAt: string
+}
+
+/** 员工 Skill 提交的严格试运行状态（Skill 创建专家方案 4.4）。 */
+export type SkillSubmissionTrialStatus = 'not_started' | 'running' | 'unconfirmed' | 'passed' | 'failed'
+
+export interface SkillSubmissionReviewItem {
+  id: string
+  name: string
+  description: string
+  submitter: { id: string; displayName: string }
+  source: 'conversation' | 'zip' | 'link'
+  sessionId: string | null
+  status: 'pending' | 'approved' | 'rejected'
+  versionId: string
+  versionNumber: number
+  scriptCount: number
+  publishedSkillId?: string
+  /** 修订的已发布 Skill 当前可见范围（null 为全员），通过时默认沿用。 */
+  publishedVisibleRoleIds?: string[] | null
+  trial: { status: SkillSubmissionTrialStatus; runId?: string; testedAt?: string }
+  submittedAt: string
+}
+
+export interface SkillSubmissionReviewDetail extends SkillSubmissionReviewItem {
+  files: Array<{ path: string; size: number; script: boolean }>
+  compatibility: { status: 'compatible' | 'needs_review' | 'incompatible'; issues: Array<{ code: string; severity: 'warning' | 'error'; message: string }> }
+  trial: SkillSubmissionReviewItem['trial'] & { skillId?: string; resultSummary?: string }
 }
 
 export interface SkillDependencySummary {
@@ -1011,4 +1178,34 @@ export interface AgentVersionHistoryItem {
   publishedAt: string | null
   publishedBy: string | null
   active: boolean
+}
+
+/** 钉钉集成 › 应用配置（2026-11-06 起在页面填写；AppSecret 加密保存，不回显）。 */
+export interface DingTalkSettings {
+  configured: boolean
+  source: 'deployment-config' | 'admin' | null
+  corpId: string | null
+  agentId: string | null
+  appKey: string | null
+  secretHint: string | null
+  secretReadable: boolean
+  secretProblem: 'deployment_secret_missing' | 'master_key' | null
+  sessionTtlSeconds: number
+  bindingTicketTtlSeconds: number
+  adminDailyBindLimit: number
+  timeoutMs: number
+  canStoreSecret: boolean
+  updatedAt: string | null
+  updatedByName: string | null
+}
+
+export interface DingTalkSettingsInput {
+  corpId: string
+  agentId: string
+  appKey: string
+  appSecret?: string
+  sessionTtlSeconds: number
+  bindingTicketTtlSeconds: number
+  adminDailyBindLimit: number
+  timeoutMs: number
 }

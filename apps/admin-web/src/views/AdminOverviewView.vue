@@ -54,11 +54,13 @@ onMounted(() => contentStore.load())
       </div>
     </section>
 
-    <section v-loading="contentStore.loading" class="metric-grid">
-      <article class="metric-card"><div class="metric-label">近 7 日运行</div><div class="metric-value">{{ totalRuns }}</div><div class="metric-detail">近 7 日累计</div></article>
-      <article class="metric-card"><div class="metric-label">运行成功率</div><div class="metric-value">{{ successRate }}</div><div class="metric-detail">不含取消与排队运行</div></article>
-      <article class="metric-card"><div class="metric-label">模型 Token</div><div class="metric-value">{{ totalTokens.toLocaleString() }}</div><div class="metric-detail"><button class="metric-link" type="button" @click="router.push('/model-usage')">查看用量明细</button></div></article>
-      <article v-if="authStore.canReadAudit" class="metric-card"><div class="metric-label">近 24 小时需关注</div><div class="metric-value">{{ contentStore.operationsSummary?.attentionEvents24h ?? 0 }}</div><div class="metric-detail"><button class="metric-link" type="button" @click="router.push('/audit')">查看失败与阻止事件</button></div></article>
+    <section v-loading="contentStore.loading" class="content-panel overview-strip" aria-label="运营概况">
+      <dl class="overview-strip__stats">
+        <div class="overview-stat"><dt>近 7 日运行</dt><dd><strong class="overview-stat__value">{{ totalRuns }}</strong></dd></div>
+        <div class="overview-stat"><dt>运行成功率</dt><dd><strong class="overview-stat__value">{{ successRate }}</strong><small>不含取消与排队运行</small></dd></div>
+        <div class="overview-stat"><dt>模型 Token</dt><dd><strong class="overview-stat__value">{{ totalTokens.toLocaleString() }}</strong><small><button class="overview-stat__link" type="button" @click="router.push('/model-usage')">查看用量明细</button></small></dd></div>
+        <div v-if="authStore.canReadAudit" class="overview-stat"><dt>近 24 小时需关注</dt><dd><strong class="overview-stat__value">{{ contentStore.operationsSummary?.attentionEvents24h ?? 0 }}</strong><small><button class="overview-stat__link" type="button" @click="router.push('/audit')">查看失败与阻止事件</button></small></dd></div>
+      </dl>
     </section>
 
     <section class="overview-main-grid">
@@ -140,12 +142,6 @@ onMounted(() => contentStore.load())
   background: var(--color-success);
 }
 
-.metric-delta { font-weight: var(--font-weight-title); }
-.metric-delta.is-up { color: var(--color-success-strong); }
-.metric-delta.is-down { color: var(--color-primary); }
-.metric-link { padding: 0; border: 0; color: var(--color-primary); background: transparent; cursor: pointer; font: inherit; }
-.metric-link:hover { text-decoration: underline; }
-.metric-link:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; }
 
 .overview-main-grid,
 .overview-bottom-grid {
@@ -343,7 +339,6 @@ onMounted(() => contentStore.load())
 .audit-summary-list__dot.is-blocked { background: var(--color-warning); }
 
 @media (max-width: 1180px) {
-  .metric-grid { grid-template-columns: repeat(2, 1fr); }
   .overview-main-grid { grid-template-columns: 1fr; }
 }
 
@@ -352,7 +347,6 @@ onMounted(() => contentStore.load())
 }
 
 @media (max-width: 600px) {
-  .metric-grid { grid-template-columns: 1fr; }
   .status-donut-wrap { grid-template-columns: 1fr; justify-items: center; }
   .status-legend { width: 100%; }
 }

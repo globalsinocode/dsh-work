@@ -40,10 +40,18 @@ flowchart LR
 | `local_user_credentials` | 独立账号密码 | 用户名全租户唯一；密码以加盐 scrypt 保存；初始密码必须修改 |
 | `local_identity_bootstrap` | 首个独立管理员的一次性初始化 | 每租户只能消费一次 |
 | `local_auth_rate_limits` | 登录限流计数 | 键是 HMAC，不保存用户名或地址；多进程与重启共享 |
-| `authentication_sessions` | 服务端 Session | 浏览器只持有不透明 Cookie，数据库只存摘要；OIDC Token 服务端加密 |
+| `authentication_sessions` | 服务端 Session | 浏览器只持有不透明 Cookie，数据库只存摘要；OIDC Token 服务端加密；来源 `ai-hub-oidc` / `local-password` / `dingtalk`（迁移 0117），`dingtalk` 会话必须带 `binding_id`、按该绑定有效性校验并按它撤销，其他来源不得带 |
+| `external_account_bindings` | 平台账号与外部渠道账号的绑定（迁移 0117，[钉钉接入方案](dingtalk-integration-plan.md) 4.2；本期 `channel = 'dingtalk'`） | 有效记录中平台账号与外部账号各自唯一（部分唯一索引）；状态只有 `valid` / `invalid`，未绑定即没有有效记录；`self_rebind_locked` 只出现在失效记录上；只存钉钉 userid、姓名与部门，不存手机号 |
+| `external_binding_tickets` | 服务端短时单次凭证：钉钉内待绑定凭证与管理员代绑确认凭证（迁移 0117） | 只存凭证哈希；原子消费，重复使用、过期、来源或目标员工 / 管理员不符一律无效；代绑凭证只存脱敏手机号与 HMAC |
+| `external_channel_status` | 外部渠道连接检查结果（迁移 0118，钉钉集成页） | 每租户每渠道一行；只存检查时间、结论与各接口权限探测结果，不存凭据 |
+| `dingtalk_departure_checks` | 每日钉钉离职检查记录（迁移 0118） | 同一租户至多一条 `running`（部分唯一索引），超过 6 小时未结束的视为中断并标为 `failed` 后再开始新检查；只有明确“用户不存在”才判为离职；判为离职超过有效绑定 10% 时 `paused` 并保存待确认的绑定 ID，管理员确认或忽略后结束 |
+| `dingtalk_app_configurations` | 钉钉企业内部应用配置（迁移 0119，DT30） | 每租户一行；`configured` 时 CorpId、AgentId、AppKey 必填；AppSecret 不存本表，页面保存的以 `credential_ref` 指向 `credential_secrets` 中的加密值，来自部署配置时 `credential_ref` 为空、只在内存使用；`cleared` 后部署配置不再自动生效 |
 | `oidc_login_transactions` | OIDC 登录事务 | state、nonce 与入口绑定，一次性使用 |
 | `application_admin_bootstrap_claims` | AI Hub 初始管理员认领 | 按应用/环境幂等消费 |
 | `identity_directory_sync_state` | AI Hub 员工目录同步游标 | 持久化 opaque cursor；员工停用即撤销其 Session，保留本地角色历史 |
+| `org_departments` | 部门树（迁移 0113，[组织架构方案](org-structure-plan.md) ORG-S1） | 每租户一个根部门（迁移创建）；`path` 为根到本部门的 ID 路径，不能移到自己下级之下；同一上级下有效部门不重名；删除置为 `removed`；写操作按租户串行 |
+| `org_department_members` | 员工所属部门（迁移 0113） | 员工可属于多个部门、至多一个主部门；`users.department_id` 只作显示，等于主部门名称，没有主部门时为空；迁移 0113 清空了独立账号的历史部门文本，迁移 0116 把 AI Hub 账号的旧组织名统一为主部门名称（无主部门则清空） |
+| `org_department_grants` | 部门授予的角色（迁移 0114，ORG-S2） | 同一部门同一角色至多一条有效授权；展开为 `user_roles`（`source_key = 'department:<grant_id>'`），随成员与部门变化重算；管理类角色不能授予；部门删除后置为 `invalid` |
 | `roles`、`user_roles`、`data_scope_grants` | 本地角色、用户角色、数据范围授权 | 独立于 AI Hub；过期角色不生效；任何变更由触发器递增本地授权版本，请求按当前版本重新计算 |
 | `system_settings` | 早期的租户级设置 | 当前代码未读写 |
 | `user_preferences` | 员工端界面偏好（迁移 0094） | 每个账号一行；`ui_mode` 为 `work` 或 `collab`，无记录时为工作模式；只影响界面，不改变权限 |
@@ -86,6 +94,7 @@ Task 创建时由触发器写入发起 Principal：员工请求为本人，系�
 | `workspace_object_gc_candidates` | 待回收的空间对象候选 | 逻辑移除后的延迟清理队列 |
 | `conversation_read_states` | 协作模式对话列表按对话对象（单聊的 AI 同事 / 群组 / 私聊对方）的已读位置（迁移 0101，私聊为 0117） | 按账号 + 对话对象唯一；已读时间只前进不回拨；与 `workspace_notification_states` 分开保存；迁移时已有的 AI 同事和群组记为已读。`peer` 的 target_id 是对方用户 id |
 | `message_mentions` | 群聊与共享讨论中 @ 同事的站内提醒（项目空间方案 D38，迁移 0114） | 按消息 + 接收人唯一，与消息同一事务写入；只登记发送时的现任成员且不含发送者；读取时重查成员身份；`read_at` 为本人已读时间，与对话对象已读位置和按空间静音分开 |
+| `user_notifications` | 员工端站内通知：与本人相关的事件（@ 我、任务指派、我创建的任务完成、被加入项目，迁移 0122；定时执行暂停或停止、定时任务没成功、Skill 审核结论，迁移 0123） | 按接收人 + 业务发生唯一，与业务变更同一事务写入，触发人本人不登记；只存对象 ID 与代码值，名称与可见性在读取时按接收人当前权限解析；打开群组标记 @ 提醒已读时同步 `mention` 通知；钉钉等推送渠道以本表为来源；每天清扫删除 90 天前的记录（迁移 0124 按时间建索引） |
 
 ## 4. 会话、Task 与运行
 
@@ -146,12 +155,13 @@ flowchart LR
 
 | 表 | 作用 | 关键不变量 |
 | --- | --- | --- |
-| `skills`、`skill_versions` | Skill 与其版本 | 已发布版本不可修改（触发器）；文件夹正文经存储端口按内容寻址保存，数据库只存引用与文件索引；`skills.covered_builtin_scenarios` 是管理员设置的“覆盖内置场景”（Skill 级，不随版本固定）。平台内置 Skill 随代码发布，不在这两张表中 |
+| `skills`、`skill_versions` | Skill 与其版本 | 已发布版本不可修改（触发器）；文件夹正文经存储端口按内容寻址保存，数据库只存引用与文件索引；`skills.covered_builtin_scenarios` 是管理员设置的“覆盖内置场景”（Skill 级，不随版本固定）；`skills.visible_role_ids` 是 Skill 可见范围（迁移 `0119`，null 为全员，否则为非空角色 ID 数组，同样不随版本固定）。平台内置 Skill 随代码发布，不在这两张表中 |
 | `skill_version_dependencies` | Skill 依赖 | 依赖精确版本，不能依赖自身；Skill 声明的内置工具（`tool_refs`）须在注册表中且引用它的 Agent 可装配 |
 | `skill_installations` | 管理端安装计划 | 每次安装 Run 一条；完成时必须指向已保存的版本 |
 | `skill_test_bindings` | 严格试运行与精确 Attempt 的绑定 | 不可修改（触发器）；绑定配置与 Runtime 指纹 |
 | `skill_runtime_activations`、`skill_python_executions` | Attempt 内的 Skill 激活与 Python 执行记录 | 作为试运行证据，按 Attempt 隔离 |
-| `agent_recommendations` | Attempt 内推荐的 AI 同事（推荐 AI 同事方案） | 关联 Run、Attempt、发起员工与被推荐的 Agent；只保存位置与限长的推荐理由，名称与说明读取时取当前启用版本；会话详情只显示各 Run 当前 Attempt 的记录，同一 Attempt 再次推荐整组替换 |
+| `skill_submissions`、`skill_submission_versions` | 员工 Skill 提交与其不可变版本（Skill 创建专家方案，迁移 `0120`） | 提交归属提交员工，来源字段第一期只有“对话创建”（`conversation`，须带会话）；同一会话同名草稿归为一个提交（部分唯一索引）。状态 draft / pending / approved / rejected；`skill_id` 指向审核试运行时存下的 Skill（通过前不进入 Skill 列表、`installation_key` 为空，通过时写入），`reviewed_version_id` 为审核结论针对的版本（迁移 `0121`）。版本的 `skill_version_id` 为管理员开始试运行时存下的 Skill 待发布版本（一对一；`skill_installations.channel` 新增 `submission`）。版本只保存 Skill 文件夹引用与文件索引（`artifact`）、包摘要、兼容性与脚本数，并记录保存它的 Run 与 Attempt，会话详情据此挂草稿卡片。`agent_versions.skill_creation_enabled` 为“可创建 Skill”开关 |
+| `agent_recommendations` | Attempt 内推荐的 AI 同事（推荐 AI 同事方案） | 关联 Run、Attempt、发起员工与被推荐的 Agent；只保存位置、限长的推荐理由与可选的“发给该同事的问题”（`suggested_prompt`，用于预填，迁移 `0118`），名称与说明读取时取当前启用版本；会话详情只显示各 Run 当前 Attempt 的记录，同一 Attempt 再次推荐整组替换 |
 | `skill_release_records` | 发布、启用、停用、回滚记录 | 只追加 |
 | `skill_test_runs` | 早期的测试记录 | 只保留历史 |
 
@@ -193,9 +203,11 @@ flowchart LR
 
 | 表 | 作用 | 关键不变量 |
 | --- | --- | --- |
-| `knowledge_sources`、`knowledge_documents` | 知识来源与文档版本 | 已发布文档不可修改；来源、版本、生效日期、权限与摘要可追溯；合成来源显式标记 |
-| `knowledge_chunks` | 检索分段 | 文档写入或草稿修改时由触发器按句切分（每段不超过 800 字）并生成中文二元组与英文词检索项，GIN 索引；检索先过滤权限再排序 |
-| `run_knowledge_sources` | Attempt 引用的知识 | 记录相关度与摘录，用于回答末尾的引用 |
+| `external_knowledge_connections` | 企业知识库（WeKnora）连接 | 每个企业最多一条；管理端保存的 API Key 经 `credential_refs`/`credential_secrets` 加密存储，本表只存引用与末四位，未保存时由部署配置提供；记录统一嵌入模型、启用状态与最近成功、失败时间 |
+| `external_knowledge_bases` | 经平台创建的知识库 | 同一连接下外部 ID 唯一；有且只有一个归属部门；记录建库时的嵌入模型；删除为置 `deleted`，不再检索 |
+| `external_knowledge_base_grants` | 知识库按部门的可见范围授权 | 同一知识库同一部门只有一条有效授权；可选包含下级；区分员工与管理员授予；可见范围读取时实时计算 |
+| `session_knowledge_bases` | 会话所选知识库 | 员工在个人空间对话中添加；每次执行与员工当前可见知识库取交集后检索 |
+| `run_knowledge_citations` | Attempt 注入的企业知识引用快照 | 不依赖外部文档仍存在；同一 Attempt 内按序号唯一；用于回答末尾的引用与执行详情来源 |
 | `memory_proposals` | Agent 在运行中提出的短期记忆建议 | 只有人能确认范围与保留期后提交审核；按 Attempt + 提案键幂等 |
 | `memory_consents` | 来源用户对记忆使用范围的授权 | 可撤回；撤回后不能再发布 |
 | `memory_candidates` | 待审核的记忆候选 | 按提交人 + 提交键幂等；只能被处理一次 |
@@ -234,7 +246,7 @@ flowchart LR
 
 | 触发器（表） | 作用 |
 | --- | --- |
-| `agent_versions_immutable`、`skill_versions_immutable`、`knowledge_documents_immutable`、`memory_versions_immutable`、`skill_test_bindings_immutable` | 已发布版本与证据不可修改 |
+| `agent_versions_immutable`、`skill_versions_immutable`、`memory_versions_immutable`、`skill_test_bindings_immutable` | 已发布版本与证据不可修改 |
 | `users_personal_workspace_provisioning`（users） | 为新用户创建默认个人空间 |
 | `personal_workspace_membership_guard`、`team_workspace_single_owner`（workspace_members） | 保护个人空间成员关系；团队空间必须有且只有一名负责人（`DW001`） |
 | `roles_bump_local_authorization`、`user_roles_bump_local_authorization`、`data_scope_grants_bump_local_authorization` | 授权变化递增本地授权版本 |
@@ -244,7 +256,6 @@ flowchart LR
 | `run_attempts_pin_task_executor_principal` | 把 Attempt 执行身份固定到声明的 Agent 或平台 |
 | `runs_ensure_task_identity`、`runs_sync_task_status` | 会话 Run 自动建 Task；Run 状态同步到 Task |
 | `runs_ensure_budget_account`、`run_attempts_settle_budget_fallback` | 建立预算账户；Attempt 结束时兜底结算或释放预留 |
-| `knowledge_documents_index` | 知识文档写入时生成检索分段 |
 
 ## 运行终态与恢复
 
@@ -269,6 +280,12 @@ Run 和 Attempt 的普通状态转换不能从终态回退。只有失败或取�
 - [Agent 验证与发布](../../server/migrations/0091_agent_validations.sql)：待发布版本冻结、自定义测试问题与验证案例；与既有发布候选/试运行表并存。
 - [Agent 运行记录索引](../../server/migrations/0092_agent_run_history_index.sql)：详情页按 Task 的执行身份读取最近 Run。
 - [PF-06 委派](../../server/migrations/0063_controlled_agent_delegation.sql) 保留 `task_delegations`；三方合并不引入删除委派或数据平面的破坏性迁移。
+- [推荐问题预填](../../server/migrations/0118_agent_recommendation_prompt.sql)：推荐记录增加可选的“发给该同事的问题”。
+- [Skill 可见范围与员工提交](../../server/migrations/0119_skill_visibility.sql)、[Skill 提交版本](../../server/migrations/0120_skill_submissions.sql)、[提交审核](../../server/migrations/0121_skill_submission_review.sql)。
+- [站内通知](../../server/migrations/0122_user_notifications.sql)、[通知事件](../../server/migrations/0123_user_notification_events.sql)、[通知保留清理](../../server/migrations/0124_user_notification_retention.sql)。
+- [组织部门](../../server/migrations/0125_org_departments.sql)、[部门授权](../../server/migrations/0126_org_department_grants.sql)、[部门显示对账](../../server/migrations/0128_org_department_display_resync.sql)。
+- [企业知识库接入 WeKnora](../../server/migrations/0127_weknora_knowledge.sql)：新增连接、知识库、部门授权、会话所选知识库与引用快照五张表，给带 `workbench:use` 的角色加 `knowledge:view`；删除原有本地知识库四张表、两篇合成文档与检索函数。
+- [钉钉账号绑定](../../server/migrations/0129_dingtalk_account_bindings.sql)、[钉钉管理](../../server/migrations/0130_dingtalk_administration.sql)、[钉钉应用配置](../../server/migrations/0131_dingtalk_app_configuration.sql)。
 
 新增变更使用新的顺序迁移，保留已应用迁移；迁移运行器以咨询锁串行执行并校验已执行迁移的 SHA-256，修改已执行迁移会拒绝启动。应用回滚不会自动降低 Schema，至少保持上一版本兼容；破坏性清理需独立安排。操作流程见 [部署手册](../release/mac-mini-deployment-runbook.md)。
 

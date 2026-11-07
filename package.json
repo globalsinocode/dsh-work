@@ -43,7 +43,7 @@
     "probe:pf07:mcp": "node --experimental-strip-types --env-file-if-exists=.env scripts/acceptance/pf07-mcp-runtime-probe.ts",
     "probe:pf07:mcp:platform": "node --experimental-strip-types --env-file-if-exists=.env scripts/acceptance/pf07-mcp-platform-probe.ts",
     "test:pf07:p1": "pnpm test:m2:integration && pnpm test:m3:integration && pnpm test:mcp:integration && pnpm test:pf04:integration && pnpm test:pf05:integration",
-    "test:m4:knowledge:integration": "pnpm --filter @dsh-work/server test:m4:knowledge:integration",
+    "test:knowledge:integration": "pnpm --filter @dsh-work/server test:knowledge:integration",
     "test:m4:file": "pnpm --filter @dsh-work/server test:m4:file",
     "test:m4:file:integration": "pnpm --filter @dsh-work/server test:m4:file:integration",
     "test:m4:authorization:integration": "pnpm --filter @dsh-work/server test:m4:authorization:integration",
@@ -72,7 +72,7 @@
     "probe:artifact": "pnpm probe -- artifact",
     "probe:cancel": "pnpm probe -- cancel",
     "probe:concurrency": "pnpm probe -- concurrency",
-    "test:scripts": "node --experimental-strip-types --test scripts/checks/checks.test.mjs scripts/checks/server-dependencies.test.mjs scripts/runtime/probe.test.mjs scripts/testing/playwright-p0-config.test.mjs scripts/testing/run-server-tests.test.mjs scripts/testing/target-environment-preflight.test.mjs scripts/testing/nginx-proxy-config.test.mjs scripts/runtime/run-timings.test.mjs scripts/acceptance/c-tier-p2.test.mjs",
+    "test:scripts": "node --experimental-strip-types --test scripts/checks/checks.test.mjs scripts/checks/server-dependencies.test.mjs scripts/runtime/probe.test.mjs scripts/testing/playwright-p0-config.test.mjs scripts/testing/run-server-tests.test.mjs scripts/testing/target-environment-preflight.test.mjs scripts/testing/nginx-proxy-config.test.mjs scripts/runtime/run-timings.test.mjs scripts/acceptance/c-tier-p2.test.mjs scripts/release/release-bundle.test.mjs",
     "preflight:target-simulation": "node scripts/testing/target-environment-preflight.mjs --profile config/target-environment/2026-10-17.json",
     "ci:static": "pnpm verify && pnpm test:scripts && pnpm test:pf07:matrix && pnpm test:pf07:fixture && pnpm check:secrets && pnpm typecheck && pnpm lint && pnpm build",
     "ci:unit": "pnpm test:unit && pnpm test:m5:frontend",
@@ -114,6 +114,7 @@
     "test:e2e:project-space": "playwright test --config playwright.project-space.config.ts",
     "test:e2e:automation": "playwright test --config playwright.automation.config.ts",
     "test:e2e:mcp-admin": "playwright test --config playwright.mcp-admin.config.ts",
+    "test:e2e:skill-review": "playwright test --config playwright.skill-review.config.ts",
     "test:e2e:agent-principal": "playwright test --config playwright.agent-principal.config.ts",
     "test:e2e:agent-capabilities": "playwright test --config playwright.agent-capabilities.config.ts",
     "test:e2e:agent-routines": "playwright test --config playwright.agent-routines.config.ts",
@@ -129,6 +130,7 @@
     "test:local-auth": "pnpm --filter @dsh-work/server test:local-auth",
     "test:local-auth:integration": "pnpm --filter @dsh-work/server test:local-auth:integration",
     "test:e2e:local-auth": "playwright test --config playwright.local-auth.config.ts",
+    "test:e2e:dingtalk": "playwright test --config playwright.dingtalk.config.ts",
     "test:e2e:login-options": "playwright test --config playwright.login-options.config.ts"
   },
   "devDependencies": {

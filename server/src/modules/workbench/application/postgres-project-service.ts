@@ -15,6 +15,7 @@ import type { RuntimeManifest } from '../../runtime/runtime-types.ts'
 import type { SessionAuthorizationContext } from '../../authorization/postgres-authorization-service.ts'
 import type { PostgresProjectArchiveService } from './postgres-project-archive-service.ts'
 import { activityTransitionToken, recordWorkspaceActivity } from './workspace-activity-writer.ts'
+import { recordUserNotification } from '../../notification/user-notification-writer.ts'
 import { workspaceStateConflict } from './workspace-state-conflict-error.ts'
 
 const tenantId = 'tenant-dsh-work'
@@ -371,6 +372,12 @@ export class PostgresProjectService implements ProjectTaskThreadPort {
           } : {}),
         },
       })
+      if (assignee.type === 'employee') {
+        await recordUserNotification(transaction, {
+          recipientUserId: assignee.id, kind: 'task_assigned', workspaceId, objectType: 'project_task', objectId: taskId,
+          actorUserId, dedupeKey: `task_assigned:${taskId}:created`,
+        })
+      }
     })
     } catch (error) {
       await this.discardUnstartedThread(sessionId, null)
@@ -541,6 +548,12 @@ export class PostgresProjectService implements ProjectTaskThreadPort {
           assigneeType = assignee.type
           assigneeUserId = assignee.type === 'employee' ? assignee.id : null
           assigneeAgentMemberId = assignee.type === 'agent' ? assignee.id : null
+          if (assignee.type === 'employee') {
+            await recordUserNotification(transaction, {
+              recipientUserId: assignee.id, kind: 'task_assigned', workspaceId, objectType: 'project_task', objectId: taskId,
+              actorUserId, dedupeKey: `task_assigned:${taskId}:${await activityTransitionToken(transaction)}`,
+            })
+          }
         }
       }
       briefTitle = title
@@ -708,9 +721,14 @@ export class PostgresProjectService implements ProjectTaskThreadPort {
           taskId, sessionId: task.sessionId, kind: 'completed', actorUserId,
           metadata: { note, deliverables: names.map(row => row.name), ...(via ? { via } : {}) },
         })
+        const completionToken = await activityTransitionToken(transaction)
+        await recordUserNotification(transaction, {
+          recipientUserId: task.createdBy, kind: 'task_completed', workspaceId, objectType: 'project_task', objectId: taskId,
+          actorUserId, dedupeKey: `task_completed:${taskId}:${completionToken}`,
+        })
         await recordWorkspaceActivity(transaction, {
           workspaceId, kind: 'project_task_completed', actorUserId, objectType: 'project_task', objectId: taskId,
-          dedupeKey: `project-task-completed:${taskId}:${await activityTransitionToken(transaction)}`,
+          dedupeKey: `project-task-completed:${taskId}:${completionToken}`,
           metadata: via ? {
             viaAgentMemberId: via.agentMemberId,
             viaAgentName: via.agentName,
@@ -951,10 +969,10 @@ export class PostgresProjectService implements ProjectTaskThreadPort {
       }
       await this.database.begin(async (transaction) => {
         const [task] = await transaction<{
-          id: string; schedule: ProjectTaskSchedule | null; scheduleState: ProjectTaskScheduleState | null
+          id: string; workspaceId: string; schedule: ProjectTaskSchedule | null; scheduleState: ProjectTaskScheduleState | null
           setBy: string | null; failures: number
         }[]>`
-          select id, schedule, schedule_state as "scheduleState", schedule_set_by as "setBy",
+          select id, workspace_id as "workspaceId", schedule, schedule_state as "scheduleState", schedule_set_by as "setBy",
                  consecutive_failures as failures
             from project_tasks
            where tenant_id = ${tenantId} and session_id = ${sessionId} and removed_at is null and assignee_type = 'agent'
@@ -976,6 +994,9 @@ export class PostgresProjectService implements ProjectTaskThreadPort {
           await this.recordTaskEvent(transaction, {
             taskId: task.id, sessionId, kind: 'schedule_paused', actorUserId: task.setBy,
             metadata: { reason: 'consecutive_failures', failures },
+          })
+          await notifyScheduleHalted(transaction, {
+            taskId: task.id, workspaceId: task.workspaceId, setBy: task.setBy, state: 'paused', reason: 'consecutive_failures',
           })
         }
       })
@@ -1032,6 +1053,10 @@ export class PostgresProjectService implements ProjectTaskThreadPort {
         await this.recordTaskEvent(transaction, {
           taskId, sessionId: task.sessionId, kind: 'schedule_stopped', actorUserId: setBy, metadata: { reason },
         })
+        // 任务已完成而停止时不另发：完成本身已通知创建人（NC-S3）。
+        if (reason !== 'completed') {
+          await notifyScheduleHalted(transaction, { taskId, workspaceId: task.workspaceId, setBy, state: 'stopped', reason })
+        }
         return null
       }
       if (task.workspaceStatus !== 'active') return stop('workspace_archived')
@@ -1069,10 +1094,15 @@ export class PostgresProjectService implements ProjectTaskThreadPort {
     const record = async (kind: ProjectTaskEvent['kind'], metadata: Record<string, unknown>, pause = false) => {
       await this.database.begin(async (transaction) => {
         if (pause) {
-          await transaction`
+          const paused = await transaction`
             update project_tasks set schedule_state = 'paused', schedule_reason = ${String(metadata.reason)}, next_slot_utc = null
              where tenant_id = ${tenantId} and id = ${taskId} and schedule_state = 'active'
           `
+          if (paused.count > 0) {
+            await notifyScheduleHalted(transaction, {
+              taskId, workspaceId: plan.workspaceId, setBy: plan.setBy, state: 'paused', reason: String(metadata.reason),
+            })
+          }
         }
         await this.recordTaskEvent(transaction, { taskId, sessionId: plan.sessionId, kind, actorUserId: plan.setBy, metadata })
       })
@@ -1515,4 +1545,19 @@ function parseFileIds(value: unknown, field: string): string[] {
   const ids = [...new Set(value.map(id => (id as string).trim()))]
   if (ids.length > 5) throw requestInvalid(`${field}最多 5 个`)
   return ids
+}
+
+/**
+ * 定时执行被暂停或停止（NC-S3）：通知规则设置人。这是系统动作，触发人记为空；同一任务每次
+ * 暂停或停止各一条（按事务令牌区分）。
+ */
+async function notifyScheduleHalted(transaction: DatabaseTransaction, input: {
+  taskId: string; workspaceId: string; setBy: string; state: 'paused' | 'stopped'; reason: string
+}) {
+  await recordUserNotification(transaction, {
+    recipientUserId: input.setBy, kind: 'task_schedule_stopped', workspaceId: input.workspaceId,
+    objectType: 'project_task', objectId: input.taskId, actorUserId: null,
+    dedupeKey: `task_schedule_stopped:${input.taskId}:${await activityTransitionToken(transaction)}`,
+    metadata: { state: input.state, reason: input.reason },
+  })
 }

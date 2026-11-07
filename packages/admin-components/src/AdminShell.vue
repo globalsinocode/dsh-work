@@ -12,11 +12,14 @@ import {
   FolderOpened,
   Grid,
   InfoFilled,
+  Iphone,
   Key,
   Menu,
   Monitor,
   MoreFilled,
   Notebook,
+  Reading,
+  OfficeBuilding,
   PieChart,
   SwitchButton,
   Tickets,
@@ -83,6 +86,13 @@ const navigationGroups: Array<{ label: string; items: NavigationItem[] }> = [
     ],
   },
   {
+    // 企业知识库（weknora-knowledge-plan WK-S3）：独立分组，不放在组织与权限下。
+    label: '知识库',
+    items: [
+      { label: '企业知识库', path: '/knowledge', icon: Reading, permission: 'admin' },
+    ],
+  },
+  {
     label: '组织与权限',
     items: [
       {
@@ -92,6 +102,8 @@ const navigationGroups: Array<{ label: string; items: NavigationItem[] }> = [
         permission: 'admin',
         requiresIdentityAdministration: true,
       },
+      { label: '组织架构', path: '/organization', icon: OfficeBuilding, permission: 'admin' },
+      { label: '钉钉集成', path: '/dingtalk', icon: Iphone, permission: 'admin', requiresIdentityAdministration: true },
       { label: '工作空间', path: '/workspaces', icon: FolderOpened, permission: 'admin' },
     ],
   },

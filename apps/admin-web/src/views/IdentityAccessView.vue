@@ -1,26 +1,42 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { Refresh, Search, UserFilled } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
 import { adminApi, AdminApiError } from '@/api/client'
 import { useListPagination } from '@/composables/use-list-pagination'
 import { useAuthStore } from '@/stores/auth'
+import DingTalkBindingPanel from '@/components/dingtalk/DingTalkBindingPanel.vue'
+import { dingtalkBoundBy, dingtalkRevokeReason, dingtalkStatusLabel, dingtalkStatusTag } from '@/utils/dingtalk'
 import type {
+  DingTalkBindingStatus,
   DirectorySyncState,
   IdentityRoleSummary,
   IdentityUserPage,
   IdentityUserSummary,
   LocalPermissionDefinition,
+  OrganizationDepartment,
 } from '@/types/domain'
 
+interface DepartmentOption {
+  value: string
+  label: string
+  children: DepartmentOption[]
+}
+
 const authStore = useAuthStore()
+// 单元测试中可能没有路由。
+const route = useRoute() as ReturnType<typeof useRoute> | undefined
 const localAccountsEnabled = ref(false)
 const directoryEnabled = ref(false)
 const accountDialogOpen = ref(false)
 const accountTarget = ref<IdentityUserSummary>()
 const resettingPassword = ref(false)
-const accountForm = reactive({ username: '', password: '', name: '', department: '', email: '' })
+const accountForm = reactive({ username: '', password: '', name: '', departmentId: '', email: '' })
+// 新建账号时从组织架构部门树选择部门（成为主部门），可以不选。
+const departmentOptions = ref<DepartmentOption[]>([])
+const departmentLoadError = ref('')
 const accountPasswordError = ref('')
 const accountUsernameError = ref('')
 const accountNameError = ref('')
@@ -36,12 +52,13 @@ const loading = ref(false)
 const saving = ref(false)
 const syncing = ref(false)
 const error = ref('')
-const query = ref('')
+const query = ref(typeof route?.query.query === 'string' ? route.query.query : '')
 const statusFilter = ref<'all' | 'active' | 'disabled'>('all')
+const dingtalkFilter = ref<'all' | 'bound' | 'unbound' | 'invalid'>('all')
 const currentPage = ref(1)
 const userPageSize = 20
 const userTotal = ref(0)
-const userSummary = ref({ synchronized: 0, active: 0, authorized: 0 })
+const userSummary = ref<IdentityUserPage['summary']>({ synchronized: 0, active: 0, authorized: 0 })
 const activeTab = ref<'users' | 'roles'>('users')
 const selectedUser = ref<IdentityUserSummary>()
 const userDrawerOpen = ref(false)
@@ -116,6 +133,9 @@ async function load() {
     permissionDefinitions.value = nextPermissions
     directoryState.value = nextState
     refreshSelectedUser()
+    // “钉钉集成 › 未绑定名单 › 代为绑定”带员工 ID 跳转：直接打开该员工的配置抽屉。
+    const requested = typeof route?.query.user === 'string' ? users.value.find(user => user.id === route.query.user) : undefined
+    if (requested) openUser(requested)
   } catch (cause) {
     error.value = cause instanceof Error ? cause.message : '身份与权限数据加载失败'
   } finally {
@@ -130,8 +150,27 @@ function openAccount(user?: IdentityUserSummary, reset = false) {
   accountNameError.value = ''
   accountError.value = ''
   clearAccountUsernameError()
-  Object.assign(accountForm, { username: user?.username ?? '', password: '', name: user?.name ?? '', department: user?.department ?? '', email: user?.email ?? '' })
+  Object.assign(accountForm, { username: user?.username ?? '', password: '', name: user?.name ?? '', departmentId: '', email: user?.email ?? '' })
   accountDialogOpen.value = true
+  if (!user) void loadDepartmentOptions()
+}
+
+async function loadDepartmentOptions() {
+  departmentLoadError.value = ''
+  try {
+    const organization = await adminApi.getOrganization()
+    const children = new Map<string | null, OrganizationDepartment[]>()
+    for (const department of organization.departments) {
+      children.set(department.parentId, [...(children.get(department.parentId) ?? []), department])
+    }
+    const build = (parentId: string | null): DepartmentOption[] => (children.get(parentId) ?? [])
+      .sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name, 'zh-CN'))
+      .map(department => ({ value: department.id, label: department.name, children: build(department.id) }))
+    departmentOptions.value = build(null)
+  } catch (cause) {
+    departmentOptions.value = []
+    departmentLoadError.value = cause instanceof Error ? cause.message : '部门列表加载失败'
+  }
 }
 
 function clearAccountUsernameError() {
@@ -193,7 +232,8 @@ async function saveAccount() {
     if (resettingPassword.value && accountTarget.value) {
       await adminApi.resetLocalPassword(accountTarget.value.id, accountForm.password)
     } else {
-      await adminApi.createLocalAccount({ ...accountForm })
+      const { departmentId, ...account } = accountForm
+      await adminApi.createLocalAccount({ ...account, ...(departmentId ? { departmentId } : {}) })
     }
     accountDialogOpen.value = false
     accountForm.password = ''
@@ -413,6 +453,7 @@ function userListRequest() {
   return {
     query: query.value.trim(),
     status: statusFilter.value,
+    dingtalk: dingtalkFilter.value,
     page: currentPage.value,
     pageSize: userPageSize,
   }
@@ -423,6 +464,14 @@ function applyUserPage(result: IdentityUserPage) {
   userTotal.value = result.total
   currentPage.value = result.page
   userSummary.value = result.summary
+}
+
+function dingtalkRowHint(user: IdentityUserSummary) {
+  const dingtalk = user.dingtalk
+  if (!dingtalk) return ''
+  if (dingtalk.status === 'bound') return dingtalkBoundBy(dingtalk.boundBy)
+  if (dingtalk.status === 'invalid') return dingtalkRevokeReason(dingtalk.revokeReason) + (dingtalk.selfRebindLocked ? '，已锁定' : '')
+  return '收不到钉钉通知'
 }
 
 function changeUserPage(page: number) {
@@ -478,49 +527,49 @@ onMounted(() => void load())
       title="账号由管理员开通；新账号需分配角色后才能使用。初始密码请通过安全渠道交付，首次登录需修改。"
     />
 
-    <section class="identity-summary">
-      <article class="metric-card">
-        <div class="metric-label">员工账号</div>
-        <div class="metric-value">{{ userSummary.synchronized }}</div>
-        <div class="metric-detail">{{ userSummary.active }} 个有效账号</div>
-      </article>
-      <article class="metric-card">
-        <div class="metric-label">已授权员工</div>
-        <div class="metric-value">{{ userSummary.authorized }}</div>
-        <div class="metric-detail">至少具有一个本地角色</div>
-      </article>
-      <article class="metric-card">
-        <div class="metric-label">本地角色</div>
-        <div class="metric-value">{{ roles.length }}</div>
-        <div class="metric-detail">{{ roles.filter(role => role.status === 'active').length }} 个启用</div>
-      </article>
-      <article v-if="directoryEnabled" class="metric-card sync-card">
-        <div class="sync-card__copy">
-          <div class="metric-label">员工目录</div>
-          <strong>{{ directoryState?.applicationId ?? 'dsh-work' }} · {{ directoryState?.environment ?? '—' }}</strong>
-          <span>最近成功：{{ formatDate(directoryState?.lastSucceededAt) }}</span>
-          <span v-if="directoryState?.lastError" class="sync-card__error">{{ directoryState.lastError }}</span>
+    <section class="content-panel overview-strip" aria-label="员工与权限概况">
+      <dl class="overview-strip__stats">
+        <div class="overview-stat">
+          <dt>员工账号</dt>
+          <dd><strong class="overview-stat__value">{{ userSummary.synchronized }}</strong><small>{{ userSummary.active }} 个有效账号</small></dd>
         </div>
-        <div class="sync-card__actions">
-          <el-tag :type="directoryState?.status === 'failed' ? 'danger' : directoryState?.status === 'running' ? 'warning' : 'success'" effect="plain">
-            {{ directoryState?.status === 'failed' ? '失败' : directoryState?.status === 'running' ? '同步中' : '就绪' }}
-          </el-tag>
-          <el-dropdown v-if="authStore.canManageIdentity" trigger="click" @command="handleSyncCommand">
-            <el-button type="primary" :icon="Refresh" :loading="syncing">同步员工</el-button>
-            <template #dropdown>
-              <el-dropdown-menu>
-                <el-dropdown-item command="incremental">增量同步</el-dropdown-item>
-                <el-dropdown-item command="full" divided>重新全量同步</el-dropdown-item>
-              </el-dropdown-menu>
-            </template>
-          </el-dropdown>
+        <div class="overview-stat">
+          <dt>已授权员工</dt>
+          <dd><strong class="overview-stat__value">{{ userSummary.authorized }}</strong><small>至少具有一个本地角色</small></dd>
         </div>
-      </article>
-      <article v-else class="metric-card">
-        <div class="metric-label">账号安全</div>
-        <div class="metric-detail">仅管理员可开通账号</div>
-        <el-button v-if="authStore.identityProvider === 'local-password'" tag="a" href="/change-password" link type="primary">修改我的密码</el-button>
-      </article>
+        <div class="overview-stat">
+          <dt>本地角色</dt>
+          <dd><strong class="overview-stat__value">{{ roles.length }}</strong><small>{{ roles.filter(role => role.status === 'active').length }} 个启用</small></dd>
+        </div>
+        <div v-if="directoryEnabled" class="overview-stat">
+          <dt>员工目录</dt>
+          <dd><strong class="sync-source">{{ directoryState?.applicationId ?? 'dsh-work' }} · {{ directoryState?.environment ?? '—' }}</strong><small>最近成功：{{ formatDate(directoryState?.lastSucceededAt) }}</small></dd>
+        </div>
+      </dl>
+      <p v-if="localAccountsEnabled && userSummary.dingtalk" class="overview-strip__hint dingtalk-summary" aria-label="钉钉绑定概况">
+        钉钉：已绑定 <strong>{{ userSummary.dingtalk.bound }}</strong>（本人登录 {{ userSummary.dingtalk.selfBound }} · 管理员代绑 {{ userSummary.dingtalk.adminBound }}）
+        · 未绑定 <strong>{{ userSummary.dingtalk.unbound + userSummary.dingtalk.invalid }}</strong>
+        <a v-if="authStore.canManageIdentity" href="/dingtalk?tab=unbound">查看名单</a>
+      </p>
+      <p v-if="directoryEnabled && directoryState?.lastError" class="overview-strip__hint sync-error">{{ directoryState.lastError }}</p>
+      <p v-else-if="!directoryEnabled" class="overview-strip__hint">账号安全：仅管理员可开通账号。</p>
+      <div v-if="directoryEnabled" class="overview-strip__actions">
+        <el-tag :type="directoryState?.status === 'failed' ? 'danger' : directoryState?.status === 'running' ? 'warning' : 'success'" effect="plain">
+          {{ directoryState?.status === 'failed' ? '失败' : directoryState?.status === 'running' ? '同步中' : '就绪' }}
+        </el-tag>
+        <el-dropdown v-if="authStore.canManageIdentity" trigger="click" @command="handleSyncCommand">
+          <el-button type="primary" :icon="Refresh" :loading="syncing">同步员工</el-button>
+          <template #dropdown>
+            <el-dropdown-menu>
+              <el-dropdown-item command="incremental">增量同步</el-dropdown-item>
+              <el-dropdown-item command="full" divided>重新全量同步</el-dropdown-item>
+            </el-dropdown-menu>
+          </template>
+        </el-dropdown>
+      </div>
+      <div v-else-if="authStore.identityProvider === 'local-password'" class="overview-strip__actions">
+        <el-button tag="a" href="/change-password" link type="primary">修改我的密码</el-button>
+      </div>
     </section>
 
     <el-tabs v-model="activeTab" class="identity-tabs">
@@ -532,6 +581,12 @@ onMounted(() => void load())
               <el-option label="全部状态" value="all" />
               <el-option label="有效" value="active" />
               <el-option label="已停用" value="disabled" />
+            </el-select>
+            <el-select v-if="localAccountsEnabled" v-model="dingtalkFilter" aria-label="筛选钉钉绑定" @change="reloadUsers(true)">
+              <el-option label="钉钉：全部" value="all" />
+              <el-option label="已绑定" value="bound" />
+              <el-option label="未绑定" value="unbound" />
+              <el-option label="已失效" value="invalid" />
             </el-select>
             <el-button :icon="Search" @click="reloadUsers(true)">查询</el-button>
             <span class="filter-bar__meta">{{ userTotal }} 名员工</span>
@@ -550,10 +605,22 @@ onMounted(() => void load())
             </el-table-column>
             <el-table-column label="登录账号" min-width="180" show-overflow-tooltip><template #default="scope"><span class="login-account">{{ scope.row.loginAccount || '未提供' }}</span></template></el-table-column>
             <el-table-column label="来源" width="100"><template #default="scope"><el-tag effect="plain" :type="scope.row.identityProvider === 'ai-hub' ? 'primary' : 'info'">{{ scope.row.identityProvider === 'ai-hub' ? 'AI Hub' : '独立账号' }}</el-tag></template></el-table-column>
+            <el-table-column v-if="localAccountsEnabled" label="钉钉" min-width="150">
+              <template #default="scope">
+                <template v-if="scope.row.dingtalk">
+                  <el-tag :type="dingtalkStatusTag[scope.row.dingtalk.status as DingTalkBindingStatus]" effect="plain">{{ dingtalkStatusLabel[scope.row.dingtalk.status as DingTalkBindingStatus] }}</el-tag>
+                  <div class="dingtalk-hint">{{ dingtalkRowHint(scope.row) }}</div>
+                </template>
+                <span v-else class="empty-value">—</span>
+              </template>
+            </el-table-column>
             <el-table-column prop="department" label="组织 / 部门" min-width="140" show-overflow-tooltip />
             <el-table-column label="本地角色" min-width="180">
               <template #default="scope">
-                <div v-if="scope.row.roles.length" class="tag-list"><el-tag v-for="role in scope.row.roles" :key="role.id" effect="plain" :type="role.status === 'active' ? 'primary' : 'info'">{{ role.name }}</el-tag></div>
+                <div v-if="scope.row.roles.length || scope.row.departmentRoles?.length" class="tag-list">
+                  <el-tag v-for="role in scope.row.roles" :key="role.id" effect="plain" :type="role.status === 'active' ? 'primary' : 'info'">{{ role.name }}</el-tag>
+                  <el-tag v-for="role in scope.row.departmentRoles ?? []" :key="role.grantId" effect="plain" type="info" :title="`来自部门“${role.departmentName}”`">{{ role.name }}（部门）</el-tag>
+                </div>
                 <span v-else class="empty-value">尚未授权</span>
               </template>
             </el-table-column>
@@ -613,7 +680,11 @@ onMounted(() => void load())
           <el-form-item label="登录账号" for="account-username" required :error="accountUsernameError"><el-input id="account-username" v-model="accountForm.username" placeholder="请输入手机号或邮箱" autocomplete="off" autocapitalize="none" :maxlength="254" :disabled="saving" required @input="clearAccountUsernameError" @blur="checkAccountUsername" /><span v-if="checkingAccount" role="status">正在检查账号…</span></el-form-item>
           <template v-if="!accountTarget">
             <el-form-item label="姓名" for="account-name" required :error="accountNameError"><el-input id="account-name" v-model="accountForm.name" :maxlength="80" :disabled="saving" required @input="accountNameError = ''" /></el-form-item>
-            <el-form-item label="部门" for="account-department"><el-input id="account-department" v-model="accountForm.department" :maxlength="100" /></el-form-item>
+            <el-alert v-if="departmentLoadError" type="warning" :closable="false" show-icon :title="`部门列表加载失败，可先不选部门，之后在“组织架构”中分配：${departmentLoadError}`" />
+            <el-form-item v-if="departmentOptions.length" label="部门" for="account-department">
+              <el-tree-select id="account-department" v-model="accountForm.departmentId" :data="departmentOptions" node-key="value" check-strictly default-expand-all clearable filterable placeholder="从组织架构选择（可不选）" :disabled="saving" />
+              <p>选中的部门即为该员工的主部门；之后可在“组织架构”中调整。</p>
+            </el-form-item>
             <el-form-item label="邮箱" for="account-email"><el-input id="account-email" v-model="accountForm.email" type="email" :maxlength="254" /></el-form-item>
           </template>
         </template>
@@ -651,6 +722,13 @@ onMounted(() => void load())
             <el-button :type="selectedUser.status === 'active' ? 'danger' : 'primary'" :loading="saving" @click="toggleAccountStatus">{{ selectedUser.status === 'active' ? '停用账号' : '启用账号' }}</el-button>
           </div>
         </section>
+        <DingTalkBindingPanel
+          v-if="localAccountsEnabled && authStore.canManageIdentity && selectedUser.identityProvider === 'local' && selectedUser.username"
+          :user-id="selectedUser.id"
+          :user-name="selectedUser.name"
+          :can-manage="selectedUser.status === 'active'"
+          @changed="void refreshUsers()"
+        />
         <p v-if="selectedUser.identityProvider === 'ai-hub'">AI Hub 账号，登录凭据和账号启停由 AI Hub 管理。</p>
 
         <section class="drawer-section">
@@ -660,7 +738,11 @@ onMounted(() => void load())
               <span><strong>{{ role.name }}</strong><code>{{ role.code }}</code></span>
               <el-button v-if="authStore.canManageIdentity" link type="danger" :disabled="saving" @click="revokeRole(role)">移除</el-button>
             </div>
-            <el-empty v-if="!selectedUser.roles.length" :image-size="56" description="尚未分配本地角色" />
+            <div v-for="role in selectedUser.departmentRoles ?? []" :key="role.grantId" class="assigned-role">
+              <span><strong>{{ role.name }}</strong><code>{{ role.code }}</code></span>
+              <el-tag effect="plain" type="info">来自部门“{{ role.departmentName }}”，在组织架构中修改</el-tag>
+            </div>
+            <el-empty v-if="!selectedUser.roles.length && !selectedUser.departmentRoles?.length" :image-size="56" description="尚未分配本地角色" />
           </div>
           <div v-if="authStore.canManageIdentity" class="inline-form">
             <el-select v-model="selectedRoleId" aria-label="选择要分配的角色" filterable placeholder="选择要分配的角色"><el-option v-for="role in assignableRoles" :key="role.id" :label="role.name" :value="role.id" /></el-select>
@@ -702,18 +784,15 @@ onMounted(() => void load())
 </template>
 
 <style scoped>
-.identity-summary { display: grid; grid-template-columns: repeat(3, minmax(150px, 1fr)) minmax(300px, 1.6fr); gap: var(--spacing-section); }
-.sync-card { display: flex; align-items: center; justify-content: space-between; gap: 18px; }
-.sync-card__copy { display: flex; min-width: 0; flex-direction: column; }
-.sync-card__copy strong { margin-top: 5px; color: var(--color-text-heading); font-size: var(--font-size-caption); }
-.sync-card__copy span { margin-top: 5px; color: var(--color-text-muted); font-size: var(--font-size-badge); }
-.sync-card__copy .sync-card__error { color: var(--color-danger); }
-.sync-card__actions { display: flex; flex: 0 0 auto; align-items: center; gap: 10px; }
 .identity-tabs { width: 100%; }
+.dingtalk-hint { margin-top: 2px; font-size: 12px; color: var(--el-text-color-secondary); }
+.dingtalk-summary a { margin-left: 6px; }
 .filter-bar .el-input { width: 340px; }
 .filter-bar .el-select { width: 140px; }
 .identity-pagination { justify-content: space-between; padding: 14px var(--spacing-card); }
 .user-cell { display: flex; min-width: 0; align-items: center; gap: 10px; }
+.sync-source { color: var(--color-text-heading); font-size: var(--font-size-caption); }
+.overview-strip__hint.sync-error { color: var(--color-danger); }
 .user-cell__avatar, .user-detail-hero__avatar { display: grid; flex: 0 0 auto; place-items: center; border-radius: 50%; color: var(--color-primary); background: var(--color-primary-light); font-weight: var(--font-weight-title); }
 .user-cell__avatar { width: 34px; height: 34px; }
 .user-cell > span:last-child, .role-cell { display: flex; min-width: 0; flex-direction: column; }
@@ -756,6 +835,5 @@ onMounted(() => void load())
 .permission-groups :deep(.el-checkbox) { height: auto; margin: 0; align-items: flex-start; }
 .permission-groups :deep(.el-checkbox__label) { display: flex; min-width: 0; flex-direction: column; line-height: 1.4; }
 .permission-groups small { color: var(--color-text-muted); font-size: var(--font-size-micro); }
-@media (max-width: 1280px) { .identity-summary { grid-template-columns: repeat(2, 1fr); } }
-@media (max-width: 700px) { .identity-summary { grid-template-columns: 1fr; } .sync-card, .role-toolbar { align-items: stretch; flex-direction: column; } .sync-card__actions { justify-content: space-between; } .filter-bar, .filter-bar .el-input, .filter-bar .el-select { width: 100%; } .form-grid, .permission-groups :deep(.el-checkbox-group) { grid-template-columns: 1fr; } .user-detail-hero { grid-template-columns: auto 1fr; } .user-detail-hero > .el-tag { grid-column: 1 / -1; justify-self: start; } }
+@media (max-width: 700px) { .role-toolbar { align-items: stretch; flex-direction: column; } .filter-bar, .filter-bar .el-input, .filter-bar .el-select { width: 100%; } .form-grid, .permission-groups :deep(.el-checkbox-group) { grid-template-columns: 1fr; } .user-detail-hero { grid-template-columns: auto 1fr; } .user-detail-hero > .el-tag { grid-column: 1 / -1; justify-self: start; } }
 </style>

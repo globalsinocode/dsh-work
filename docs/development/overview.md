@@ -15,7 +15,7 @@ dsh-work 是部署在企业内网的统一 AI Agent 工作台。员工通过自�
 
 MVP 聚焦三类业务场景：
 
-1. 企业知识查询，回答带来源、版本和权限过滤；
+1. 企业知识查询（员工在对话中添加知识库后检索），回答带来源、更新日期和按部门的可见范围过滤；
 2. ERP、MES 等企业系统的只读业务查询；
 3. PDF、DOCX、XLSX、CSV、TXT、Markdown 文件的基础分析与成果交付。
 
@@ -88,7 +88,7 @@ dsh-work 保存可面向用户和治理的业务状态；DSH 保存运行时技�
 
 运行时统一通过 DSH 发起工具调用。工具分两类管理：
 
-- **内置工具**（DSH 原生工具与 dsh-work 平台工具）随代码发布，[注册表](../../server/src/modules/runtime/builtin-tools.ts)是唯一来源，不是可管理的数据，没有目录同步、逐工具授权或绑定修订。每个 Agent 运行默认获得工作区文件与任务进度工具（`read`、`glob`、`grep`、`read_image`、`write`、`edit`、`str_replace_editor`、`todo_write`），由执行策略限制在当前 Run 工作区和 output 目录；联网搜索 `web_search`、项目任务管理（`project_tasks_*`）与推荐 AI 同事（`list_colleague_agents`、`recommend_agents`）由 Agent 版本开关决定——项目任务仅在团队空间由人发起的运行中装配（定时执行只装配读工具），推荐仅在个人对话中由员工发起的交互运行中装配；激活 Skill、Python 执行和经验申请按运行内容装配；管理工具按 Run purpose 注入。`bash` 由平台为员工侧 Agent 运行（对话、定时任务、发布试运行）装配，在每 Attempt 的断网执行容器中前台单次执行；系统与管理运行不装配，Skill 不能声明，Runtime 紧急停用后不出现在模型可见工具中。执行容器为必需（执行隔离 4.9），启动检查未通过时所有 Agent 运行在创建前被拒绝。注册表以外的工具（如 `web_fetch`、后台任务 `job_*`、Agent 协作与 Runtime 控制工具）一律不放行。管理员只能在 Runtime 配置中紧急停用 DSH 工具：新运行不再装配，执行中的运行再调用该工具时只拒绝这一次调用并告知模型，运行本身不中断。模型只看到本次运行放行的工具。管理端在 `安全与运维 → Runtimes` 只读展示内置工具、启动时与 DSH 工具目录的核对结果，以及执行容器状态（决定是否装配 `bash`）。
+- **内置工具**（DSH 原生工具与 dsh-work 平台工具）随代码发布，[注册表](../../server/src/modules/runtime/builtin-tools.ts)是唯一来源，不是可管理的数据，没有目录同步、逐工具授权或绑定修订。每个 Agent 运行默认获得工作区文件与任务进度工具（`read`、`glob`、`grep`、`read_image`、`write`、`edit`、`str_replace_editor`、`todo_write`），由执行策略限制在当前 Run 工作区和 output 目录；联网搜索 `web_search`、项目任务管理（`project_tasks_*`）、推荐 AI 同事（`list_colleague_agents`、`recommend_agents`）与创建 Skill（`list_available_skills`、`skill_draft_save`）由 Agent 版本开关决定——项目任务仅在团队空间由人发起的运行中装配（定时执行只装配读工具），推荐与创建 Skill 仅在个人对话中由员工发起的交互运行中装配；激活 Skill、Python 执行和经验申请按运行内容装配；管理工具按 Run purpose 注入。`bash` 由平台为员工侧 Agent 运行（对话、定时任务、发布试运行）装配，在每 Attempt 的断网执行容器中前台单次执行；系统与管理运行不装配，Skill 不能声明，Runtime 紧急停用后不出现在模型可见工具中。执行容器为必需（执行隔离 4.9），启动检查未通过时所有 Agent 运行在创建前被拒绝。注册表以外的工具（如 `web_fetch`、后台任务 `job_*`、Agent 协作与 Runtime 控制工具）一律不放行。管理员只能在 Runtime 配置中紧急停用 DSH 工具：新运行不再装配，执行中的运行再调用该工具时只拒绝这一次调用并告知模型，运行本身不中断。模型只看到本次运行放行的工具。管理端在 `安全与运维 → Runtimes` 只读展示内置工具、启动时与 DSH 工具目录的核对结果，以及执行容器状态（决定是否装配 `bash`）。
 - **MCP 外部工具**以 Connector 为管理单元，由 Agent Version 显式选择；登记时发现的清单即生效，之后新增或输入 Schema 变化的 Tool 须管理员确认，入口为 `MCP 连接器`。
 
 该分类不改变执行职责：DSH 仍持有单次 Attempt 的 Agent Loop；Platform Tool Bridge 只提供确定性处理器；MCP Connector 不进入内置工具注册表，内置工具也不能借 Connector 配置扩大用途。
@@ -183,7 +183,7 @@ DSH 直接调用模型并直连 MCP 服务，平台不设模型或连接器网�
 
 ### 4.4 平台能力层
 
-- Model 模块保存 Provider、模型和路由策略，只持久化凭据引用。**当前路由只记录、不生效**：DSH ACP 使用 Profile 固定的模型（`deepseek-v4-pro`），凭据由 DSH 在 `DSH_HOME` 中管理；平台路由只写入 Attempt 快照，不决定实际调用的模型；Manifest 声明了模型能力要求的运行会被拒绝（`MODEL_CAPABILITY_UNAVAILABLE`）。让路由真正生效需要把它作为每次 Attempt 的配置传给 DSH；
+- Model 模块保存 Provider、模型和路由策略，只持久化凭据引用。**当前路由只记录、不生效**：DSH ACP 使用 Profile 固定的模型（`deepseek-v4-pro`），凭据由 DSH 在 `DSH_HOME` 中管理；平台路由只写入 Attempt 快照，不决定实际调用的模型；Manifest 声明了模型能力要求的运行会被拒绝（`MODEL_CAPABILITY_UNAVAILABLE`）。让路由真正生效需要把它作为每次 Attempt 的配置传给 DSH，并经平台模型网关转发（[模型路由方案](../design/model-routing-plan.md)，已评审未实施）；
 - Connector/Tool 模块保存版本、Schema、风险、角色、数据范围和健康状态；
 - Artifact/Content 模块保存文件与成果元数据、不可覆盖版本、权限和存储键；
 - 审计与运营投影不保存提示词、回答正文、文件内容或密钥正文。
@@ -295,6 +295,11 @@ flowchart LR
 - **执行隔离与受控 Shell：** 阶段 1a（容器统一经执行器模块启动）、1b 的 subprocess 部分、1c（“静止”保证：命令后清扫、清理期间工具等待、无法恢复时 Attempt 失败、`output/` 本身检查、工具独占性准入）与 2a（C 档单次 `bash`：执行容器内运行、平台装配、单文件大小上限、安全回归）已实现：`glob`/`grep`/`bash` 在每 Attempt 的执行容器内运行。DSH Worker 的文件工具仍是应用层边界。2b-2 已实现：`output/` 另收 xlsx、docx、pptx、pdf、png、jpg，不合规文件跳过并在回答下方说明，不再令整轮失败（功能规则第 1 节“成果登记”）。2b-4 已实现：装配 `bash` 时附件与引用成果另挂原始文件，二进制成果可跨轮修改为下一版（功能规则第 1 节“原始文件输入”）。2b-1 已实现：执行镜像由仓库内 Dockerfile 经 CI 构建并推送 GHCR（附来源证明），启动检查要求镜像含 `bash`、`rg`、LibreOffice 与 `pdftoppm`，检查到的工具链写入 Runtime 说明。2b-3 已实现：PDF、DOCX、XLSX、PPTX 成果的解析文本在一次性容器中生成，不在服务进程内解析。2b-5 已实现：Office/PDF 成果可在对话中“查看正文”（解析文本）、图片成果直接显示缩略图，“我的文件”与项目空间成果卡可预览。4.7 已实现：每个 Attempt 工作区上限 2 GiB（平台计量，超出终止命令），数据卷剩余空间不足时不运行命令，Attempt 结束删除工作区（失败的保留 3 天）。1b② 已实现：`python_execute` 在本 Attempt 的执行容器内运行（路径经环境变量给出，输出登记为成果）。C 档 P2 已于 2026-10-28 在 Mac mini（v2026.10.28-01）验收通过。阶段 3 已实现：执行容器为必需，删除开关、宿主执行回退与每次调用一个容器的 Python 路径，执行容器不可用时所有 Agent 运行在创建前明确失败。见[执行隔离方案](../design/execution-isolation-plan.md)。
 - **项目空间：** S0～S6 已实现（含双模式与 Agent 项目任务工具）；服务端/组件/P0 与部分 P1、本地真实 DSH 证据见验收目录与发布/PR 留证。OIDC/生产 P2 与部分 P1 旅程仍开放，决策背景见 [项目空间方案](../design/project-space-plan.md)。项目档案员是 `project-archive` 系统运行，经 Run/Attempt → Runtime Adapter → DSH 执行。
 - **平台内置 Skill：** 文件分析、HTML 页面、Office 文档三个内置 Skill 已达到代码级（P0 管理端冒烟与 P1 装配、覆盖、停用、团队空间复核）；真实 DSH 下的产出质量（验收目录 `BSK-P2`）与有无内置 Skill 的对比评测尚未执行。规则见[功能规则 5.5](feature-rules.md#55-平台内置-skill)，设计见[平台内置 Skill 方案](../design/builtin-skills-plan.md)。
+- **Skill 创建专家：** 可创建 Skill 开关、草稿保存与员工提交、管理员审核与发布、经 dsh-work 助手推荐进入与 Skill 广场“创建 Skill”入口已达到代码级（`SKC-01`～`SKC-04`，P0/P1）；2026-11-02 已在本机开发环境由平台管理员经管理端创建、验证（真实 Run/Attempt，8 个案例人工判定通过）并发布该专家，并在真实 DSH 上走通 `SKC-P2` 五个场景（助手推荐、纯指令与带脚本两例从需求到发布、相符时引导、越权拒绝；工作区可新建 `drafts/`），审核结论显示在草稿卡片并发站内通知。带脚本的 Skill 在严格试运行中不提供业务输入，脚本须在无输入时以内置样例自检并以退出码 0 结束（方案 4.7）；试运行证据只证明脚本能跑通，业务正确性由管理员审核判断。服务启动时预置未发布的专家草稿（`SKC-05`），各环境仍由平台管理员选角色、真实验证后发布；受控生产环境的发布尚未执行。规则见[功能规则 5.6](feature-rules.md#56-员工经-skill-创建专家新建-skill)，设计见 [Skill 创建专家方案](../design/skill-creator-plan.md)。
+- **组织架构：** 第一期 ORG-S1（本地维护的部门树、成员与主部门、新建账号选择部门）已达到代码级（`ORG-P0-01`、`ORG-01`～`ORG-04`，P0/P1）；ORG-S2（按部门授予角色、管理类角色限制与角色来源显示）已达到代码级（`ORG-P0-02`、`ORG-05`～`ORG-07`）；钉钉通讯录同步为后续阶段。规则见[功能规则第 10 节](feature-rules.md#10-组织架构org-s1org-s2)，设计见[组织架构方案](../design/org-structure-plan.md)。
+- **企业知识库（WeKnora）：** WK-S1 后端检索链路、WK-S2 员工端“知识库”页与对话中添加知识库、WK-S3 管理端“企业知识库”（连接配置与加密 API Key、全部知识库与跨部门授权）已达到代码级（基于 WeKnora v0.9.0 测试替身的 P0、P1 用例），原有本地知识库已删除。WK-S4 已于 2026-11-02 在本机 WeKnora v0.9.0（在线嵌入模型、未配置重排序）完成真实环境验收：契约测试与最低相关度校准（0.5）、员工端建库上传与对话引用（经 DSH 链路）、撤销授权后不可见与不检索、删除、WeKnora 停机降级；受控生产环境的重排序配置、并发压测与门槛复核在切换前按发布流程执行。规则见[功能规则 11](feature-rules.md#11-企业知识库weknorawk-s1-起)，设计见[接入方案](../design/weknora-knowledge-plan.md)。
+- **钉钉接入（DT-S1）：** 账号绑定（钉钉内登录即绑定、管理员代绑、解绑与锁定、改绑、每日离职检查）、`dingtalk` 会话来源（按 `binding_id` 校验、按来源撤销）、管理端“钉钉集成”页（含在页面配置钉钉应用，AppSecret 加密入库，DT30）、员工端钉钉内登录页与用户中心 › 钉钉、钉钉容器内固定协作模式已达到代码级（验收目录 `DT-ID-01`、`DT-ADM-01`～`03`、`DT-EMP-01`、`02`、`DT-EMP-P0`，钉钉开放平台为测试替身或假 HTTP 服务）。未验收：真实钉钉企业内部应用、公网入口与安全基线、真实错误码（含离职员工）、iOS/Android 钉钉内的免登与容器适配（返回键、软键盘、上传下载、安全区）（`DT-P2`）。钉钉工作通知与群组提醒（DT-S2）尚未实现。规则见[功能规则第 12 节](feature-rules.md#12-钉钉账号绑定dt-s1)，设计见[钉钉接入方案](../design/dingtalk-integration-plan.md)，部署见 [Mac mini 部署手册第 14 节](../release/mac-mini-deployment-runbook.md)。
+- **模型路由、模型网关与数据防护：** 方案已评审（2026-11-06），尚未实施；当前路由只记录不生效，DSH 仍直连模型厂商，发往模型的请求不做遮盖或拦截。路由生效与网关同批交付，见[模型路由方案](../design/model-routing-plan.md)第 9 节与[发往模型的数据防护方案](../design/model-data-protection-plan.md)。
 - **已交付功能的遗留项：** 团队空间、管理助手、Skill 安装、Python 执行和自动任务的未完成部分列在[功能规则](feature-rules.md)各节末尾。
 
 开发模式、自动化和上线前验证入口见 [开发与测试](development.md)；身份协议与生命周期见 [独立登录](../release/local-authentication.md) 或 [AI Hub 接入](../release/ai-hub-sso-integration.md)。
@@ -306,7 +311,7 @@ flowchart LR
 1. 先完成 AI Hub 联调、企业 Connector/知识源、目标主机、存储、备份、监控和 UAT；
 2. 容量不足时先测量瓶颈；增加 Node.js 实例或多主机 Worker 前实现并验证租约、抢占、事件归属和失联恢复；
 3. 上传文件、解析文本、成果与 Skill 文件经 `ObjectStorage` 端口（`server/src/domain/object-storage.ts`）读写，当前实现为本地目录 `LocalObjectStorage`；文件规模增长时新增 NAS/对象存储实现即可，不改变业务对象；Attempt 工作目录属于 Runtime 主机本地，不经此端口；
-4. 企业知识按句切成不超过 800 字的分段，写入时由数据库生成中文二元组与英文词检索项并建 GIN 索引（迁移 0081）；检索在同一条 SQL 里先做角色、工作空间、Data Scope 与发布状态过滤，再按关键词、标题与正文命中打分，每篇取最相关分段作为摘录。语义（向量）检索需要另行评估嵌入服务后再接入；
+4. 企业知识由外部 WeKnora 负责解析、分段、向量化与检索（[接入方案](../design/weknora-knowledge-plan.md)，WK-S1 起，原有本地知识库已由迁移 0115 删除）；平台按部门授权计算员工可见的知识库，只在员工于个人对话中添加知识库后检索，结果写入引用快照，WeKnora 的问答与 Agent 不使用；
 5. 跨应用治理复用达到门槛后，通过稳定治理端口把 Agent、Skill、Tool、Model、发布和汇总治理迁入 AI Hub；
 6. Workspace、产品 Session、Run/Attempt、审批实例、文件、成果和高频运行状态继续由 dsh-work 持有；
 7. 只有独立扩缩容、故障域、团队所有权和数据边界同时成立时，才评审拆分部署单元。

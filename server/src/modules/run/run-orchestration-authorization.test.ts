@@ -55,6 +55,7 @@ function orchestration(overrides: {
     async requirePlatformAdmin() { if (overrides.platformAdminCalls) overrides.platformAdminCalls.count += 1; return { id: 'u-owner' } },
     async requireActiveAgentPrincipal() {},
     async assertAgentPrincipalSnapshot() {},
+    async sessionSelectedSkillReference() { return null },
   }
   const service = new RunOrchestrationService(
     runs as unknown as RunRepository,

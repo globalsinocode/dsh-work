@@ -3,6 +3,7 @@ import { test } from 'node:test'
 import type { RuntimeManifest } from '../runtime/runtime-types.ts'
 import { authorizationDenied } from '../../domain/authorization-errors.ts'
 import { assertCurrentExecutionAuthorization, AuthorizationCheckUnavailableError } from './current-execution-authorization.ts'
+import { installedSkillReferences } from '../../domain/builtin-skill-ref.ts'
 
 type Port = Parameters<typeof assertCurrentExecutionAuthorization>[0]
 const manifest = { workspace_id: 'ws-personal-u1', agent_version_id: 'agent-v1',
@@ -39,8 +40,25 @@ test('built-in Skills are platform-provided: team re-checks never treat them as 
   await assertCurrentExecutionAuthorization(ports({
     async workspaceTypeOf() { return 'team' },
     async authorizeTeamRunExecution(input) { checked = input.additionalSkillReferences; return auth.authorizeTeamRunExecution(input) },
+    installedSkillReferences: skills => installedSkillReferences(skills, (id, version) => id === 'dsh-work-html-page' && version === '1.0.0'),
   }), undefined, withBuiltin)
   assert.deepEqual(checked, ['selected@1.0.0'])
+})
+test('only catalog-known built-in Skills skip re-checks; unknown prefixed or unwired ones are re-checked', async () => {
+  const forged = { ...manifest, skills: [...manifest.skills, { id: 'dsh-work-html-page', version: '9.9.9' }, { id: 'dsh-work-forged', version: '1.0.0' }] } as RuntimeManifest
+  const auth = ports()
+  let checked: string[] | undefined
+  const known = (id: string, version: string) => id === 'dsh-work-html-page' && version === '1.0.0'
+  await assertCurrentExecutionAuthorization(ports({
+    async authorizeRuntime(input) { checked = input.additionalSkillReferences; return auth.authorizeRuntime(input) },
+    installedSkillReferences: skills => installedSkillReferences(skills, known),
+  }), undefined, forged)
+  assert.deepEqual(checked, ['selected@1.0.0', 'dsh-work-html-page@9.9.9', 'dsh-work-forged@1.0.0'])
+  // 未接线注册表：不认任何内置 Skill。
+  await assertCurrentExecutionAuthorization(ports({
+    async authorizeRuntime(input) { checked = input.additionalSkillReferences; return auth.authorizeRuntime(input) },
+  }), undefined, { ...manifest, skills: [...manifest.skills, { id: 'dsh-work-html-page', version: '1.0.0' }] } as RuntimeManifest)
+  assert.deepEqual(checked, ['selected@1.0.0', 'dsh-work-html-page@1.0.0'])
 })
 test('team-specific membership gate is preserved', async () => {
   await assert.rejects(assertCurrentExecutionAuthorization(ports({ async workspaceTypeOf() { return 'team' },
@@ -116,4 +134,18 @@ test('PF-03: pinned MCP Connectors require current connector availability before
   await assert.rejects(assertCurrentExecutionAuthorization(ports(), undefined, pinned, {
     async assertActiveMcpConnections() { throw authorizationDenied('MCP connector unavailable') },
   }), { code: 'authorization_denied' })
+})
+test('session runs re-check the Skill the employee selected, read from the session', async () => {
+  const withSession = { ...manifest, session_id: 'session-1' } as RuntimeManifest
+  const auth = ports()
+  let selected: string | null | undefined
+  await assertCurrentExecutionAuthorization(ports({
+    async sessionSelectedSkillReference(sessionId) { assert.equal(sessionId, 'session-1'); return 'selected@1.0.0' },
+    async authorizeRuntime(input) { selected = input.selectedSkillReference; return auth.authorizeRuntime(input) },
+  }), undefined, withSession)
+  assert.equal(selected, 'selected@1.0.0')
+})
+test('session runs fail closed when the selected-Skill lookup is not wired', async () => {
+  const withSession = { ...manifest, session_id: 'session-1' } as RuntimeManifest
+  await assert.rejects(assertCurrentExecutionAuthorization(ports(), undefined, withSession), AuthorizationCheckUnavailableError)
 })

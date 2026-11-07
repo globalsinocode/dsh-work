@@ -324,6 +324,12 @@ export const useContentStore = defineStore('admin-content', () => {
     return skill
   }
 
+  async function setSkillVisibility(skillId: string, roleIds: string[] | null, reason: string) {
+    const skill = await adminApi.setSkillVisibility(skillId, { roleIds, reason })
+    replaceById(skills.value, skill)
+    return skill
+  }
+
   async function rollbackSkill(skillId: string, version: string) {
     const result = await adminApi.rollbackSkill({ skillId, version })
     replaceById(skills.value, result.skill)
@@ -331,6 +337,18 @@ export const useContentStore = defineStore('admin-content', () => {
     for (const item of skillVersions.value) {
       if (item.skillId === skillId && item.status === 'draft') item.status = 'disabled'
     }
+    return result.skill
+  }
+
+  /**
+   * 放弃待发布草稿；从未发布过的 Skill 放弃后返回 null。同一安装带入的依赖草稿会一并停用，
+   * 因此重新读取 Skill 列表与版本，不在本地推算。
+   */
+  async function discardSkillDraft(skillId: string) {
+    const result = await adminApi.discardSkillDraft(skillId)
+    const [nextSkills, nextVersions] = await Promise.all([adminApi.getSkills(), adminApi.getSkillVersions()])
+    skills.value = nextSkills
+    skillVersions.value = nextVersions
     return result.skill
   }
 
@@ -443,7 +461,9 @@ export const useContentStore = defineStore('admin-content', () => {
     updateToolPermissions,
     addTool,
     refreshToolCatalog,
+    discardSkillDraft,
     setSkillBuiltinCoverage,
+    setSkillVisibility,
     checkConnector,
     testMcpConnection,
     beginMcpProbeAuthorization,

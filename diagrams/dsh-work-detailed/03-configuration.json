@@ -239,9 +239,9 @@
     },
     {
       "id": "knowledge",
-      "file": "server/src/modules/knowledge/postgres-knowledge-service.ts",
+      "file": "server/src/modules/knowledge/weknora-knowledge-provider.ts",
       "line": 37,
-      "note": "知识源与文档版本在当前用户、角色、Workspace 和数据范围下解析，固定来源证据。数据集合与 Grant 是另一种平台受控数据能力，不等同于任意 SQL 访问。"
+      "note": "企业知识在会话所选且员工按部门可见的 WeKnora 知识库中检索，注入的分段写入引用快照。数据集合与 Grant 是另一种平台受控数据能力，不等同于任意 SQL 访问。"
     },
     {
       "id": "experience",

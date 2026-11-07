@@ -1,4 +1,5 @@
 import type { JsonObject, JsonValue, RunState } from '../../domain/run-state.ts'
+import type { KnowledgeCitation } from '../knowledge/knowledge-provider.ts'
 
 export type { JsonObject, JsonValue, RunState }
 import type { TaskBudgetInput } from '../task/task-budget-types.ts'
@@ -79,11 +80,8 @@ export interface CreateAttemptInput {
   manifest: JsonObject
   manifestSha256: string
   modelRouteSnapshot: JsonObject
-  knowledgeSources?: Array<{
-    documentId: string
-    relevanceScore: number
-    excerpt: string
-  }>
+  /** 企业知识引用快照（weknora-knowledge-plan 第 6 节第 3 条）。 */
+  knowledgeCitations?: KnowledgeCitation[]
   memorySources?: Array<{
     memoryVersionId: string
     relevanceScore: number

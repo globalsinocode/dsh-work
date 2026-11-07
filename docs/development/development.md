@@ -62,6 +62,8 @@ pnpm test:e2e
 
 服务端测试按文件名自动归类，不再需要逐个登记：`*.integration.test.ts` 属于集成测试，其余 `*.test.ts`（含 `server/config` 下的 `*.test.js`）属于单元测试。新增测试文件放对位置、用对后缀即可进入 CI；使用测试数据库的文件必须以 `.integration.test.ts` 结尾，`pnpm verify` 会检查。
 
+服务启动读取的 `server/config` 文件（DSH 配置、执行脚本、内置 Skill、Agent 预置等，测试文件除外）必须随发布包交付：`pnpm verify` 检查 `scripts/release/build-release.sh` 已复制每个文件，打包收尾再由 `scripts/release/verify-release-bundle.mjs` 核验发布包，缺失即失败。新增配置目录时同步打包脚本。
+
 接口文档 `docs/development/openapi-{admin,workbench,auth,mobile-h5}.json` 由单元测试 `server/src/http/openapi-coverage.test.ts` 与代码逐条比对：`main.ts` 经 `register*Routes` 注册的每个接口都必须写进对应文档，文档里的每个操作都必须有实际路由（参数名不同视为同一路径；`/health*` 探针除外）。新增或删除接口时同步修改文档，否则 `pnpm test:unit` 失败；`main.ts` 不得在路由函数之外直接注册接口。
 
 | 改动范围 | 主要验证命令 |
@@ -78,6 +80,8 @@ pnpm test:e2e
 | 故障与恢复 | `pnpm test:m5:faults`、`pnpm test:m5:faults:integration` |
 | 容量 | `pnpm test:m5:capacity:integration` |
 | 执行容器（真实 Docker 与真实 DSH，opt-in，不进 CI） | `DSH_WORK_EXECUTION_E2E_IMAGE=<执行镜像引用> pnpm --filter @dsh-work/server test:execution-container:e2e`；需要 `DSH_RUNTIME_HOME`、本机 Docker 与 `DSH_WORK_TEST_DATABASE_URL`，镜像用[执行镜像工作流](../../.github/workflows/execution-image.yml)产出的引用（先按摘要拉取）。其中成果解析用例（2b-3）只需要镜像与 Docker。DSH 要求 Node 22.19+ 或 24+，更低版本会在建会话时报 `no adapter registered for provider` |
+| 钉钉接入（DT-S1） | 钉钉开放平台测试替身覆盖的单元与集成测试随 `pnpm test:local-auth`、`pnpm test:local-auth:integration` 运行（`dingtalk.test.ts`、`dingtalk-auth.integration.test.ts`、`dingtalk-admin.integration.test.ts`）。浏览器旅程 `pnpm test:e2e:dingtalk`（P1，需要 `DSH_WORK_TEST_DATABASE_URL`）：夹具 `scripts/testing/dingtalk-browser.ts` 启动真实应用、可丢弃数据库与假钉钉 HTTP 服务，生产实现经 `DSH_WORK_DINGTALK_API_BASE_URL` 访问；钉钉容器用钉钉 User-Agent 与页面注入的 `window.dd` 模拟。本地手动预演可单独运行该夹具（`node --env-file-if-exists=.env --experimental-strip-types scripts/testing/dingtalk-browser.ts`，端口 4691/4681/4675 与 `playwright.dingtalk.config.ts` 一致，账号见夹具）。这些都不能代替真实钉钉验收（验收目录 `DT-P2`）。本地接真实钉钉应用：在 `.env` 配置 `DSH_CREDENTIAL_MASTER_KEY` 后，在管理端“钉钉集成 › 应用配置”填写（`DSH_WORK_DINGTALK_*` 只作初始配置，见 `.env.example`）；钉钉客户端只能打开公网受信证书的地址 |
+| 企业知识库（WeKnora） | 测试替身覆盖的单元与集成测试随 `pnpm test:unit`、`pnpm test:integration` 运行。真实 WeKnora 契约测试（opt-in，不进 CI，升级 WeKnora、更换嵌入模型或启用重排序前必须跑）：在 `.env` 配置 `WEKNORA_CONTRACT_URL`、`WEKNORA_CONTRACT_API_KEY`（能力 `retrieve`、`ingest`、`manage_kbs`）、`WEKNORA_CONTRACT_EMBEDDING_MODEL_ID` 后执行 `cd server && node --env-file-if-exists=../.env --experimental-strip-types --test src/modules/knowledge/weknora-contract.test.ts`，含最低相关度校准用例。本机代理若把外部域名解析到 198.18.0.0/15 等虚拟 IP，WeKnora 的 SSRF 检查会拦截在线嵌入模型、文档解析失败，须把模型主机加入 WeKnora 的 `SSRF_WHITELIST` |
 | 浏览器冒烟 | `pnpm exec playwright install chromium`、`pnpm test:e2e` |
 | Agent 验证与发布（冻结、后台并行验证、判定、发布、回滚、重启收敛与车道容量；隔离 PostgreSQL） | `pnpm test:agent-release:integration` |
 | Agent 独立执行身份 P1 浏览器集成 | `pnpm test:e2e:agent-principal`（专用可丢弃 PostgreSQL 与受控服务，不并入 P0 冒烟） |

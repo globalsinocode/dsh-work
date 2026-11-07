@@ -18,6 +18,7 @@ import { PostgresTaskRepository, TaskContractConflictError } from '../task/postg
 import { TaskBudgetExceededError } from '../task/task-budget-types.ts'
 import { RequestError, accessDenied, notFound, stateConflict } from '../../domain/request-errors.ts'
 import { backgroundLaneMaxConcurrent, backgroundPurposes, isBackgroundLanePurpose, isBackgroundPurpose, type BackgroundLanePurpose } from '../../domain/background-lanes.ts'
+import { recordAutomationOutcomeNotification } from '../notification/user-notification-writer.ts'
 
 interface RunRow {
   id: string
@@ -328,14 +329,17 @@ export class PostgresRunRepository implements RunRepository {
            set current_attempt_id = ${attemptId}, status = 'queued', updated_at = now()
          where tenant_id = ${input.tenantId} and id = ${input.runId}
       `
-      for (const source of input.knowledgeSources ?? []) {
+      for (const citation of input.knowledgeCitations ?? []) {
         await transaction`
-          insert into run_knowledge_sources (
-            id, tenant_id, run_id, attempt_id, document_id, relevance_score, excerpt
+          insert into run_knowledge_citations (
+            id, tenant_id, run_id, attempt_id, ordinal, external_document_id, knowledge_base_id,
+            knowledge_base_name, title, file_name, document_updated_at, content_checksum, excerpt, relevance_score
           ) values (
-            ${`run-knowledge-${randomUUID()}`}, ${input.tenantId}, ${input.runId}, ${attemptId},
-            ${source.documentId}, ${source.relevanceScore}, ${source.excerpt}
-          ) on conflict (tenant_id, attempt_id, document_id) do nothing
+            ${`run-knowledge-${randomUUID()}`}, ${input.tenantId}, ${input.runId}, ${attemptId}, ${citation.ordinal},
+            ${citation.externalDocumentId}, ${citation.knowledgeBaseId}, ${citation.knowledgeBaseName}, ${citation.title},
+            ${citation.fileName}, ${citation.documentUpdatedAt}, ${citation.contentChecksum}, ${citation.excerpt},
+            ${citation.relevanceScore}
+          ) on conflict (tenant_id, attempt_id, ordinal) do nothing
         `
       }
       for (const source of input.memorySources ?? []) {
@@ -432,6 +436,8 @@ export class PostgresRunRepository implements RunRepository {
                    created_at as "createdAt", updated_at as "updatedAt"
       `
       if (!updated) throw new Error(`Run 状态更新失败：${runId}`)
+      // 站内通知 NC-S3：定时任务的执行失败通知所有者，与失败状态同一事务；不是定时任务的 Run 无操作。
+      if (to === 'failed') await recordAutomationOutcomeNotification(transaction, { runId }, 'failed')
       return mapRun(updated)
     })
   }
@@ -624,12 +630,19 @@ export class PostgresRunRepository implements RunRepository {
     runId: string,
     to: 'failed' | 'cancelled',
   ): Promise<boolean> {
-    const updated = await this.database`
-      update runs set status = ${to}, updated_at = now()
-       where tenant_id = ${tenantId} and id = ${runId}
-         and status = 'queued' and current_attempt_id is null
-    `
-    return updated.count > 0
+    return this.database.begin(async (transaction) => {
+      const updated = await transaction`
+        update runs set status = ${to}, updated_at = now()
+         where tenant_id = ${tenantId} and id = ${runId}
+           and status = 'queued' and current_attempt_id is null
+      `
+      // 站内通知 NC-S3：受理中断（派发失败、重启后收敛）与 Run 落为失败同一事务通知所有者，
+      // 之后进程退出也不会丢；随后的执行记录收敛（markAdmission）只会合并到这一条。
+      if (updated.count > 0 && to === 'failed') {
+        await recordAutomationOutcomeNotification(transaction, { runId }, 'interrupted')
+      }
+      return updated.count > 0
+    })
   }
 
   /**
@@ -897,6 +910,7 @@ export class PostgresRunRepository implements RunRepository {
           update runs set status = 'failed', updated_at = now()
            where tenant_id = ${tenantId} and id = ${row.runId}
         `
+        await recordAutomationOutcomeNotification(transaction, { runId: row.runId }, 'failed')
         await transaction`
           insert into run_events (
             id, tenant_id, run_id, attempt_id, sequence, event_type,

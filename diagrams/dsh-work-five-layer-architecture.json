@@ -190,9 +190,9 @@
     },
     {
       "id": "assets",
-      "file": "server/src/modules/knowledge/postgres-knowledge-service.ts",
+      "file": "server/src/modules/knowledge/weknora-knowledge-provider.ts",
       "line": 37,
-      "note": "知识读取按当前用户、角色、工作空间及数据范围过滤，图中归入资产与知识权限治理。"
+      "note": "企业知识由 WeKnora 检索，平台按部门授权计算员工可见的知识库，只检索会话所选知识库，图中归入资产与知识权限治理。"
     },
     {
       "id": "connections",

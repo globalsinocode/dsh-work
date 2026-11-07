@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
@@ -12,8 +12,8 @@ import {
   Menu,
   Monitor,
   MoreFilled,
+  Notebook,
   Plus,
-  Reading,
   Setting,
   Share,
   Switch,
@@ -22,13 +22,15 @@ import {
 } from '@element-plus/icons-vue'
 
 import { AppLogo } from '@dsh-work/ui-core'
-import { roleLabels, useAuthStore } from '@/stores/auth'
-import { useContentStore } from '@/stores/content'
-import { useNotificationStore } from '@/stores/notifications'
-import { useTaskStore } from '@/stores/tasks'
 import ModeSwitchMenu from '@/components/ModeSwitchMenu.vue'
+import NotificationCenter from '@/components/NotificationCenter.vue'
 import NotificationInbox from '@/components/NotificationInbox.vue'
 import { useModeSwitch } from '@/composables/useModeSwitch'
+import { roleLabels, useAuthStore } from '@/stores/auth'
+import { useContentStore } from '@/stores/content'
+import { useNotificationStore, useWorkspaceNotificationStore } from '@/stores/notifications'
+import { useKnowledgeStore } from '@/stores/knowledge'
+import { useTaskStore } from '@/stores/tasks'
 import type { TaskRun } from '@/types/domain'
 import { isTaskInArchivedWorkspace } from '@/utils/archived-workspaces'
 import { conversationRemovalNotice } from '@/utils/content-lifecycle'
@@ -45,20 +47,24 @@ const router = useRouter()
 const authStore = useAuthStore()
 const taskStore = useTaskStore()
 const notificationStore = useNotificationStore()
+const workspaceNotificationStore = useWorkspaceNotificationStore()
 const contentStore = useContentStore()
 
 const mobileOpen = ref(false)
 const deletingSessionId = ref<string>()
 const { switchLabel, switchMode } = useModeSwitch()
 
-const navigation = [
+const knowledge = useKnowledgeStore()
+// A 工作模式主导航（WK12）：知识库排在项目空间之后；企业知识库未启用或本人不能查看时不显示。
+const navigation = computed(() => [
   { label: '新对话', path: '/workbench', icon: HomeFilled },
   { label: 'Skill 广场', path: '/skills', icon: Grid },
   { label: 'AI 同事', path: '/agents', icon: UserFilled },
   { label: '项目空间', path: '/workspaces', icon: Collection },
-  { label: '知识库', path: '/knowledge', icon: Reading },
+  ...(knowledge.enabled ? [{ label: '知识库', path: '/knowledge', icon: Notebook }] : []),
   { label: '定时任务', path: '/automations', icon: AlarmClock },
-]
+])
+onMounted(() => { void knowledge.ensureLoaded() })
 
 function isActive(path: string) {
   if (path === '/workbench') return route.path === path
@@ -161,12 +167,14 @@ watch(() => authStore.user.id, (id, previous) => {
     taskStore.reset()
     contentStore.reset()
     notificationStore.reset()
+    workspaceNotificationStore.reset()
   }
   if (id === '—') return
   void Promise.all([
     taskStore.load(),
     contentStore.load(),
     notificationStore.load(),
+    workspaceNotificationStore.load(),
   ]).catch(cause => notifyActionFailure('加载工作台', '工作内容', cause))
 }, { immediate: true })
 const authorizationHandler = createAuthorizationChangeHandler(() => authStore.refresh())
@@ -284,6 +292,9 @@ onBeforeUnmount(() => {
       </section>
 
       <div class="employee-sidebar__footer">
+        <div class="employee-sidebar__notifications">
+          <NotificationCenter @navigate="mobileOpen = false" />
+        </div>
         <el-dropdown trigger="click" placement="top-start" @command="onAccountCommand">
           <button class="profile-button" type="button" aria-label="打开用户中心">
             <span class="profile-button__avatar">{{ authStore.user.avatarText }}</span>
@@ -328,6 +339,8 @@ onBeforeUnmount(() => {
         aria-label="打开导航"
         @click="mobileOpen = true"
       />
+      <!-- 窄屏通知铃铛随侧栏收进菜单，菜单按钮以圆点提示有未读通知（方案 NC2）。 -->
+      <span v-if="notificationStore.unread > 0" class="employee-mobile-menu__dot" aria-hidden="true" data-testid="mobile-menu-notification-dot"></span>
       <main class="employee-main"><router-view :key="authStore.user.id" /></main>
     </div>
   </div>
@@ -498,6 +511,8 @@ onBeforeUnmount(() => {
   flex: 1;
 }
 
+/* 站内通知（方案 NC2）：铃铛在头像上方，与协作模式位置一致。 */
+.employee-sidebar__notifications { margin: 0 0 4px 6px; }
 .profile-button { display: flex; align-items: center; width: 100%; min-height: 48px; gap: 10px; padding: 6px 8px; border: 0; border-radius: 9px; color: #272825; background: transparent; cursor: pointer; text-align: left; }
 .profile-button:hover { background: #e7e7e4; }
 .profile-button__avatar { display: grid; width: 31px; height: 31px; flex: 0 0 auto; place-items: center; border-radius: 9px; color: #124d3f; background: #bcebdc; font-size: var(--dsh-font-size-body); font-weight: 700; }
@@ -507,6 +522,7 @@ onBeforeUnmount(() => {
 .employee-shell__body { min-width: 0; min-height: 100vh; margin-left: var(--dsh-sidebar-width); }
 .employee-main { min-height: 100vh; background: #fff; }
 .employee-mobile-menu { display: none; }
+.employee-mobile-menu__dot { display: none; }
 .sidebar-scrim { position: fixed; z-index: 25; inset: 0; display: none; border: 0; background: rgb(5 12 24 / 52%); }
 
 :global(.role-menu__heading) { padding: 8px 16px 6px; color: #8a94a5; font-size: var(--dsh-font-size-caption); font-weight: 650; }
@@ -524,6 +540,7 @@ onBeforeUnmount(() => {
   .employee-shell__body { margin-left: 0; }
   /* 为左上角浮动菜单按钮让位，避免盖住统一页头的标题。 */
   .employee-main { --dsh-page-topbar-inset-start: 44px; }
+  .employee-mobile-menu__dot { position: fixed; z-index: 19; top: 12px; left: 42px; display: block; width: 8px; height: 8px; border-radius: 50%; background: var(--el-color-danger); pointer-events: none; }
   .employee-mobile-menu { position: fixed; z-index: 18; top: 12px; left: 12px; display: inline-flex; border-color: #dfdfdc; background: rgb(255 255 255 / 90%); box-shadow: 0 4px 16px rgb(24 25 24 / 8%); backdrop-filter: blur(8px); }
 }
 </style>

@@ -91,3 +91,21 @@ test('emergency disable and covered scenarios accept only registered values', ()
   assert.equal(isReservedBuiltinSkillName('HTML 页面（平台内置）'), true)
   assert.equal(isReservedBuiltinSkillName('HTML 页面'), false)
 })
+
+test('isKnown accepts registry Skills at locked versions only', () => {
+  const catalog = loadBuiltinSkillCatalog(root)
+  const [first] = catalog.skills
+  assert.equal(catalog.isKnown(first!.id, first!.version), true)
+  assert.equal(catalog.isKnown(first!.id, '9.9.9'), false)
+  assert.equal(catalog.isKnown('dsh-work-forged', first!.version), false)
+})
+
+test('a dependency Skill with a built-in name covers it by name but never by scenario', () => {
+  const catalog = loadBuiltinSkillCatalog(root)
+  const html = catalog.skills.find(skill => skill.scenario === 'html-page')!
+  const result = catalog.resolve({ disabled: [], covering: [
+    { reference: 'skill-dep@1.0.0', name: html.name, scenarios: [], modelInvocable: true },
+  ] })
+  assert.equal(result.skills.some(skill => skill.name === html.name), false)
+  assert.deepEqual(result.exclusions, [{ skill: `${html.id}@${html.version}`, reason: 'covered', coveredBy: 'skill-dep@1.0.0' }])
+})

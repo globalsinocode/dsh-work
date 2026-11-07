@@ -1,4 +1,4 @@
-import { createHmac, randomUUID } from 'node:crypto'
+import { randomUUID } from 'node:crypto'
 import type { IncomingMessage } from 'node:http'
 
 import type { DatabaseClient, DatabaseTransaction } from '../../infrastructure/postgres/database.ts'
@@ -6,15 +6,29 @@ import {
   assertAudienceAccess, clearCookie, IdentityAccessError, normalizeReturnTo,
   parseCookies, resolveRequestOrigin, serializeCookie, validateRequestOrigin,
 } from './auth-service.ts'
+import { assignNewAccountDepartment } from '../organization/postgres-organization-service.ts'
 import { lockPlatformAdminInvariant, requireAnotherPlatformAdmin } from './administration-service.ts'
 import { resolveLocalLoginRejection } from './local-login-rejection.ts'
 import { hashPassword, normalizeUsername, verifyPassword } from './password.ts'
 import { loginAccountCandidates, normalizeLoginAccount } from './login-account.ts'
 import { hashOpaque, randomOpaque } from './secure-values.ts'
 import { IdentitySessionRepository } from './session-repository.ts'
-import type { ApiAudience, LocalIdentityConfiguration, RequestIdentity } from './types.ts'
+import type { ApiAudience, IdentityProvider, LocalIdentityConfiguration, RequestIdentity } from './types.ts'
+import { LoginRateLimiter } from './login-rate-limiter.ts'
+import {
+  bindFromSelfTicket, consumeSelfBindTicket, insertDingTalkSession, invalidateUserBindings,
+  peekSelfBindTicket, type SelfBindOutcome,
+} from './dingtalk/dingtalk-bindings.ts'
+import type { DingTalkSettingsProvider } from './dingtalk/dingtalk-settings.ts'
 
 const tenantId = 'tenant-dsh-work'
+interface ValidatedSession {
+  userId: string
+  subject: string
+  mustChangePassword: boolean
+  provider: 'local-password' | 'dingtalk'
+}
+
 interface CredentialRow {
   userId: string
   subject: string
@@ -28,19 +42,31 @@ export interface LocalAccountInput {
   username: string
   password: string
   name: string
-  department?: string | null
+  /** 新建账号时从部门树选择的部门，成为该员工的主部门；不再接受自由填写的部门文字。 */
+  departmentId?: string | null
   email?: string | null
 }
+
+/** 钉钉内登录即绑定的结果（4.2 方式一）；未带待绑定凭证时为 undefined。 */
+export type DingTalkLoginBinding =
+  | { status: 'bound' }
+  | { status: 'refused'; reason: Extract<SelfBindOutcome, { status: 'refused' }>['reason'] | 'ticket_invalid' }
+  | { status: 'password_change_required' }
 
 export class LocalAuthService {
   private readonly configuration: LocalIdentityConfiguration
   private readonly database: DatabaseClient
   private readonly repository: IdentitySessionRepository
+  private readonly limiter: LoginRateLimiter
+  /** 钉钉应用配置在每次使用时读取：管理端保存后立即生效。 */
+  private readonly dingtalk: DingTalkSettingsProvider | null
 
-  constructor(configuration: LocalIdentityConfiguration, database: DatabaseClient) {
+  constructor(configuration: LocalIdentityConfiguration, database: DatabaseClient, dingtalk: DingTalkSettingsProvider | null = null) {
     this.configuration = configuration
     this.database = database
     this.repository = new IdentitySessionRepository(database)
+    this.limiter = new LoginRateLimiter(database, configuration.sessionSecret)
+    this.dingtalk = dingtalk
   }
 
   loginPage(request: IncomingMessage, audience: ApiAudience, returnTo: string | null) {
@@ -62,13 +88,22 @@ export class LocalAuthService {
     return clearCookie(settings.sessionCookieName, this.configuration.cookieSecure)
   }
 
-  async login(request: IncomingMessage, audience: ApiAudience, input: { username: unknown; password: unknown; returnTo?: string }) {
+  /**
+   * 账号密码登录。带 `dingtalkTicket`（钉钉内待绑定凭证）时即 `bind-login`：在同一事务中锁定账号与凭据、
+   * 校验密码与 audience、消费凭证、写入绑定并签发 dingtalk 会话（4.2 方式一）。
+   */
+  async login(request: IncomingMessage, audience: ApiAudience, input: { username: unknown; password: unknown; returnTo?: string }, options: { dingtalkTicket?: string } = {}) {
     const settings = this.configuration.audiences[audience]
     validateRequestOrigin(request, settings)
     const origin = resolveRequestOrigin(request, settings)
+    const ticket = options.dingtalkTicket
+    const dingtalkConfiguration = ticket !== undefined ? await this.dingtalk?.current() ?? null : null
+    if (ticket !== undefined && (audience !== 'workbench' || !dingtalkConfiguration)) {
+      throw new IdentityAccessError(503, 'dingtalk_not_configured', '钉钉登录未启用')
+    }
     const username = normalizeUsername(input.username)
     const accountKey = `login:${username}`
-    await this.rateLimit(accountKey)
+    await this.limiter.consume(accountKey)
     // Derive outside the transaction so no row lock or pooled connection is held during scrypt.
     const [candidate] = await this.database<{ passwordHash: string; identityProvider: string }[]>`
       select c.password_hash as "passwordHash", u.identity_provider as "identityProvider"
@@ -99,32 +134,77 @@ export class LocalAuthService {
       }
       const authorization = await this.repository.resolveAuthorization(credential.userId, transaction)
       assertAudienceAccess(audience, authorization.permissions, false)
-      const expiresAt = new Date(Date.now() + this.configuration.sessionTtlSeconds * 1000)
-      // 允许同一账号在不同设备/入口（桌面工作台与移动端）并行登录：
-      // 会话按 session_hash 独立存储，登录不再吊销其他设备的活动会话。
-      // 需要踢掉全部会话时走管理端 revokeSessions；改密仍全量吊销。
-      await transaction`
-        insert into authentication_sessions (
-          session_hash, tenant_id, audience, user_id, authentication_provider,
-          authorization_version, permissions_expires_at, expires_at
-        ) values (
-          ${sessionHash}, ${tenantId}, ${audience}, ${credential.userId}, 'local-password',
-          ${authorization.authorizationVersion}, ${expiresAt}, ${expiresAt}
-        )
-      `
+      let binding: DingTalkLoginBinding | undefined
+      if (ticket !== undefined) {
+        if (credential.mustChangePassword) {
+          // 需先修改初始密码：不消费凭证，改密请求带回同一凭证后才绑定。
+          if (!await peekSelfBindTicket(transaction, ticket, origin)) return ticketRejected(transaction, credential.userId)
+          binding = { status: 'password_change_required' }
+        } else {
+          const bound = await this.completeSelfBinding(transaction, credential.userId, ticket, origin, sessionHash, authorization.authorizationVersion, dingtalkConfiguration!.sessionTtlSeconds)
+          if (!bound) return ticketRejected(transaction, credential.userId)
+          binding = bound
+          if (bound.status === 'bound') {
+            await localAudit(transaction, credential.userId, 'identity.login', 'success', { audience, provider: 'dingtalk' }, 'dingtalk')
+            return { mustChangePassword: false, binding }
+          }
+        }
+      }
+      await this.insertPasswordSession(transaction, credential.userId, audience, sessionHash, authorization.authorizationVersion)
       await localAudit(transaction, credential.userId, 'identity.login', 'success', { audience })
-      return { mustChangePassword: credential.mustChangePassword }
+      return { mustChangePassword: credential.mustChangePassword, binding }
     })
     if (!result) throw await resolveLocalLoginRejection(this.database, username, input.password)
-    await this.clearRateLimit(accountKey)
+    if ('ticketRejected' in result) {
+      throw new IdentityAccessError(409, 'dingtalk_ticket_invalid', '钉钉登录凭证已失效，请重新在钉钉中打开')
+    }
+    await this.limiter.clear(accountKey)
     const returnTo = normalizeReturnTo(typeof input.returnTo === 'string' ? input.returnTo : null, origin)
     const location = result.mustChangePassword
       ? new URL(`/change-password?return_to=${encodeURIComponent(returnTo)}`, origin).toString()
       : returnTo
+    const ttl = result.binding?.status === 'bound' ? dingtalkConfiguration!.sessionTtlSeconds : this.configuration.sessionTtlSeconds
     return {
       location,
-      sessionCookie: serializeCookie(settings.sessionCookieName, sessionToken, this.configuration.sessionTtlSeconds, this.configuration.cookieSecure),
+      sessionCookie: serializeCookie(settings.sessionCookieName, sessionToken, ttl, this.configuration.cookieSecure),
+      ...(result.binding ? { dingtalkBinding: result.binding } : {}),
     }
+  }
+
+  /** 消费待绑定凭证并写入绑定；绑定成功时签发 dingtalk 会话。凭证无效返回 null。 */
+  private async completeSelfBinding(
+    transaction: DatabaseTransaction, userId: string, ticket: string, origin: string,
+    sessionHash: string, authorizationVersion: number, dingtalkSessionTtlSeconds: number,
+  ): Promise<DingTalkLoginBinding | null> {
+    const consumed = await consumeSelfBindTicket(transaction, ticket, origin)
+    if (!consumed) return null
+    const outcome = await bindFromSelfTicket(transaction, userId, consumed)
+    if (outcome.status === 'refused') {
+      await localAudit(transaction, userId, 'identity.dingtalk.bind', 'failed', { reason: outcome.reason }, 'dingtalk')
+      return { status: 'refused', reason: outcome.reason }
+    }
+    await insertDingTalkSession(transaction, {
+      sessionHash, userId, bindingId: outcome.bindingId, authorizationVersion,
+      ttlSeconds: dingtalkSessionTtlSeconds,
+    })
+    if (outcome.created) {
+      await localAudit(transaction, userId, 'identity.dingtalk.bind', 'success', { bindingId: outcome.bindingId, boundBy: 'self' }, 'dingtalk')
+    }
+    return { status: 'bound' }
+  }
+
+  /** 密码登录保留同账号其他设备的会话；需要全部退出时走撤销、改密或停用流程。 */
+  private async insertPasswordSession(transaction: DatabaseTransaction, userId: string, audience: ApiAudience, sessionHash: string, authorizationVersion: number) {
+    const expiresAt = new Date(Date.now() + this.configuration.sessionTtlSeconds * 1000)
+    await transaction`
+      insert into authentication_sessions (
+        session_hash, tenant_id, audience, user_id, authentication_provider,
+        authorization_version, permissions_expires_at, expires_at
+      ) values (
+        ${sessionHash}, ${tenantId}, ${audience}, ${userId}, 'local-password',
+        ${authorizationVersion}, ${expiresAt}, ${expiresAt}
+      )
+    `
   }
 
   async authenticateApi(request: IncomingMessage, audience: ApiAudience, allowPasswordChange = false): Promise<RequestIdentity> {
@@ -134,7 +214,27 @@ export class LocalAuthService {
     const token = parseCookies(request.headers.cookie)[settings.sessionCookieName]
     if (!token) throw new IdentityAccessError(401, 'authentication_required', '请先登录')
     const sessionHash = hashOpaque(token)
-    const [session] = await this.database<{ userId: string; subject: string; mustChangePassword: boolean }[]>`
+    const session = await this.findLocalSession(sessionHash, audience) ?? await this.findDingTalkSession(sessionHash, audience)
+    if (!session) throw new IdentityAccessError(401, 'session_expired', '登录会话不存在或已过期')
+    if (session.mustChangePassword && (!allowPasswordChange || session.provider === 'dingtalk')) {
+      throw new IdentityAccessError(403, 'password_change_required', '请先修改初始密码')
+    }
+    // 钉钉会话不能用于修改密码（改密仍需密码会话）。
+    if (allowPasswordChange && session.provider === 'dingtalk') {
+      throw new IdentityAccessError(403, 'password_session_required', '请使用账号密码登录后修改密码')
+    }
+    const authorization = await this.repository.resolveAuthorization(session.userId)
+    assertAudienceAccess(audience, authorization.permissions, !allowPasswordChange && !['GET', 'HEAD', 'OPTIONS'].includes(request.method ?? 'GET'))
+    await this.repository.updateAuthorizationVersion(sessionHash, authorization.authorizationVersion)
+    return {
+      audience, applicationId: settings.applicationId, sessionHash,
+      userId: session.userId, subject: session.subject, ...authorization,
+      identityProvider: session.provider,
+    }
+  }
+
+  private async findLocalSession(sessionHash: string, audience: ApiAudience): Promise<ValidatedSession | null> {
+    const [session] = await this.database<Omit<ValidatedSession, 'provider'>[]>`
       select s.user_id as "userId", u.external_subject as subject, c.must_change_password as "mustChangePassword"
         from authentication_sessions s
         join users u on u.tenant_id = s.tenant_id and u.id = s.user_id
@@ -144,33 +244,56 @@ export class LocalAuthService {
          and s.authentication_provider = 'local-password' and s.revoked_at is null and s.expires_at > now()
          and u.status = 'active' and u.business_user and t.status = 'active' and u.identity_provider = 'local'
     `
-    if (!session) throw new IdentityAccessError(401, 'session_expired', '登录会话不存在或已过期')
-    if (session.mustChangePassword && !allowPasswordChange) {
-      throw new IdentityAccessError(403, 'password_change_required', '请先修改初始密码')
-    }
-    const authorization = await this.repository.resolveAuthorization(session.userId)
-    assertAudienceAccess(audience, authorization.permissions, !allowPasswordChange && !['GET', 'HEAD', 'OPTIONS'].includes(request.method ?? 'GET'))
-    await this.repository.updateAuthorizationVersion(sessionHash, authorization.authorizationVersion)
-    return {
-      audience, applicationId: settings.applicationId, sessionHash,
-      userId: session.userId, subject: session.subject, ...authorization,
-      identityProvider: 'local-password',
-    }
+    return session ? { ...session, provider: 'local-password' } : null
   }
 
+  /**
+   * dingtalk 会话另走一条查询（4.3）：账号为本地账号且有效、会话上的 binding_id 对应的绑定仍有效且属于该账号；
+   * 不要求密码凭据。must_change_password 为真时同样拒绝（绑定前已要求先改密，此处兜底）。
+   */
+  private async findDingTalkSession(sessionHash: string, audience: ApiAudience): Promise<ValidatedSession | null> {
+    if (audience !== 'workbench') return null
+    const [session] = await this.database<Omit<ValidatedSession, 'provider'>[]>`
+      select s.user_id as "userId", u.external_subject as subject,
+             coalesce(c.must_change_password, false) as "mustChangePassword"
+        from authentication_sessions s
+        join external_account_bindings b on b.id = s.binding_id and b.tenant_id = s.tenant_id
+         and b.user_id = s.user_id and b.channel = 'dingtalk' and b.status = 'valid'
+        join users u on u.tenant_id = s.tenant_id and u.id = s.user_id
+        join tenants t on t.id = u.tenant_id
+        left join local_user_credentials c on c.tenant_id = u.tenant_id and c.user_id = u.id
+       where s.tenant_id = ${tenantId} and s.session_hash = ${sessionHash} and s.audience = 'workbench'
+         and s.authentication_provider = 'dingtalk' and s.revoked_at is null and s.expires_at > now()
+         and u.status = 'active' and u.business_user and t.status = 'active' and u.identity_provider = 'local'
+    `
+    return session ? { ...session, provider: 'dingtalk' } : null
+  }
+
+  /** 退出登录撤销该账号在此 audience 的全部来源会话（4.3：手机钉钉与桌面浏览器会话都结束）。 */
   async logout(request: IncomingMessage, audience: ApiAudience) {
     const settings = this.configuration.audiences[audience]
     validateRequestOrigin(request, settings)
     const origin = resolveRequestOrigin(request, settings)
-    return { location: new URL('/login', origin).toString(), clearSessionCookie: await this.revokeSession(request, audience) }
+    const token = parseCookies(request.headers.cookie)[settings.sessionCookieName]
+    if (token) await this.repository.logoutSession(hashOpaque(token), audience, { allSources: true })
+    return { location: new URL('/login', origin).toString(), clearSessionCookie: clearCookie(settings.sessionCookieName, this.configuration.cookieSecure) }
   }
 
-  async changePassword(request: IncomingMessage, audience: ApiAudience, input: { currentPassword: unknown; newPassword: unknown; returnTo?: string }) {
+  /**
+   * 修改密码。带 `dingtalkTicket` 时为钉钉内“修改初始密码并绑定”：改密成功后在同一事务中消费待绑定凭证、
+   * 写入绑定并签发 dingtalk 会话（4.2 方式一第 4 步）。凭证失效时改密照常成功，只是不绑定。
+   */
+  async changePassword(request: IncomingMessage, audience: ApiAudience, input: { currentPassword: unknown; newPassword: unknown; returnTo?: string; dingtalkTicket?: unknown }) {
     const identity = await this.authenticateApi(request, audience, true)
     const settings = this.configuration.audiences[audience]
     const origin = resolveRequestOrigin(request, settings)
+    const ticket = typeof input.dingtalkTicket === 'string' && input.dingtalkTicket ? input.dingtalkTicket : undefined
+    const dingtalkConfiguration = ticket !== undefined ? await this.dingtalk?.current() ?? null : null
+    if (ticket !== undefined && (audience !== 'workbench' || !dingtalkConfiguration)) {
+      throw new IdentityAccessError(503, 'dingtalk_not_configured', '钉钉登录未启用')
+    }
     const passwordKey = `password:${identity.userId}`
-    await this.rateLimit(passwordKey)
+    await this.limiter.consume(passwordKey)
     if (input.currentPassword === input.newPassword) throw new IdentityAccessError(422, 'password_unchanged', '新密码不能与当前密码相同')
     const passwordHash = await hashPassword(input.newPassword)
     // Verify outside the transaction; the locked recheck below rejects a hash changed meanwhile.
@@ -200,7 +323,7 @@ export class LocalAuthService {
       `
       if (!session || !credential?.active || !currentValid || credential.passwordHash !== current?.passwordHash) {
         await localAudit(transaction, identity.userId, 'identity.password.change', 'failed')
-        return false
+        return null
       }
       const authorization = await this.repository.resolveAuthorization(identity.userId, transaction)
       assertAudienceAccess(audience, authorization.permissions, false)
@@ -208,25 +331,26 @@ export class LocalAuthService {
         update local_user_credentials set password_hash = ${passwordHash}, must_change_password = false, updated_at = now()
          where tenant_id = ${tenantId} and user_id = ${identity.userId}
       `
+      // 员工自己改密：绑定保留，但与现在一样撤销全部来源的会话（4.2“解绑与失效”）。
       await revokeUserSessions(transaction, identity.userId)
-      const expiresAt = new Date(Date.now() + this.configuration.sessionTtlSeconds * 1000)
-      await transaction`
-        insert into authentication_sessions (
-          session_hash, tenant_id, audience, user_id, authentication_provider,
-          authorization_version, permissions_expires_at, expires_at
-        ) values (
-          ${sessionHash}, ${tenantId}, ${audience}, ${identity.userId}, 'local-password',
-          ${authorization.authorizationVersion}, ${expiresAt}, ${expiresAt}
-        )
-      `
       await localAudit(transaction, identity.userId, 'identity.password.change', 'success', { audience })
-      return true
+      if (ticket !== undefined) {
+        const binding = await this.completeSelfBinding(transaction, identity.userId, ticket, origin, sessionHash, authorization.authorizationVersion, dingtalkConfiguration!.sessionTtlSeconds)
+        if (binding?.status === 'bound') return { binding }
+        if (!binding) await localAudit(transaction, identity.userId, 'identity.dingtalk.bind', 'failed', { reason: 'ticket_invalid' }, 'dingtalk')
+        await this.insertPasswordSession(transaction, identity.userId, audience, sessionHash, authorization.authorizationVersion)
+        return { binding: binding ?? ({ status: 'refused', reason: 'ticket_invalid' } satisfies DingTalkLoginBinding) }
+      }
+      await this.insertPasswordSession(transaction, identity.userId, audience, sessionHash, authorization.authorizationVersion)
+      return { binding: undefined }
     })
     if (!changed) throw new IdentityAccessError(401, 'invalid_credentials', '当前密码错误或会话已过期')
-    await this.clearRateLimit(passwordKey)
+    await this.limiter.clear(passwordKey)
+    const ttl = changed.binding?.status === 'bound' ? dingtalkConfiguration!.sessionTtlSeconds : this.configuration.sessionTtlSeconds
     return {
       location: normalizeReturnTo(typeof input.returnTo === 'string' ? input.returnTo : null, origin),
-      sessionCookie: serializeCookie(settings.sessionCookieName, sessionToken, this.configuration.sessionTtlSeconds, this.configuration.cookieSecure),
+      sessionCookie: serializeCookie(settings.sessionCookieName, sessionToken, ttl, this.configuration.cookieSecure),
+      ...(changed.binding ? { dingtalkBinding: changed.binding } : {}),
     }
   }
 
@@ -258,6 +382,7 @@ export class LocalAuthService {
     return this.database.begin(async transaction => {
       await assertPlatformAdmin(transaction, actorId)
       const userId = await insertAccount(transaction, input, username, passwordHash, true)
+      if (input.departmentId) await assignNewAccountDepartment(transaction, { userId, departmentId: input.departmentId, actorId })
       await revokeUserSessions(transaction, userId)
       await localAudit(transaction, actorId, 'identity.local.create', 'success', { userId })
       return { userId, username }
@@ -283,8 +408,10 @@ export class LocalAuthService {
            and exists (select 1 from users u where u.tenant_id = ${tenantId} and u.id = ${userId} and u.identity_provider = 'local') returning user_id
       `
       if (!credential) throw new IdentityAccessError(404, 'local_account_missing', '该员工尚未开通独立登录')
+      // 管理员重置密码通常意味着密码可能泄露：钉钉绑定同时失效（4.2“解绑与失效”）。
+      const invalidated = await invalidateUserBindings(transaction, userId, 'admin_password_reset')
       await revokeUserSessions(transaction, userId)
-      await localAudit(transaction, actorId, 'identity.password.reset', 'success', { userId })
+      await localAudit(transaction, actorId, 'identity.password.reset', 'success', { userId, ...(invalidated.length ? { dingtalkBindingInvalidated: 'true' } : {}) })
     })
     return { userId }
   }
@@ -311,38 +438,13 @@ export class LocalAuthService {
         if (admin) await requireAnotherPlatformAdmin(transaction, userId, true)
       }
       await transaction`update users set status = ${status}, local_authorization_version = local_authorization_version + 1, updated_at = now() where tenant_id = ${tenantId} and id = ${userId}`
-      if (status === 'disabled') await revokeUserSessions(transaction, userId)
+      if (status === 'disabled') {
+        await invalidateUserBindings(transaction, userId, 'account_disabled')
+        await revokeUserSessions(transaction, userId)
+      }
       await localAudit(transaction, actorId, 'identity.local.status', 'success', { userId, status })
     })
     return { userId, status }
-  }
-
-  /**
-   * Per-account attempt window. Behind the reverse proxy every request shares one peer
-   * address, so a per-connection limit would become a single company-wide quota; it is
-   * intentionally absent. The attempt is reserved before verification (so concurrent
-   * guesses cannot exceed the limit) and the window is cleared after a success, so only
-   * consecutive failures lock an account.
-   */
-  private async rateLimit(accountKey: string) {
-    const [row] = await this.database<{ attempts: number }[]>`
-      insert into local_auth_rate_limits (key_hash, attempts, expires_at)
-      values (${this.rateLimitKey(accountKey)}, 1, now() + interval '15 minutes')
-      on conflict (key_hash) do update set
-        attempts = case when local_auth_rate_limits.expires_at <= now() then 1 else least(local_auth_rate_limits.attempts + 1, 1000) end,
-        expires_at = case when local_auth_rate_limits.expires_at <= now() then now() + interval '15 minutes' else local_auth_rate_limits.expires_at end
-      returning attempts
-    `
-    if (!row || row.attempts > 10) throw new IdentityAccessError(429, 'login_rate_limited', '尝试次数过多，请 15 分钟后重试')
-    await this.database`delete from local_auth_rate_limits where expires_at < now() - interval '1 day'`
-  }
-
-  private async clearRateLimit(accountKey: string) {
-    await this.database`delete from local_auth_rate_limits where key_hash = ${this.rateLimitKey(accountKey)}`
-  }
-
-  private rateLimitKey(accountKey: string) {
-    return createHmac('sha256', this.configuration.sessionSecret).update(accountKey).digest('hex')
   }
 }
 
@@ -351,11 +453,10 @@ async function insertAccount(transaction: DatabaseTransaction, input: LocalAccou
   if (await loginAccountExists(transaction, username)) throw new IdentityAccessError(409, 'local_account_exists', '登录账号已存在，请使用其他手机号或邮箱')
   const userId = `user-${randomUUID()}`
   const name = requiredText(input.name, '姓名', 80)
-  const department = optionalText(input.department, '部门', 100)
   const email = optionalText(input.email, '邮箱', 254)
   await transaction`
-    insert into users (id, tenant_id, external_subject, display_name, department_id, status, identity_provider, business_user, email)
-    values (${userId}, ${tenantId}, ${`local:${randomUUID()}`}, ${name}, ${department}, 'active', 'local', true, ${email})
+    insert into users (id, tenant_id, external_subject, display_name, status, identity_provider, business_user, email)
+    values (${userId}, ${tenantId}, ${`local:${randomUUID()}`}, ${name}, 'active', 'local', true, ${email})
   `
   const [created] = await transaction`
     insert into local_user_credentials (tenant_id, user_id, username, password_hash, must_change_password)
@@ -392,12 +493,20 @@ async function revokeUserSessions(transaction: DatabaseTransaction, userId: stri
   await transaction`update authentication_sessions set revoked_at = now() where tenant_id = ${tenantId} and user_id = ${userId} and revoked_at is null`
 }
 
-async function localAudit(transaction: DatabaseTransaction, actorId: string, action: string, result: 'success' | 'failed', context: Record<string, string> = {}) {
+async function ticketRejected(transaction: DatabaseTransaction, userId: string) {
+  await localAudit(transaction, userId, 'identity.dingtalk.bind', 'failed', { reason: 'ticket_invalid' }, 'dingtalk')
+  return { ticketRejected: true as const }
+}
+
+async function localAudit(
+  transaction: DatabaseTransaction, actorId: string, action: string, result: 'success' | 'failed',
+  context: Record<string, string> = {}, provider: IdentityProvider = 'local-password',
+) {
   await transaction`
     insert into audit_events (id, tenant_id, actor_type, actor_id, action, object_type, object_id, result, trace_id, safe_context)
     values (${`audit-${randomUUID()}`}, ${tenantId}, ${actorId === 'anonymous' ? 'system' : 'user'}, ${actorId}, ${action},
       'local_identity', ${context.userId ?? actorId}, ${result}, ${`trace-identity-${randomUUID()}`},
-      ${transaction.json({ provider: 'local-password', ...context })})
+      ${transaction.json({ provider, ...context })})
   `
 }
 

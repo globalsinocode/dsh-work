@@ -243,8 +243,9 @@ const taskInfoTarget = computed(() =>
  */
 const collabTaskDetail = computed(() => collab.value && Boolean(taskDetailId.value))
 const asideView = ref<'task' | 'space'>(props.infoOpen ? 'space' : 'task')
-watch(collabTaskDetail, (inDetail) => {
-  if (!collab.value || !wideLayout.value) return
+// 窄屏变宽时同样按进入任务详情处理：窄屏期间右栏不显示，变宽后应回到“任务信息并列”的默认。
+watch([collabTaskDetail, wideLayout], ([inDetail, wide]) => {
+  if (!collab.value || !wide) return
   if (inDetail) {
     asideView.value = props.infoOpen ? 'space' : 'task'
     panelCollapsed.value = false

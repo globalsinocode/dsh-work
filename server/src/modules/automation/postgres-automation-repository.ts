@@ -15,8 +15,22 @@ import type {
   AutomationStatus,
   FrozenExecutionConfig,
 } from './automation-types.ts'
+import { AutomationReasonCodes } from './automation-types.ts'
+import { recordAutomationOutcomeNotification } from '../notification/user-notification-writer.ts'
 
 const tenantId = 'tenant-dsh-work'
+
+/**
+ * 站内通知 NC-S3：定时执行被跳过时只为所有者无从知晓的原因通知。因所有者自己暂停、停用或改了
+ * 计划而作废的时间点不通知，手动执行被当场拒绝也不通知（页面已提示）。
+ */
+const NOTIFIED_SKIP_REASONS: ReadonlySet<string> = new Set([
+  AutomationReasonCodes.overlap,
+  AutomationReasonCodes.subjectInvalid,
+  AutomationReasonCodes.authorizationDenied,
+  AutomationReasonCodes.userPendingLimit,
+  AutomationReasonCodes.globalPendingLimit,
+])
 const NON_TERMINAL_RUN_STATES = ['queued', 'running', 'waiting', 'cancel_requested']
 
 interface AutomationRow {
@@ -458,7 +472,16 @@ export class PostgresAutomationRepository {
       on conflict (tenant_id, automation_id, trigger_id) do nothing
       returning ${tx.unsafe(EXECUTION_BASE_COLUMNS)}
     `
-    return row ? mapExecution(row) : null
+    if (!row) return null
+    const execution = mapExecution(row)
+    if (input.admissionStatus === 'skipped') {
+      if (input.kind === 'missed') {
+        await recordAutomationOutcomeNotification(tx, { executionId: execution.id }, 'missed')
+      } else if (input.kind === 'scheduled' && NOTIFIED_SKIP_REASONS.has(input.reasonCode ?? '')) {
+        await recordAutomationOutcomeNotification(tx, { executionId: execution.id }, 'skipped')
+      }
+    }
+    return execution
   }
 
   /** 游标推进：条件更新防止并发处理器重复登记同一区间。 */
@@ -483,12 +506,19 @@ export class PostgresAutomationRepository {
     reasonCode?: string,
     tx?: DatabaseTransaction,
   ): Promise<void> {
-    const executor = tx ?? this.database
-    await executor`
-      update automation_executions
-         set admission_status = ${status}, reason_code = ${reasonCode ?? null}, updated_at = now()
-       where tenant_id = ${tenantId} and id = ${executionId}
-    `
+    const apply = async (executor: DatabaseTransaction) => {
+      await executor`
+        update automation_executions
+           set admission_status = ${status}, reason_code = ${reasonCode ?? null}, updated_at = now()
+         where tenant_id = ${tenantId} and id = ${executionId}
+      `
+      // 受理后未能开始（派发失败、重启后收敛）通知所有者；所有者自己暂停或停用而收敛的不通知。
+      if (status === 'interrupted' && reasonCode === AutomationReasonCodes.dispatchInterrupted) {
+        await recordAutomationOutcomeNotification(executor, { executionId }, 'interrupted')
+      }
+    }
+    if (tx) await apply(tx)
+    else await this.database.begin(apply)
   }
 
   async listExecutions(

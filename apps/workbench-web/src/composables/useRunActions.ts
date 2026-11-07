@@ -30,7 +30,7 @@ export function useRunActions(task: Ref<TaskRun | undefined>, options: {
     if (!task.value || stopping.value || !options.canOperate.value) return
     try {
       await ElMessageBox.confirm(
-        '停止后会终止本轮运行尝试，已有对话和执行记录仍会保留。',
+        '停止后这一轮不会继续执行，已有对话和结果会保留。',
         '停止本轮执行？',
         {
           confirmButtonText: '停止本轮执行',
@@ -52,7 +52,7 @@ export function useRunActions(task: Ref<TaskRun | undefined>, options: {
     if (!task.value || !options.canOperate.value) return false
     try {
       const next = await taskStore.retryTask(task.value.id)
-      ElMessage.success('已创建新的运行尝试')
+      ElMessage.success('已重新执行本轮')
       if (next && next.id !== task.value.id) await options.onRetried?.(next)
       return true
     } catch (error) {

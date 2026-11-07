@@ -4,7 +4,7 @@ import { assertRuntimeModelRequirements } from '../../runtime/execution-capabili
 import type { RuntimeManifest } from '../../runtime/runtime-types.ts'
 import { compileRuntimeManifest } from '../../runtime/manifest-compiler.ts'
 import { toManifestToolBinding } from '../../../domain/tool-binding.ts'
-import { agentRecommendationToolNames, builtinToolReference, executionToolNames, projectTaskToolNames } from '../../runtime/builtin-tools.ts'
+import { agentRecommendationToolNames, builtinToolReference, executionToolNames, projectTaskToolNames, skillCreationToolNames } from '../../runtime/builtin-tools.ts'
 import type { RuntimeAuthorizationDecision } from '../../authorization/postgres-authorization-service.ts'
 import type { PreparedRuntimeFile } from '../../runtime/runtime-types.ts'
 import { authorizationDenied } from '../../../domain/authorization-errors.ts'
@@ -90,8 +90,10 @@ export class AttemptDispatcher {
           skillInstructions: [],
           tools: [],
           coveringSkills: [],
+          unavailableSkills: [],
           runtimeTools: [],
           toolBindings: [],
+          skillCreationEnabled: false,
           mcpConnections: [],
           approvalMode: 'risk_based' as const,
           roleIds: ['role-employee'],
@@ -111,23 +113,38 @@ export class AttemptDispatcher {
     }
     const route = await this.deps.models.resolveRoute('default', agent.modelRequirements)
     await assertRuntimeModelRequirements(this.deps.runtime, agent.modelRequirements, route)
-    const authorization = input.authorization ?? await this.deps.authorization?.authorizeRuntime({
-      userId: input.userId,
-      workspaceId: input.workspaceId,
-      agentVersionId: input.agentVersionId,
-      additionalSkillReferences: input.additionalSkillReferences,
-    })
-    const effectiveDataScopes = authorization?.dataScopes ?? agent.dataScopes
-    const knowledgeContext = this.deps.knowledge && input.purpose !== 'agent-routine'
-      ? await this.deps.knowledge.resolveContext({
-          query: input.prompt,
+    // Whose grants bound the run is the one thing entry points choose: employees run within
+    // their own access, release trials within the Agent's own grants.
+    const trial = input.purpose === 'agent-release-trial'
+    const authorization = input.authorization ?? (trial
+      ? await this.deps.authorization?.authorizeReleaseTrial({ userId: input.userId, agentVersionId: input.agentVersionId })
+      : await this.deps.authorization?.authorizeRuntime({
           userId: input.userId,
           workspaceId: input.workspaceId,
-          dataScopes: effectiveDataScopes,
-          roleIds: authorization?.roleIds,
+          agentVersionId: input.agentVersionId,
+          additionalSkillReferences: input.additionalSkillReferences,
+        }))
+    const effectiveDataScopes = authorization?.dataScopes ?? agent.dataScopes
+    // 企业知识（weknora-knowledge-plan 5.7）：一期只在个人空间的员工对话中检索，且只检索会话所选、
+    // 员工当前可见的知识库。团队空间、定时任务、主动任务、验证运行与系统运行都不调用（2.1）。
+    const knowledge = this.deps.knowledge && !input.purpose && input.personalConversation === true && run.sessionId
+      ? await this.deps.knowledge.resolveContext({
+          sessionId: run.sessionId,
+          userId: input.userId,
+          agentVersionId: input.agentVersionId,
+          query: knowledgeQuery(input.prompt, input.history),
         })
-      : []
-    const memoryContext = this.deps.memory && input.purpose !== 'agent-routine'
+      : null
+    if (knowledge?.status === 'unavailable') {
+      await this.deps.operations?.appendAudit(
+        input.userId, 'knowledge.retrieve.unavailable', run.id, 'failed', `trace-${run.id}`,
+        `企业知识库不可用，本次执行未注入知识（${knowledge.failureReason ?? 'unknown'}）`,
+      )
+    }
+    // Experience is retrieved per person, workspace or organization. Runs without a
+    // workspace (release trials) get none by design: validation checks SOUL.md, skills,
+    // tools and access, not experience that differs per employee.
+    const memoryContext = this.deps.memory && input.purpose !== 'agent-routine' && input.workspaceId
       ? await this.deps.memory.resolveContext({
           query: input.prompt,
           userId: input.userId,
@@ -186,6 +203,13 @@ export class AttemptDispatcher {
           })
         : []),
       ...agentDataToolRefs(agent).map(tool => tool.id),
+      ...(!input.purpose
+        ? skillCreationToolNames({
+            enabled: agent.skillCreationEnabled === true,
+            personalConversation: input.personalConversation === true,
+            bashAvailable: !disabledTools.has('bash'),
+          })
+        : []),
     ].filter(name => !disabledTools.has(name))
     // 执行隔离 2b-4：有解析文本的输入照常挂文本；装配了 bash 时另挂原始文件。二进制成果没有解析文本，
     // bash 被 Runtime 紧急停用时无法使用，在创建 Attempt 之前拒绝并说明原因。
@@ -232,6 +256,9 @@ export class AttemptDispatcher {
         write_policy: 'workspace_only',
       },
       skills: [...agent.skills, ...builtin.skills.map(skill => `${skill.id}@${skill.version}`)].map(toCapabilityReference),
+      ...(agent.unavailableSkills?.length ? {
+        unavailable_skills: agent.unavailableSkills.map(item => ({ skill: item.reference, name: item.name, reason: 'python_dependency_missing' as const, missing: item.missing })),
+      } : {}),
       ...(builtin.exclusions.length ? {
         builtin_skill_exclusions: builtin.exclusions.map(item => ({
           skill: item.skill,
@@ -247,15 +274,9 @@ export class AttemptDispatcher {
       ...(agent.toolBindings.length ? { tool_bindings: agent.toolBindings.map(toManifestToolBinding) } : {}),
       ...(agent.mcpConnections?.length ? { mcp_connections: agent.mcpConnections } : {}),
       data_scopes: effectiveDataScopes,
-      knowledge_context: knowledgeContext.map(document => ({
-        documentId: document.documentId,
-        title: document.title,
-        version: document.version,
-        effectiveDate: document.effectiveDate,
-        dataScope: document.dataScope,
-        contentChecksum: document.contentChecksum,
-        excerpt: document.excerpt,
-      })),
+      knowledge_context: knowledge?.documents ?? [],
+      ...(knowledge && knowledge.status !== 'not_applicable' ? { knowledge_status: knowledge.status } : {}),
+      ...(knowledge?.skippedBases.length ? { knowledge_skipped_bases: knowledge.skippedBases } : {}),
       ...(memoryContext.length ? { memory_context: memoryContext.map(memory => ({
         memoryVersionId: memory.memoryVersionId,
         title: memory.title,
@@ -291,11 +312,7 @@ export class AttemptDispatcher {
       trace_id: `trace-${run.id}-${attemptId}`,
     }
     await this.submit(run, manifest, route, {
-      knowledgeSources: knowledgeContext.map(document => ({
-        documentId: document.documentId,
-        relevanceScore: document.relevanceScore,
-        excerpt: document.excerpt,
-      })),
+      knowledgeCitations: knowledge?.citations ?? [],
       memorySources: memoryContext.map(memory => ({
         memoryVersionId: memory.memoryVersionId,
         relevanceScore: memory.relevanceScore,
@@ -317,7 +334,7 @@ export class AttemptDispatcher {
     run: RunRecord,
     manifest: RuntimeManifest,
     route: unknown,
-    sources: Pick<Parameters<OrchestrationDependencies['runs']['createAttempt']>[0], 'knowledgeSources' | 'memorySources' | 'inputFiles'> = {},
+    sources: Pick<Parameters<OrchestrationDependencies['runs']['createAttempt']>[0], 'knowledgeCitations' | 'memorySources' | 'inputFiles'> = {},
   ): Promise<void> {
     this.assertPrincipalContextForDispatch(manifest)
     await this.deps.runtime.assertAvailable?.(manifest)
@@ -358,4 +375,23 @@ export class AttemptDispatcher {
       throw authorizationDenied('执行清单缺少独立 Principal 身份')
     }
   }
+}
+
+/** 上一条员工提问的末尾最多 500 字（4.3）。 */
+const previousQuestionChars = 500
+
+/**
+ * 检索查询词（WK4、4.3）：同一会话中员工的上一条提问加本次提问，让“那第二条呢”这类追问也能
+ * 检索到。由平台拼接，不调用模型改写。
+ */
+export function knowledgeQuery(
+  prompt: string,
+  history: RuntimeManifest['input']['conversation_history'] | undefined,
+): string {
+  const current = prompt.trim()
+  const previous = [...(history ?? [])].reverse()
+    .find(message => message.role === 'user' && message.content.trim() && message.content.trim() !== current)
+    ?.content.trim()
+  if (!previous) return current
+  return `${previous.length > previousQuestionChars ? previous.slice(-previousQuestionChars) : previous}\n${current}`
 }

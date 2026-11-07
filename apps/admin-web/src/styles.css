@@ -34,7 +34,6 @@
   --font-weight-title: 600;
   --font-weight-body: 400;
   --font-weight-badge: 500;
-  --font-weight-metric: 700;
   --spacing-page: 24px 28px;
   --spacing-card: 16px;
   --spacing-section: 20px;
@@ -254,39 +253,102 @@ body {
   background: var(--color-text-heading);
 }
 
-.metric-grid {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 14px;
+/*
+ * 页面概况条：一行给出关键数字，替代原来每项一张的大统计卡片。
+ * 结构：section.content-panel.overview-strip > dl.overview-strip__stats > div.overview-stat > dt + dd(strong.overview-stat__value + small)，
+ * 可选 p.overview-strip__hint（规则说明）与 div.overview-strip__actions（页面级操作）。
+ */
+.overview-strip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 28px;
+  padding-block: 12px;
 }
 
-.metric-card {
-  position: relative;
+.overview-strip__stats {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px 24px;
+  margin: 0;
+}
+
+.overview-stat {
+  display: flex;
   min-width: 0;
-  padding: var(--spacing-card);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-card);
-  background: var(--color-bg-base);
+  align-items: baseline;
+  gap: 8px;
 }
 
-.metric-label {
+.overview-stat dt {
   color: var(--color-text-secondary);
   font-size: var(--font-size-caption);
+  white-space: nowrap;
 }
 
-.metric-value {
-  margin-top: 8px;
+.overview-stat dd {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 6px;
+  margin: 0;
+}
+
+.overview-stat__value {
   color: var(--color-text-heading);
-  font-size: var(--font-size-metric);
-  font-weight: var(--font-weight-metric);
-  letter-spacing: -0.02em;
+  font-size: var(--font-size-title);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
-.metric-detail {
-  margin-top: 8px;
+.overview-stat small {
   color: var(--color-text-muted);
   font-size: var(--font-size-badge);
-  line-height: 1.4;
+}
+
+.overview-stat--attention .overview-stat__value {
+  color: var(--color-warning-strong);
+}
+
+.overview-stat--danger .overview-stat__value {
+  color: var(--color-danger-strong);
+}
+
+.overview-stat__link {
+  padding: 0;
+  border: 0;
+  color: var(--color-primary);
+  background: transparent;
+  cursor: pointer;
+  font-size: var(--font-size-badge);
+}
+
+.overview-stat__link:hover {
+  text-decoration: underline;
+}
+
+.overview-stat__link:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+.overview-strip__hint {
+  flex: 1 1 320px;
+  min-width: 0;
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-badge);
+  line-height: 1.6;
+}
+
+.overview-strip__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-left: auto;
 }
 
 .data-table {
@@ -410,8 +472,3 @@ body {
   border-radius: var(--radius-card);
 }
 
-@media (max-width: 1280px) {
-  .metric-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-}

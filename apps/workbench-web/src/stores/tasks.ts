@@ -5,6 +5,7 @@ import { workbenchApi } from '../api/client'
 import type { RunStatus, TaskRun } from '../types/domain'
 import { createIntentRegistry, isUncertainRequestFailure } from '../utils/idempotent-intent'
 import { isNotFoundError } from '../utils/request-error'
+import { isMissingResource } from '@/utils/missing-resource'
 
 const intentRegistry = createIntentRegistry()
 
@@ -108,7 +109,7 @@ export const useTaskStore = defineStore('tasks', () => {
       // 只有「Run 确实不存在或无权访问」才逐出缓存。5xx（含网关 504）、超时与
       // 网络错误都属于暂时性失败：逐出会把仍在的对话渲染成「未找到对话」，而且
       // 没有任何自动恢复路径。保留条目，让页面继续展示已有快照等下一次刷新。
-      if (current === generation && isNotFoundError(cause)) {
+      if (current === generation && (isNotFoundError(cause) || isMissingResource(cause))) {
         tasks.value = tasks.value.filter(item => item.id !== id)
         closeStream(id)
       }
@@ -128,6 +129,7 @@ export const useTaskStore = defineStore('tasks', () => {
     agentVersionId?: string,
     skillVersionId?: string,
     mentionedUserIds: string[] = [],
+    knowledgeBaseIds: string[] = [],
   ) {
     void _workspaceName
     const current = generation
@@ -160,6 +162,17 @@ export const useTaskStore = defineStore('tasks', () => {
       throw error
     }
     requireGeneration(current)
+    // 企业知识库（WK-S2）：新对话中添加的知识库在首条提问执行前写入会话，首条就能检索。
+    if (knowledgeBaseIds.length) {
+      try {
+        await workbenchApi.setSessionKnowledgeBases(session.id, knowledgeBaseIds)
+      } catch (cause) {
+        // 写入失败（知识库刚被撤销可见范围、连接停用等）时首条提问不发出，删掉刚建的空会话，重试不会堆积空会话。
+        await workbenchApi.deleteSession(session.id).catch(() => undefined)
+        throw cause
+      }
+      requireGeneration(current)
+    }
     const task = await startRunWithSessionFiles(session.id, {
       prompt,
       attachments,

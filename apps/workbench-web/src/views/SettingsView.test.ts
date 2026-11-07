@@ -22,6 +22,7 @@ describe('SettingsView', () => {
     vi.spyOn(workbenchApi, 'getContentPolicy').mockResolvedValue({
       version: 'v1', physicalDeletion: false, retentionDays: null, notice: '保留规则',
     })
+    vi.spyOn(workbenchApi, 'getDingTalkBinding').mockResolvedValue({ enabled: false, status: 'unbound', binding: null, invalid: null, selfRebindLocked: false })
     vi.spyOn(workbenchApi, 'getSession').mockResolvedValue({
       user: { id: 'U00001', name: '林岚', title: '', department: '', avatarText: '林', role: 'employee', dataScopes: [] },
       identityProvider: 'prototype-sso',

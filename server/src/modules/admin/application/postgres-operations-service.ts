@@ -857,6 +857,7 @@ export class PostgresOperationsService {
            select 1 from user_roles ur
            join roles r on r.tenant_id = ur.tenant_id and r.id = ur.role_id
             where ur.tenant_id = u.tenant_id and ur.user_id = u.id
+              and ur.source_key = 'local' and r.status = 'active'
               and (ur.valid_until is null or ur.valid_until > now())
               and (r.permissions ? 'admin:*' or r.permissions ? 'admin:write')
          )

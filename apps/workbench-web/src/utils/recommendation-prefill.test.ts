@@ -10,6 +10,12 @@ describe('recommendation prefill', () => {
     expect(window.location.search).toBe('?agent=agent-contract')
     expect(takeRecommendationPrefill()).toBe('这份合同的违约金合理吗？')
     expect(window.history.state).toEqual({ back: '/tasks/run-1' })
+    expect(takeRecommendationPrefill()).toBeNull()
+  })
+
+  it('keeps an explicit empty prefill so the target page leaves the input blank', () => {
+    window.history.replaceState(recommendationPrefillState(''), '', '/workbench?agent=agent-skill-creator')
     expect(takeRecommendationPrefill()).toBe('')
+    expect(takeRecommendationPrefill()).toBeNull()
   })
 })

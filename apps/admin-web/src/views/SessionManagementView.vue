@@ -70,11 +70,13 @@ onMounted(() => reloadSessions())
 
     <el-alert type="info" :closable="false" show-icon title="本页用于运行治理，只展示 Session、用户、工作空间、Agent、Token 和链路等元数据；消息正文需要专项审计授权。" />
 
-    <section v-loading="sessionsLoading" class="metric-grid">
-      <article class="metric-card"><div class="metric-label">Session 总数</div><div class="metric-value">{{ summary?.total ?? 0 }}</div><div class="metric-detail">全部治理记录</div></article>
-      <article class="metric-card"><div class="metric-label">活动 Session</div><div class="metric-value">{{ summary?.active ?? 0 }}</div><div class="metric-detail">执行中或排队中</div></article>
-      <article class="metric-card"><div class="metric-label">等待确认</div><div class="metric-value">{{ summary?.awaitingApproval ?? 0 }}</div><div class="metric-detail">服务端自动确认处理中</div></article>
-      <article class="metric-card"><div class="metric-label">失败 Session</div><div class="metric-value">{{ summary?.failed ?? 0 }}</div><div class="metric-detail">需要检查运行或依赖</div></article>
+    <section v-loading="sessionsLoading" class="content-panel overview-strip" aria-label="Session 概况">
+      <dl class="overview-strip__stats">
+        <div class="overview-stat"><dt>Session 总数</dt><dd><strong class="overview-stat__value">{{ summary?.total ?? 0 }}</strong><small>全部治理记录</small></dd></div>
+        <div class="overview-stat"><dt>活动 Session</dt><dd><strong class="overview-stat__value">{{ summary?.active ?? 0 }}</strong><small>执行中或排队中</small></dd></div>
+        <div class="overview-stat"><dt>等待确认</dt><dd><strong class="overview-stat__value">{{ summary?.awaitingApproval ?? 0 }}</strong><small>服务端自动确认处理中</small></dd></div>
+        <div class="overview-stat"><dt>失败 Session</dt><dd><strong class="overview-stat__value">{{ summary?.failed ?? 0 }}</strong><small>需要检查运行或依赖</small></dd></div>
+      </dl>
     </section>
 
     <section class="content-panel content-panel--flush session-table">

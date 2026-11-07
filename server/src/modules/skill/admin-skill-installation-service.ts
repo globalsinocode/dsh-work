@@ -1,4 +1,6 @@
+import type { PythonModuleIndex } from '../runtime/execution-backend.ts'
 import { skillNotFound, skillConflict } from './skill-errors.ts'
+import { DEFAULT_SKILL_TEST_PROMPT, installationKey, lockInstallationKey, nextInstalledVersion } from './skill-identity.ts'
 import { normalizeSkillTestScenario } from '../../domain/skill-test-scenario.ts'
 import { evaluateAttemptEvidence, SKILL_TEST_EVIDENCE_POLICY, SKILL_TEST_SCENARIO_POLICY } from './skill-test-evidence.ts'
 import { authorizationDenied, requestInvalid } from '../../domain/authorization-errors.ts'
@@ -60,8 +62,9 @@ export class AdminSkillInstallationService {
   private readonly pythonPackages: string[]
   private readonly artifactStore?: SkillArtifactStore
   private readonly checkRuntime?: (references: string[], requiredPackages: string[]) => Promise<void>
-  constructor(db: DatabaseClient, orchestration: AdminRunLauncher, authorization: PostgresAuthorizationService, acquire = acquireSkillSource, pythonSandboxAvailable = false, pythonPackages: string[] = [], artifactStore?: SkillArtifactStore, checkRuntime?: (references: string[], requiredPackages: string[]) => Promise<void>) {
-    this.db = db; this.orchestration = orchestration; this.authorization = authorization; this.acquire = acquire; this.pythonSandboxAvailable = pythonSandboxAvailable; this.pythonPackages = pythonPackages; this.artifactStore = artifactStore; this.checkRuntime = checkRuntime
+  private readonly pythonModules: PythonModuleIndex | null
+  constructor(db: DatabaseClient, orchestration: AdminRunLauncher, authorization: PostgresAuthorizationService, acquire = acquireSkillSource, pythonSandboxAvailable = false, pythonPackages: string[] = [], artifactStore?: SkillArtifactStore, checkRuntime?: (references: string[], requiredPackages: string[]) => Promise<void>, pythonModules: PythonModuleIndex | null = null) {
+    this.db = db; this.orchestration = orchestration; this.authorization = authorization; this.acquire = acquire; this.pythonSandboxAvailable = pythonSandboxAvailable; this.pythonPackages = pythonPackages; this.artifactStore = artifactStore; this.checkRuntime = checkRuntime; this.pythonModules = pythonModules
   }
 
   async testPackage(userId: string, skill: RuntimeSkillConfiguration, prompt: string) {
@@ -453,7 +456,7 @@ export class AdminSkillInstallationService {
     if (reserved.length) throw invalidRequest(`Skill 名称不能以“${BUILTIN_SKILL_NAME_SUFFIX}”结尾，该后缀保留给平台内置 Skill：${reserved.join('、')}`)
     const unavailableTools = invalidSkillToolReferences(bundle.packages.flatMap(pkg => pkg.toolIds))
       .map(reference => reference.split('@')[0]!)
-    const preparedPlan = buildSkillInstallationPlan(bundle, { pythonSandboxAvailable: this.pythonSandboxAvailable, pythonPackages: this.pythonPackages, unavailableTools, deferRuntimeRequirements })
+    const preparedPlan = buildSkillInstallationPlan(bundle, { pythonSandboxAvailable: this.pythonSandboxAvailable, pythonPackages: this.pythonPackages, pythonModules: this.pythonModules, unavailableTools, deferRuntimeRequirements })
     const artifacts: SkillPackageArtifact[] = []
     for (const packageToStore of preparedPlan.packages) artifacts.push(await this.requireArtifactStore().put(packageToStore))
     const plan = externalizeSkillInstallationPlan(preparedPlan, artifacts)
@@ -472,7 +475,7 @@ export class AdminSkillInstallationService {
     if (invalidTools.length) throw invalidRequest(`Skill 引用了平台不提供的工具：${invalidTools.join('、')}`)
     for (const artifact of row.plan.packages) await this.requireArtifactStore().read(artifact)
     const packageKeys = [...new Set(row.plan.packages.map(pkg => installationKey(pkg.name)))].sort()
-    for (const key of packageKeys) await tx`select pg_advisory_xact_lock(hashtextextended(${`${tenant}:skill-install:${key}`}, 0))`
+    for (const key of packageKeys) await lockInstallationKey(tx, tenant, key)
     const identities = new Map<string, InstalledIdentity>()
     for (const pkg of row.plan.packages) identities.set(pkg.name, await this.resolveInstalledIdentity(tx, pkg, userId))
     let promoted = true
@@ -495,7 +498,7 @@ export class AdminSkillInstallationService {
       await tx`
         insert into skill_versions (id, tenant_id, skill_id, version, name, category, description, instructions, manifest, artifact_ref, package_sha256, tool_refs, test_prompt, status, created_by, change_summary)
         values (${identity.versionId}, ${tenant}, ${identity.skillId}, ${identity.version}, ${pkg.name}, '已安装 Skill', ${pkg.description}, '',
-          ${tx.json(JSON.parse(JSON.stringify({ artifact: pkg, installationId: row.id, dependencies, ...(row.channel === 'link' ? { installationChannel: 'link' } : {}) })))}, ${pkg.artifactRef}, ${pkg.sha256}, ${tx.json(pkg.toolIds)}, '请按照 Skill 说明完成一个最小示例；有参考资料时实际读取并说明结果，缺少业务输入时明确指出。', 'draft', ${userId}, ${changeSummary})
+          ${tx.json(JSON.parse(JSON.stringify({ artifact: pkg, installationId: row.id, dependencies, ...(row.channel === 'link' ? { installationChannel: 'link' } : {}) })))}, ${pkg.artifactRef}, ${pkg.sha256}, ${tx.json(pkg.toolIds)}, ${DEFAULT_SKILL_TEST_PROMPT}, 'draft', ${userId}, ${changeSummary})
       `
       await tx`update skills set name = ${pkg.name}, description = ${pkg.description}, draft_version_id = ${identity.versionId}, updated_at = now() where tenant_id = ${tenant} and id = ${identity.skillId}`
     }
@@ -531,12 +534,13 @@ export class AdminSkillInstallationService {
     const [sameVersion] = await tx<{ versionId: string; version: string }[]>`
       select id as "versionId", version from skill_versions
       where tenant_id = ${tenant} and skill_id = ${existing.skillId} and package_sha256 = ${pkg.sha256}
+        and status <> 'disabled'
       order by created_at desc, id desc limit 1
     `
     if (sameVersion) return { skillId: existing.skillId, ...sameVersion, action: 'duplicate' }
     if (existing.draftVersionId) {
       const [draft] = await tx<{ version: string }[]>`select version from skill_versions where tenant_id = ${tenant} and id = ${existing.draftVersionId}`
-      throw new RequestError(409, 'skill_draft_conflict', `Skill“${pkg.name}”已有内容不同的待验证草稿${draft ? ` v${draft.version}` : ''}，本次安装未覆盖。请先发布或删除现有草稿后重试。`)
+      throw new RequestError(409, 'skill_draft_conflict', `Skill“${pkg.name}”已有内容不同的待验证草稿${draft ? ` v${draft.version}` : ''}，本次安装未覆盖。请先发布，或在 Skill 详情的“版本历史”中放弃该草稿后重试。`)
     }
     const [latest] = await tx<{ version: string }[]>`
       select version from skill_versions where tenant_id = ${tenant} and skill_id = ${existing.skillId}
@@ -552,7 +556,7 @@ export class AdminSkillInstallationService {
       where tenant_id = ${tenant} and id = ${identity.skillId} for update
     `
     if (existing?.draftVersionId) {
-      throw new RequestError(409, 'skill_draft_conflict', `Skill“${pkg.name}”的依赖内容已变化，但当前已有待验证草稿，本次安装未覆盖。请先发布或删除现有草稿后重试。`)
+      throw new RequestError(409, 'skill_draft_conflict', `Skill“${pkg.name}”的依赖内容已变化，但当前已有待验证草稿，本次安装未覆盖。请先发布，或在 Skill 详情的“版本历史”中放弃该草稿后重试。`)
     }
     const [latest] = await tx<{ version: string }[]>`
       select version from skill_versions where tenant_id = ${tenant} and skill_id = ${identity.skillId}
@@ -640,13 +644,6 @@ function withoutFileContents(pkg: SkillPackage) {
 }
 function installationSourceLabel(source: InstallationSource) {
   return 'fileName' in source ? source.fileName : source.url
-}
-function installationKey(name: string) {
-  return name.trim().normalize('NFC').toLowerCase()
-}
-function nextInstalledVersion(current: string) {
-  const [major = 0, minor = 0] = current.split('.').map(Number)
-  return `${major}.${minor + 1}.0`
 }
 function installationResultMessage(skillName: string, result: InstalledIdentity) {
   if (result.action === 'duplicate') {

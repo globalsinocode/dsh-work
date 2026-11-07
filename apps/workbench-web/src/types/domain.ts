@@ -46,7 +46,9 @@ export interface TaskSource {
   version?: string
   effectiveAt?: string
   dataScope?: string
-  synthetic?: boolean
+  /** 企业知识引用快照：原文件名与所属知识库名称。 */
+  fileName?: string
+  knowledgeBaseName?: string
   updatedAt?: string
 }
 
@@ -178,7 +180,30 @@ export interface AgentRecommendation {
   name: string
   description: string
   reason: string
+  /** 推荐时写给该同事的问题（员工口吻）；“去聊天”优先预填它，没有时预填该轮员工的原问题。 */
+  suggestedPrompt?: string
   available: boolean
+}
+
+/**
+ * Skill 草稿卡片（Skill 创建专家方案 4.3）：某个 Run 当前 Attempt 保存的草稿版本，带所属提交的当前状态。
+ * 只给提交人本人看；提交审核只能由员工在卡片上发起。
+ */
+export interface SkillDraft {
+  submissionId: string
+  versionId: string
+  versionNumber: number
+  runId: string
+  name: string
+  description: string
+  files: Array<{ path: string; size: number; script: boolean }>
+  compatibility: { status: 'compatible' | 'needs_review' | 'incompatible'; issues: Array<{ code: string; severity: 'warning' | 'error'; message: string }> }
+  status: 'draft' | 'pending' | 'approved' | 'rejected'
+  /** 是否为该提交的当前版本；被新版本替代的卡片只显示一行说明。 */
+  latest: boolean
+  reviewNote?: string
+  submittedAt?: string
+  reviewedAt?: string
 }
 
 export interface TaskRunError {
@@ -293,8 +318,14 @@ export interface TaskRun {
    * 的成果合集，供气泡按 runId 挂到对应回复下。本轮核验仍只用 result.artifacts。
    */
   threadArtifacts?: Artifact[]
+  /**
+   * 个人会话多轮详情中各轮的执行状态：停止或失败、没有回复的历史轮次在其问题下标出结果，
+   * 不随新一轮消失。只有一轮或团队详情时缺省。
+   */
+  threadRuns?: Array<{ runId: string; status: RunStatus; stoppedBy: string | null }>
   /** 推荐 AI 同事：个人会话中各 Run 当前 Attempt 的推荐卡片，按 runId 挂到该 Run 的回复下。 */
   recommendations?: AgentRecommendation[]
+  skillDrafts?: SkillDraft[]
   /**
    * EX-PROGRESS-01：客户端时钟减服务端事件时间（毫秒），收到实时事件时更新。进行中步骤的
    * 计时据此把服务端时间换算到本机，避免两边时钟不一致；只有快照时缺省，按 0 计。
@@ -996,7 +1027,7 @@ export type ConversationLocation =
 
 export interface WorkbenchSession {
   user: UserProfile
-  identityProvider: 'prototype-sso' | 'ai-hub-oidc' | 'local-password'
+  identityProvider: 'prototype-sso' | 'ai-hub-oidc' | 'local-password' | 'dingtalk'
   apiAudience: 'workbench'
 }
 
@@ -1010,6 +1041,8 @@ export interface WorkbenchAgent {
   description: string
   welcomeMessage: string
   examplePrompts: string[]
+  /** 当前启用版本开启了“可创建 Skill”（Skill 创建专家方案 4.8）；旧服务端缺省。 */
+  canCreateSkills?: boolean
 }
 
 export interface McpUserGrantListItem {
@@ -1217,9 +1250,47 @@ export interface PersonalFileQuery {
 }
 
 /** D38：本人未读 @ 提醒，按项目空间与讨论汇总。 */
+/** 站内通知（方案 NC-S1）：与本人相关的事件；`visible` 为 false 时名称与跳转目标均为 null。 */
+export interface UserNotification {
+  id: string
+  kind:
+    | 'mention' | 'task_assigned' | 'task_completed' | 'workspace_member_added'
+    | 'task_schedule_stopped' | 'automation_failed' | 'skill_review_result'
+    | 'dingtalk_bound_by_admin' | 'dingtalk_binding_revoked' | 'dingtalk_bind_reminder'
+  createdAt: string
+  read: boolean
+  visible: boolean
+  actor: { id: string; name: string } | null
+  workspace: { id: string; name: string } | null
+  objectName: string | null
+  /** 事件代码（NC-S3）：`state`、`reason`、`outcome`、`result`。 */
+  detail: Record<string, string> | null
+  target: {
+    type: 'message' | 'project_task' | 'workspace' | 'automation' | 'skill_submission' | 'dingtalk_binding'
+    id: string
+    sessionId: string | null
+  } | null
+}
+
 export interface MentionSummary {
   workspaceId: string
   sessionId: string
   count: number
   latestAt: string
+}
+
+/** 用户中心 › 钉钉（钉钉接入 DT-S1）。`enabled` 为部署是否配置了钉钉应用；AI Hub 账号恒为 false。 */
+export interface DingTalkSelfBinding {
+  enabled: boolean
+  status: 'bound' | 'unbound' | 'invalid'
+  binding: {
+    id: string
+    dingtalkName: string | null
+    dingtalkDepartment: string | null
+    boundBy: 'self' | 'admin'
+    boundByAdminName: string | null
+    boundAt: string
+  } | null
+  invalid: { reason: string | null; at: string } | null
+  selfRebindLocked: boolean
 }

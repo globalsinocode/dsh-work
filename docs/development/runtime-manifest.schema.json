@@ -345,7 +345,7 @@
     "knowledge_context": {
       "type": "array",
       "maxItems": 3,
-      "description": "控制面按用户、角色和工作空间过滤后固化的版本化知识片段。",
+      "description": "员工在个人空间对话中添加知识库后，由控制面按所选且对员工可见的企业知识库（WeKnora）检索并固化的知识片段；没有检索时为空。",
       "items": {
         "type": "object",
         "required": [
@@ -386,6 +386,16 @@
         },
         "additionalProperties": false
       }
+    },
+    "knowledge_status": {
+      "enum": ["not_selected", "skipped", "ok", "unavailable"],
+      "description": "企业知识检索结果：not_selected 会话没有添加知识库；skipped 所选知识库全部已删除或不可见；ok 已检索（可能没有结果）；unavailable 知识库服务不可用。缺省表示本次执行不支持检索。"
+    },
+    "knowledge_skipped_bases": {
+      "type": "array",
+      "maxItems": 20,
+      "items": { "type": "string", "minLength": 1, "maxLength": 60 },
+      "description": "所选但本次因已删除或对员工不可见而跳过的知识库名称；只用于回答页脚，不进入提示词。"
     },
     "project_context": {
       "type": "object",

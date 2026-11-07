@@ -190,6 +190,29 @@ test('POST /me/mentions/read 只读本人在该讨论的提醒；打开群组同
   assert.equal((await groupTarget(ownerId))?.mentioned, false, '打开群组即已读')
 })
 
+test('打开群组读到最新一条 @ 本人的消息（upTo 只有毫秒精度）也把提醒标为已读', async () => {
+  const posted = await api('POST', `${base}/sessions/${sessionId}/messages`, {
+    as: ownerId,
+    body: { content: '@提醒成员 最新一条', idempotencyKey: `d38-latest-${randomUUID()}`, mentionedUserIds: [memberId] },
+  })
+  assert.equal(posted.status, 201)
+  const messageId = (posted.body.data as { messageId: string }).messageId
+  // 消息时间带微秒；客户端传的 upTo 来自列表预览 sentAt，只到毫秒。
+  const [message] = await database<Array<{ createdAt: Date }>>`
+    update messages set created_at = date_trunc('milliseconds', now()) + interval '456 microseconds'
+     where tenant_id = ${tenantId} and id = ${messageId}
+    returning created_at as "createdAt"
+  `
+  assert.equal((await groupTarget(memberId))?.mentioned, true)
+
+  const opened = await api('POST', `${base}/me/conversation-targets/group/${workspaceId}/read`, {
+    as: memberId,
+    body: { upTo: message!.createdAt.toISOString() },
+  })
+  assert.equal(opened.status, 200)
+  assert.equal((await groupTarget(memberId))?.mentioned, false, '同一毫秒内的最新一条 @ 随已读位置一并已读')
+})
+
 test('被移出群组后不再返回该群组的提醒', async () => {
   assert.equal(await mentionCount(viewerId), 1)
   await database`delete from workspace_members where tenant_id = ${tenantId} and workspace_id = ${workspaceId} and user_id = ${viewerId}`

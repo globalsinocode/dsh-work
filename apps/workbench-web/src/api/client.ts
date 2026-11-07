@@ -2,6 +2,7 @@ import type {
   NewSpaceDisclosureImpact,
   PersonalFile,
   PersonalFileQuery,
+  SkillDraft,
   UserSessionSummary,
   UserSessionQuery,
   AgentCandidatePage,
@@ -24,6 +25,7 @@ import type {
   ConversationLocation,
   ConversationTarget,
   MentionSummary,
+  UserNotification,
   WorkspaceTimelineItem,
   UserPreferences,
   WorkbenchAgent,
@@ -65,8 +67,17 @@ import type {
   WeknoraKnowledgeBaseSummary,
   WeknoraDocumentSummary,
   WeknoraSearchHit,
+  DingTalkSelfBinding,
 } from '../types/domain'
 import { isAuthorizationChangeCode, notifyAuthorizationChange } from '../utils/authorization-change'
+import type {
+  KnowledgeBase,
+  KnowledgeDepartmentOption,
+  KnowledgeDocument,
+  KnowledgeDocumentPage,
+  KnowledgeStatus,
+  SessionKnowledgeBase,
+} from '../types/knowledge'
 
 interface ApiEnvelope<T> {
   data: T
@@ -215,6 +226,9 @@ export const workbenchApi = {
 
   getSession: () => request<WorkbenchSession>('/session'),
   getPreferences: () => request<UserPreferences>('/me/preferences'),
+  // 用户中心 › 钉钉（钉钉接入 DT-S1）：查看与解除本人的钉钉绑定。
+  getDingTalkBinding: () => request<DingTalkSelfBinding>('/me/dingtalk-binding'),
+  unbindDingTalk: () => request<DingTalkSelfBinding>('/me/dingtalk-binding', { method: 'DELETE' }),
   updatePreferences: (input: { uiMode: UiMode }) =>
     request<UserPreferences>('/me/preferences', { method: 'PUT', body: JSON.stringify(input) }),
   getPushConfig: () => request<PushConfig>('/me/push/config'),
@@ -266,6 +280,16 @@ export const workbenchApi = {
       method: 'POST',
       body: JSON.stringify({ workspaceId, ...(sessionId ? { sessionId } : {}) }),
     }),
+  /** 站内通知（方案 NC-S1）：本人的通知分页，`status=unread` 只含计入未读的通知。 */
+  listUserNotifications: (query: { status?: 'all' | 'unread'; cursor?: string; limit?: number } = {}) => {
+    const params = new URLSearchParams()
+    for (const [key, value] of Object.entries(query)) if (value !== undefined && value !== '') params.set(key, String(value))
+    return request<{ items: UserNotification[]; nextCursor: string | null }>(`/me/notifications?${params}`)
+  },
+  getNotificationUnreadCount: () => request<{ unread: number }>('/me/notifications/unread-count'),
+  markNotificationRead: (notificationId: string) =>
+    request<{ id: string; read: true }>(`/me/notifications/${encodeURIComponent(notificationId)}/read`, { method: 'POST' }),
+  markAllNotificationsRead: () => request<{ read: number }>('/me/notifications/read-all', { method: 'POST' }),
   resolveConversation: (conversationId: string) =>
     request<ConversationLocation>(`/me/conversation-targets/resolve?conversation=${encodeURIComponent(conversationId)}`),
   getTasks: () => request<TaskRun[]>('/tasks'),
@@ -280,6 +304,14 @@ export const workbenchApi = {
       `/agents/${encodeURIComponent(agentId)}/mcp-access`,
     ),
   getSkills: () => request<WorkbenchSkill[]>('/skills'),
+  submitSkillDraft: (submissionId: string, versionId: string) =>
+    request<SkillDraft>(`/skill-submissions/${encodeURIComponent(submissionId)}/submit`, { method: 'POST', body: JSON.stringify({ versionId }) }),
+  withdrawSkillDraft: (submissionId: string) =>
+    request<SkillDraft>(`/skill-submissions/${encodeURIComponent(submissionId)}/withdraw`, { method: 'POST' }),
+  getSkillDraftFile: (submissionId: string, versionId: string, path = 'SKILL.md') =>
+    request<{ path: string; size: number; content: string }>(
+      `/skill-submissions/${encodeURIComponent(submissionId)}/versions/${encodeURIComponent(versionId)}/file?path=${encodeURIComponent(path)}`,
+    ),
   getRun: (runId: string) => request<TaskRun>(`/runs/${encodeURIComponent(runId)}`),
   /** I-06：Run 的版本化任务结果投影（task-result/v1），与 Run 详情同一授权边界。 */
   getRunResult: (runId: string) => request<TaskResult>(`/runs/${encodeURIComponent(runId)}/result`),
@@ -798,6 +830,51 @@ export const workbenchApi = {
     ),
   weknoraDocumentContentUrl: (documentId: string, inline = false) =>
     `${baseUrl}/integrations/weknora/documents/${encodeURIComponent(documentId)}/content${inline ? '?disposition=inline' : ''}`,
+
+  // 企业知识库（weknora-knowledge-plan 第 8 节，WK-S2）。
+  getKnowledgeStatus: () => request<KnowledgeStatus>('/knowledge/status'),
+  listKnowledgeDepartments: () => request<KnowledgeDepartmentOption[]>('/knowledge/departments'),
+  /** stats=false 时不读取 WeKnora 统计（文档数为 0），供对话中的知识库选择器在 WeKnora 暂不可用时也能使用。 */
+  listKnowledgeBases: (options: { stats?: boolean } = {}) =>
+    request<KnowledgeBase[]>(options.stats === false ? '/knowledge-bases?stats=false' : '/knowledge-bases'),
+  getKnowledgeBase: (knowledgeBaseId: string, options: { stats?: boolean } = {}) =>
+    request<KnowledgeBase>(`/knowledge-bases/${encodeURIComponent(knowledgeBaseId)}${options.stats === false ? '?stats=false' : ''}`),
+  createKnowledgeBase: (input: { name: string; description?: string; ownerDepartmentId: string; includeDescendants?: boolean }) =>
+    request<KnowledgeBase>('/knowledge-bases', { method: 'POST', body: JSON.stringify(input) }),
+  updateKnowledgeBase: (knowledgeBaseId: string, input: { name?: string; description?: string }) =>
+    request<KnowledgeBase>(`/knowledge-bases/${encodeURIComponent(knowledgeBaseId)}`, { method: 'PATCH', body: JSON.stringify(input) }),
+  deleteKnowledgeBase: (knowledgeBaseId: string) => request<{ deleted: true }>(`/knowledge-bases/${encodeURIComponent(knowledgeBaseId)}`, { method: 'DELETE' }),
+  addKnowledgeGrant: (knowledgeBaseId: string, input: { departmentId: string; includeDescendants?: boolean }) =>
+    request<KnowledgeBase>(`${`/knowledge-bases/${encodeURIComponent(knowledgeBaseId)}`}/grants`, { method: 'POST', body: JSON.stringify(input) }),
+  revokeKnowledgeGrant: (knowledgeBaseId: string, grantId: string) =>
+    request<KnowledgeBase>(`${`/knowledge-bases/${encodeURIComponent(knowledgeBaseId)}`}/grants/${encodeURIComponent(grantId)}`, { method: 'DELETE' }),
+  listKnowledgeDocuments: (knowledgeBaseId: string, query: { keyword?: string; status?: string; page?: number; pageSize?: number } = {}) => {
+    const params = new URLSearchParams()
+    for (const [key, value] of Object.entries(query)) if (value !== undefined && value !== '') params.set(key, String(value))
+    return request<KnowledgeDocumentPage>(`${`/knowledge-bases/${encodeURIComponent(knowledgeBaseId)}`}/documents?${params}`)
+  },
+  uploadKnowledgeDocument: (knowledgeBaseId: string, file: File) => request<KnowledgeDocument>(`${`/knowledge-bases/${encodeURIComponent(knowledgeBaseId)}`}/documents`, {
+    method: 'POST',
+    headers: { 'Content-Type': file.type || 'application/octet-stream', 'X-File-Name': encodeURIComponent(file.name) },
+    body: file,
+  }),
+  updateKnowledgeDocument: (knowledgeBaseId: string, documentId: string, title: string) =>
+    request<{ updated: true }>(`${`/knowledge-bases/${encodeURIComponent(knowledgeBaseId)}`}/documents/${encodeURIComponent(documentId)}`, { method: 'PATCH', body: JSON.stringify({ title }) }),
+  reparseKnowledgeDocument: (knowledgeBaseId: string, documentId: string) =>
+    request<{ submitted: true }>(`${`/knowledge-bases/${encodeURIComponent(knowledgeBaseId)}`}/documents/${encodeURIComponent(documentId)}/reparse`, { method: 'POST' }),
+  deleteKnowledgeDocument: (knowledgeBaseId: string, documentId: string) =>
+    request<{ deleted: true }>(`${`/knowledge-bases/${encodeURIComponent(knowledgeBaseId)}`}/documents/${encodeURIComponent(documentId)}`, { method: 'DELETE' }),
+  downloadKnowledgeDocument: (knowledgeBaseId: string, documentId: string) =>
+    requestBlob(`${`/knowledge-bases/${encodeURIComponent(knowledgeBaseId)}`}/documents/${encodeURIComponent(documentId)}/download`),
+  previewKnowledgeDocument: (knowledgeBaseId: string, documentId: string) =>
+    request<{ text: string; truncated: boolean }>(`${`/knowledge-bases/${encodeURIComponent(knowledgeBaseId)}`}/documents/${encodeURIComponent(documentId)}/preview`),
+  getSessionKnowledgeBases: (sessionId: string) =>
+    request<SessionKnowledgeBase[]>(`/sessions/${encodeURIComponent(sessionId)}/knowledge-bases`),
+  setSessionKnowledgeBases: (sessionId: string, knowledgeBaseIds: string[]) =>
+    request<SessionKnowledgeBase[]>(`/sessions/${encodeURIComponent(sessionId)}/knowledge-bases`, {
+      method: 'PUT',
+      body: JSON.stringify({ knowledgeBaseIds }),
+    }),
 }
 
 /**

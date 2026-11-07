@@ -226,6 +226,7 @@ export class AdminQueryService {
       webSearchEnabled: input.webSearchEnabled === true,
       projectTasksEnabled: input.projectTasksEnabled === true,
       agentRecommendationEnabled: input.agentRecommendationEnabled === true,
+      skillCreationEnabled: input.skillCreationEnabled === true,
     }
     assertDraftConfiguration(normalizedInput)
 
@@ -239,6 +240,7 @@ export class AdminQueryService {
       webSearchEnabled: configuration.webSearchEnabled === true,
       projectTasksEnabled: configuration.projectTasksEnabled === true,
       agentRecommendationEnabled: configuration.agentRecommendationEnabled === true,
+      skillCreationEnabled: configuration.skillCreationEnabled === true,
       roleIds: visibleRoleIds ?? configuration.roleIds ?? [],
       dataScopes: configuration.dataScopes ?? [],
       tools: configuration.tools ?? [],
@@ -350,6 +352,8 @@ export class AdminQueryService {
       skills: target.skills,
       webSearchEnabled: target.webSearchEnabled,
       projectTasksEnabled: target.projectTasksEnabled,
+      agentRecommendationEnabled: target.agentRecommendationEnabled,
+      skillCreationEnabled: target.skillCreationEnabled,
       updatedAt: timestamp,
     })
     await this.repository.updateAgentVersion(input.agentId, target.version, { status: 'published' })
@@ -387,6 +391,7 @@ export class AdminQueryService {
       toolIds: unique(input.toolIds),
       testPrompt: input.testPrompt.trim(),
       coveredBuiltinScenarios: [],
+      visibleRoleIds: null,
       owner: actor,
       status: 'draft',
       version: '0.1.0',
@@ -497,6 +502,17 @@ export class AdminQueryService {
     try { scenarios = normalizeBuiltinSkillScenarios(input.scenarios) }
     catch (error) { throw invalidRequest(error instanceof Error ? error.message : '覆盖内置场景无效') }
     return this.repository.updateSkill(input.skillId, { coveredBuiltinScenarios: scenarios })
+  }
+
+  /** 冒烟只校验形状并保存，不复核角色是否存在（真实规则见 PostgresSkillService.setVisibleRoles）。 */
+  async setVisibleRoles(input: { skillId: string; roleIds: unknown; reason: unknown; actor: string }) {
+    if (!input.actor.trim()) throw stateConflict('操作人不能为空')
+    if (typeof input.reason !== 'string' || !input.reason.trim()) throw invalidRequest('请填写 1～500 字的调整原因')
+    const roleIds = input.roleIds
+    if (roleIds !== null && (!Array.isArray(roleIds) || !roleIds.length || roleIds.some(role => typeof role !== 'string'))) {
+      throw invalidRequest('可见角色须为非空的角色 ID 列表；全员可见时传 null')
+    }
+    return this.repository.updateSkill(input.skillId, { visibleRoleIds: roleIds as string[] | null })
   }
 
   async getBuiltinToolStatus(): Promise<BuiltinToolStatus> {
@@ -740,6 +756,8 @@ function assertAgentReady(agent: AgentDefinition) {
     skills: agent.skills,
     webSearchEnabled: agent.webSearchEnabled,
     projectTasksEnabled: agent.projectTasksEnabled,
+    agentRecommendationEnabled: agent.agentRecommendationEnabled,
+    skillCreationEnabled: agent.skillCreationEnabled,
     changeSummary: '发布校验',
   })
   if (!agent.roleIds.length) throw invalidRequest('发布前必须配置员工可见角色')
@@ -801,5 +819,6 @@ function agentVersionSnapshot(agent: AgentDefinition) {
     webSearchEnabled: agent.webSearchEnabled,
     projectTasksEnabled: agent.projectTasksEnabled,
     agentRecommendationEnabled: agent.agentRecommendationEnabled === true,
+    skillCreationEnabled: agent.skillCreationEnabled === true,
   }
 }

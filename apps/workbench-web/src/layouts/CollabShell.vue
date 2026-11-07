@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted } from 'vue'
+import { computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
   AlarmClock,
@@ -9,7 +9,7 @@ import {
   Document,
   Grid,
   Monitor,
-  Reading,
+  Notebook,
   Setting,
   Switch,
   SwitchButton,
@@ -17,11 +17,14 @@ import {
 } from '@element-plus/icons-vue'
 
 import { AppLogo } from '@dsh-work/ui-core'
+import DingTalkFlashBanner from '@/components/DingTalkFlashBanner.vue'
 import ModeSwitchMenu from '@/components/ModeSwitchMenu.vue'
+import NotificationCenter from '@/components/NotificationCenter.vue'
 import { useModeSwitch } from '@/composables/useModeSwitch'
 import { useWorkbenchBootstrap } from '@/composables/useWorkbenchBootstrap'
 import { roleLabels, useAuthStore } from '@/stores/auth'
 import { useCollabConversationStore } from '@/stores/collab-conversations'
+import { useKnowledgeStore } from '@/stores/knowledge'
 
 /** 协作模式壳层（项目空间方案 12.3）：窄图标栏（只显示图标）+ 主内容；窄屏改为底部标签栏。 */
 const route = useRoute()
@@ -30,12 +33,15 @@ const authStore = useAuthStore()
 const conversations = useCollabConversationStore()
 const { switchLabel, switchMode } = useModeSwitch()
 
-const navigation = [
+const knowledge = useKnowledgeStore()
+// B 协作模式主导航（WK12）：知识库排在群组之后；企业知识库未启用或本人不能查看时不显示。
+const navigation = computed(() => [
   { label: '对话', path: '/c/chats', icon: ChatDotRound },
   { label: 'AI 同事', path: '/c/agents', icon: UserFilled },
   { label: '群组', path: '/c/groups', icon: Collection },
+  ...(knowledge.enabled ? [{ label: '知识库', path: '/knowledge', icon: Notebook }] : []),
   { label: '定时任务', path: '/automations', icon: AlarmClock },
-]
+])
 
 /** “对话”入口的 @ 提醒圆点（D38）。 */
 function mentionDot(path: string) {
@@ -74,6 +80,7 @@ useWorkbenchBootstrap()
 // D38：主导航“对话”在有 @ 本人的群组时显示提醒圆点；不在对话页时也加载一次对话列表。
 onMounted(() => {
   if (!conversations.loaded) void conversations.load()
+  void knowledge.ensureLoaded()
 })
 </script>
 
@@ -105,6 +112,7 @@ onMounted(() => {
       </nav>
 
       <div class="collab-rail__account">
+        <NotificationCenter size="large" />
         <el-dropdown trigger="click" placement="right-end" @command="onAccountCommand">
           <button class="collab-avatar" type="button" aria-label="打开用户菜单">
             {{ authStore.user.avatarText }}
@@ -154,7 +162,7 @@ onMounted(() => {
       </div>
     </aside>
 
-    <main class="collab-main"><router-view :key="authStore.user.id" /></main>
+    <main class="collab-main"><DingTalkFlashBanner /><router-view :key="authStore.user.id" /></main>
   </div>
 </template>
 
@@ -195,6 +203,9 @@ onMounted(() => {
 }
 
 .collab-rail__logo { display: flex; justify-content: center; min-height: 44px; }
+
+/* 站内通知（方案 NC2）：铃铛在头像上方；窄屏顶栏中排在头像左侧。 */
+.collab-rail__account { display: flex; flex-direction: column; align-items: center; gap: 10px; }
 
 .collab-rail__nav {
   display: flex;
@@ -284,6 +295,7 @@ onMounted(() => {
   }
 
   .collab-rail__logo { min-height: 0; }
+  .collab-rail__account { flex-direction: row; gap: 6px; }
 
   .collab-rail__nav {
     position: fixed;

@@ -3,7 +3,7 @@ import { createPinia, setActivePinia } from 'pinia'
 import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { ref } from 'vue'
+import { ref, type Ref } from 'vue'
 import { useAuthStore } from '@/stores/auth'
 import { useContentStore } from '@/stores/content'
 import { useTaskStore } from '@/stores/tasks'
@@ -194,6 +194,7 @@ async function mountView(options: {
   workspace?: Workspace
   getRun?: () => Promise<TaskRun>
   bridge?: ProjectTaskDetailBridge
+  listError?: Error
 } = {}) {
   if (route.name !== 'workspace-conversation' && route.name !== 'workspace-task-thread'
     && route.name !== 'collab-group-conversation' && route.name !== 'collab-group-task-thread') {
@@ -216,7 +217,8 @@ async function mountView(options: {
   // B5：详情刷新失败会把条目从缓存移除；Run 存在时详情请求应返回它本身。
   if (options.getRun) api.getRun.mockImplementation(options.getRun)
   else if (item) api.getRun.mockResolvedValue(item)
-  vi.spyOn(taskStore, 'load').mockResolvedValue(undefined)
+  const loadList = vi.spyOn(taskStore, 'load').mockResolvedValue(undefined)
+  if (options.listError) loadList.mockRejectedValueOnce(options.listError)
   const contentStore = useContentStore(pinia)
   contentStore.workspaces.splice(0, contentStore.workspaces.length, options.workspace ?? workspace())
   const wrapper = mount(ConversationView, {
@@ -227,7 +229,7 @@ async function mountView(options: {
     },
   })
   await flushPromises()
-  return { wrapper, taskStore, contentStore }
+  return { wrapper, taskStore, contentStore, loadList }
 }
 
 describe('ConversationView 归档只读态（design §2.7 / AC-23）', () => {
@@ -324,7 +326,10 @@ describe('ConversationView 归档只读态（design §2.7 / AC-23）', () => {
       { id: 'tool-call-call-read', title: '正在调用工具', detail: 'read：正在调用', status: 'running', tool: 'read', callId: 'call-read', event: 'tool.started', at: startedAt, startedAt },
     ] }) })
     expect(wrapper.get('[data-testid="current-step"]').text()).toBe('正在读取文件')
-    expect(wrapper.get('[data-testid="run-progress-card"]').text()).toMatch(/正在处理 · 已用 4\d 秒/)
+    // 只有一个步骤时它的计时就是总用时，标题旁不重复“已用”。
+    const card = wrapper.get('[data-testid="run-progress-card"]').text()
+    expect(card).toMatch(/4\d 秒/)
+    expect(card).not.toContain('已用')
     expect(wrapper.text()).not.toContain('没有新的')
   })
 
@@ -550,6 +555,94 @@ describe('ConversationView 归档只读态（design §2.7 / AC-23）', () => {
     expect(api.getSessionThread).not.toHaveBeenCalled()
     expect(wrapper.text()).toContain('我的上一轮提问')
     expect(wrapper.text()).toContain('我的上一轮回答')
+  })
+
+  it('EX-STATE-01: tells a temporary outage apart from a missing conversation and can retry', async () => {
+    const outage = Object.assign(new Error('服务暂时不可用'), { status: 503 })
+    api.getRun.mockRejectedValue(outage)
+    api.getSessionThread.mockRejectedValue(outage)
+    const { wrapper } = await mountView({ item: null })
+    expect(wrapper.text()).toContain('暂时无法加载对话')
+    expect(wrapper.text()).not.toContain('未找到对话')
+
+    api.getRun.mockResolvedValue(task({
+      messages: [{ id: 'm-back', role: 'assistant', content: '恢复后的回答', createdAt: '10:01', runId: 'run-001' }],
+    }))
+    await wrapper.get('[data-testid="conversation-unavailable"] button').trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('恢复后的回答')
+    expect(wrapper.find('[data-testid="conversation-unavailable"]').exists()).toBe(false)
+  })
+
+  it('EX-STATE-01: still offers a retry when the whole service is down, and the retry reloads the list', async () => {
+    const outage = Object.assign(new Error('服务暂时不可用'), { status: 503 })
+    api.getRun.mockRejectedValue(outage)
+    api.getSessionThread.mockRejectedValue(outage)
+    const { wrapper, loadList } = await mountView({ item: null, listError: outage })
+    expect(wrapper.text()).toContain('暂时无法加载对话')
+    expect(wrapper.text()).not.toContain('未找到对话')
+
+    api.getRun.mockResolvedValue(task({
+      messages: [{ id: 'm-back', role: 'assistant', content: '恢复后的回答', createdAt: '10:01', runId: 'run-001' }],
+    }))
+    await wrapper.get('[data-testid="conversation-unavailable"] button').trigger('click')
+    await flushPromises()
+    expect(loadList).toHaveBeenCalledTimes(2)
+    expect(wrapper.text()).toContain('恢复后的回答')
+  })
+
+  it('EX-STATE-01: treats a run outage as unavailable even when the id is not a session', async () => {
+    api.getRun.mockRejectedValue(Object.assign(new Error('服务暂时不可用'), { status: 503 }))
+    api.getSessionThread.mockRejectedValue(Object.assign(new Error('不存在'), { status: 404 }))
+    const { wrapper } = await mountView({ item: null })
+    expect(wrapper.text()).toContain('暂时无法加载对话')
+    expect(wrapper.text()).not.toContain('未找到对话')
+  })
+
+  it('EX-STATE-01: keeps showing the conversation when a refresh fails temporarily', async () => {
+    const { wrapper, taskStore } = await mountView({ item: task({
+      messages: [{ id: 'm-keep', role: 'assistant', content: '已有的回答', createdAt: '10:01', runId: 'run-001' }],
+    }) })
+    api.getRun.mockRejectedValue(Object.assign(new Error('服务暂时不可用'), { status: 503 }))
+    await taskStore.refreshRun('run-001').catch(() => undefined)
+    await flushPromises()
+    expect(wrapper.text()).toContain('已有的回答')
+    expect(wrapper.text()).not.toContain('未找到对话')
+  })
+
+  it('EX-STATE-01: follows a late failure notice to the bottom, but not while the employee reads history', async () => {
+    const running = task({ status: 'running', result: { ...task().result, outcome: 'pending', error: null } })
+    const { wrapper, taskStore } = await mountView({ item: running })
+    const scroller = wrapper.get('.conversation-scroll').element as HTMLElement
+    Object.defineProperty(scroller, 'scrollHeight', { configurable: true, value: 2000 })
+    Object.defineProperty(scroller, 'clientHeight', { configurable: true, value: 500 })
+    const scrollTo = vi.fn()
+    scroller.scrollTo = scrollTo as typeof scroller.scrollTo
+    const fail = (code: string) => taskStore.upsert({ ...running, result: { ...running.result, outcome: 'not_achieved', error: { ...task().result.error!, code } } })
+
+    // 停在底部附近：结论随后才到达也跟随到底部。
+    scroller.scrollTop = 1450
+    await wrapper.get('.conversation-scroll').trigger('scroll')
+    fail('late_failure')
+    await flushPromises()
+    expect(scrollTo).toHaveBeenCalled()
+
+    // 正在往上翻看历史：不打断。
+    scrollTo.mockClear()
+    scroller.scrollTop = 0
+    await wrapper.get('.conversation-scroll').trigger('scroll')
+    fail('another_failure')
+    await flushPromises()
+    expect(scrollTo).not.toHaveBeenCalled()
+  })
+
+  it('EX-STATE-01: still says not found when the server answers that the conversation is missing', async () => {
+    const missing = Object.assign(new Error('不存在'), { status: 404 })
+    api.getRun.mockRejectedValue(missing)
+    api.getSessionThread.mockRejectedValue(missing)
+    const { wrapper } = await mountView({ item: null })
+    expect(wrapper.text()).toContain('未找到对话')
+    expect(wrapper.find('[data-testid="conversation-unavailable"]').exists()).toBe(false)
   })
 
   it('loads a shared session thread without runs and shows sender/Agent attribution (TW-10)', async () => {
@@ -1303,6 +1396,43 @@ describe('ConversationView 空间内嵌套视图（TW-10 导航）', () => {
         workspaceAgentMemberId: 'wam-7', fileIds: ['file-art-1'],
       }))
       expect(wrapper.find('[data-testid="referenced-artifacts"]').exists()).toBe(false)
+    })
+
+    it('D37：任务完成或执行开始后，发不出去的成果引用随之清空', async () => {
+      const artifact: Artifact = {
+        id: 'art-1', name: '缺货原因.md', type: 'markdown', version: 2, size: '2 KB', createdAt: '09:06', runId: 'run-9',
+        workspaceId: 'ws-team', fileId: 'file-art-1', canReference: true, summary: '',
+      }
+      api.getSessionThread.mockResolvedValue(sessionThread({
+        messages: [
+          { id: 'm3', role: 'assistant', content: '前三个原因如下', createdAt: '09:06', sentAt: '2026-09-10T09:06:00.000Z', runId: 'run-9', senderId: null, senderName: null, runRequesterId: 'U00002', runRequesterName: '周航', agentName: '缺货分析助手' },
+        ],
+        runs: [{ runId: 'run-9', status: 'succeeded', requestedBy: 'U00002', requesterName: '周航', createdAt: '2026-09-10T09:05:00.000Z' }],
+        artifacts: [artifact],
+      }))
+      api.listProjectTasks.mockResolvedValue(page([projectTask()]))
+      const detail = bridge({ taskValue: projectTask({ status: 'in_progress' }) })
+      const { wrapper } = await mountView({ item: null, bridge: detail })
+      await wrapper.get('[data-testid="continue-editing-art-1"]').trigger('click')
+      expect(wrapper.find('[data-testid="referenced-artifacts"]').exists()).toBe(true)
+
+      ;(detail.task as Ref<ProjectTask>).value = projectTask({ status: 'done' })
+      await flushPromises()
+      expect(wrapper.find('[data-testid="referenced-artifacts"]').exists()).toBe(false)
+    })
+
+    it('D37：等待权限确认的执行在执行记录下显示确认说明', async () => {
+      api.getSessionThread.mockResolvedValue(sessionThread({
+        runs: [{ runId: 'run-9', status: 'awaiting_approval', requestedBy: 'U00002', requesterName: '周航', createdAt: '2026-09-10T09:05:00.000Z' }],
+      }))
+      api.getRun.mockImplementation(async (id: string) => {
+        if (id === 'run-9') return task({ id: 'run-9', sessionId: 'session-001', status: 'awaiting_approval' })
+        throw new Error('not a run')
+      })
+      const { wrapper } = await mountView({ item: null, bridge: bridge({ taskValue: projectTask({ status: 'in_progress' }) }) })
+      expect(api.getRun).toHaveBeenCalledWith('run-9')
+      expect(wrapper.get('[data-testid="run-approval-notice"]').text()).toContain('等待本轮工具权限确认')
+      expect(wrapper.find('[data-testid="run-progress-card"]').exists()).toBe(false)
     })
 
     it('执行中只能评论', async () => {

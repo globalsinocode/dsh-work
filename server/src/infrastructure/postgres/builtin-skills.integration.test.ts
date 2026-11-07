@@ -205,7 +205,7 @@ test('安装与旧文本接口拒绝内置 Skill 的保留名称', async () => {
 })
 
 test('团队空间只授权 Agent 时，执行前复核不把内置 Skill 当作需要空间授权的 Skill', async () => {
-  const authorization = new PostgresAuthorizationService(database)
+  const authorization = new PostgresAuthorizationService(database, { knownBuiltinSkill: catalog.isKnown })
   const workspaceId = `ws-bsk-team-${randomUUID().slice(0, 8)}`
   await database`
     insert into workspaces (id, tenant_id, name, description, workspace_type, created_by, status)

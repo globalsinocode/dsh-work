@@ -3,7 +3,7 @@ import type { IncomingMessage } from 'node:http'
 import type { UserProfile } from '../../domain/types.ts'
 
 export type ApiAudience = 'workbench' | 'admin'
-export type IdentityProvider = 'prototype-sso' | 'ai-hub-oidc' | 'local-password'
+export type IdentityProvider = 'prototype-sso' | 'ai-hub-oidc' | 'local-password' | 'dingtalk'
 
 /** Business permissions are defined and evaluated only by dsh-work. */
 export const LOCAL_PERMISSIONS = {
@@ -13,6 +13,9 @@ export const LOCAL_PERMISSIONS = {
   adminRead: 'admin:read',
   adminWrite: 'admin:write',
   auditRead: 'audit:read',
+  knowledgeView: 'knowledge:view',
+  knowledgeDocs: 'knowledge:docs',
+  knowledgeBases: 'knowledge:bases',
 } as const
 
 export interface RequestIdentity {

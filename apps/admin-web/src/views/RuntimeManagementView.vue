@@ -266,11 +266,13 @@ onMounted(() => contentStore.load())
       </div>
     </section>
 
-    <section v-loading="contentStore.loading" class="metric-grid">
-      <article class="metric-card"><div class="metric-label">登记 Runtime</div><div class="metric-value">{{ contentStore.runtimes.length }}</div><div class="metric-detail">{{ healthyCount }} 个当前健康</div></article>
-      <article class="metric-card"><div class="metric-label">最大并发 Worker</div><div class="metric-value">{{ totalCapacity }}</div><div class="metric-detail">所有 Runtime 配置容量之和</div></article>
-      <article class="metric-card"><div class="metric-label">活动 Worker</div><div class="metric-value">{{ activeWorkers }}</div><div class="metric-detail">正在执行 Attempt 的子进程</div></article>
-      <article class="metric-card"><div class="metric-label">排队运行</div><div class="metric-value">{{ queuedRuns }}</div><div class="metric-detail">等待可用 Worker 槽位</div></article>
+    <section v-loading="contentStore.loading" class="content-panel overview-strip" aria-label="Runtime 概况">
+      <dl class="overview-strip__stats">
+        <div class="overview-stat"><dt>登记 Runtime</dt><dd><strong class="overview-stat__value">{{ contentStore.runtimes.length }}</strong><small>{{ healthyCount }} 个当前健康</small></dd></div>
+        <div class="overview-stat"><dt>最大并发 Worker</dt><dd><strong class="overview-stat__value">{{ totalCapacity }}</strong><small>所有 Runtime 配置容量之和</small></dd></div>
+        <div class="overview-stat"><dt>活动 Worker</dt><dd><strong class="overview-stat__value">{{ activeWorkers }}</strong><small>正在执行 Attempt 的子进程</small></dd></div>
+        <div class="overview-stat"><dt>排队运行</dt><dd><strong class="overview-stat__value">{{ queuedRuns }}</strong><small>等待可用 Worker 槽位</small></dd></div>
+      </dl>
     </section>
 
     <section class="content-panel content-panel--flush runtime-table">

@@ -20,6 +20,7 @@ import {
 
 import { AssistantMessageContent, RunTimeline, StatusTag } from '@dsh-work/ui-core'
 import { workbenchApi } from '@/api/client'
+import { isMissingResource } from '@/utils/missing-resource'
 import { useAuthStore } from '@/stores/auth'
 import { useContentStore } from '@/stores/content'
 import { useTaskStore } from '@/stores/tasks'
@@ -31,7 +32,6 @@ import { exportConversation } from '@/utils/conversation-export'
 import { continueChoice, type ContinueChoice } from '@/utils/continue-intent'
 import { colleagueMentionOptions, mentionsUser, splitMentions, type MentionOption } from '@/utils/mentions'
 import { scheduleLabel, scheduleReasonLabel } from '@/utils/project-task-schedule'
-import { isTransientRequestError } from '@/utils/request-error'
 import { runFailureDetailReason } from '@/utils/run-error-display'
 import { TEAM_COMPOSER_SHORTCUT_HINT } from '@/utils/team-composer-hints'
 import {
@@ -40,13 +40,20 @@ import {
 } from '@/components/team-space-composer/team-composer-bridge'
 import ArtifactPreviewPanel from '@/components/conversation/ArtifactPreviewPanel.vue'
 import ConversationMessageItem from '@/components/conversation/ConversationMessageItem.vue'
+import RunApprovalNotice from '@/components/conversation/RunApprovalNotice.vue'
 import AgentRecommendationCards from '@/components/conversation/AgentRecommendationCards.vue'
+import SkillDraftCards from '@/components/conversation/SkillDraftCards.vue'
 import RunArtifactCards from '@/components/conversation/RunArtifactCards.vue'
 import RunProgressCard from '@/components/conversation/RunProgressCard.vue'
 import RunProgressSummary from '@/components/conversation/RunProgressSummary.vue'
 import RunStepsDisclosure from '@/components/conversation/RunStepsDisclosure.vue'
 import { useMediaQuery } from '@/composables/useMediaQuery'
 import '@/styles/conversation-thread.css'
+import KnowledgeBaseChips from '@/components/knowledge/KnowledgeBaseChips.vue'
+import KnowledgeBasePicker from '@/components/knowledge/KnowledgeBasePicker.vue'
+import { useKnowledgeStore } from '@/stores/knowledge'
+import type { SessionKnowledgeBase } from '@/types/knowledge'
+import { runAgentName } from '@/utils/run-agent-name'
 
 const route = useRoute()
 const router = useRouter()
@@ -68,6 +75,11 @@ const retrying = ref(false)
  */
 const sessionThread = ref<SessionThread | null>(null)
 const threadMissing = ref(false)
+/**
+ * 加载失败但不能断定对话不存在（服务不可用、网络中断等）：显示“暂时无法加载”并可重试，
+ * 不落到“未找到对话”——后者只用于服务端明确答复不存在或无权访问（见 isMissingResource）。
+ */
+const targetUnavailable = ref(false)
 /** 「加载更早」在途标记（评审中3）：线程只保留最近一页，更早历史按需前置合并。 */
 const loadingEarlierMessages = ref(false)
 /** Run/Session 目标解析在途标记：避免加载间隙闪现「未找到对话」。 */
@@ -121,6 +133,8 @@ function conversationPath(target: string) {
 }
 
 const task = computed(() => taskStore.getTask(routeTargetId.value))
+/** 一对一对话的标题栏显示正在对话的 AI 同事，与执行中卡片同一取值（runAgentName）；团队对话不显示。 */
+const headerAgentName = computed(() => task.value && task.value.workspaceType !== 'team' ? runAgentName(task.value) : '')
 /**
  * 归档只读态（design §2.7 / 3-T1 执行轨）：运行所属团队空间归档后，续写（发送消息）
  * 与重试入口隐藏；内容、来源与成果下载保持可读。个人空间不会命中（AC-23）。
@@ -230,6 +244,39 @@ const mentionOptions = computed<MentionOption[]>(() => [
  */
 const projectTask = ref<ProjectTask | null>(null)
 const currentSessionId = computed(() => task.value?.sessionId ?? sessionThread.value?.sessionId ?? null)
+
+/**
+ * 企业知识库（weknora-knowledge-plan 5.7，WK17）：个人空间对话中添加的知识库在整个会话内有效，
+ * 添加、移除只影响之后的提问。一期团队空间不显示入口；只有发起人能修改自己的会话。
+ */
+const knowledge = useKnowledgeStore()
+const sessionKnowledge = ref<SessionKnowledgeBase[]>([])
+const showKnowledge = computed(() => knowledge.enabled && Boolean(task.value) && !isTeamSession.value && isRequester.value)
+let knowledgeToken = 0
+watch([currentSessionId, showKnowledge], async ([sessionId, show]) => {
+  const token = ++knowledgeToken
+  sessionKnowledge.value = []
+  if (!sessionId || !show) return
+  try {
+    const items = await workbenchApi.getSessionKnowledgeBases(sessionId)
+    if (token === knowledgeToken) sessionKnowledge.value = items
+  } catch {
+    // 读取失败时不显示标签；执行时仍按服务端保存的选择检索。
+  }
+}, { immediate: true })
+async function saveSessionKnowledge(items: SessionKnowledgeBase[]) {
+  const sessionId = currentSessionId.value
+  if (!sessionId) return
+  try {
+    sessionKnowledge.value = await workbenchApi.setSessionKnowledgeBases(sessionId, items.map(item => item.id))
+  } catch (cause) {
+    notifyActionFailure('更新知识库', '当前对话', cause, '请稍后重试。')
+  }
+}
+function removeSessionKnowledge(id: string) {
+  void saveSessionKnowledge(sessionKnowledge.value.filter(item => item.id !== id))
+}
+onMounted(() => { void knowledge.ensureLoaded() })
 /** 追问会换到新 Run 的地址但仍是同一对话：只在换到别的会话时关闭成果预览。 */
 let previewSessionId: string | null = null
 watch(currentSessionId, (sessionId) => {
@@ -429,6 +476,12 @@ function recommendationsForMessage(message: ChatMessage) {
   if (!task.value || message.role !== 'assistant' || !message.runId) return []
   if (terminalAssistantMessageIdByRun.value.get(message.runId) !== message.id) return []
   return (task.value.recommendations ?? []).filter(item => item.runId === message.runId)
+}
+
+function skillDraftsForMessage(message: ChatMessage) {
+  if (!task.value || message.role !== 'assistant' || !message.runId) return []
+  if (terminalAssistantMessageIdByRun.value.get(message.runId) !== message.id) return []
+  return (task.value.skillDrafts ?? []).filter(item => item.runId === message.runId)
 }
 
 function openRecommendedFromCard(recommendation: AgentRecommendation) {
@@ -878,12 +931,12 @@ function threadArtifactsFor(message: SessionThreadMessage) {
 }
 
 /**
- * D37：排队或执行中的执行与会话页同样显示进度卡片：读取 Run 详情并订阅其事件（本人刚发起的
- * 执行已在发送时订阅）；读取失败时只保留执行记录。结束后卡片消失，由回复与成果取代。
+ * D37：排队或执行中的执行与会话页同样显示进度卡片，等待权限确认的显示确认说明：读取 Run 详情并
+ * 订阅其事件（本人刚发起的执行已在发送时订阅）；读取失败时只保留执行记录。结束后卡片消失，由回复与成果取代。
  */
 const LIVE_RUN_STATUSES = ['queued', 'running']
 const threadLiveRunIds = computed(() => inTaskConversation.value
-  ? (sessionThread.value?.runs ?? []).filter(run => LIVE_RUN_STATUSES.includes(run.status)).map(run => run.runId)
+  ? (sessionThread.value?.runs ?? []).filter(run => ACTIVE_RUN_STATUSES.includes(run.status)).map(run => run.runId)
   : [])
 watch(threadLiveRunIds, (runIds) => {
   for (const runId of runIds) {
@@ -896,6 +949,11 @@ function liveRun(runId: string) {
   return run && LIVE_RUN_STATUSES.includes(run.status) ? run : undefined
 }
 
+function approvalRun(runId: string) {
+  const run = taskStore.getTask(runId)
+  return run?.status === 'awaiting_approval' ? run : undefined
+}
+
 /** 继续修改只用于下一条交给 Agent 的消息：执行中或任务已完成时只能评论，不提供。 */
 const canContinueEditingInThread = computed(() =>
   canWriteSession.value && isAgentTaskConversation.value && !threadHasActiveRun.value && !agentTaskDone.value)
@@ -904,6 +962,21 @@ function continueEditingInThread(artifact: Artifact) {
   continueEditing(artifact)
   sendMode.value = 'agent'
 }
+
+/**
+ * 任务对话里的引用只属于这个对话、且只在还能交给 Agent 时有效。useRunActions 按 Run 的会话清空，
+ * 任务对话没有当前 Run 不会触发：换到别的任务对话（视图复用）或执行开始、任务完成后在这里清空，
+ * 避免把上一个任务的成果带给另一个任务的 Agent，或留下发不出去的引用。
+ */
+let referenceSessionId: string | null = null
+watch(
+  [() => (inTaskConversation.value ? sessionThread.value?.sessionId ?? null : null), canContinueEditingInThread],
+  ([sessionId, canContinue]) => {
+    if (!sessionId) return
+    if ((referenceSessionId && sessionId !== referenceSessionId) || !canContinue) referencedArtifacts.value = []
+    referenceSessionId = sessionId
+  },
+)
 
 /** 任务对话的首条消息是任务标题与说明（创建任务时写入），不算评论。 */
 const briefMessageId = computed(() =>
@@ -1204,7 +1277,8 @@ async function loadEarlierMessages() {
 
 async function initializeConversation() {
   if (!isActiveConversationRoute.value || !routeTargetId.value) return
-  await taskStore.load()
+  // 对话列表只是缓存来源：服务整体不可用时它会先失败，仍要继续解析目标，才能给出“暂时无法加载”。
+  await taskStore.load().catch(() => undefined)
   const thread = await loadConversationTarget(routeTargetId.value)
   if (!isEmbeddedInWorkspace.value) {
     await loadAgentMembers(task.value?.workspaceId ?? thread?.workspaceId)
@@ -1256,27 +1330,25 @@ const targetLoadFailed = ref(false)
 
 async function loadConversationTarget(id: string): Promise<SessionThread | null> {
   targetLoading.value = true
+  targetLoadFailed.value = false
+  targetUnavailable.value = false
   contentSyncedAt.value = new Date().toISOString()
+  let runError: unknown
   try {
-    let refreshError: unknown = null
-    const run = await taskStore.refreshRun(id).catch((cause: unknown) => {
-      refreshError = cause
+    const run = await taskStore.refreshRun(id).catch((error: unknown) => { runError = error; return null }) ?? taskStore.getTask(id) ?? null
+    if (run) {
+      // 团队 Run 目标：Run 详情只含本轮消息，补拉共享线程让对话页保留完整历史。
+      await loadRunSharedThread(run)
       return null
-    }) ?? taskStore.getTask(id) ?? null
-    if (!run) {
-      // 暂时性失败（网关 504、超时、断网、限流）不能落成「未找到对话」：那会让员工
-      // 以为对话丢了。改成可重试的失败态；其余情形仍按原语义回退到会话线程
-      // （旧链接可能本来就指向会话，也可能指向已删除的 Run）。
-      if (refreshError && isTransientRequestError(refreshError)) {
-        targetLoadFailed.value = true
-        return null
-      }
-      return await loadSessionMode(id)
     }
-    targetLoadFailed.value = false
-    // 团队 Run 目标：Run 详情只含本轮消息，补拉共享线程让对话页保留完整历史。
-    await loadRunSharedThread(run)
-    return null
+    // 不是 Run 时按 Session 加载；Run 接口暂时不可用时同样先试 Session，两者都没能确认才判定。
+    const thread = await loadSessionMode(id)
+    if (!thread && runError !== undefined && !isMissingResource(runError)) {
+      threadMissing.value = false
+      targetLoadFailed.value = true
+      targetUnavailable.value = true
+    }
+    return thread
   } finally {
     targetLoading.value = false
   }
@@ -1303,10 +1375,20 @@ async function loadSessionMode(id: string): Promise<SessionThread | null> {
     const thread = await taskStore.loadSessionThread(id)
     sessionThread.value = thread
     return thread
-  } catch {
-    threadMissing.value = true
+  } catch (error) {
+    if (isMissingResource(error)) threadMissing.value = true
+    else {
+      targetLoadFailed.value = true
+      targetUnavailable.value = true
+    }
     return null
   }
+}
+
+/** “暂时无法加载”后的重试：与初次进入走同一流程（含此前失败的对话列表），加载中显示骨架屏。 */
+async function retryConversationTarget() {
+  threadMissing.value = false
+  await initializeConversation()
 }
 
 onMounted(initializeConversation)
@@ -1319,6 +1401,7 @@ watch(
     prefetchedRunArtifacts.clear()
     sessionThread.value = null
     threadMissing.value = false
+    targetUnavailable.value = false
     const thread = await loadConversationTarget(String(id))
     if (!isActiveConversationRoute.value || !routeTargetId.value) return
     if (!isEmbeddedInWorkspace.value) {
@@ -1388,10 +1471,13 @@ async function refreshSharedTarget() {
       try {
         sessionThread.value = await taskStore.loadSessionThread(thread.sessionId)
         if (isTaskThreadRoute.value) void taskDetail?.refresh()
-      } catch {
-        // 会话被删除或已失权：无 Run 详情时与初次加载同一口径落到「未找到对话」。
-        sessionThread.value = null
-        if (!task.value) threadMissing.value = true
+      } catch (error) {
+        // 会话被删除或已失权：与初次加载同一口径落到「未找到对话」。后台刷新遇到服务暂时不可用时
+        // 保留当前内容，等下一次刷新，不把正在看的对话换成“未找到”。
+        if (isMissingResource(error)) {
+          sessionThread.value = null
+          threadMissing.value = true
+        }
       }
     }
     const currentTask = task.value
@@ -1433,8 +1519,13 @@ onBeforeUnmount(() => {
   if (teamComposerBridge) teamComposerBridge.value = createEmptyTeamComposerBridge()
 })
 
+// 失败、未达成与停止的说明可能在状态变化之后随结果刷新才到（状态不再变化），也要跟随到底部；
+// 员工正在往上翻看历史时（showJumpToLatest）不打断。
 watch(
-  [() => routeTargetId.value, () => task.value?.messages.length, () => task.value?.status, () => sessionThread.value?.messages.length],
+  [
+    () => routeTargetId.value, () => task.value?.messages.length, () => task.value?.status, () => sessionThread.value?.messages.length,
+    () => task.value?.result.error?.code, () => task.value?.result.outcome, () => task.value?.stoppedBy,
+  ],
   async () => {
     await nextTick()
     if (!showJumpToLatest.value) scrollToBottom('smooth')
@@ -1451,7 +1542,7 @@ watch(
       'conversation-page--previewing': Boolean(task && previewArtifact && previewDocked),
     }"
   >
-    <div v-if="(taskStore.loading || targetLoading) && !task && !sessionThread && !threadMissing" class="conversation-state">
+    <div v-if="(taskStore.loading || targetLoading) && !task && !sessionThread && !threadMissing && !targetUnavailable" class="conversation-state">
       <el-skeleton :rows="8" animated />
     </div>
 
@@ -1545,6 +1636,7 @@ watch(
                   :task="liveRun(item.run.runId)!"
                   @open-details="openSessionRun(item.run.runId)"
                 />
+                <RunApprovalNotice v-else-if="approvalRun(item.run.runId)" :task="approvalRun(item.run.runId)!" />
               </template>
               <div v-else class="task-conversation-event" data-testid="task-conversation-event">
                 <p class="task-conversation-record">
@@ -1749,6 +1841,19 @@ watch(
     </template>
 
     <el-result
+      v-else-if="!task && targetUnavailable"
+      class="conversation-state"
+      icon="error"
+      title="暂时无法加载对话"
+      sub-title="对话服务暂时不可用或网络中断，对话本身没有受影响。请稍后重试；若持续出现，请联系管理员。"
+      data-testid="conversation-unavailable"
+    >
+      <template #extra>
+        <el-button type="primary" @click="retryConversationTarget">重试</el-button>
+      </template>
+    </el-result>
+
+    <el-result
       v-else-if="!task"
       class="conversation-state"
       :icon="targetLoadFailed ? 'error' : 'warning'"
@@ -1781,8 +1886,17 @@ watch(
           <button type="button" class="conversation-header__back" :aria-label="isTaskThreadRoute ? '返回任务对话' : '返回'" @click="goBack">
             <el-icon><ArrowLeft /></el-icon>
           </button>
-          <template v-if="!isTaskThreadRoute">
-            <h1>{{ task.title }}</h1><span v-if="currentWorkspace?.type === 'team'">团队：{{ currentWorkspace.name }}</span>
+          <!-- 任务详情内：标题与所属空间已由外层任务信息与面包屑给出。 -->
+          <!-- EX-STYLE-01：一对一对话在标题栏显示正在对话的 AI 同事，对话标题在下一行。 -->
+          <template v-if="!isTaskThreadRoute && headerAgentName">
+            <span class="assistant-avatar" aria-hidden="true">{{ headerAgentName.slice(0, 1) }}</span>
+            <div class="conversation-header__titles">
+              <strong>{{ headerAgentName }}</strong>
+              <h1>{{ task.title }}</h1>
+            </div>
+          </template>
+          <template v-else-if="!isTaskThreadRoute">
+            <h1>{{ task.title }}</h1><span v-if="currentWorkspace?.type === 'team'">项目空间：{{ currentWorkspace.name }}</span>
           </template>
           <span v-if="task.skill" class="conversation-skill">
             <span>Skill</span>{{ task.skill.name }} · v{{ task.skill.version }}
@@ -1898,6 +2012,7 @@ watch(
                   :recommendations="recommendationsForMessage(message)"
                   @open="openRecommendedFromCard"
                 />
+                <SkillDraftCards :drafts="skillDraftsForMessage(message)" />
 
                 <div class="assistant-actions">
                   <button type="button" aria-label="复制回答" @click="copyAnswer(message.content)">
@@ -1923,6 +2038,8 @@ watch(
             v-if="['queued', 'running'].includes(task.status)"
             :task="task"
             @open-details="detailsOpen = true"
+            @retry="retryRun"
+            @open-recommended-agent="openRecommendedAgent"
           />
 
           <section v-if="task.status === 'awaiting_approval'" class="conversation-notice approval-notice">
@@ -2012,9 +2129,10 @@ watch(
           v-if="showJumpToLatest"
           class="jump-latest"
           type="button"
+          aria-label="回到最新消息"
+          title="回到最新消息"
           @click="scrollToBottom()"
         >
-          回到最新消息
           <el-icon><ArrowDown /></el-icon>
         </button>
         <div v-if="isTaskThreadRoute" class="conversation-composer-dock__inner" data-testid="run-view-task-return">
@@ -2048,17 +2166,26 @@ watch(
             任务信息读取失败：{{ projectTaskError }}
             <el-button link type="primary" @click="reloadProjectTask">重试</el-button>
           </p>
-          <TaskComposer :show-workspace-context="currentWorkspace?.type === 'team'" @open-files="router.push('/files')"
+          <TaskComposer
             v-if="canFollowUp && !isEmbeddedInWorkspace"
+            :show-workspace-context="currentWorkspace?.type === 'team'"
             compact
             :initial-workspace-id="streamWorkspaceId"
             :running="canStop"
             :stopping="stopping"
             :mention-options="isTeamSession ? mentionOptions : []"
             :files-require-mention="isTeamSession && !taskThreadAgentId"
+            @open-files="router.push('/files')"
             @submit="submitFollowUp"
             @stop="stopCurrentRun"
-          />
+          >
+            <template v-if="showKnowledge" #attachments>
+              <KnowledgeBaseChips :items="sessionKnowledge" @remove="removeSessionKnowledge" />
+            </template>
+            <template v-if="showKnowledge" #leading-actions>
+              <KnowledgeBasePicker :selected="sessionKnowledge" @change="saveSessionKnowledge" />
+            </template>
+          </TaskComposer>
           <p v-else-if="workspaceArchived" data-testid="conversation-archived-notice" class="conversation-archived-notice">
             该空间已归档，仅保留有权限的只读查看与下载；无法续写或重试。
           </p>
@@ -2132,11 +2259,15 @@ watch(
             <article v-for="source in task.result.sources" :key="source.id">
               <span>{{ sourceTypeLabels[source.type] }}</span>
               <strong>{{ source.title }}</strong>
-              <small v-if="source.version || source.effectiveAt">
+              <small v-if="source.type === 'knowledge' && (source.knowledgeBaseName || source.updatedAt)">
+                <template v-if="source.knowledgeBaseName">{{ source.knowledgeBaseName }}</template>
+                <template v-if="source.fileName"> · {{ source.fileName }}</template>
+                <template v-if="source.updatedAt"> · 更新于 {{ source.updatedAt }}</template>
+              </small>
+              <small v-else-if="source.version || source.effectiveAt">
                 <template v-if="source.version">v{{ source.version }}</template>
                 <template v-if="source.effectiveAt"> · {{ source.effectiveAt }} 生效</template>
                 <template v-if="source.dataScope"> · {{ source.dataScope }}</template>
-                <template v-if="source.synthetic"> · 合成测试数据</template>
               </small>
               <p>{{ source.description }}</p>
             </article>
@@ -2226,6 +2357,27 @@ watch(
   gap: 6px;
 }
 
+.conversation-header__titles {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+}
+
+.conversation-header__titles strong {
+  overflow: hidden;
+  color: #242624;
+  font-size: var(--dsh-font-size-body);
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.conversation-header__left .conversation-header__titles h1 {
+  color: #6b716b;
+  font-size: var(--dsh-font-size-micro);
+  font-weight: 400;
+}
+
 .conversation-header__left h1 {
   margin: 0;
   overflow: hidden;
@@ -2279,14 +2431,17 @@ watch(
 
 .conversation-scroll {
   height: 100vh;
-  padding: 94px 28px 226px;
+  padding: 94px 40px 226px;
   overflow-y: auto;
   scroll-behavior: smooth;
   scrollbar-gutter: stable;
+  /* EX-STYLE-01：回答中的表格按对话区宽度展开（conversation-thread.css 用容器单位计算）。 */
+  container-type: inline-size;
 }
 
+/* EX-STYLE-01：对话列随对话区变宽，左右至少留 40px，最宽 1040px。 */
 .conversation-thread {
-  width: min(100%, 920px);
+  width: min(100%, 1040px);
   min-height: calc(100vh - 330px);
   margin: 0 auto;
 }
@@ -2340,6 +2495,8 @@ watch(
 
 .conversation-page--task .conversation-scroll {
   padding-top: 8px;
+  /* 与下方任务对话的列宽一致，回答中的表格按此计算可展开的宽度（conversation-thread.css）。 */
+  --conversation-column-max: 760px;
 }
 
 .conversation-page--task .conversation-thread {
@@ -2369,7 +2526,7 @@ watch(
 }
 
 .task-conversation-quiet__body {
-  margin: 10px 0 0 34px;
+  margin: 10px 0 0 42px;
 }
 
 .task-conversation-record {
@@ -3099,13 +3256,13 @@ watch(
   right: 0;
   bottom: 0;
   left: 0;
-  padding: 48px 28px 13px;
+  padding: 48px 40px 13px;
   background: linear-gradient(to bottom, rgb(255 255 255 / 0%), #fff 31%, #fff 100%);
   pointer-events: none;
 }
 
 .conversation-composer-dock__inner {
-  width: min(100%, 920px);
+  width: min(100%, 1040px);
   margin: 0 auto;
   pointer-events: auto;
 }
@@ -3158,16 +3315,16 @@ watch(
   font-size: var(--dsh-font-size-body);
 }
 
+/* EX-STYLE-01：回到最新为对话列右下角的圆形按钮。 */
 .jump-latest {
-  display: flex;
-  align-items: center;
-  width: max-content;
-  min-height: 29px;
-  gap: 5px;
-  margin: 0 auto 9px;
-  padding: 0 10px;
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  margin: 0 max(0px, calc((100% - 1040px) / 2)) 10px auto;
+  padding: 0;
   border: 1px solid #dedfdd;
-  border-radius: 999px;
+  border-radius: 50%;
   color: #626762;
   background: #fff;
   box-shadow: 0 5px 16px rgb(25 30 26 / 7%);
@@ -3249,7 +3406,7 @@ watch(
   display: block;
   margin-top: 4px;
   color: var(--color-text-muted);
-  font-size: var(--font-size-badge);
+  font-size: var(--dsh-font-size-micro);
   line-height: 1.5;
 }
 

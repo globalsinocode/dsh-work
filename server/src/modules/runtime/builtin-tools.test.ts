@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import {
   agentBuiltinToolNames, agentRecommendationToolNames, builtinTool, executionToolNames, invalidSkillToolReferences, isDshBuiltinTool,
-  normalizeDisabledTools, skillToolName, unavailableSkillTools,
+  normalizeDisabledTools, skillCreationToolNames, skillToolName, unavailableSkillTools,
 } from './builtin-tools.ts'
 
 // 执行隔离阶段 2：bash 由平台在执行容器可用时装配，不进入 Agent 快照，也不能由 Skill 声明。
@@ -37,4 +37,17 @@ test('agent recommendation tools assemble only for enabled personal conversation
     assert.deepEqual(invalidSkillToolReferences([`${name}@1.0.0`]), [`${name}@1.0.0`])
   }
   assert.equal(agentBuiltinToolNames({ webSearchEnabled: true }).includes('list_colleague_agents'), false)
+})
+
+// Skill 创建专家方案 4.2：开启开关的个人对话装配；草稿只能经 bash 写出，bash 被停用时不装配保存工具。
+test('Skill creation tools assemble only for enabled personal conversations, saving only with bash', () => {
+  assert.deepEqual(skillCreationToolNames({ enabled: true, personalConversation: true, bashAvailable: true }), ['list_available_skills', 'skill_draft_save'])
+  assert.deepEqual(skillCreationToolNames({ enabled: true, personalConversation: true, bashAvailable: false }), ['list_available_skills'])
+  assert.deepEqual(skillCreationToolNames({ enabled: true, personalConversation: false, bashAvailable: true }), [])
+  assert.deepEqual(skillCreationToolNames({ enabled: false, personalConversation: true, bashAvailable: true }), [])
+  for (const name of ['list_available_skills', 'skill_draft_save']) {
+    assert.equal(builtinTool(name)?.assembly, 'personal-conversation')
+    assert.equal(builtinTool(name)?.source, 'platform')
+    assert.deepEqual(invalidSkillToolReferences([`${name}@1.0.0`]), [`${name}@1.0.0`], 'Skills cannot declare it')
+  }
 })

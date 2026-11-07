@@ -16,6 +16,10 @@ import TeamSpaceComposer from '@/components/team-space-composer/team-space-compo
 import { workbenchApi } from '@/api/client'
 import { useContentStore } from '@/stores/content'
 import { useTaskStore } from '@/stores/tasks'
+import KnowledgeBaseChips from '@/components/knowledge/KnowledgeBaseChips.vue'
+import KnowledgeBasePicker from '@/components/knowledge/KnowledgeBasePicker.vue'
+import { useKnowledgeStore } from '@/stores/knowledge'
+import type { SessionKnowledgeBase } from '@/types/knowledge'
 import type { WorkbenchAgent, WorkbenchSkill, WorkspaceFile, WorkspaceFileProjection } from '@/types/domain'
 import { notifyActionFailure } from '@/utils/feedback'
 import { splitMentions, type MentionOption } from '@/utils/mentions'
@@ -117,6 +121,7 @@ const personalComposerRef = ref<ComposerHandle>()
 
 const selectedTask = ref('')
 const presetPrompt = ref('')
+const composerKey = ref(0)
 const referencedWorkspaceFileIds = ref<string[]>([])
 const selectedAgentId = ref('')
 const selectedAgentVersionId = ref('')
@@ -134,6 +139,27 @@ const mcpAccessUnavailable = ref('')
 const composerWorkspaceId = computed(() => props.workspaceLocked ? props.workspaceId : '')
 const composerWorkspaceName = computed(() => props.workspaceLocked ? props.workspaceName : '')
 const composerReady = computed(() => true)
+
+/**
+ * 企业知识库（weknora-knowledge-plan 5.7）：一期只在个人空间的新对话中添加；所选知识库随首条提问
+ * 写入会话。从知识库页“用这个知识库提问”进入时经 `?knowledgeBase=` 预先带上。
+ */
+const knowledge = useKnowledgeStore()
+const showKnowledge = computed(() => !props.workspaceLocked && knowledge.enabled)
+const selectedKnowledge = ref<SessionKnowledgeBase[]>([])
+async function syncKnowledgeFromRoute() {
+  const id = typeof route.query.knowledgeBase === 'string' ? route.query.knowledgeBase : ''
+  if (!id || props.workspaceLocked) return
+  try {
+    const base = await workbenchApi.getKnowledgeBase(id, { stats: false })
+    selectedKnowledge.value = [{ id: base.id, name: base.name, available: true }]
+  } catch {
+    selectedKnowledge.value = []
+  }
+}
+function removeKnowledge(id: string) {
+  selectedKnowledge.value = selectedKnowledge.value.filter(item => item.id !== id)
+}
 const selectedSkill = computed<WorkbenchSkill | undefined>(() =>
   contentStore.skills.find(skill =>
     skill.id === selectedSkillId.value && skill.versionId === selectedSkillVersionId.value,
@@ -143,6 +169,10 @@ const selectedAgent = computed<WorkbenchAgent | undefined>(() =>
   contentStore.agents.find(agent =>
     agent.id === selectedAgentId.value && agent.versionId === selectedAgentVersionId.value,
   ),
+)
+/** 已选中 AI 同事时显示它的欢迎语（SKC-04），与 B 模式单聊一致。 */
+const welcomeText = computed(() =>
+  selectedAgent.value?.welcomeMessage || selectedAgent.value?.description || '整理文档、查询制度、分析文件并形成可交付报告',
 )
 /**
  * 唯一可发起 Agent 的自动预选（TW-02「只有一个可用 Agent 时可默认选中」）：
@@ -250,6 +280,7 @@ async function submitTask(payload: {
     payload.release?.()
     return
   }
+  recommendationNotice.value = ''
   try {
     // TW-10：文本中显式 @ 的 Agent 成员优先于唯一成员的自动预选。
     const presetMemberId = effectivePresetAgentMember.value?.status === 'available'
@@ -275,6 +306,7 @@ async function submitTask(payload: {
       referencedWorkspaceFileIds.value = []
       return
     }
+    const knowledgeBaseIds = showKnowledge.value ? selectedKnowledge.value.filter(item => item.available).map(item => item.id) : []
     const task = await taskStore.createTask(
       payload.prompt,
       payload.files,
@@ -287,6 +319,7 @@ async function submitTask(payload: {
       selectedAgentVersionId.value || undefined,
       selectedSkillVersionId.value || undefined,
       mentionedUserIds,
+      ...(knowledgeBaseIds.length ? [knowledgeBaseIds] as const : []),
     )
     await router.push(conversationPath(payload.workspaceId, task.id))
     payload.confirm?.()
@@ -402,7 +435,8 @@ function syncAgentFromRoute() {
   recommendationNotice.value = prefill ? (agent ? 'prefilled' : 'unavailable') : ''
   if (agent) {
     selectedTask.value = ''
-    presetPrompt.value = prefill || (agent.examplePrompts[0] ?? '')
+    presetPrompt.value = prefill ?? (agent.examplePrompts[0] ?? '')
+    composerKey.value += 1
     focusComposer()
   }
 }
@@ -459,6 +493,8 @@ watch(() => route.query.skillVersion, syncSkillFromRoute)
 watch(() => route.query.agent, syncAgentFromRoute)
 watch(() => route.query.agentVersion, syncAgentFromRoute)
 watch(selectedAgentId, agentId => { void refreshMcpAccess(agentId) })
+watch(() => route.query.knowledgeBase, () => { void syncKnowledgeFromRoute() }, { immediate: true })
+onMounted(() => { void knowledge.ensureLoaded() })
 
 let referenceSequence = 0
 function clearPersonalReference() {
@@ -528,7 +564,7 @@ defineExpose({ useWorkspaceFile, focusComposer, submitWorkspaceTask: submitTask 
       <section class="workbench-welcome" aria-labelledby="conversation-starter-title">
         <div class="workbench-welcome__copy">
           <h1 id="conversation-starter-title">{{ title }}</h1>
-          <p>整理文档、查询制度、分析文件并形成可交付报告</p>
+          <p>{{ welcomeText }}</p>
         </div>
 
         <p
@@ -579,7 +615,7 @@ defineExpose({ useWorkspaceFile, focusComposer, submitWorkspaceTask: submitTask 
           @submit="onTeamStageSubmit"
         />
         <p v-if="recommendationNotice === 'prefilled'" class="recommendation-notice" role="status" data-testid="recommendation-prefill-notice">
-          已带入你在 dsh-work 助手那里的问题，确认后再发送；原对话记录与附件不会带入。
+          已带入要发给这位 AI 同事的问题，可以修改，确认后再发送；原对话记录与附件不会带入。
         </p>
         <p v-else-if="recommendationNotice === 'unavailable'" class="recommendation-notice recommendation-notice--blocked" role="alert">
           推荐的 AI 同事暂不可用：你已没有使用权限，或它已停用。
@@ -587,6 +623,7 @@ defineExpose({ useWorkspaceFile, focusComposer, submitWorkspaceTask: submitTask 
         <TaskComposer
           v-if="composerReady && !useTeamSpaceComposer"
           ref="personalComposerRef"
+          :key="composerKey"
           class="workbench-composer"
           :initial-prompt="presetPrompt"
           :initial-workspace-id="composerWorkspaceId"
@@ -604,7 +641,14 @@ defineExpose({ useWorkspaceFile, focusComposer, submitWorkspaceTask: submitTask 
           @clear-skill="clearSelectedSkill"
           @clear-agent="clearSelectedAgent"
           @open-files="router.push('/files')"
-        />
+        >
+          <template v-if="showKnowledge" #attachments>
+            <KnowledgeBaseChips :items="selectedKnowledge" @remove="removeKnowledge" />
+          </template>
+          <template v-if="showKnowledge" #leading-actions>
+            <KnowledgeBasePicker :selected="selectedKnowledge" @change="selectedKnowledge = $event" />
+          </template>
+        </TaskComposer>
         <el-skeleton v-else-if="!composerReady" class="workbench-composer" :rows="3" animated />
 
         <footer v-if="!useTeamSpaceComposer" class="workbench-trust">

@@ -9,6 +9,8 @@ import { registerSkillRoutes } from './http/admin/skill-routes.ts'
 import { registerToolRoutes } from './http/admin/tool-routes.ts'
 import { registerModelGovernanceRoutes } from './http/admin/model-routes.ts'
 import { registerOperationsRoutes } from './http/admin/operations-routes.ts'
+import { registerOrganizationRoutes } from './http/admin/organization-routes.ts'
+import { PostgresOrganizationService } from './modules/organization/postgres-organization-service.ts'
 import { registerIdentityAdministrationRoutes } from './http/admin/identity-routes.ts'
 import { Router, envelope, httpResult } from './http/router.ts'
 import { registerConversationRoutes } from './http/workbench/conversation-routes.ts'
@@ -25,11 +27,22 @@ import { registerPushRoutes } from './http/workbench/push-routes.ts'
 import { createWeknoraAccessService, registerWeknoraRoutes } from './http/workbench/weknora-routes.ts'
 import { registerConversationTargetRoutes } from './http/workbench/conversation-target-routes.ts'
 import { registerDirectConversationRoutes } from './http/workbench/direct-conversation-routes.ts'
+import { registerDingTalkBindingRoutes } from './http/workbench/dingtalk-binding-routes.ts'
+import { PostgresDingTalkSelfBindingService } from './modules/identity/dingtalk/dingtalk-self-service.ts'
+import { registerUserNotificationRoutes } from './http/workbench/user-notification-routes.ts'
+import { registerKnowledgeRoutes } from './http/workbench/knowledge-routes.ts'
+import { registerKnowledgeAdminRoutes } from './http/admin/knowledge-admin-routes.ts'
 import { registerWorkspaceTimelineRoutes } from './http/workbench/workspace-timeline-routes.ts'
 import { registerOidcRoutes } from './http/auth-routes.ts'
 import { registerLocalAuthRoutes } from './http/local-auth-routes.ts'
+import { registerDingTalkAuthRoutes } from './http/dingtalk-auth-routes.ts'
+import { registerDingTalkAdminRoutes } from './http/admin/dingtalk-admin-routes.ts'
+import { DingTalkAdministrationService } from './modules/identity/dingtalk/dingtalk-admin-service.ts'
 import { registerAuthConfigurationRoutes, registerSessionRoutes } from './http/session-routes.ts'
 import { LocalAuthService } from './modules/identity/local-auth-service.ts'
+import { DingTalkAuthService } from './modules/identity/dingtalk/dingtalk-auth-service.ts'
+import { loadDingTalkDeploymentSettings } from './modules/identity/dingtalk/dingtalk-config.ts'
+import { DingTalkSettingsService } from './modules/identity/dingtalk/dingtalk-settings.ts'
 import { checkDatabase, createDatabase } from './infrastructure/postgres/database.ts'
 import { runMigrations } from './infrastructure/postgres/migration-runner.ts'
 import { PostgresOperationsService } from './modules/admin/application/postgres-operations-service.ts'
@@ -58,6 +71,10 @@ import { normalizePythonPackageName } from './modules/skill/skill-installation-p
 import { loadBuiltinSkillCatalog } from './modules/skill/builtin-skills.ts'
 import { AgentRecommendationService } from './modules/agent/agent-recommendation-service.ts'
 import { missingDshBuiltinTools } from './modules/runtime/builtin-tools.ts'
+import { SkillSubmissionService } from './modules/skill/skill-submission-service.ts'
+import { registerSkillSubmissionRoutes } from './http/workbench/skill-submission-routes.ts'
+import { SkillSubmissionReviewService } from './modules/skill/skill-submission-review-service.ts'
+import { registerSkillSubmissionReviewRoutes } from './http/admin/skill-submission-review-routes.ts'
 import { redactSensitiveText } from './security/safe-observability.ts'
 import {
   preflightDshRuntime,
@@ -75,12 +92,14 @@ import {
   WorkspaceNotificationRecipientService,
   createPostgresNotificationRecipientPorts,
 } from './modules/workbench/application/workspace-notification-recipient-service.ts'
+import { PostgresUserNotificationService } from './modules/workbench/application/postgres-user-notification-service.ts'
 import { PostgresWorkspaceUsageService } from './modules/workbench/application/postgres-workspace-usage-service.ts'
 import { PostgresWorkspaceService } from './modules/workbench/application/postgres-workspace-service.ts'
 import { PostgresAgentService } from './modules/agent/postgres-agent-service.ts'
 import { PostgresAgentAccessService } from './modules/agent/agent-access-service.ts'
 import { PostgresAgentReleaseService } from './modules/agent/postgres-agent-release-service.ts'
 import { PostgresAgentValidationService } from './modules/agent/agent-validation-service.ts'
+import { loadSkillCreatorPreset, seedSkillCreatorDraft } from './modules/agent/skill-creator-preset.ts'
 import { PostgresAgentRunHistory } from './modules/agent/agent-run-history.ts'
 import { registerAgentReleaseRoutes } from './http/admin/agent-release-routes.ts'
 import { registerAgentValidationRoutes } from './http/admin/agent-validation-routes.ts'
@@ -108,7 +127,10 @@ import { PostgresEncryptedCredentialStore } from './modules/tool/postgres-encryp
 import { McpUserCredentialStore } from './modules/tool/mcp-user-credential-store.ts'
 import { McpUserGrantService } from './modules/tool/mcp-user-grant-service.ts'
 import { registerMcpGrantRoutes } from './http/workbench/mcp-grant-routes.ts'
-import { PostgresKnowledgeService } from './modules/knowledge/postgres-knowledge-service.ts'
+import { WeKnoraKnowledgeProvider } from './modules/knowledge/weknora-knowledge-provider.ts'
+import { PostgresKnowledgeBaseService } from './modules/knowledge/postgres-knowledge-base-service.ts'
+import { PostgresKnowledgeConnection } from './modules/knowledge/knowledge-connection.ts'
+import { PostgresKnowledgeAdminService } from './modules/knowledge/postgres-knowledge-admin-service.ts'
 import { PostgresAuthorizationService } from './modules/authorization/postgres-authorization-service.ts'
 import { PostgresAutomationRepository } from './modules/automation/postgres-automation-repository.ts'
 import { AutomationService } from './modules/automation/automation-service.ts'
@@ -156,17 +178,48 @@ async function start() {
   const directorySync = identityConfiguration.mode === 'oidc'
     ? new IdentityDirectorySyncService(identityConfiguration, database)
     : null
-  const localAuthentication = new LocalAuthService(localIdentityConfiguration(identityConfiguration), database)
+  // 钉钉企业内部应用（钉钉接入方案 DT-S1）：配置在管理端“钉钉集成”页填写，AppSecret 以 DSH_CREDENTIAL_MASTER_KEY
+  // 加密入库；DSH_WORK_DINGTALK_* 只在页面从未保存过时作为初始配置。未配置时免登接口明确返回不可用；
+  // 测试替身不在生产启动中接线。
+  const dingtalkSettings = new DingTalkSettingsService(database, {
+    deployment: loadDingTalkDeploymentSettings(process.env),
+    ...(process.env.DSH_CREDENTIAL_MASTER_KEY ? {
+      credentials: new PostgresEncryptedCredentialStore(database, {
+        masterKeyBase64: process.env.DSH_CREDENTIAL_MASTER_KEY,
+        keyId: process.env.DSH_CREDENTIAL_MASTER_KEY_ID,
+      }),
+    } : {}),
+  })
+  await dingtalkSettings.ensureBootstrap()
+  const localAuthentication = new LocalAuthService(localIdentityConfiguration(identityConfiguration), database, dingtalkSettings)
+  const dingtalkAuthentication = new DingTalkAuthService(localIdentityConfiguration(identityConfiguration), database, dingtalkSettings)
   const router = new Router({ authenticateApi: portalAuthenticator(localAuthentication, oidcAuthentication) })
   if (oidcAuthentication) registerOidcRoutes(router, oidcAuthentication, localAuthentication)
   registerLocalAuthRoutes(router, localAuthentication, oidcAuthentication)
+  registerDingTalkAuthRoutes(router, dingtalkAuthentication, localAuthentication, oidcAuthentication)
+  const dingtalkAdministration = new DingTalkAdministrationService(database, dingtalkSettings, {
+    manager: dingtalkSettings,
+    secret: identityConfiguration.sessionSecret,
+    workbenchOrigins: localIdentityConfiguration(identityConfiguration).audiences.workbench.allowedOrigins,
+  })
+  registerDingTalkAdminRoutes(router, dingtalkAdministration)
+  // 每日离职检查（钉钉接入方案 4.2）：每次检查前读取当前配置，未配置时跳过；单进程部署，进行中的检查由唯一索引互斥。
+  const dingtalkDepartureTimer = dingtalkAdministration.startDailyDepartureCheck()
   registerSessionRoutes(router)
-  registerAuthConfigurationRoutes(router, () => ({ mode: identityConfiguration.mode, localEnabled: true, aiHubEnabled: Boolean(oidcAuthentication) }))
+  // 钉钉只对员工端提供 corpId（容器内 requestAuthCode 需要），不是秘密，也不暴露 AppKey/AppSecret。
+  registerAuthConfigurationRoutes(router, async audience => {
+    const dingtalk = audience === 'workbench' ? await dingtalkSettings.current() : null
+    return {
+      mode: identityConfiguration.mode, localEnabled: true, aiHubEnabled: Boolean(oidcAuthentication),
+      ...(dingtalk ? { dingtalk: { corpId: dingtalk.corpId } } : {}),
+    }
+  })
   registerIdentityAdministrationRoutes(
     router,
     new IdentityAdministrationService(database, true),
     directorySync,
   )
+  registerOrganizationRoutes(router, new PostgresOrganizationService(database))
   const directorySyncTimer = directorySync?.startScheduler() ?? null
   const modelRepository = new PostgresModelGovernanceRepository(database)
 
@@ -179,6 +232,8 @@ async function start() {
   let memoryProposalSweep: NodeJS.Timeout | null = null
   let agentDataSweep: NodeJS.Timeout | null = null
   let workspaceObjectGcSweep: NodeJS.Timeout | null = null
+  let notificationRetentionSweep: NodeJS.Timeout | null = null
+  let notificationRetentionRun: Promise<void> | null = null
   let dshCapability: CapabilityState = { status: 'not-configured' }
   let pythonCapability: CapabilityState = { status: 'unavailable', code: 'PYTHON_UNAVAILABLE' }
   let attemptContainers: AttemptExecutionContainers | null = null
@@ -187,6 +242,8 @@ async function start() {
   const dataRoot = resolve(projectRoot, process.env.DSH_WORK_DATA_ROOT ?? '.runtime')
   // 平台内置 Skill 随代码发布；内容与版本锁不一致属于发布缺陷，服务不启动（builtin-skills-plan 5.1）。
   const builtinSkills = loadBuiltinSkillCatalog(resolve(projectRoot, 'server/config/builtin-skills'))
+  // Agent 预置定义同样随代码发布，缺失或格式错误属于发布缺陷，服务不启动（Skill 创建专家方案 5.1）。
+  const skillCreatorPreset = loadSkillCreatorPreset(resolve(projectRoot, 'server/config/agent-presets'))
   const skillArtifacts = new SkillArtifactStore(new LocalObjectStorage(resolve(dataRoot, 'skills'), { fileMode: 0o400 }))
   await migrateSkillFilesToFileSystem(database, skillArtifacts)
   // Database migrations and identity initialization above stay fail-closed.
@@ -237,6 +294,7 @@ async function start() {
   }
   const conversations = new PostgresConversationRepository(database)
   const authorization = new PostgresAuthorizationService(database, {
+    knownBuiltinSkill: builtinSkills.isKnown,
     // AI Hub 身份的后台任务必须复核目录；配置降级为 local 时传 null，
     // 授权服务仍按用户来源拒绝 AI Hub 后台执行，独立账号不受影响。
     // 信任窗口 = 同步间隔 ×2（interval=0 即关闭同步 → 兜底 60s 后 fail-closed）。
@@ -272,6 +330,7 @@ async function start() {
   const projectTaskToolsRef: { current?: ProjectTaskTools } = {}
   const agentRecommendationsRef: { current?: AgentRecommendationService } = {}
   const operationsRef: { current?: PostgresOperationsService } = {}
+  const skillSubmissionsRef: { current?: SkillSubmissionService } = {}
   const dshAdapter: AgentRuntimePort = dshInstallation ? new DshAcpRuntimeAdapter({
     runtimeId: 'runtime-local-01',
     runtimeRoot: resolve(dataRoot, 'dsh-attempts'),
@@ -339,11 +398,17 @@ async function start() {
       if (!agentDataRef.current) throw new Error('Agent 数据平面尚未就绪')
       return agentDataRef.current.invokeFromAttempt(name, input, manifest)
     },
-    agentRecommendationTool: async (name, input, manifest) => {
+    agentRecommendationTool: async (name, input, manifest, signal) => {
       if (!agentRecommendationsRef.current) throw new Error('推荐服务尚未就绪')
       return name === 'list_colleague_agents'
-        ? agentRecommendationsRef.current.listColleagues(manifest)
-        : agentRecommendationsRef.current.recommend(manifest, input)
+        ? agentRecommendationsRef.current.listColleagues(manifest, signal)
+        : agentRecommendationsRef.current.recommend(manifest, input, signal)
+    },
+    skillCreationTool: async (name, input, manifest, workspaceDirectory) => {
+      if (!skillSubmissionsRef.current) throw new Error('Skill 提交服务尚未就绪')
+      return name === 'list_available_skills'
+        ? skillSubmissionsRef.current.listAvailableSkills(manifest, input)
+        : skillSubmissionsRef.current.saveDraft(manifest, input, workspaceDirectory)
     },
     prepareSkillInstallation: (manifest, signal) => installationService.prepare(manifest, signal),
     inspectAdminState: (input, manifest, signal) => assistantService.inspectState(input, manifest, signal),
@@ -467,7 +532,22 @@ async function start() {
   }
   skills.setPublicationAvailabilityChecker(checkInstallationRuntime)
   const agents = new PostgresAgentService(database, operations, skills, toolService)
-  const knowledge = new PostgresKnowledgeService(database)
+  // 企业知识库（weknora-knowledge-plan）：连接由管理端配置（WK-S3），API Key 加密保存；部署配置 WEKNORA_*
+  // 只在管理员保存 API Key 之前提供初始连接。执行前检索、员工端与管理端共用同一连接，保存后立即生效。
+  const knowledgeConnection = new PostgresKnowledgeConnection(database, {
+    credentials: credentialSecrets,
+    bootstrap: process.env.WEKNORA_BASE_URL && process.env.WEKNORA_API_KEY
+      ? {
+          baseUrl: process.env.WEKNORA_BASE_URL,
+          apiKey: process.env.WEKNORA_API_KEY,
+          embeddingModelId: process.env.WEKNORA_EMBEDDING_MODEL_ID || undefined,
+        }
+      : undefined,
+  })
+  await knowledgeConnection.ensureBootstrap()
+  const knowledge = new WeKnoraKnowledgeProvider(database, knowledgeConnection)
+  const knowledgeBases = new PostgresKnowledgeBaseService(database, operations, knowledgeConnection)
+  const knowledgeAdmin = new PostgresKnowledgeAdminService(database, operations, knowledgeConnection, credentialSecrets)
   const controlledMemory = new PostgresControlledMemoryService(database, authorization, operations)
   controlledMemoryRef.current = controlledMemory
   const agentData = new PostgresAgentDataService(database)
@@ -554,7 +634,21 @@ async function start() {
   })
   persistentWait.start()
   const pythonPackages = containerPythonRunner && attemptContainers ? [...attemptContainers.pythonPackages] : []
-  const installationService: AdminSkillInstallationService = new AdminSkillInstallationService(database, orchestration, authorization, acquireSkillSource, Boolean(containerPythonRunner), pythonPackages, skillArtifacts, checkInstallationRuntime)
+  const pythonModules = containerPythonRunner && attemptContainers ? attemptContainers.pythonModules : null
+  // 依赖登记（2026-11-04）：按当前执行镜像复查已发布 Skill 的 Python 依赖；缺包的在管理端标出并在运行前被拒绝。
+  skills.setPythonEnvironment(containerPythonRunner && attemptContainers ? { image: attemptContainers.image, packages: pythonPackages, modules: pythonModules } : null)
+  await skills.recheckPublishedPythonDependencies().catch(error => console.error('skill python dependency recheck failed', error))
+  // Skill 创建专家：草稿用与安装相同的包规则与 Python 环境核对（skill-creator-plan 4.2）。
+  skillSubmissionsRef.current = new SkillSubmissionService({
+    database, skills, authorization, artifactStore: skillArtifacts, builtinSkills,
+    pythonSandboxAvailable: Boolean(containerPythonRunner), pythonPackages, pythonModules,
+  })
+  conversations.setSkillDraftReader(skillSubmissionsRef.current)
+  registerSkillSubmissionRoutes(router, skillSubmissionsRef.current)
+  registerSkillSubmissionReviewRoutes(router, new SkillSubmissionReviewService({
+    database, skills, artifactStore: skillArtifacts, audit: operations,
+  }))
+  const installationService: AdminSkillInstallationService = new AdminSkillInstallationService(database, orchestration, authorization, acquireSkillSource, Boolean(containerPythonRunner), pythonPackages, skillArtifacts, checkInstallationRuntime, pythonModules)
   const assistantService = new AdminAssistantService(database, orchestration, authorization, installationService, skills, agents, operations)
   skills.setPackageTester((userId, skill, prompt) => installationService.testPackage(userId, skill, prompt))
   skills.setPackageTestLifecycle({
@@ -654,6 +748,23 @@ async function start() {
   registerRunApprovalRoutes(router, database, runs, persistentWait, 'postgres')
   registerConversationTargetRoutes(router, new PostgresConversationTargetService(database, agents), authorization)
   registerDirectConversationRoutes(router, new PostgresDirectConversationService(database))
+  registerDingTalkBindingRoutes(router, new PostgresDingTalkSelfBindingService(database, dingtalkSettings))
+  const userNotifications = new PostgresUserNotificationService(database)
+  registerUserNotificationRoutes(router, userNotifications, authorization)
+  registerKnowledgeRoutes(router, knowledgeBases, authorization)
+  registerKnowledgeAdminRoutes(router, knowledgeAdmin)
+  // 站内通知 NC-S4：启动后与每天清扫一次 90 天前的通知，不阻塞启动；清扫可重复执行。
+  const purgeNotifications = () => {
+    // 上一轮还没结束时不重叠；关闭服务时等进行中的一轮结束再关数据库。
+    if (notificationRetentionRun) return
+    notificationRetentionRun = userNotifications.purgeExpired()
+      .then(result => { if (result.removed > 0) console.warn('user notification retention sweep completed', result) })
+      .catch(error => console.error('user notification retention sweep failed', error))
+      .finally(() => { notificationRetentionRun = null })
+  }
+  purgeNotifications()
+  notificationRetentionSweep = setInterval(purgeNotifications, 24 * 60 * 60 * 1000)
+  notificationRetentionSweep.unref()
   registerWorkspaceTimelineRoutes(router, new PostgresWorkspaceTimelineService(database, new PostgresWorkspaceService(database)), authorization)
   registerWorkspaceUsageRoutes(router, workspaceUsage, authorization)
   registerProjectRoutes(router, projects, authorization, projectArchive)
@@ -673,6 +784,14 @@ async function start() {
   // 已在运行的案例 Run 由重启恢复收敛，读取验证时折叠为同一状态。
   const validationRecovery = await agentValidation.recoverInterruptedValidations()
   if (validationRecovery.interrupted > 0) console.warn('agent validation recovery completed', validationRecovery)
+  // Skill 创建专家方案 5.1（SKC-05）：环境中还没有专家时预置未发布草稿；写库失败只记录，不阻止启动。
+  try {
+    const seeded = await seedSkillCreatorDraft(database, agents, agentValidation, skillCreatorPreset)
+    if (seeded.status !== 'skipped') console.info('skill creator preset', seeded)
+    else if (seeded.reason === 'no_admin') console.warn('skill creator preset skipped: 没有可用的本地平台管理员，下次启动重试')
+  } catch (error) {
+    console.warn('skill creator preset skipped:', error instanceof Error ? error.message : error)
+  }
   registerAgentValidationRoutes(router, agents, agentValidation, new PostgresAgentRunHistory(database))
   registerSkillRoutes(router, skills, async () => builtinSkills.status((await operations.getRuntimePolicy('runtime-local-01')).disabledBuiltinSkills))
   registerToolRoutes(router, toolService)
@@ -723,9 +842,12 @@ async function start() {
     server.close(() => {
       void (async () => {
         if (directorySyncTimer) clearInterval(directorySyncTimer)
+        if (dingtalkDepartureTimer) clearInterval(dingtalkDepartureTimer)
         if (memoryProposalSweep) clearInterval(memoryProposalSweep)
         if (agentDataSweep) clearInterval(agentDataSweep)
         if (workspaceObjectGcSweep) clearInterval(workspaceObjectGcSweep)
+        if (notificationRetentionSweep) clearInterval(notificationRetentionSweep)
+        await notificationRetentionRun
         if (workspaceSweep) clearInterval(workspaceSweep)
         if (automationSweep) await automationSweep.close()
         if (revocationSweep) revocationSweep.close()

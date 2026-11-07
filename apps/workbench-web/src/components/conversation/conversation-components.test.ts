@@ -3,14 +3,17 @@ import { createPinia, setActivePinia } from 'pinia'
 import { flushPromises, mount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type { AgentRecommendation, Artifact, ChatMessage, SessionThread, TaskResult, TaskRun } from '@/types/domain'
+import type { AgentRecommendation, Artifact, ChatMessage, SessionThread, SkillDraft, TaskResult, TaskRun } from '@/types/domain'
 import ConversationMessageItem from './ConversationMessageItem.vue'
 import RunComposer from './RunComposer.vue'
 import RunMessageList from './RunMessageList.vue'
 import SessionDiscussionList from './SessionDiscussionList.vue'
 
-const { downloadArtifact, getArtifactText } = vi.hoisted(() => ({ downloadArtifact: vi.fn(), getArtifactText: vi.fn() }))
-vi.mock('@/api/client', () => ({ workbenchApi: { downloadArtifact, getArtifactText } }))
+const { downloadArtifact, getArtifactText, submitSkillDraft, withdrawSkillDraft, getSkillDraftFile } = vi.hoisted(() => ({
+  downloadArtifact: vi.fn(), getArtifactText: vi.fn(),
+  submitSkillDraft: vi.fn(), withdrawSkillDraft: vi.fn(), getSkillDraftFile: vi.fn(),
+}))
+vi.mock('@/api/client', () => ({ workbenchApi: { downloadArtifact, getArtifactText, submitSkillDraft, withdrawSkillDraft, getSkillDraftFile } }))
 
 // S5b：从 ConversationView 拆出的消息组件，A 的对话详情与 B 的对话页共用。
 
@@ -144,8 +147,27 @@ describe('RunMessageList', () => {
       global,
       props: { task: run({ result: result({ artifacts: [file] }) }), isOwn: m => m.role === 'user', canFollowUp: true },
     })
-    expect(wrapper.text()).toContain('目标已达成 · 1 分 5 秒')
-    expect(wrapper.text()).toContain('1,200 Token · inventory')
+    // 身份行保留时间并追加结论；个人对话不标“由某人发起”；底部只留 Token 用量，不重复同事名称。
+    expect(wrapper.get('[data-testid="message-badge"]').text()).toBe('目标已达成')
+    expect(wrapper.text()).not.toContain('由 林岚 发起')
+    // EX-STYLE-01：一对一对话中本人的消息只留气泡，没有头像与名字，时间在气泡下（悬停时显示），仍有可访问名称。
+    const own = wrapper.get('.conversation-message--compact')
+    expect(own.find('.assistant-identity').exists()).toBe(false)
+    expect(own.attributes('aria-label')).toBe('我的消息，10:00')
+    expect(own.get('.message-time').text()).toBe('10:00')
+    expect(wrapper.findAll('.conversation-message--latest')).toHaveLength(1)
+    expect(wrapper.get('.assistant-run-meta').text()).toBe('1,200 Token')
+
+    const team = mount(RunMessageList, { global, props: { task: run({ workspaceType: 'team', tokenUsage: undefined }), isOwn: m => m.role === 'user' } })
+    expect(team.text()).toContain('由 林岚 发起')
+    // 多人对话中本人的消息仍显示头像与名字。
+    expect(team.find('.conversation-message--compact').exists()).toBe(false)
+    expect(team.findAll('.assistant-identity strong').map(item => item.text())).toContain('林岚')
+    expect(team.find('.assistant-run-meta').exists()).toBe(false)
+
+    const unverified = mount(RunMessageList, { global, props: { task: run({ result: result({ outcome: 'unverified' }) }), isOwn: m => m.role === 'user' } })
+    expect(unverified.text()).toContain('库存助手10:01')
+    expect(unverified.text()).not.toContain('待核验')
 
     await wrapper.get('[data-testid="preview-artifact-artifact-1"]').trigger('click')
     await wrapper.get('button[aria-label="下载成果 库存周报.md"]').trigger('click')
@@ -240,6 +262,101 @@ describe('RunMessageList', () => {
     expect(wrapper.text()).toContain('该 AI 同事暂不可用')
   })
 
+  it('REC-01: prefers the question written for the colleague over the employee’s “who should I ask”', async () => {
+    const recommendation: AgentRecommendation = {
+      id: 'rec-3', runId: 'run-1', agentId: 'agent-planning', name: '计划排产', description: '排产与交期',
+      reason: '负责交期风险说明', suggestedPrompt: '请分析本月订单的交期风险，列出可能延期的订单和原因。', available: true,
+    }
+    const wrapper = mount(RunMessageList, {
+      global,
+      props: {
+        task: run({
+          id: 'run-1',
+          messages: [
+            { id: 'u1', role: 'user', content: '分析本月订单的交期风险，应该找哪个 AI 同事？', createdAt: '10:00', runId: 'run-1' },
+            { id: 'a1', role: 'assistant', content: '建议找计划排产', createdAt: '10:01', runId: 'run-1' },
+          ],
+          recommendations: [recommendation],
+        }),
+        isOwn: m => m.role === 'user',
+      },
+    })
+    await wrapper.get('[aria-label="去和计划排产聊天"]').trigger('click')
+    expect(wrapper.emitted('open-recommended-agent')).toEqual([[recommendation, '请分析本月订单的交期风险，列出可能延期的订单和原因。']])
+  })
+
+  it('SKC-01: the Skill draft card sits under the run’s last reply; the employee submits, withdraws and previews it', async () => {
+    const draft = (overrides: Partial<SkillDraft> = {}): SkillDraft => ({
+      submissionId: 'sub-1', versionId: 'ver-2', versionNumber: 2, runId: 'run-1', name: '销售周报汇总',
+      description: '每周把销售日报汇总成周报。',
+      files: [{ path: 'SKILL.md', size: 1400, script: false }, { path: 'scripts/report.py', size: 3200, script: true }],
+      compatibility: { status: 'compatible', issues: [] }, status: 'draft', latest: true, ...overrides,
+    })
+    submitSkillDraft.mockResolvedValue(draft({ status: 'pending', submittedAt: '2026-10-30T07:42:00.000Z' }))
+    withdrawSkillDraft.mockResolvedValue(draft({ status: 'draft' }))
+    getSkillDraftFile.mockResolvedValue({ path: 'SKILL.md', size: 20, content: '---\nname: 销售周报汇总\n---' })
+    const wrapper = mount(RunMessageList, {
+      global,
+      props: {
+        task: run({
+          id: 'run-1',
+          messages: [
+            { id: 'u1', role: 'user', content: '帮我做一个周报 Skill', createdAt: '10:00', runId: 'run-1' },
+            { id: 'a1', role: 'assistant', content: '先确认几件事', createdAt: '10:01', runId: 'run-1' },
+            { id: 'a2', role: 'assistant', content: '草稿如下', createdAt: '10:02', runId: 'run-1' },
+          ],
+          skillDrafts: [draft({ versionId: 'ver-1', versionNumber: 1, latest: false }), draft()],
+        }),
+        isOwn: m => m.role === 'user',
+      },
+    })
+    expect(wrapper.findAll('[data-testid="skill-drafts"]')).toHaveLength(1)
+    expect(wrapper.get('[data-testid="skill-draft-superseded"]').text()).toContain('草稿 v1 · 已由新版本替代')
+    const card = wrapper.get('[data-testid="skill-draft-card"]')
+    expect(card.text()).toContain('scripts/report.py')
+    expect(card.text()).toContain('脚本')
+    expect(card.text()).toContain('包校验：通过')
+    expect(card.text(), '不声称平台验证过试跑').not.toContain('试跑')
+
+    await card.get('.skill-draft__preview-toggle').trigger('click')
+    await flushPromises()
+    expect(getSkillDraftFile).toHaveBeenCalledWith('sub-1', 'ver-2')
+    expect(wrapper.get('[data-testid="skill-draft-preview"]').text()).toContain('name: 销售周报汇总')
+
+    await wrapper.get('[data-action="submit-skill-draft"]').trigger('click')
+    await flushPromises()
+    expect(submitSkillDraft).toHaveBeenCalledWith('sub-1', 'ver-2')
+    expect(wrapper.get('[data-testid="skill-draft-card"]').text()).toContain('已提交审核')
+    await wrapper.get('[data-action="withdraw-skill-draft"]').trigger('click')
+    await flushPromises()
+    expect(withdrawSkillDraft).toHaveBeenCalledWith('sub-1')
+    expect(wrapper.find('[data-action="submit-skill-draft"]').exists()).toBe(true)
+  })
+
+  it('SKC-01: an incompatible draft cannot be submitted; a rejected one shows the reason', () => {
+    const base: SkillDraft = {
+      submissionId: 'sub-2', versionId: 'ver-1', versionNumber: 1, runId: 'run-1', name: '客诉回复', description: '客诉首次回复。',
+      files: [{ path: 'SKILL.md', size: 900, script: false }],
+      compatibility: { status: 'incompatible', issues: [{ code: 'python_package', severity: 'error', message: '依赖 foo 不在执行环境中' }] },
+      status: 'draft', latest: true,
+    }
+    const mountWith = (drafts: SkillDraft[]) => mount(RunMessageList, {
+      global,
+      props: {
+        task: run({ id: 'run-1', messages: [{ id: 'a1', role: 'assistant', content: '草稿如下', createdAt: '10:01', runId: 'run-1' }], skillDrafts: drafts }),
+        isOwn: m => m.role === 'user',
+      },
+    })
+    const incompatible = mountWith([base])
+    expect(incompatible.text()).toContain('包校验：未通过')
+    expect(incompatible.text()).toContain('依赖 foo 不在执行环境中')
+    expect(incompatible.get('[data-action="submit-skill-draft"]').attributes('disabled')).toBeDefined()
+    const rejected = mountWith([{ ...base, compatibility: { status: 'compatible', issues: [] }, status: 'rejected', reviewNote: '文件名不要带客户名称' }])
+    expect(rejected.text()).toContain('审核未通过')
+    expect(rejected.text()).toContain('文件名不要带客户名称')
+    expect(rejected.find('[data-action="submit-skill-draft"]').exists()).toBe(false)
+  })
+
   it('2b-5: every artifact opens the preview; failed or pending text is explained beside the card; images show a thumbnail', async () => {
     const sheet = artifact({ id: 'a-xlsx', name: '营收.xlsx', type: 'xlsx', textPreview: 'available' })
     const report = artifact({ id: 'a-pdf', name: '报告.pdf', type: 'pdf', textPreview: 'failed', textPreviewError: 'PDF 无法读取' })
@@ -308,6 +425,46 @@ describe('RunMessageList', () => {
 
     const readOnly = mount(RunMessageList, { global, props: { ...props, canFollowUp: false } })
     expect(readOnly.find('[data-testid="continue-editing-artifact-1"]').exists()).toBe(false)
+  })
+
+  it('marks the artifact card being previewed as selected on the whole card', () => {
+    const props = { task: run({ result: result({ artifacts: [artifact()] }) }), isOwn: () => false, canFollowUp: true }
+    const previewing = mount(RunMessageList, { global, props: { ...props, previewKey: 'artifact-1@1' } })
+    expect(previewing.get('[data-testid="answer-artifact-artifact-1"] .answer-artifact__row').classes()).toContain('is-active')
+    expect(previewing.get('[data-testid="preview-artifact-artifact-1"]').attributes('aria-pressed')).toBe('true')
+    const idle = mount(RunMessageList, { global, props })
+    expect(idle.get('[data-testid="answer-artifact-artifact-1"] .answer-artifact__row').classes()).not.toContain('is-active')
+  })
+
+  it('keeps the requester on a team reply that did not reach its goal, without any outcome label', () => {
+    const team = mount(RunMessageList, { global, props: { task: run({ workspaceType: 'team', result: result({ outcome: 'not_achieved' }) }), isOwn: m => m.role === 'user' } })
+    const identity = team.findAll('.assistant-identity')[1]!.text()
+    expect(identity).toMatch(/10:01\s*· 由 林岚 发起/)
+    expect(identity).not.toContain('目标')
+  })
+
+  it('warns about operations with unknown effects when a run was stopped, and splits reason from next step on failure', () => {
+    const effect = { kind: 'external_effect_unknown' as const, message: '工具 erp.write 的实际效果未知；须查询权威系统回执后才能确认目标。' }
+    const stopped = mount(RunMessageList, { global, props: { task: run({ status: 'cancelled', stoppedBy: '林岚', result: result({ outcome: 'not_achieved', pendingItems: [effect] }) }), isOwn: () => false } })
+    const warning = stopped.get('[data-testid="run-external-effect-unknown"]')
+    expect(warning.attributes('role')).toBe('alert')
+    expect(warning.text()).toContain('erp.write')
+    expect(warning.text()).toContain('重新发送前')
+
+    const plainStop = mount(RunMessageList, { global, props: { task: run({ status: 'cancelled', stoppedBy: '林岚', result: result({ outcome: 'not_achieved' }) }), isOwn: () => false } })
+    expect(plainStop.find('[data-testid="run-external-effect-unknown"]').exists()).toBe(false)
+
+    const failed = mount(RunMessageList, {
+      global,
+      props: {
+        task: run({ status: 'failed', result: result({ outcome: 'not_achieved', pendingItems: [effect], error: { code: 'run_failed', message: '本轮执行失败', object: '运行 run-1', reason: '执行服务没有正常完成本轮。', suggestion: '可以重新执行。', retryable: true } }) }),
+        isOwn: () => false,
+      },
+    })
+    const paragraphs = failed.findAll('[data-testid="run-error-notice"] p').map(item => item.text())
+    expect(paragraphs).toEqual(['执行服务没有正常完成本轮。', '下一步：可以重新执行。'])
+    expect(failed.get('[data-testid="run-error-notice"]').text()).toContain('erp.write')
+    expect(failed.find('[data-testid="run-external-effect-unknown"]').exists()).toBe(false)
   })
 
   const at = (seconds: number) => new Date(Date.UTC(2026, 9, 28, 10, 0, seconds)).toISOString()
@@ -379,8 +536,87 @@ describe('RunMessageList', () => {
     expect(failed.emitted('retry')).toHaveLength(1)
     expect(failed.find('[data-testid="run-result-not-achieved"]').exists()).toBe(false)
 
-    const stopped = mount(RunMessageList, { global, props: { task: run({ status: 'cancelled', stoppedBy: '周航', result: result({ outcome: 'unverified' }) }), isOwn: () => false } })
+    // 失败说明先给原因与下一步，运行编号与错误码收进默认收起的技术详情。
+    const details = failed.get('[data-testid="run-error-details"]')
+    expect(details.attributes('open')).toBeUndefined()
+    expect(details.text()).toContain('run_failed')
+    expect(failed.get('[data-testid="run-error-notice"]').text()).toContain('下一步：重试')
+
+    // 员工主动停止：只留一行，不再用“目标未达成”的警示卡片重复说明。
+    const stopped = mount(RunMessageList, { global, props: { task: run({ status: 'cancelled', stoppedBy: '周航', result: result({ outcome: 'not_achieved', summary: '执行已取消，任务目标未达成。' }) }), isOwn: () => false } })
     expect(stopped.get('[data-testid="run-stopped-by"]').text()).toBe('本轮执行已由 周航 停止')
+    expect(stopped.find('[data-testid="run-result-not-achieved"]').exists()).toBe(false)
+    expect(stopped.text()).not.toContain('目标未达成')
+
+    const systemStopped = mount(RunMessageList, { global, props: { task: run({ status: 'cancelled', stoppedBy: null, result: result({ outcome: 'not_achieved' }) }), isOwn: () => false } })
+    expect(systemStopped.get('[data-testid="run-stopped-by"]').text()).toBe('本轮执行已停止')
+  })
+
+  it('shows the elapsed total beside the title only when there is more than one step (EX-PROGRESS-01)', () => {
+    const several = mount(RunMessageList, { global, props: { task: run({ status: 'running', result: result({ outcome: 'pending' }), steps: liveSteps }), isOwn: () => false } })
+    expect(several.get('[data-testid="run-progress-card"] .assistant-identity').text()).toMatch(/正在处理 · 已用/)
+
+
+    // 重新执行后唯一的步骤从新的执行开始，它的计时不等于本轮总用时，仍显示总用时。
+    const retried = mount(RunMessageList, {
+      global,
+      props: {
+        task: run({ status: 'running', result: result({ outcome: 'pending' }), steps: [
+          { id: 'e1', title: '执行服务开始运行', detail: '', status: 'succeeded', event: 'run.started', at: at(0) },
+          { id: 'e2', title: '执行服务开始运行', detail: '', status: 'succeeded', event: 'run.started', at: at(50) },
+          { id: 'c9', title: '正在调用工具', detail: '', status: 'running', tool: 'erp.query', callId: 'c9', event: 'tool.started', at: at(50), startedAt: at(50) },
+        ] }),
+        isOwn: () => false,
+      },
+    })
+    expect(retried.findAll('[data-testid="run-progress-step"]')).toHaveLength(1)
+    expect(retried.get('[data-testid="run-progress-card"] .assistant-identity').text()).toMatch(/正在处理 · 已用/)
+  })
+
+  it('EX-STATE-01: names the working colleague the same way as its finished reply', () => {
+    const named = mount(RunMessageList, {
+      global,
+      props: { task: run({ status: 'running', agentVersion: '库存助手@1.2.0', result: result({ outcome: 'pending' }), steps: liveSteps }), isOwn: () => false },
+    })
+    expect(named.get('[data-testid="run-progress-card"] .assistant-identity').text()).toContain('库存助手')
+    expect(named.get('[data-testid="run-progress-card"] .assistant-avatar').text()).toBe('库')
+
+    // 没有版本时 agentVersion 为空串：退回最近一条回复的名称。
+    const fallback = mount(RunMessageList, {
+      global,
+      props: { task: run({ status: 'running', agentVersion: '', result: result({ outcome: 'pending' }), steps: liveSteps }), isOwn: () => false },
+    })
+    expect(fallback.get('[data-testid="run-progress-card"] .assistant-identity strong').text()).toBe('库存助手')
+  })
+
+  it('EX-STATE-01: keeps a note under earlier rounds that were stopped or failed without a reply', () => {
+    const thread: ChatMessage[] = [
+      ...messages,
+      { id: 'm3', role: 'user', content: '再核对明细', createdAt: '10:02', runId: 'run-2', senderId: 'U1', senderName: '林岚' },
+      { id: 'm4', role: 'user', content: '换个口径', createdAt: '10:03', runId: 'run-3', senderId: 'U1', senderName: '林岚' },
+      { id: 'm5', role: 'user', content: '最后一轮', createdAt: '10:04', runId: 'run-4', senderId: 'U1', senderName: '林岚' },
+    ]
+    const wrapper = mount(RunMessageList, {
+      global,
+      props: {
+        task: run({
+          id: 'run-4', status: 'cancelled', stoppedBy: '林岚', messages: thread, result: result({ outcome: 'unverified' }),
+          threadRuns: [
+            { runId: 'run-1', status: 'succeeded', stoppedBy: null },
+            { runId: 'run-2', status: 'cancelled', stoppedBy: '林岚' },
+            { runId: 'run-3', status: 'failed', stoppedBy: null },
+            { runId: 'run-4', status: 'cancelled', stoppedBy: '林岚' },
+          ],
+        }),
+        isOwn: message => message.role === 'user',
+      },
+    })
+    // 已有回复的轮次与本轮都不加说明；本轮的停止仍由下方说明给出，不重复。
+    expect(wrapper.findAll('[data-testid="past-run-note"]').map(note => note.text())).toEqual([
+      '已停止（林岚），没有生成回复',
+      '这一轮没有完成，没有生成回复',
+    ])
+    expect(wrapper.get('[data-testid="run-stopped-by"]').text()).toBe('本轮执行已由 林岚 停止')
   })
 })
 

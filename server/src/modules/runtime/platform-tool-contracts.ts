@@ -179,6 +179,7 @@ export const platformToolContracts = {
             properties: {
               agentId: { type: 'string', minLength: 1, maxLength: 160 },
               reason: { type: 'string', minLength: 1, maxLength: 120 },
+              suggestedPrompt: { type: 'string', minLength: 1, maxLength: 500 },
             },
             required: ['agentId', 'reason'],
           },
@@ -188,6 +189,23 @@ export const platformToolContracts = {
     },
     outputSchema: objectOutput,
     effect: 'write', retryPolicy: 'never', concurrencyPolicy: 'serialized', timeoutMs: 30_000,
+  }),
+  list_available_skills: contract({
+    inputSchema: {
+      type: 'object', additionalProperties: false,
+      properties: { query: { type: 'string', maxLength: 100 } },
+    },
+    outputSchema: objectOutput,
+    effect: 'read', retryPolicy: 'safe', concurrencyPolicy: 'concurrent', timeoutMs: 30_000,
+  }),
+  skill_draft_save: contract({
+    inputSchema: {
+      type: 'object', additionalProperties: false,
+      properties: { directory: { type: 'string', minLength: 1, maxLength: 200 } },
+      required: ['directory'],
+    },
+    outputSchema: objectOutput,
+    effect: 'write', retryPolicy: 'never', concurrencyPolicy: 'serialized', timeoutMs: 60_000,
   }),
   propose_memory: contract({
     inputSchema: {
@@ -229,12 +247,13 @@ export function platformToolsForPurpose(purpose: AdminRunPurpose): RuntimeManife
 }
 
 /**
- * 项目空间 S6 的任务工具只用于员工在团队空间发起的运行，推荐工具只用于员工个人对话；
- * 二者都不进入任何管理或系统运行。
+ * 项目空间 S6 的任务工具只用于员工在团队空间发起的运行，推荐与 Skill 创建工具只用于员工个人对话；
+ * 它们都不进入任何管理或系统运行。
  */
 const projectTaskTools = new Set<string>([
   'project_tasks_list', 'project_task_get', 'project_task_create', 'project_task_update',
   'list_colleague_agents', 'recommend_agents',
+  'list_available_skills', 'skill_draft_save',
 ])
 
 export function assertPlatformToolPurpose(manifest: Pick<RuntimeManifest, 'purpose' | 'tools'>): void {

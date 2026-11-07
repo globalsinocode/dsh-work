@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import type { DatabaseClient } from '../../infrastructure/postgres/database.ts'
 import type { AgentRecommendationView } from '../../domain/types.ts'
 import type { RuntimeManifest } from '../runtime/runtime-types.ts'
-import { toolPreconditionFailed } from '../runtime/platform-tool-contract.ts'
+import { PlatformToolError, toolPreconditionFailed } from '../runtime/platform-tool-contract.ts'
 import { isAuthorizationDenial } from '../../domain/authorization-errors.ts'
 import type { PostgresAuthorizationService } from '../authorization/postgres-authorization-service.ts'
 import type { PostgresAgentService, WorkbenchAgentDefinition } from './postgres-agent-service.ts'
@@ -10,6 +10,7 @@ import type { PostgresAgentService, WorkbenchAgentDefinition } from './postgres-
 const tenantId = 'tenant-dsh-work'
 const MAX_COLLEAGUES = 50
 const MAX_REASON_LENGTH = 120
+const MAX_SUGGESTED_PROMPT_LENGTH = 500
 
 export type { AgentRecommendationView }
 
@@ -36,7 +37,8 @@ export class AgentRecommendationService {
   }
 
   /** `list_colleague_agents`：发起员工当前可用、且不是本 Agent 的 AI 同事。 */
-  async listColleagues(manifest: RuntimeManifest) {
+  async listColleagues(manifest: RuntimeManifest, signal?: AbortSignal) {
+    assertAlive(signal)
     const colleagues = await this.colleaguesFor(manifest)
     return {
       agents: colleagues.slice(0, MAX_COLLEAGUES).map(agent => ({
@@ -48,8 +50,12 @@ export class AgentRecommendationService {
     }
   }
 
-  /** `recommend_agents`：校验后记录 1～3 位推荐；同一 Attempt 再次调用替换上一组。 */
-  async recommend(manifest: RuntimeManifest, input: Record<string, unknown>) {
+  /**
+   * `recommend_agents`：校验后记录 1～3 位推荐；同一 Attempt 再次调用替换上一组。
+   * Attempt 已取消时不写入：提交前再查一次，取消发生在写入途中则整组回滚。
+   */
+  async recommend(manifest: RuntimeManifest, input: Record<string, unknown>, signal?: AbortSignal) {
+    assertAlive(signal)
     const items = Array.isArray(input['recommendations']) ? input['recommendations'] as Array<Record<string, unknown>> : []
     if (items.length < 1 || items.length > 3) throw toolPreconditionFailed('每次推荐 1～3 位 AI 同事')
     const colleagues = new Map((await this.colleaguesFor(manifest)).map(agent => [agent.id, agent]))
@@ -57,27 +63,31 @@ export class AgentRecommendationService {
     const recommendations = items.map(item => {
       const agentId = typeof item['agentId'] === 'string' ? item['agentId'].trim() : ''
       const reason = typeof item['reason'] === 'string' ? item['reason'].trim() : ''
+      const suggestedPrompt = typeof item['suggestedPrompt'] === 'string' ? item['suggestedPrompt'].trim() : ''
       const agent = colleagues.get(agentId)
       if (!agent) throw toolPreconditionFailed(`不能推荐这位 AI 同事：${agentId || '未提供'}。只能推荐 list_colleague_agents 返回的同事`)
       if (seen.has(agentId)) throw toolPreconditionFailed(`同一次推荐中重复出现：${agent.name}`)
       if (!reason || reason.length > MAX_REASON_LENGTH) throw toolPreconditionFailed(`推荐理由须为 1～${MAX_REASON_LENGTH} 个字`)
+      if (suggestedPrompt.length > MAX_SUGGESTED_PROMPT_LENGTH) throw toolPreconditionFailed(`发给同事的问题不超过 ${MAX_SUGGESTED_PROMPT_LENGTH} 个字`)
       seen.add(agentId)
-      return { agent, reason }
+      return { agent, reason, suggestedPrompt: suggestedPrompt || null }
     })
     const userId = manifest.user_context.user_id
+    assertAlive(signal)
     await this.database.begin(async transaction => {
       await transaction`delete from agent_recommendations where tenant_id = ${tenantId} and attempt_id = ${manifest.attempt_id}`
-      for (const [index, { agent, reason }] of recommendations.entries()) {
+      for (const [index, { agent, reason, suggestedPrompt }] of recommendations.entries()) {
         await transaction`
           insert into agent_recommendations (
             id, tenant_id, run_id, attempt_id, session_id, recommended_for_user_id,
-            source_agent_version_id, agent_id, reason, position
+            source_agent_version_id, agent_id, reason, suggested_prompt, position
           ) values (
             ${`agent-recommendation-${randomUUID()}`}, ${tenantId}, ${manifest.run_id}, ${manifest.attempt_id},
-            ${manifest.session_id}, ${userId}, ${manifest.agent_version_id}, ${agent.id}, ${reason}, ${index + 1}
+            ${manifest.session_id}, ${userId}, ${manifest.agent_version_id}, ${agent.id}, ${reason}, ${suggestedPrompt}, ${index + 1}
           )
         `
       }
+      assertAlive(signal)
     })
     return {
       recommended: recommendations.map(({ agent }) => ({ agentId: agent.id, name: agent.name })),
@@ -91,8 +101,8 @@ export class AgentRecommendationService {
    */
   async loadForRuns(runIds: string[], viewerUserId: string): Promise<AgentRecommendationView[]> {
     if (!runIds.length) return []
-    const rows = await this.database<Array<{ id: string; runId: string; agentId: string; reason: string; name: string | null; description: string | null }>>`
-      select rec.id, rec.run_id as "runId", rec.agent_id as "agentId", rec.reason,
+    const rows = await this.database<Array<{ id: string; runId: string; agentId: string; reason: string; suggestedPrompt: string | null; name: string | null; description: string | null }>>`
+      select rec.id, rec.run_id as "runId", rec.agent_id as "agentId", rec.reason, rec.suggested_prompt as "suggestedPrompt",
              av.name, av.description
         from agent_recommendations rec
         join runs r on r.tenant_id = rec.tenant_id and r.id = rec.run_id and r.current_attempt_id = rec.attempt_id
@@ -111,6 +121,7 @@ export class AgentRecommendationService {
       name: row.name ?? 'AI 同事',
       description: row.description ?? '',
       reason: row.reason,
+      ...(row.suggestedPrompt ? { suggestedPrompt: row.suggestedPrompt } : {}),
       available: usable.has(row.agentId),
     }))
   }
@@ -139,4 +150,8 @@ export class AgentRecommendationService {
       throw error
     }
   }
+}
+
+function assertAlive(signal: AbortSignal | undefined) {
+  if (signal?.aborted) throw new PlatformToolError({ status: 409, code: 'TOOL_CANCELLED', message: '工具调用已取消' })
 }

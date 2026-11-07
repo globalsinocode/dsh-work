@@ -137,11 +137,21 @@ test('目录只列员工本人可用的同事，不含本 Agent；推荐逐项�
   await rejects([{ agentId: usable.agentId, reason: '审查合同' }, { agentId: usable.agentId, reason: '再推荐一次' }], /重复出现/)
   await rejects([{ agentId: usable.agentId, reason: '长'.repeat(121) }], /推荐理由/)
   await rejects([1, 2, 3, 4].map(() => ({ agentId: usable.agentId, reason: '多' })), /1～3 位/)
+  await rejects([{ agentId: usable.agentId, reason: '审查合同', suggestedPrompt: '问'.repeat(501) }], /发给同事的问题/)
+
+  // Attempt 已取消（员工停止或超时）：不写入推荐。
+  const cancelled = new AbortController()
+  cancelled.abort()
+  await assert.rejects(
+    recommendations.recommend(manifest, { recommendations: [{ agentId: usable.agentId, reason: '能逐条审查合同条款' }] }, cancelled.signal),
+    /工具调用已取消/,
+  )
+  assert.equal((await recommendations.loadForRuns([runId], EMPLOYEE)).length, 0)
 
   const first = await recommendations.recommend(manifest, { recommendations: [{ agentId: usable.agentId, reason: '能逐条审查合同条款' }] })
   assert.deepEqual(first.recommended.map(item => item.agentId), [usable.agentId])
   await recommendations.recommend(manifest, { recommendations: [
-    { agentId: usable2.agentId, reason: '能读取订单与到货数据' },
+    { agentId: usable2.agentId, reason: '能读取订单与到货数据', suggestedPrompt: '请分析本月订单的交付风险。' },
     { agentId: usable.agentId, reason: '能逐条审查合同条款' },
   ] })
   const views = await recommendations.loadForRuns([runId], EMPLOYEE)
@@ -150,6 +160,8 @@ test('目录只列员工本人可用的同事，不含本 Agent；推荐逐项�
     [usable.agentId, '能逐条审查合同条款', true],
   ])
   assert.equal(views[0]?.name, '交付分析')
+  assert.equal(views[0]?.suggestedPrompt, '请分析本月订单的交付风险。')
+  assert.equal(views[1]?.suggestedPrompt, undefined, '未提供时不返回，前端退回原问题')
 
   // 会话详情按 Run 挂推荐；同事被停用后标为不可用。
   const detail = await conversations.getTask(runId, EMPLOYEE)

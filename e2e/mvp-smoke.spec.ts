@@ -123,6 +123,24 @@ test('administrator can navigate governance modules and switch Skill tabs', asyn
   await expect(builtinTools.getByText('随平台代码发布', { exact: false })).toBeVisible()
 })
 
+test('administrator sees pending Skill submissions and their content (SKC-01 P0)', async ({ page }) => {
+  await page.goto(`${adminUrl}/skills`)
+  const skillTabs = page.getByRole('tablist', { name: 'Skill 管理' })
+  await skillTabs.getByRole('tab', { name: /待审核/ }).click()
+  await expect(page).toHaveURL(/\/skills\/review$/)
+  const row = page.getByRole('row', { name: /周报汇总/ })
+  await expect(row).toContainText('测试员工')
+  await expect(row).toContainText('对话创建')
+  await expect(row).toContainText('未试运行')
+
+  await page.getByRole('button', { name: '审核 周报汇总' }).click()
+  const drawer = page.getByRole('dialog', { name: '审核：周报汇总' })
+  await expect(drawer.getByLabel('SKILL.md 内容')).toContainText('name: 周报汇总')
+  await drawer.getByRole('tab', { name: '脚本：scripts/report.py' }).click()
+  await expect(drawer.getByLabel('scripts/report.py 内容')).toContainText('import openpyxl')
+  await expect(drawer.getByRole('button', { name: '通过并发布' })).toBeDisabled()
+})
+
 test('administrator views built-in Skills read-only, sets a covered scenario and disables one in the Runtime (BSK-01)', async ({ page }) => {
   await page.goto(`${adminUrl}/skills`)
   const builtin = page.getByRole('region', { name: '平台内置 Skill' })

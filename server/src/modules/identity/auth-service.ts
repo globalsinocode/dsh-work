@@ -469,7 +469,6 @@ function toExternalIdentity(user: CurrentPlatformUser) {
     subject: user.subject,
     displayName: user.display_name,
     email: user.email,
-    organizationName: user.organization_name,
     businessUser: user.business_user,
     status: user.status,
   }

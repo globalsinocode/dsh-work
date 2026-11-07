@@ -108,8 +108,35 @@ async function publishColleague(id: string, name: string, visibleRoleIds: string
 }
 await publishColleague('agent-p1-contract', '合同审查（P1）', ['role-employee'])
 await publishColleague('agent-p1-finance', '财务内控（P1）', ['role-platform-admin'])
+// SKC-01 第 1 步：问题带 `P1-推荐同事-Skill创建` 时推荐 Skill 创建专家（P1），并给出预填问题
+// （真实 DSH 中由 dsh-work 助手按专家的说明与示例问题判断后调用 recommend_agents）。
 runtime.hooks.recommendAgents = async manifest => {
-  await fixture.recommendations.recommend(manifest, { recommendations: [{ agentId: 'agent-p1-contract', reason: '掌握公司的合同审查规则，可以逐条审查合同。' }] })
+  const recommendation = manifest.input.message.includes('P1-推荐同事-Skill创建')
+    ? { agentId: 'agent-p1-skill-creator', reason: '专门帮员工把反复做的工作写成 Skill 草稿。', suggestedPrompt: '我想把每周的销售周报做成一个 Skill' }
+    : { agentId: 'agent-p1-contract', reason: '掌握公司的合同审查规则，可以逐条审查合同。' }
+  await fixture.recommendations.recommend(manifest, { recommendations: [recommendation] })
+}
+// SKC-01：开启“可创建 Skill”的 Skill 创建专家（P1）；`P1-创建Skill` 在临时工作区写出 Skill 目录并经草稿服务保存。
+{
+  const created = await fixture.agents.createAgent({
+    id: 'agent-p1-skill-creator', name: 'Skill 创建专家（P1）', description: 'Skill 创建专家（P1）：把员工反复做的工作写成 Skill 草稿。',
+    owner: '平台治理', department: '平台治理', welcomeMessage: '你好，我是 Skill 创建专家（P1 合成）。', examplePrompts: ['帮我做一个周报 Skill'],
+    systemPrompt: '你是 Skill 创建专家，帮员工把反复做的工作写成 Skill 草稿。',
+    maxOutputBytes: 65536, maxToolCalls: 20, timeoutSeconds: 300, skills: [], skillCreationEnabled: true,
+    dataScopes: ['workspace:authorized'],
+    changeSummary: 'P1 Skill 创建夹具', actor: 'U00008', executionRoleIds: ['role-employee'], executionDataScopes: ['workspace:authorized'],
+  })
+  await fixture.db.client`update agent_versions set status = 'published' where tenant_id = ${testTenant} and id = ${created.version.id}`
+  await fixture.db.client`update agents set status = 'published', active_version_id = ${created.version.id}, draft_version_id = null,
+    visible_role_ids = ${fixture.db.client.json(['role-employee'])} where tenant_id = ${testTenant} and id = 'agent-p1-skill-creator'`
+}
+runtime.hooks.saveSkillDraft = async manifest => {
+  const workspace = join(fixture.root, 'draft-workspaces', manifest.attempt_id)
+  const directory = join(workspace, 'drafts', 'weekly')
+  await mkdir(join(directory, 'scripts'), { recursive: true })
+  await writeFile(join(directory, 'SKILL.md'), '---\nname: 销售周报汇总（P1）\ndescription: 每周把各区域销售日报汇总成周报，含环比与结论。\n---\n\n按区域汇总员工上传的一周销售日报，运行 scripts/weekly_report.py 计算环比，再写一段结论。\n')
+  await writeFile(join(directory, 'scripts', 'weekly_report.py'), 'import os\nprint(os.environ.get("DSH_INPUT_DIR", ""))\n')
+  await fixture.skillSubmissions.saveDraft(manifest, { directory: 'drafts/weekly' }, workspace)
 }
 fixture.router.post('/api/workbench/v1/test/agents/:agentId/disable', async (_request, context) => {
   await fixture.db.client`update agents set status = 'disabled' where tenant_id = ${testTenant} and id = ${context.params['agentId'] ?? ''}`

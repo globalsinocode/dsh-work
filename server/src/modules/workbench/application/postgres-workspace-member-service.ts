@@ -9,6 +9,7 @@ import {
   currentTeamAuthRevision,
   recordWorkspaceActivity,
 } from './workspace-activity-writer.ts'
+import { recordUserNotification } from '../../notification/user-notification-writer.ts'
 import { RequestError, invalidRequest } from '../../../domain/request-errors.ts'
 
 const tenantId = 'tenant-dsh-work'
@@ -269,6 +270,10 @@ export class PostgresWorkspaceMemberService {
         objectId: targetUserId,
         dedupeKey: `member_added:${targetUserId}:${inserted.joinedAt}`,
         metadata: { userId: targetUserId, role },
+      })
+      await recordUserNotification(transaction, {
+        recipientUserId: targetUserId, kind: 'workspace_member_added', workspaceId, objectType: 'workspace',
+        objectId: workspaceId, actorUserId, dedupeKey: `member_added:${workspaceId}:${inserted.joinedAt}`,
       })
       created = true
     })
@@ -735,7 +740,7 @@ export const workbenchAccessPredicate = /* sql */ `
     from user_roles ur
     join roles r on r.tenant_id = ur.tenant_id and r.id = ur.role_id
    where ur.tenant_id = u.tenant_id and ur.user_id = u.id
-     and ur.source_key = 'local'
+     and (ur.source_key = 'local' or ur.source_key like 'department:%')
      and (ur.valid_until is null or ur.valid_until > now())
      and r.status = 'active'
      and r.permissions ? 'workbench:use'

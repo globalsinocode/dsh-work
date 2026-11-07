@@ -127,7 +127,7 @@ function publishRuntimeToolCatalog(ctx, path, mode) {
 }
 
 const readTools = new Set(['read', 'read_image', 'glob', 'grep', 'web_fetch', 'web_search', 'get_goal', 'job_list', 'job_output', 'inspect_admin_state', 'prepare_skill_installation'])
-const retrySafeTools = new Set(['read', 'read_image', 'glob', 'grep', 'web_search', 'get_goal', 'job_list', 'job_output', 'inspect_admin_state', 'prepare_skill_installation', 'activate_skill', 'propose_memory', 'project_tasks_list', 'project_task_get', 'list_colleague_agents'])
+const retrySafeTools = new Set(['read', 'read_image', 'glob', 'grep', 'web_search', 'get_goal', 'job_list', 'job_output', 'inspect_admin_state', 'prepare_skill_installation', 'activate_skill', 'propose_memory', 'project_tasks_list', 'project_task_get', 'list_colleague_agents', 'list_available_skills'])
 const concurrentTools = new Set(['read', 'read_image', 'glob', 'grep', 'web_fetch', 'web_search', 'get_goal', 'job_list', 'job_output', 'inspect_admin_state'])
 const toolTimeoutSeconds = new Map([
   ['todo_write', 10], ['create_goal', 10], ['get_goal', 10], ['update_goal', 10],
@@ -613,6 +613,7 @@ function registerPlatformTools(ctx) {
             properties: {
               agentId: { type: 'string', minLength: 1, maxLength: 160 },
               reason: { type: 'string', minLength: 1, maxLength: 120 },
+              suggestedPrompt: { type: 'string', minLength: 1, maxLength: 500, description: 'Optional. The question to send to that colleague, written as the employee, stating the task itself (keep the objects, time and scope); never "who should I ask". Prefilled into the new conversation for the employee to confirm.' },
             },
             required: ['agentId', 'reason'],
             additionalProperties: false,
@@ -620,6 +621,25 @@ function registerPlatformTools(ctx) {
         },
       },
       required: ['recommendations'],
+      additionalProperties: false,
+    },
+  })
+  registerPlatformTool(ctx, socketPath, {
+    name: 'list_available_skills',
+    description: 'List the Skills the employee you are talking with can already use: published Skills from their Skill catalog and the platform built-in Skills (name and description). Check it before writing a new Skill so you do not duplicate one.',
+    parameters: {
+      type: 'object',
+      properties: { query: { type: 'string', maxLength: 100, description: 'Optional keyword to filter by name or description.' } },
+      additionalProperties: false,
+    },
+  })
+  registerPlatformTool(ctx, socketPath, {
+    name: 'skill_draft_save',
+    description: 'Save a Skill folder from the workspace as a draft for the employee. The folder must contain SKILL.md with name and description in its YAML frontmatter; write it with bash outside output/, input/ and skills/ (for example drafts/weekly-report). The platform validates it with the Skill package rules and returns compatibility. The employee sees a draft card under your reply and decides whether to submit it for review; you cannot submit or publish it.',
+    parameters: {
+      type: 'object',
+      properties: { directory: { type: 'string', minLength: 1, maxLength: 200, description: 'Folder path relative to the workspace root, for example drafts/weekly-report.' } },
+      required: ['directory'],
       additionalProperties: false,
     },
   })

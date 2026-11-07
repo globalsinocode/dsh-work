@@ -1,6 +1,7 @@
 import type { DatabaseTransaction } from '../../../infrastructure/postgres/database.ts'
 import { bumpTeamAuthRevision } from '../../authorization/postgres-workspace-grant-source-service.ts'
 import { recordWorkspaceActivity } from './workspace-activity-writer.ts'
+import { recordUserNotification } from '../../notification/user-notification-writer.ts'
 
 const tenantId = 'tenant-dsh-work'
 
@@ -46,6 +47,10 @@ export async function insertNewSpaceEmployeeMembers(
       objectId: userId,
       dedupeKey: `member_added:${userId}:${inserted!.joinedAt}`,
       metadata: { userId, role: 'member' },
+    })
+    await recordUserNotification(transaction, {
+      recipientUserId: userId, kind: 'workspace_member_added', workspaceId, objectType: 'workspace',
+      objectId: workspaceId, actorUserId, dedupeKey: `member_added:${workspaceId}:${inserted!.joinedAt}`,
     })
   }
   await bumpTeamAuthRevision(transaction, workspaceId)

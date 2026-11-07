@@ -4,7 +4,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import test from 'node:test'
-import { classifyServerTest, listServerTests } from './run-server-tests.mjs'
+import { classifyServerTest, descendantProcesses, listServerTests } from './run-server-tests.mjs'
 
 test('server tests are classified by file name', () => {
   assert.equal(classifyServerTest('src/http/a.test.ts'), 'unit')
@@ -37,4 +37,19 @@ test('runner CLI rejects unknown kinds and directories outside the server test r
   const outside = spawnSync(process.execPath, [cli, 'unit', '../e2e'], { encoding: 'utf8' })
   assert.equal(outside.status, 2)
   assert.match(outside.stderr, /只能选择/)
+})
+
+test('watchdog lists every process below the runner, including leaked grandchildren', () => {
+  const ps = [
+    '  1     0 /sbin/init',
+    ' 10     1 node --test a.test.ts b.test.ts',
+    ' 11    10 node --experimental-strip-types src/b.test.ts',
+    ' 12    11 node /tmp/mock/docker.mjs run --name dsh-py-0',
+    ' 13     1 node unrelated.js',
+  ].join('\n')
+  assert.deepEqual(descendantProcesses(ps, 10), [
+    '11 node --experimental-strip-types src/b.test.ts',
+    '12 node /tmp/mock/docker.mjs run --name dsh-py-0',
+  ])
+  assert.deepEqual(descendantProcesses(ps, 99), [])
 })

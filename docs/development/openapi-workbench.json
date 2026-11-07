@@ -23,83 +23,14 @@
       "get": {
         "operationId": "listAgentRoutineRecipientResults",
         "summary": "列出当前员工被指定接收且仍有空间读取权的 Agent 主动任务结果",
-        "responses": { "200": { "$ref": "#/components/responses/Ok" }, "403": { "$ref": "#/components/responses/Error" } }
-      }
-    },
-    "/integrations/weknora/status": {
-      "get": {
-        "operationId": "getWeknoraStatus",
-        "summary": "查询当前员工的 WeKnora 知识库连接状态",
-        "responses": { "200": { "$ref": "#/components/responses/Ok" }, "401": { "$ref": "#/components/responses/Error" }, "503": { "$ref": "#/components/responses/Error" } }
-      }
-    },
-    "/integrations/weknora/bind/start": {
-      "post": {
-        "operationId": "startWeknoraBind",
-        "summary": "开始把当前员工绑定到 WeKnora 账号",
-        "responses": { "200": { "$ref": "#/components/responses/Ok" }, "401": { "$ref": "#/components/responses/Error" }, "503": { "$ref": "#/components/responses/Error" } }
-      }
-    },
-    "/integrations/weknora/bind/callback": {
-      "get": {
-        "operationId": "completeWeknoraBindCallback",
-        "summary": "完成 WeKnora 绑定并重定向回知识库页",
-        "parameters": [
-          { "name": "state", "in": "query", "schema": { "type": "string" } },
-          { "name": "bind_code", "in": "query", "schema": { "type": "string" } },
-          { "name": "bind_error", "in": "query", "schema": { "type": "string" } }
-        ],
-        "responses": { "302": { "description": "重定向到知识库页" }, "503": { "$ref": "#/components/responses/Error" } }
-      }
-    },
-    "/integrations/weknora/link": {
-      "delete": {
-        "operationId": "unlinkWeknora",
-        "summary": "解除当前员工与 WeKnora 的绑定",
-        "responses": { "200": { "$ref": "#/components/responses/Ok" }, "401": { "$ref": "#/components/responses/Error" } }
-      }
-    },
-    "/integrations/weknora/knowledge-bases": {
-      "get": {
-        "operationId": "listWeknoraKnowledgeBases",
-        "summary": "列出当前员工可读的 WeKnora 知识库",
-        "responses": { "200": { "$ref": "#/components/responses/Ok" }, "401": { "$ref": "#/components/responses/Error" }, "503": { "$ref": "#/components/responses/Error" } }
-      }
-    },
-    "/integrations/weknora/knowledge-bases/{id}": {
-      "get": {
-        "operationId": "getWeknoraKnowledgeBase",
-        "summary": "读取一个 WeKnora 知识库",
-        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
-        "responses": { "200": { "$ref": "#/components/responses/Ok" }, "401": { "$ref": "#/components/responses/Error" }, "503": { "$ref": "#/components/responses/Error" } }
-      }
-    },
-    "/integrations/weknora/knowledge-bases/{id}/documents": {
-      "get": {
-        "operationId": "listWeknoraDocuments",
-        "summary": "列出一个 WeKnora 知识库中的文档",
-        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
-        "responses": { "200": { "$ref": "#/components/responses/Ok" }, "401": { "$ref": "#/components/responses/Error" }, "503": { "$ref": "#/components/responses/Error" } }
-      }
-    },
-    "/integrations/weknora/knowledge-bases/{id}/search": {
-      "post": {
-        "operationId": "searchWeknoraKnowledgeBase",
-        "summary": "在一个 WeKnora 知识库中检索",
-        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
-        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["query"], "properties": { "query": { "type": "string" } } } } } },
-        "responses": { "200": { "$ref": "#/components/responses/Ok" }, "401": { "$ref": "#/components/responses/Error" }, "422": { "$ref": "#/components/responses/Error" }, "503": { "$ref": "#/components/responses/Error" } }
-      }
-    },
-    "/integrations/weknora/documents/{id}/content": {
-      "get": {
-        "operationId": "getWeknoraDocumentContent",
-        "summary": "读取一份 WeKnora 文档内容",
-        "parameters": [
-          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } },
-          { "name": "disposition", "in": "query", "schema": { "type": "string", "enum": ["inline", "attachment"] } }
-        ],
-        "responses": { "200": { "description": "上游文档内容" }, "401": { "$ref": "#/components/responses/Error" }, "503": { "$ref": "#/components/responses/Error" } }
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
       }
     },
     "/session": {
@@ -111,6 +42,29 @@
             "$ref": "#/components/responses/Ok"
           },
           "401": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/me/dingtalk-binding": {
+      "get": {
+        "operationId": "getMyDingTalkBinding",
+        "summary": "用户中心 › 钉钉：本人的钉钉绑定（钉钉接入 DT-S1）。enabled 为部署是否配置了钉钉应用（AI Hub 账号恒为 false）；status 为 bound / unbound / invalid，含钉钉姓名与部门、绑定方式（本人 / 管理员及其姓名）、失效原因与是否被锁定自行绑定",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          }
+        }
+      },
+      "delete": {
+        "operationId": "unbindMyDingTalk",
+        "summary": "员工自行解除钉钉绑定：绑定失效并在同一事务中按 binding_id 撤销钉钉会话（含当前的钉钉会话），写审计；不锁定自行绑定，之后在钉钉内登录一次可重新绑定。没有有效绑定时返回 404",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "404": {
             "$ref": "#/components/responses/Error"
           }
         }
@@ -192,260 +146,6 @@
           "422": {
             "$ref": "#/components/responses/Error"
           }
-        }
-      }
-    },
-    "/me/push/config": {
-      "get": {
-        "operationId": "getPushConfig",
-        "summary": "读取 Web Push 公钥",
-        "responses": {
-          "200": {
-            "description": "VAPID 公钥",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "allOf": [
-                    { "$ref": "#/components/schemas/Envelope" },
-                    {
-                      "type": "object",
-                      "properties": {
-                        "data": { "$ref": "#/components/schemas/PushConfig" }
-                      }
-                    }
-                  ]
-                }
-              }
-            }
-          },
-          "401": { "$ref": "#/components/responses/Error" },
-          "503": { "$ref": "#/components/responses/Error" }
-        }
-      }
-    },
-    "/me/push/subscriptions": {
-      "put": {
-        "operationId": "upsertPushSubscription",
-        "summary": "登记或更新本机 Push 订阅",
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": { "$ref": "#/components/schemas/PushSubscriptionInput" }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "订阅已保存",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "allOf": [
-                    { "$ref": "#/components/schemas/Envelope" },
-                    {
-                      "type": "object",
-                      "properties": {
-                        "data": { "$ref": "#/components/schemas/PushSubscriptionUpsertResult" }
-                      }
-                    }
-                  ]
-                }
-              }
-            }
-          },
-          "401": { "$ref": "#/components/responses/Error" },
-          "422": { "$ref": "#/components/responses/Error" },
-          "503": { "$ref": "#/components/responses/Error" }
-        }
-      },
-      "delete": {
-        "operationId": "deletePushSubscription",
-        "summary": "注销本机 Push 订阅",
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": { "$ref": "#/components/schemas/PushSubscriptionDeleteInput" }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "订阅已删除",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "allOf": [
-                    { "$ref": "#/components/schemas/Envelope" },
-                    {
-                      "type": "object",
-                      "properties": {
-                        "data": { "$ref": "#/components/schemas/PushSubscriptionDeleteResult" }
-                      }
-                    }
-                  ]
-                }
-              }
-            }
-          },
-          "401": { "$ref": "#/components/responses/Error" },
-          "422": { "$ref": "#/components/responses/Error" }
-        }
-      }
-    },
-    "/me/notification-preferences": {
-      "get": {
-        "operationId": "getNotificationPreferences",
-        "summary": "读取通知偏好",
-        "responses": {
-          "200": {
-            "description": "通知偏好",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "allOf": [
-                    { "$ref": "#/components/schemas/Envelope" },
-                    {
-                      "type": "object",
-                      "properties": {
-                        "data": { "$ref": "#/components/schemas/NotificationPreferences" }
-                      }
-                    }
-                  ]
-                }
-              }
-            }
-          },
-          "401": { "$ref": "#/components/responses/Error" }
-        }
-      },
-      "patch": {
-        "operationId": "patchNotificationPreferences",
-        "summary": "更新通知偏好",
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": { "$ref": "#/components/schemas/NotificationPreferencesPatch" }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "保存后的通知偏好",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "allOf": [
-                    { "$ref": "#/components/schemas/Envelope" },
-                    {
-                      "type": "object",
-                      "properties": {
-                        "data": { "$ref": "#/components/schemas/NotificationPreferences" }
-                      }
-                    }
-                  ]
-                }
-              }
-            }
-          },
-          "401": { "$ref": "#/components/responses/Error" },
-          "422": { "$ref": "#/components/responses/Error" }
-        }
-      }
-    },
-    "/me/direct-conversations": {
-      "get": {
-        "operationId": "listDirectConversations",
-        "summary": "同事私聊列表（本人）",
-        "description": "移动端一对一私聊。不并入 conversation-targets，PC 员工端不使用。只含已有消息且本人未隐藏的私聊。",
-        "parameters": [
-          { "name": "cursor", "in": "query", "schema": { "type": "string" } },
-          { "name": "limit", "in": "query", "schema": { "type": "integer", "minimum": 1, "maximum": 100, "default": 30 } }
-        ],
-        "responses": {
-          "200": { "description": "私聊行，id 为对方用户 id" },
-          "401": { "$ref": "#/components/responses/Error" },
-          "422": { "$ref": "#/components/responses/Error" }
-        }
-      }
-    },
-    "/direct-conversations/with/{userId}": {
-      "get": {
-        "operationId": "lookupDirectConversation",
-        "summary": "查看与某同事是否已有私聊",
-        "parameters": [{ "name": "userId", "in": "path", "required": true, "schema": { "type": "string" } }],
-        "responses": {
-          "200": { "description": "conversationId 为空表示尚未发言" },
-          "401": { "$ref": "#/components/responses/Error" },
-          "404": { "$ref": "#/components/responses/Error" },
-          "422": { "$ref": "#/components/responses/Error" }
-        }
-      }
-    },
-    "/direct-conversations/with/{userId}/messages": {
-      "post": {
-        "operationId": "sendDirectMessage",
-        "summary": "发送同事私聊",
-        "description": "同一事务内保证两人只有一条私聊并追加文本。不创建 Run，不写入 sessions。",
-        "parameters": [{ "name": "userId", "in": "path", "required": true, "schema": { "type": "string" } }],
-        "requestBody": {
-          "required": true,
-          "content": { "application/json": { "schema": { "type": "object", "required": ["content"], "properties": { "content": { "type": "string", "minLength": 1, "maxLength": 20000 } } } } }
-        },
-        "responses": {
-          "200": { "description": "刚写入的消息" },
-          "401": { "$ref": "#/components/responses/Error" },
-          "404": { "$ref": "#/components/responses/Error" },
-          "422": { "$ref": "#/components/responses/Error" }
-        }
-      }
-    },
-    "/direct-conversations/with/{userId}/read": {
-      "post": {
-        "operationId": "markDirectConversationRead",
-        "summary": "私聊已读位置只进不退",
-        "parameters": [{ "name": "userId", "in": "path", "required": true, "schema": { "type": "string" } }],
-        "requestBody": {
-          "required": true,
-          "content": { "application/json": { "schema": { "type": "object", "properties": { "upTo": { "type": "string", "format": "date-time" } } } } }
-        },
-        "responses": {
-          "200": { "description": "对方用户 id 与已读时间" },
-          "401": { "$ref": "#/components/responses/Error" },
-          "404": { "$ref": "#/components/responses/Error" },
-          "422": { "$ref": "#/components/responses/Error" }
-        }
-      }
-    },
-    "/direct-conversations/{id}/messages": {
-      "get": {
-        "operationId": "listDirectMessages",
-        "summary": "读取私聊消息",
-        "parameters": [
-          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } },
-          { "name": "cursor", "in": "query", "schema": { "type": "string" } },
-          { "name": "limit", "in": "query", "schema": { "type": "integer", "minimum": 1, "maximum": 100, "default": 30 } }
-        ],
-        "responses": {
-          "200": { "description": "本页按时间从早到晚；nextCursor 取更早的消息" },
-          "401": { "$ref": "#/components/responses/Error" },
-          "404": { "$ref": "#/components/responses/Error" },
-          "422": { "$ref": "#/components/responses/Error" }
-        }
-      }
-    },
-    "/direct-conversations/{id}/hide": {
-      "post": {
-        "operationId": "hideDirectConversation",
-        "summary": "从本人列表隐藏私聊",
-        "description": "不删除消息。对方再发来一条后重新出现。",
-        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
-        "responses": {
-          "200": { "description": "已隐藏" },
-          "401": { "$ref": "#/components/responses/Error" },
-          "404": { "$ref": "#/components/responses/Error" }
         }
       }
     },
@@ -677,15 +377,24 @@
               "application/json": {
                 "schema": {
                   "allOf": [
-                    { "$ref": "#/components/schemas/Envelope" },
+                    {
+                      "$ref": "#/components/schemas/Envelope"
+                    },
                     {
                       "type": "object",
                       "properties": {
                         "data": {
                           "type": "object",
-                          "required": ["items"],
+                          "required": [
+                            "items"
+                          ],
                           "properties": {
-                            "items": { "type": "array", "items": { "$ref": "#/components/schemas/MentionSummary" } }
+                            "items": {
+                              "type": "array",
+                              "items": {
+                                "$ref": "#/components/schemas/MentionSummary"
+                              }
+                            }
                           }
                         }
                       }
@@ -695,7 +404,243 @@
               }
             }
           },
-          "401": { "$ref": "#/components/responses/Error" }
+          "401": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/me/notifications": {
+      "get": {
+        "operationId": "listMyNotifications",
+        "summary": "本人的站内通知",
+        "description": "站内通知方案 NC-S1：与本人相关的事件（@ 我、任务指派给我、我创建的任务完成、被加入项目、定时执行暂停或停止、定时任务没成功、Skill 审核结论），按时间倒序，只含最近 90 天。每条读取时按本人当前权限重新判断：不可见时 visible=false，且不返回名称与跳转目标。",
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "all",
+                "unread"
+              ],
+              "default": "all"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 50,
+              "default": 20
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "通知分页",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/Envelope"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "type": "object",
+                          "required": [
+                            "items",
+                            "nextCursor"
+                          ],
+                          "properties": {
+                            "items": {
+                              "type": "array",
+                              "items": {
+                                "$ref": "#/components/schemas/UserNotification"
+                              }
+                            },
+                            "nextCursor": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            }
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/me/notifications/unread-count": {
+      "get": {
+        "operationId": "getMyNotificationUnreadCount",
+        "summary": "本人未读通知数",
+        "description": "未读、仍可见、在保留期内的通知条数；按空间静音的项目不计（@ 我不受静音影响）。",
+        "responses": {
+          "200": {
+            "description": "未读数",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/Envelope"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "type": "object",
+                          "required": [
+                            "unread"
+                          ],
+                          "properties": {
+                            "unread": {
+                              "type": "integer",
+                              "minimum": 0
+                            }
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/me/notifications/read-all": {
+      "post": {
+        "operationId": "markAllMyNotificationsRead",
+        "summary": "全部标为已读",
+        "description": "只改本人通知的已读状态，不改变业务数据。",
+        "responses": {
+          "200": {
+            "description": "已标记的条数",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/Envelope"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "type": "object",
+                          "required": [
+                            "read"
+                          ],
+                          "properties": {
+                            "read": {
+                              "type": "integer",
+                              "minimum": 0
+                            }
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/me/notifications/{notificationId}/read": {
+      "post": {
+        "operationId": "markMyNotificationRead",
+        "summary": "标记一条通知已读",
+        "parameters": [
+          {
+            "name": "notificationId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "已读",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/Envelope"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "type": "object",
+                          "required": [
+                            "id",
+                            "read"
+                          ],
+                          "properties": {
+                            "id": {
+                              "type": "string"
+                            },
+                            "read": {
+                              "type": "boolean",
+                              "const": true
+                            }
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          }
         }
       }
     },
@@ -710,20 +655,36 @@
             "application/json": {
               "schema": {
                 "type": "object",
-                "required": ["workspaceId"],
+                "required": [
+                  "workspaceId"
+                ],
                 "properties": {
-                  "workspaceId": { "type": "string", "maxLength": 200 },
-                  "sessionId": { "type": "string", "maxLength": 200 }
+                  "workspaceId": {
+                    "type": "string",
+                    "maxLength": 200
+                  },
+                  "sessionId": {
+                    "type": "string",
+                    "maxLength": 200
+                  }
                 }
               }
             }
           }
         },
         "responses": {
-          "200": { "$ref": "#/components/responses/Ok" },
-          "401": { "$ref": "#/components/responses/Error" },
-          "404": { "$ref": "#/components/responses/Error" },
-          "422": { "$ref": "#/components/responses/Error" }
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          }
         }
       }
     },
@@ -868,6 +829,126 @@
         }
       }
     },
+    "/skill-submissions/{submissionId}/submit": {
+      "parameters": [
+        {
+          "name": "submissionId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "post": {
+        "operationId": "submitSkillDraft",
+        "summary": "员工在草稿卡片上把本人的 Skill 草稿提交平台管理员审核（Skill 创建专家方案 4.3）",
+        "description": "只能提交本人的、当前版本的、非不兼容的草稿；已待审核时重复提交不改变状态。同一员工同时待审核不超过 5 条，超出返回 409。模型没有对应工具，提交只能由员工发起。",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "versionId"
+                ],
+                "properties": {
+                  "versionId": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error",
+            "description": "草稿不存在或不是本人的"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error",
+            "description": "不是当前版本、版本不兼容、已审核或待审核已达上限"
+          }
+        }
+      }
+    },
+    "/skill-submissions/{submissionId}/withdraw": {
+      "parameters": [
+        {
+          "name": "submissionId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "post": {
+        "operationId": "withdrawSkillDraft",
+        "summary": "员工撤回本人尚未审核的 Skill 提交，回到草稿",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error",
+            "description": "草稿不存在或不是本人的"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error",
+            "description": "只有等待审核的提交可以撤回"
+          }
+        }
+      }
+    },
+    "/skill-submissions/{submissionId}/versions/{versionId}/file": {
+      "parameters": [
+        {
+          "name": "submissionId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "versionId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "get": {
+        "operationId": "getSkillDraftFile",
+        "summary": "草稿卡片预览：读取本人某个草稿版本中的一个文本文件（默认 SKILL.md）",
+        "parameters": [
+          {
+            "name": "path",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "default": "SKILL.md"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error",
+            "description": "草稿或文件不存在，或不是本人的"
+          }
+        }
+      }
+    },
     "/workspaces": {
       "get": {
         "operationId": "listMyWorkspaces",
@@ -917,14 +998,18 @@
                   },
                   "agentIds": {
                     "type": "array",
-                    "items": { "type": "string" },
+                    "items": {
+                      "type": "string"
+                    },
                     "minItems": 1,
                     "maxItems": 10,
                     "description": "创建时加入的 Agent ID；省略时为平台默认 Agent。"
                   },
                   "memberUserIds": {
                     "type": "array",
-                    "items": { "type": "string" },
+                    "items": {
+                      "type": "string"
+                    },
                     "maxItems": 50,
                     "description": "创建时一并加入的同事（用户 ID），角色为成员；省略时只有创建者。"
                   }
@@ -965,14 +1050,42 @@
                 "type": "object",
                 "additionalProperties": false,
                 "properties": {
-                  "agentIds": { "type": "array", "items": { "type": "string" }, "maxItems": 10 },
-                  "memberUserIds": { "type": "array", "items": { "type": "string" }, "maxItems": 50 }
+                  "agentIds": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "maxItems": 10
+                  },
+                  "memberUserIds": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "maxItems": 50
+                  }
                 }
               }
             }
           }
         },
-        "responses": { "200": { "$ref": "#/components/responses/Ok" }, "403": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" }, "422": { "$ref": "#/components/responses/Error" } }
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
       }
     },
     "/member-candidates": {
@@ -981,11 +1094,44 @@
         "summary": "搜索新建项目空间（群组）时可一并加入的企业业务员工",
         "description": "与 GET /workspaces/{workspaceId}/member-candidates 同一口径（在职、业务员工、有员工工作台权限，仅返回姓名与部门），不含调用者本人。任何员工工作台用户都可新建空间，因此只要求工作台身份。envelope.data 为 MemberCandidatePage。",
         "parameters": [
-          { "name": "query", "in": "query", "schema": { "type": "string" }, "description": "按姓名模糊搜索；省略时按目录顺序返回。" },
-          { "name": "cursor", "in": "query", "schema": { "type": "string" }, "description": "上一页返回的 nextCursor 游标。" },
-          { "name": "limit", "in": "query", "schema": { "type": "integer", "minimum": 1, "maximum": 100, "default": 20 } }
+          {
+            "name": "query",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "按姓名模糊搜索；省略时按目录顺序返回。"
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "上一页返回的 nextCursor 游标。"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 20
+            }
+          }
         ],
-        "responses": { "200": { "$ref": "#/components/responses/Ok" }, "403": { "$ref": "#/components/responses/Error" }, "422": { "$ref": "#/components/responses/Error" } }
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
       }
     },
     "/workspaces/{workspaceId}/files": {
@@ -1066,6 +1212,9 @@
           "201": {
             "$ref": "#/components/responses/Ok"
           },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
           "422": {
             "description": "请求校验失败：文件过大、类型不支持、安全检查未通过、编码无效等（HTTP 层没有 413 分类，超限同样以 422 返回）",
             "content": {
@@ -1075,9 +1224,6 @@
                 }
               }
             }
-          },
-          "403": {
-            "$ref": "#/components/responses/Error"
           }
         }
       }
@@ -1183,9 +1329,6 @@
           }
         },
         "responses": {
-          "201": {
-            "$ref": "#/components/responses/Ok"
-          },
           "200": {
             "description": "重复添加同一角色时返回当前成员状态",
             "content": {
@@ -1195,6 +1338,9 @@
                 }
               }
             }
+          },
+          "201": {
+            "$ref": "#/components/responses/Ok"
           },
           "403": {
             "$ref": "#/components/responses/Error"
@@ -1409,100 +1555,395 @@
         "operationId": "previewMemberDisclosureImpact",
         "summary": "预览添加成员对 Agent 可交付数据范围的影响（负责人、管理员）",
         "description": "项目空间 S0：团队空间的 Agent 交付数据范围取全体现任成员的交集。把查询参数 userId 指定的员工视为成员计算，返回会失去部分可交付数据范围的 Agent 成员（agentMemberId、name、lostDataScopes）；只读，不改变状态。归档空间拒绝。个人工作空间不支持。",
-        "parameters": [{ "name": "userId", "in": "query", "required": true, "schema": { "type": "string" } }],
-        "responses": { "200": { "$ref": "#/components/responses/Ok" }, "403": { "$ref": "#/components/responses/Error" }, "422": { "$ref": "#/components/responses/Error" } }
+        "parameters": [
+          {
+            "name": "userId",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
       }
     },
     "/workspaces/{workspaceId}/brief": {
-      "parameters": [{ "name": "workspaceId", "in": "path", "required": true, "schema": { "type": "string" } }],
+      "parameters": [
+        {
+          "name": "workspaceId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
       "get": {
         "operationId": "getProjectBrief",
         "summary": "查询项目简报（全部成员）",
         "description": "项目空间 S1：返回最新版本的项目简报（versionId、versionNo、content、dueDate、updatedBy、updatedAt），尚未填写时为 null。读取轨：归档空间的现任成员可读。个人工作空间返回 422。",
-        "responses": { "200": { "$ref": "#/components/responses/Ok" }, "403": { "$ref": "#/components/responses/Error" }, "422": { "$ref": "#/components/responses/Error" } }
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
       },
       "put": {
         "operationId": "saveProjectBrief",
         "summary": "保存项目简报（负责人、管理员）",
         "description": "项目空间 S1：请求体 content（1～8000 字）与可选 dueDate（YYYY-MM-DD 或 null）；每次保存生成新版本并写入最近动态，不覆盖历史版本。归档空间拒绝。",
-        "responses": { "200": { "$ref": "#/components/responses/Ok" }, "403": { "$ref": "#/components/responses/Error" }, "422": { "$ref": "#/components/responses/Error" } }
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
       }
     },
     "/workspaces/{workspaceId}/project-tasks": {
-      "parameters": [{ "name": "workspaceId", "in": "path", "required": true, "schema": { "type": "string" } }],
+      "parameters": [
+        {
+          "name": "workspaceId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
       "get": {
         "operationId": "listProjectTasks",
         "summary": "查询项目任务（全部成员，游标分页）",
         "description": "项目空间 S1：按 created_at、id 倒序返回未移除的任务，响应为 { items, nextCursor, total }；limit 默认 50、最大 100（超出返回 422），nextCursor 非空时作为 cursor 取下一页；sessionId 只返回绑定该线程的任务（用于判断当前线程是否为任务），total 始终是空间内全部未移除任务数。S4 起两类任务的 status 都取存储状态（todo/in_progress/done，由人推进），单次执行结果见 latestRunStatus、latestRunAt；Agent 任务另返回 schedule（kind manual/daily/weekly、timezone、timeOfDay、weekdays）、scheduleState（active/paused/stopped）、scheduleReason 与 nextRunAt；allowedActions 按当前角色给出（含 resume）。读取轨：归档空间可读。",
         "parameters": [
-          { "name": "limit", "in": "query", "required": false, "schema": { "type": "integer", "minimum": 1, "maximum": 100, "default": 50 } },
-          { "name": "cursor", "in": "query", "required": false, "schema": { "type": "string" } },
-          { "name": "sessionId", "in": "query", "required": false, "schema": { "type": "string" } }
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 50
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "sessionId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
         ],
-        "responses": { "200": { "$ref": "#/components/responses/Ok" }, "403": { "$ref": "#/components/responses/Error" }, "422": { "$ref": "#/components/responses/Error" } }
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
       },
       "post": {
         "operationId": "createProjectTask",
         "summary": "创建项目任务（非只读成员）",
         "description": "项目空间 S1/S3：请求体 title、可选 description、assignee（type 为 employee 或 agent，id 为员工用户 ID 或 Agent 成员 ID）、可选 inputFileIds（仅 Agent 任务，本空间已解析成功的共享文件版本对象，最多 5 个）与 dueDate；S4：Agent 任务可选 schedule（{ kind: manual|daily|weekly, timeOfDay: HH:mm, weekdays: 0～6 }，缺省每天 09:00，时区取平台默认）与 startNow（保存并立即执行，响应为已开始执行的任务）；员工任务带 schedule 返回 422；每个空间未完成的定时 Agent 任务超过 20 个返回 409。只读成员不能承接任务。两类任务创建时都建立任务对话（返回的 sessionId），首条消息为任务标题与说明。",
-        "responses": { "201": { "$ref": "#/components/responses/Ok" }, "403": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" }, "422": { "$ref": "#/components/responses/Error" } }
+        "responses": {
+          "201": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
       }
     },
     "/workspaces/{workspaceId}/project-tasks/{taskId}": {
-      "parameters": [{ "name": "workspaceId", "in": "path", "required": true, "schema": { "type": "string" } }, { "name": "taskId", "in": "path", "required": true, "schema": { "type": "string" } }],
+      "parameters": [
+        {
+          "name": "workspaceId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "taskId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
       "get": {
         "operationId": "getProjectTask",
         "summary": "读取单个项目任务（全部现任成员）",
         "description": "项目空间任务详情页使用。读取轨：全部现任成员（含只读成员）可读，空间归档后仍可读；allowedActions 按调用者角色与空间状态裁剪。已移除或不存在的任务返回 404，非成员与个人空间按不可枚举文案拒绝。",
-        "responses": { "200": { "$ref": "#/components/responses/Ok" }, "403": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" }, "422": { "$ref": "#/components/responses/Error" } }
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
       },
       "patch": {
         "operationId": "updateProjectTask",
         "summary": "编辑项目任务（创建人、负责人、管理员）",
         "description": "项目空间 S1/S3：可改 title、description、assignee、inputFileIds、dueDate；S4：Agent 任务可改 schedule（修改人接替为规则设置人，清除暂停并写入 schedule_changed 事件），改派给员工时删除执行规则，从员工改派给 Agent 时缺省每天 09:00。改派只在任务对话没有执行中的 Run 时允许；员工换员工沿用原任务对话并记改派事件，跨类型改派或换 Agent 从新的任务对话开始。",
-        "responses": { "200": { "$ref": "#/components/responses/Ok" }, "403": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" }, "422": { "$ref": "#/components/responses/Error" } }
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
       },
       "delete": {
         "operationId": "removeProjectTask",
         "summary": "移除项目任务（创建人、负责人、管理员）",
         "description": "项目空间 S1：逻辑移除；任务线程与成果保留。执行中的任务不能移除。",
-        "responses": { "200": { "$ref": "#/components/responses/Ok" }, "403": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" }, "422": { "$ref": "#/components/responses/Error" } }
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
       }
     },
     "/workspaces/{workspaceId}/project-tasks/{taskId}/events": {
-      "parameters": [{ "name": "workspaceId", "in": "path", "required": true, "schema": { "type": "string" } }, { "name": "taskId", "in": "path", "required": true, "schema": { "type": "string" } }],
+      "parameters": [
+        {
+          "name": "workspaceId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "taskId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
       "get": {
         "operationId": "listProjectTaskEvents",
         "summary": "读取项目任务事件（全部现任成员）",
         "description": "项目空间 S3：员工任务的状态推进（status_changed，metadata.from/to/auto）、完成（completed，metadata.note/deliverables）与同类改派（reassigned，metadata.from/to）；S4 起还有 schedule_changed（metadata.schedule）、schedule_paused / schedule_stopped（metadata.reason）、schedule_resumed、scheduled_run（metadata.slot/runId）、execution_skipped（metadata.slot/reason）、execution_missed（metadata.from/to/count），定时类事件的 actor 是规则设置人（仅归因）。按发生时间正序；在任务对话中作为系统记录展示。读取轨，归档可读；已移除或不存在的任务返回 404。",
-        "responses": { "200": { "$ref": "#/components/responses/Ok" }, "403": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" }, "422": { "$ref": "#/components/responses/Error" } }
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
       }
     },
     "/workspaces/{workspaceId}/project-tasks/{taskId}/start": {
-      "parameters": [{ "name": "workspaceId", "in": "path", "required": true, "schema": { "type": "string" } }, { "name": "taskId", "in": "path", "required": true, "schema": { "type": "string" } }],
+      "parameters": [
+        {
+          "name": "workspaceId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "taskId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
       "post": {
         "operationId": "startProjectTask",
         "summary": "立即执行 Agent 任务（非只读成员）",
         "description": "项目空间 S1/S3/S4：在任务对话中发起一次执行（任何执行规则下都可用），带上任务引用的文件，并经既有 Run/Attempt 执行；Manifest 携带当前项目简报版本（project_context）。需要 idempotencyKey（请求体或 Idempotency-Key 头）；可选 prompt 为成员写下的补充要求，缺省以开始执行的指令发起。缺省时第一次以开始执行的指令、之后以定时执行的固定提示发起。执行中或任务已完成返回 409。",
-        "responses": { "202": { "$ref": "#/components/responses/Ok" }, "403": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" }, "422": { "$ref": "#/components/responses/Error" } }
+        "responses": {
+          "202": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
       }
     },
     "/workspaces/{workspaceId}/project-tasks/{taskId}/status": {
-      "parameters": [{ "name": "workspaceId", "in": "path", "required": true, "schema": { "type": "string" } }, { "name": "taskId", "in": "path", "required": true, "schema": { "type": "string" } }],
+      "parameters": [
+        {
+          "name": "workspaceId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "taskId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
       "post": {
         "operationId": "setProjectTaskStatus",
         "summary": "更新任务状态（员工任务：任务负责人、创建人、空间负责人、管理员；Agent 任务：创建人、空间负责人、管理员）",
         "description": "项目空间 S1/S4：请求体 status（todo/in_progress/done）；完成时可附 completionNote 与 deliverableFileIds（本空间共享文件版本对象）。Agent 任务标记完成时停止定时执行，改回待办或进行中时从当前时刻恢复；执行中标记完成返回 409。",
-        "responses": { "200": { "$ref": "#/components/responses/Ok" }, "403": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" }, "422": { "$ref": "#/components/responses/Error" } }
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
       }
     },
     "/workspaces/{workspaceId}/project-tasks/{taskId}/schedule/resume": {
-      "parameters": [{ "name": "workspaceId", "in": "path", "required": true, "schema": { "type": "string" } }, { "name": "taskId", "in": "path", "required": true, "schema": { "type": "string" } }],
+      "parameters": [
+        {
+          "name": "workspaceId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "taskId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
       "post": {
         "operationId": "resumeProjectTaskSchedule",
         "summary": "恢复已暂停的定时执行（创建人、空间负责人、管理员）",
         "description": "项目空间 S4：恢复因连续失败或规则设置人失去发起资格而暂停的定时执行；恢复人接替为规则设置人，失败计数清零，从当前时刻计算下次时间点，写入 schedule_resumed 事件。未暂停或员工任务返回 409。",
-        "responses": { "200": { "$ref": "#/components/responses/Ok" }, "403": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" }, "422": { "$ref": "#/components/responses/Error" } }
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
       }
     },
     "/workspaces/{workspaceId}/project-archive": {
@@ -1980,105 +2421,6 @@
         "description": "逻辑移除：保留 archived 响应字段，增加 removedFromHistory=true、physicalDeletion=false。停止出现在历史/最近列表，不物理删除消息/运行/文件/成果；不提供恢复。幂等但仍复核当前作者和空间访问。"
       }
     },
-    "/runs/{runId}/export": {
-      "parameters": [
-        {
-          "name": "runId",
-          "in": "path",
-          "required": true,
-          "schema": {
-            "type": "string"
-          }
-        }
-      ],
-      "get": {
-        "operationId": "exportRunMarkdown",
-        "summary": "把本人可访问的 Run 导出为 Markdown 附件",
-        "responses": {
-          "200": {
-            "description": "Markdown 附件",
-            "content": {
-              "text/markdown": {
-                "schema": {
-                  "type": "string"
-                }
-              }
-            }
-          },
-          "404": {
-            "$ref": "#/components/responses/Error"
-          }
-        }
-      }
-    },
-    "/sessions/{sessionId}/export": {
-      "parameters": [
-        {
-          "$ref": "#/components/parameters/SessionId"
-        }
-      ],
-      "get": {
-        "operationId": "exportSessionMarkdown",
-        "summary": "把本人可访问的会话导出为 Markdown 附件",
-        "responses": {
-          "200": {
-            "description": "Markdown 附件",
-            "content": {
-              "text/markdown": {
-                "schema": {
-                  "type": "string"
-                }
-              }
-            }
-          },
-          "403": {
-            "$ref": "#/components/responses/Error"
-          }
-        }
-      }
-    },
-    "/sessions/{sessionId}/discard-draft": {
-      "parameters": [
-        {
-          "$ref": "#/components/parameters/SessionId"
-        }
-      ],
-      "post": {
-        "operationId": "discardEmptyDraftSession",
-        "summary": "丢弃尚未产生任何消息的草稿会话（按 clientIntentId 幂等）",
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": false,
-                "required": [
-                  "clientIntentId"
-                ],
-                "properties": {
-                  "clientIntentId": {
-                    "type": "string",
-                    "minLength": 1
-                  }
-                }
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "$ref": "#/components/responses/Ok"
-          },
-          "403": {
-            "$ref": "#/components/responses/Error"
-          },
-          "404": {
-            "$ref": "#/components/responses/Error"
-          }
-        }
-      }
-    },
     "/sessions/{sessionId}/summary": {
       "parameters": [
         {
@@ -2278,56 +2620,6 @@
           "409": {
             "$ref": "#/components/responses/Error"
           }
-        }
-      }
-    },
-    "/runs/{runId}/approval": {
-      "parameters": [
-        {
-          "$ref": "#/components/parameters/RunId"
-        }
-      ],
-      "post": {
-        "operationId": "resolveRunApproval",
-        "summary": "发起人确认本次 Run 的待决审批",
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "required": ["decision"],
-                "properties": {
-                  "decision": {
-                    "type": "string",
-                    "enum": ["approved", "rejected"]
-                  }
-                }
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "决议已记录",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "allOf": [
-                    { "$ref": "#/components/schemas/Envelope" },
-                    {
-                      "type": "object",
-                      "properties": {
-                        "data": { "$ref": "#/components/schemas/RunApprovalResolution" }
-                      }
-                    }
-                  ]
-                }
-              }
-            }
-          },
-          "403": { "$ref": "#/components/responses/Error" },
-          "409": { "$ref": "#/components/responses/Error" }
         }
       }
     },
@@ -3112,70 +3404,6 @@
         }
       }
     },
-    "/notifications": {
-      "get": {
-        "operationId": "listAccountNotifications",
-        "summary": "账号级通知收件箱（sequence 游标）",
-        "parameters": [
-          {
-            "name": "limit",
-            "in": "query",
-            "schema": { "type": "integer", "minimum": 1, "maximum": 100 }
-          },
-          { "name": "cursor", "in": "query", "schema": { "type": "string" } },
-          { "name": "unread", "in": "query", "schema": { "type": "boolean" } },
-          { "name": "workspaceId", "in": "query", "schema": { "type": "string" } }
-        ],
-        "responses": {
-          "200": { "description": "通知分页", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Envelope" } } } }
-        }
-      }
-    },
-    "/notifications/counts": {
-      "get": {
-        "operationId": "getAccountNotificationCounts",
-        "summary": "账号级未读计数（按空间拆分）",
-        "responses": {
-          "200": { "description": "未读计数", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Envelope" } } } }
-        }
-      }
-    },
-    "/notifications/read": {
-      "post": {
-        "operationId": "markAccountNotificationsRead",
-        "summary": "按 sequence 标记已读",
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "required": ["throughSequence"],
-                "properties": {
-                  "throughSequence": { "type": "integer", "minimum": 0 },
-                  "workspaceId": { "type": "string" }
-                }
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": { "description": "已读水位", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Envelope" } } } }
-        }
-      }
-    },
-    "/notifications/events": {
-      "get": {
-        "operationId": "streamAccountNotificationEvents",
-        "summary": "账号级通知 SSE（仅推送 sequence 失效信号）",
-        "parameters": [
-          { "name": "since", "in": "query", "schema": { "type": "integer", "minimum": 0 } }
-        ],
-        "responses": {
-          "200": { "description": "text/event-stream" }
-        }
-      }
-    },
     "/workspaces/{workspaceId}/usage": {
       "parameters": [
         {
@@ -3232,41 +3460,6 @@
             "$ref": "#/components/responses/Error"
           }
         }
-      }
-    },
-    "/mcp-grants": {
-      "get": {
-        "operationId": "listMcpUserGrants",
-        "summary": "列出当前员工的外部 MCP 授权状态",
-        "responses": { "200": { "$ref": "#/components/responses/Ok" } }
-      }
-    },
-    "/mcp-grants/{connectorId}/authorization": {
-      "post": {
-        "operationId": "beginMcpUserGrantAuthorization",
-        "summary": "开始员工 OAuth 授权",
-        "responses": { "200": { "$ref": "#/components/responses/Ok" } }
-      }
-    },
-    "/mcp-grants/callback": {
-      "get": {
-        "operationId": "completeMcpUserGrantAuthorization",
-        "summary": "OAuth 回调换票",
-        "responses": { "302": { "description": "Redirect to settings" } }
-      }
-    },
-    "/mcp-grants/{connectorId}": {
-      "delete": {
-        "operationId": "revokeMcpUserGrant",
-        "summary": "解除员工 MCP 授权",
-        "responses": { "200": { "$ref": "#/components/responses/Ok" } }
-      }
-    },
-    "/agents/{agentId}/mcp-access": {
-      "get": {
-        "operationId": "getAgentMcpAccess",
-        "summary": "发送前检查 MCP 授权缺口",
-        "responses": { "200": { "$ref": "#/components/responses/Ok" } }
       }
     },
     "/automations": {
@@ -3464,31 +3657,6 @@
       "delete": {
         "operationId": "disableAutomation",
         "summary": "已弃用：等同归档；响应带 Deprecation，请改用 POST …/archive",
-        "responses": {
-          "200": {
-            "$ref": "#/components/responses/Ok"
-          },
-          "401": {
-            "$ref": "#/components/responses/Error"
-          },
-          "404": {
-            "$ref": "#/components/responses/Error"
-          },
-          "409": {
-            "$ref": "#/components/responses/Error"
-          }
-        }
-      }
-    },
-    "/automations/{automationId}/archive": {
-      "parameters": [
-        {
-          "$ref": "#/components/parameters/AutomationId"
-        }
-      ],
-      "post": {
-        "operationId": "archiveAutomation",
-        "summary": "归档自动任务：status 置 disabled 并写入 archivedAt/archivedBy，停止未来调度",
         "responses": {
           "200": {
             "$ref": "#/components/responses/Ok"
@@ -4087,11 +4255,2252 @@
           }
         }
       }
+    },
+    "/knowledge/status": {
+      "get": {
+        "operationId": "getKnowledgeStatus",
+        "summary": "企业知识库可用性与本人权限级别",
+        "description": "enabled 为 false 时员工端不显示“知识库”入口与“添加知识库”（WeKnora 未配置、AI Hub 账号或没有查看级别）。",
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/Envelope"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "$ref": "#/components/schemas/KnowledgeStatus"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/knowledge/departments": {
+      "get": {
+        "operationId": "listKnowledgeDepartments",
+        "summary": "本人直接所属的部门",
+        "description": "新建知识库与调整可见部门时可选的部门；员工只能授给自己所属的部门（WK11）。",
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/Envelope"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/components/schemas/KnowledgeDepartmentOption"
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/knowledge-bases": {
+      "get": {
+        "operationId": "listKnowledgeBases",
+        "parameters": [
+          {
+            "name": "stats",
+            "in": "query",
+            "description": "false 时不读取 WeKnora 统计（documentCount、processingCount 为 0）。",
+            "schema": {
+              "enum": [
+                "true",
+                "false"
+              ]
+            }
+          }
+        ],
+        "summary": "可见知识库",
+        "description": "授给本人所属部门、或上级部门勾选“包含下级”授给的知识库（weknora-knowledge-plan 5.3）。",
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/Envelope"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/components/schemas/KnowledgeBase"
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      },
+      "post": {
+        "operationId": "createKnowledgeBase",
+        "summary": "新建知识库",
+        "description": "需要 knowledge:bases；归属部门必须是本人所属的非根部门，默认授给该部门并包含下级；平台带上统一嵌入模型在 WeKnora 中建库。",
+        "responses": {
+          "201": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/Envelope"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "$ref": "#/components/schemas/KnowledgeBase"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/KnowledgeBaseCreateRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/knowledge-bases/{knowledgeBaseId}": {
+      "get": {
+        "operationId": "getKnowledgeBase",
+        "parameters": [
+          {
+            "name": "knowledgeBaseId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "summary": "知识库详情",
+        "description": "不可见与不存在同样返回 404。",
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/Envelope"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "$ref": "#/components/schemas/KnowledgeBase"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      },
+      "patch": {
+        "operationId": "updateKnowledgeBase",
+        "summary": "修改名称和说明",
+        "description": "需要 knowledge:bases，且知识库归属本人直接所属的部门。",
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/Envelope"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "$ref": "#/components/schemas/KnowledgeBase"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "name": "knowledgeBaseId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 60
+                  },
+                  "description": {
+                    "type": "string",
+                    "maxLength": 200
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "deleteKnowledgeBase",
+        "summary": "删除知识库",
+        "description": "WeKnora 接受删除后平台立即标为已删除，不再检索与显示。",
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/Envelope"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "type": "object",
+                          "required": [
+                            "deleted"
+                          ],
+                          "properties": {
+                            "deleted": {
+                              "type": "boolean"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "name": "knowledgeBaseId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/knowledge-bases/{knowledgeBaseId}/grants": {
+      "post": {
+        "operationId": "addKnowledgeBaseGrant",
+        "summary": "授给本人所属的部门",
+        "description": "不能授给根部门或本人不在的部门；同一部门重复授予幂等。",
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/Envelope"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "$ref": "#/components/schemas/KnowledgeBase"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "name": "knowledgeBaseId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "departmentId"
+                ],
+                "properties": {
+                  "departmentId": {
+                    "type": "string"
+                  },
+                  "includeDescendants": {
+                    "type": "boolean",
+                    "default": true
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/knowledge-bases/{knowledgeBaseId}/grants/{grantId}": {
+      "delete": {
+        "operationId": "revokeKnowledgeBaseGrant",
+        "summary": "撤销员工授予的可见部门",
+        "description": "不能撤销平台管理员授予的授权，不能撤销到没有任何授权。",
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/Envelope"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "$ref": "#/components/schemas/KnowledgeBase"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "name": "knowledgeBaseId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "grantId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/knowledge-bases/{knowledgeBaseId}/documents": {
+      "get": {
+        "operationId": "listKnowledgeDocuments",
+        "summary": "文档列表",
+        "description": "按页读取，上传人取自平台审计。",
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/Envelope"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "type": "object",
+                          "required": [
+                            "items",
+                            "total",
+                            "page",
+                            "pageSize"
+                          ],
+                          "properties": {
+                            "items": {
+                              "type": "array",
+                              "items": {
+                                "$ref": "#/components/schemas/KnowledgeDocument"
+                              }
+                            },
+                            "total": {
+                              "type": "integer"
+                            },
+                            "page": {
+                              "type": "integer"
+                            },
+                            "pageSize": {
+                              "type": "integer"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "name": "knowledgeBaseId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "keyword",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "schema": {
+              "enum": [
+                "all",
+                "parsing",
+                "completed",
+                "failed"
+              ]
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "name": "pageSize",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 50
+            }
+          }
+        ]
+      },
+      "post": {
+        "operationId": "uploadKnowledgeDocument",
+        "summary": "上传文件",
+        "description": "请求体为文件原始字节（最大 50 MB），文件名放在 URL 编码的 X-File-Name 请求头；需要 knowledge:docs 且知识库归属本人所属部门。重复文件返回 409。不提供网址导入（WK16）。",
+        "responses": {
+          "201": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/Envelope"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "$ref": "#/components/schemas/KnowledgeDocument"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "name": "knowledgeBaseId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "X-File-Name",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/octet-stream": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/knowledge-bases/{knowledgeBaseId}/documents/{documentId}": {
+      "patch": {
+        "operationId": "updateKnowledgeDocument",
+        "summary": "修改文档标题",
+        "description": "文档必须属于该知识库。",
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/Envelope"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "type": "object",
+                          "required": [
+                            "updated"
+                          ],
+                          "properties": {
+                            "updated": {
+                              "type": "boolean"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "name": "knowledgeBaseId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "documentId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "title"
+                ],
+                "properties": {
+                  "title": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "deleteKnowledgeDocument",
+        "summary": "删除文档",
+        "description": "WeKnora 接受删除请求即视为完成。",
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/Envelope"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "type": "object",
+                          "required": [
+                            "deleted"
+                          ],
+                          "properties": {
+                            "deleted": {
+                              "type": "boolean"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "name": "knowledgeBaseId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "documentId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/knowledge-bases/{knowledgeBaseId}/documents/{documentId}/reparse": {
+      "post": {
+        "operationId": "reparseKnowledgeDocument",
+        "summary": "重新解析文档",
+        "description": "",
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/Envelope"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "type": "object",
+                          "required": [
+                            "submitted"
+                          ],
+                          "properties": {
+                            "submitted": {
+                              "type": "boolean"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "name": "knowledgeBaseId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "documentId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/knowledge-bases/{knowledgeBaseId}/documents/{documentId}/download": {
+      "get": {
+        "operationId": "downloadKnowledgeDocument",
+        "summary": "下载原文件",
+        "description": "按查看者当前权限校验，写下载审计。",
+        "parameters": [
+          {
+            "name": "knowledgeBaseId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "documentId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "文件",
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/knowledge-bases/{knowledgeBaseId}/documents/{documentId}/preview": {
+      "get": {
+        "operationId": "previewKnowledgeDocument",
+        "summary": "预览文档文本",
+        "description": "只返回纯文本（最多 200 KB），不作为 HTML 渲染。",
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/Envelope"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "type": "object",
+                          "required": [
+                            "text",
+                            "truncated"
+                          ],
+                          "properties": {
+                            "text": {
+                              "type": "string"
+                            },
+                            "truncated": {
+                              "type": "boolean"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "name": "knowledgeBaseId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "documentId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/sessions/{sessionId}/knowledge-bases": {
+      "get": {
+        "operationId": "getSessionKnowledgeBases",
+        "summary": "会话所选知识库",
+        "description": "只读本人个人空间的会话；已删除或已不可见的知识库 available 为 false。",
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/Envelope"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/components/schemas/SessionKnowledgeBase"
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      },
+      "put": {
+        "operationId": "setSessionKnowledgeBases",
+        "summary": "设置会话所选知识库",
+        "description": "整体替换；只能添加当前可见的知识库，最多 20 个；一期团队空间会话被拒绝。添加、移除只影响之后的执行。",
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/Envelope"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/components/schemas/SessionKnowledgeBase"
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "knowledgeBaseIds"
+                ],
+                "properties": {
+                  "knowledgeBaseIds": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "maxItems": 20
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/integrations/weknora/status": {
+      "get": {
+        "operationId": "getWeknoraStatus",
+        "summary": "查询当前员工的 WeKnora 知识库连接状态",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/integrations/weknora/bind/start": {
+      "post": {
+        "operationId": "startWeknoraBind",
+        "summary": "开始把当前员工绑定到 WeKnora 账号",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/integrations/weknora/bind/callback": {
+      "get": {
+        "operationId": "completeWeknoraBindCallback",
+        "summary": "完成 WeKnora 绑定并重定向回知识库页",
+        "parameters": [
+          {
+            "name": "state",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "bind_code",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "bind_error",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "302": {
+            "description": "重定向到知识库页"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/integrations/weknora/link": {
+      "delete": {
+        "operationId": "unlinkWeknora",
+        "summary": "解除当前员工与 WeKnora 的绑定",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/integrations/weknora/knowledge-bases": {
+      "get": {
+        "operationId": "listWeknoraKnowledgeBases",
+        "summary": "列出当前员工可读的 WeKnora 知识库",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/integrations/weknora/knowledge-bases/{id}": {
+      "get": {
+        "operationId": "getWeknoraKnowledgeBase",
+        "summary": "读取一个 WeKnora 知识库",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/integrations/weknora/knowledge-bases/{id}/documents": {
+      "get": {
+        "operationId": "listWeknoraDocuments",
+        "summary": "列出一个 WeKnora 知识库中的文档",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/integrations/weknora/knowledge-bases/{id}/search": {
+      "post": {
+        "operationId": "searchWeknoraKnowledgeBase",
+        "summary": "在一个 WeKnora 知识库中检索",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "query"
+                ],
+                "properties": {
+                  "query": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/integrations/weknora/documents/{id}/content": {
+      "get": {
+        "operationId": "getWeknoraDocumentContent",
+        "summary": "读取一份 WeKnora 文档内容",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "disposition",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "inline",
+                "attachment"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "上游文档内容"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/me/push/config": {
+      "get": {
+        "operationId": "getPushConfig",
+        "summary": "读取 Web Push 公钥",
+        "responses": {
+          "200": {
+            "description": "VAPID 公钥",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/Envelope"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "$ref": "#/components/schemas/PushConfig"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/me/push/subscriptions": {
+      "put": {
+        "operationId": "upsertPushSubscription",
+        "summary": "登记或更新本机 Push 订阅",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PushSubscriptionInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "订阅已保存",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/Envelope"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "$ref": "#/components/schemas/PushSubscriptionUpsertResult"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      },
+      "delete": {
+        "operationId": "deletePushSubscription",
+        "summary": "注销本机 Push 订阅",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PushSubscriptionDeleteInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "订阅已删除",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/Envelope"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "$ref": "#/components/schemas/PushSubscriptionDeleteResult"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/me/notification-preferences": {
+      "get": {
+        "operationId": "getNotificationPreferences",
+        "summary": "读取通知偏好",
+        "responses": {
+          "200": {
+            "description": "通知偏好",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/Envelope"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "$ref": "#/components/schemas/NotificationPreferences"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      },
+      "patch": {
+        "operationId": "patchNotificationPreferences",
+        "summary": "更新通知偏好",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NotificationPreferencesPatch"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "保存后的通知偏好",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/Envelope"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "$ref": "#/components/schemas/NotificationPreferences"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/me/direct-conversations": {
+      "get": {
+        "operationId": "listDirectConversations",
+        "summary": "同事私聊列表（本人）",
+        "description": "移动端一对一私聊。不并入 conversation-targets，PC 员工端不使用。只含已有消息且本人未隐藏的私聊。",
+        "parameters": [
+          {
+            "name": "cursor",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 30
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "私聊行，id 为对方用户 id"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/direct-conversations/with/{userId}": {
+      "get": {
+        "operationId": "lookupDirectConversation",
+        "summary": "查看与某同事是否已有私聊",
+        "parameters": [
+          {
+            "name": "userId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "conversationId 为空表示尚未发言"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/direct-conversations/with/{userId}/messages": {
+      "post": {
+        "operationId": "sendDirectMessage",
+        "summary": "发送同事私聊",
+        "description": "同一事务内保证两人只有一条私聊并追加文本。不创建 Run，不写入 sessions。",
+        "parameters": [
+          {
+            "name": "userId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "content"
+                ],
+                "properties": {
+                  "content": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 20000
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "刚写入的消息"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/direct-conversations/with/{userId}/read": {
+      "post": {
+        "operationId": "markDirectConversationRead",
+        "summary": "私聊已读位置只进不退",
+        "parameters": [
+          {
+            "name": "userId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "upTo": {
+                    "type": "string",
+                    "format": "date-time"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "对方用户 id 与已读时间"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/direct-conversations/{id}/messages": {
+      "get": {
+        "operationId": "listDirectMessages",
+        "summary": "读取私聊消息",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 30
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "本页按时间从早到晚；nextCursor 取更早的消息"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/direct-conversations/{id}/hide": {
+      "post": {
+        "operationId": "hideDirectConversation",
+        "summary": "从本人列表隐藏私聊",
+        "description": "不删除消息。对方再发来一条后重新出现。",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "已隐藏"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/runs/{runId}/export": {
+      "parameters": [
+        {
+          "name": "runId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "get": {
+        "operationId": "exportRunMarkdown",
+        "summary": "把本人可访问的 Run 导出为 Markdown 附件",
+        "responses": {
+          "200": {
+            "description": "Markdown 附件",
+            "content": {
+              "text/markdown": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/sessions/{sessionId}/export": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/SessionId"
+        }
+      ],
+      "get": {
+        "operationId": "exportSessionMarkdown",
+        "summary": "把本人可访问的会话导出为 Markdown 附件",
+        "responses": {
+          "200": {
+            "description": "Markdown 附件",
+            "content": {
+              "text/markdown": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/sessions/{sessionId}/discard-draft": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/SessionId"
+        }
+      ],
+      "post": {
+        "operationId": "discardEmptyDraftSession",
+        "summary": "丢弃尚未产生任何消息的草稿会话（按 clientIntentId 幂等）",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "clientIntentId"
+                ],
+                "properties": {
+                  "clientIntentId": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/runs/{runId}/approval": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/RunId"
+        }
+      ],
+      "post": {
+        "operationId": "resolveRunApproval",
+        "summary": "发起人确认本次 Run 的待决审批",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "decision"
+                ],
+                "properties": {
+                  "decision": {
+                    "type": "string",
+                    "enum": [
+                      "approved",
+                      "rejected"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "决议已记录",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/Envelope"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "$ref": "#/components/schemas/RunApprovalResolution"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/notifications": {
+      "get": {
+        "operationId": "listAccountNotifications",
+        "summary": "账号级通知收件箱（sequence 游标）",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "unread",
+            "in": "query",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "workspaceId",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "通知分页",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/notifications/counts": {
+      "get": {
+        "operationId": "getAccountNotificationCounts",
+        "summary": "账号级未读计数（按空间拆分）",
+        "responses": {
+          "200": {
+            "description": "未读计数",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/notifications/read": {
+      "post": {
+        "operationId": "markAccountNotificationsRead",
+        "summary": "按 sequence 标记已读",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "throughSequence"
+                ],
+                "properties": {
+                  "throughSequence": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "workspaceId": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "已读水位",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/notifications/events": {
+      "get": {
+        "operationId": "streamAccountNotificationEvents",
+        "summary": "账号级通知 SSE（仅推送 sequence 失效信号）",
+        "parameters": [
+          {
+            "name": "since",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "text/event-stream"
+          }
+        }
+      }
+    },
+    "/mcp-grants": {
+      "get": {
+        "operationId": "listMcpUserGrants",
+        "summary": "列出当前员工的外部 MCP 授权状态",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          }
+        }
+      }
+    },
+    "/mcp-grants/{connectorId}/authorization": {
+      "post": {
+        "operationId": "beginMcpUserGrantAuthorization",
+        "summary": "开始员工 OAuth 授权",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          }
+        }
+      }
+    },
+    "/mcp-grants/callback": {
+      "get": {
+        "operationId": "completeMcpUserGrantAuthorization",
+        "summary": "OAuth 回调换票",
+        "responses": {
+          "302": {
+            "description": "Redirect to settings"
+          }
+        }
+      }
+    },
+    "/mcp-grants/{connectorId}": {
+      "delete": {
+        "operationId": "revokeMcpUserGrant",
+        "summary": "解除员工 MCP 授权",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          }
+        }
+      }
+    },
+    "/agents/{agentId}/mcp-access": {
+      "get": {
+        "operationId": "getAgentMcpAccess",
+        "summary": "发送前检查 MCP 授权缺口",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          }
+        }
+      }
+    },
+    "/automations/{automationId}/archive": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/AutomationId"
+        }
+      ],
+      "post": {
+        "operationId": "archiveAutomation",
+        "summary": "归档自动任务：status 置 disabled 并写入 archivedAt/archivedBy，停止未来调度",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
     }
   },
   "components": {
     "securitySchemes": {
-      "localWorkbenchSession": {"type": "apiKey", "in": "cookie", "name": "dsh_work_local_session", "description": "local 模式签发；生产使用 __Host- 前缀，与 OIDC Session 分离。"},
+      "localWorkbenchSession": {
+        "type": "apiKey",
+        "in": "cookie",
+        "name": "dsh_work_local_session",
+        "description": "local 模式签发；生产使用 __Host- 前缀，与 OIDC Session 分离。"
+      },
       "enterpriseSession": {
         "type": "apiKey",
         "in": "cookie",
@@ -4834,12 +7243,27 @@
       },
       "MentionSummary": {
         "type": "object",
-        "required": ["workspaceId", "sessionId", "count", "latestAt"],
+        "required": [
+          "workspaceId",
+          "sessionId",
+          "count",
+          "latestAt"
+        ],
         "properties": {
-          "workspaceId": { "type": "string" },
-          "sessionId": { "type": "string" },
-          "count": { "type": "integer", "minimum": 1 },
-          "latestAt": { "type": "string", "format": "date-time" }
+          "workspaceId": {
+            "type": "string"
+          },
+          "sessionId": {
+            "type": "string"
+          },
+          "count": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "latestAt": {
+            "type": "string",
+            "format": "date-time"
+          }
         }
       },
       "ConversationMessagePreview": {
@@ -5121,7 +7545,9 @@
               },
               "mentionedUserIds": {
                 "type": "array",
-                "items": { "type": "string" },
+                "items": {
+                  "type": "string"
+                },
                 "description": "D38：该发言 @ 并登记了提醒的同事（用户 ID）。"
               },
               "attachments": {
@@ -5392,71 +7818,129 @@
       },
       "PushConfig": {
         "type": "object",
-        "required": ["vapidPublicKey"],
+        "required": [
+          "vapidPublicKey"
+        ],
         "properties": {
-          "vapidPublicKey": { "type": "string" }
+          "vapidPublicKey": {
+            "type": "string"
+          }
         }
       },
       "PushSubscriptionInput": {
         "type": "object",
-        "required": ["endpoint", "keys"],
+        "required": [
+          "endpoint",
+          "keys"
+        ],
         "properties": {
-          "endpoint": { "type": "string" },
+          "endpoint": {
+            "type": "string"
+          },
           "keys": {
             "type": "object",
-            "required": ["p256dh", "auth"],
+            "required": [
+              "p256dh",
+              "auth"
+            ],
             "properties": {
-              "p256dh": { "type": "string" },
-              "auth": { "type": "string" }
+              "p256dh": {
+                "type": "string"
+              },
+              "auth": {
+                "type": "string"
+              }
             }
           }
         }
       },
       "PushSubscriptionUpsertResult": {
         "type": "object",
-        "required": ["endpoint", "updated"],
+        "required": [
+          "endpoint",
+          "updated"
+        ],
         "properties": {
-          "endpoint": { "type": "string" },
-          "updated": { "type": "boolean", "const": true }
+          "endpoint": {
+            "type": "string"
+          },
+          "updated": {
+            "type": "boolean",
+            "const": true
+          }
         }
       },
       "PushSubscriptionDeleteInput": {
         "type": "object",
-        "required": ["endpoint"],
+        "required": [
+          "endpoint"
+        ],
         "properties": {
-          "endpoint": { "type": "string" }
+          "endpoint": {
+            "type": "string"
+          }
         }
       },
       "PushSubscriptionDeleteResult": {
         "type": "object",
-        "required": ["endpoint", "deleted"],
+        "required": [
+          "endpoint",
+          "deleted"
+        ],
         "properties": {
-          "endpoint": { "type": "string" },
-          "deleted": { "type": "boolean", "const": true }
+          "endpoint": {
+            "type": "string"
+          },
+          "deleted": {
+            "type": "boolean",
+            "const": true
+          }
         }
       },
       "NotificationPreferences": {
         "type": "object",
-        "required": ["collabUnread", "runFinished"],
+        "required": [
+          "collabUnread",
+          "runFinished"
+        ],
         "properties": {
-          "collabUnread": { "type": "boolean" },
-          "runFinished": { "type": "boolean" }
+          "collabUnread": {
+            "type": "boolean"
+          },
+          "runFinished": {
+            "type": "boolean"
+          }
         }
       },
       "NotificationPreferencesPatch": {
         "type": "object",
         "additionalProperties": false,
         "properties": {
-          "collabUnread": { "type": "boolean" },
-          "runFinished": { "type": "boolean" }
+          "collabUnread": {
+            "type": "boolean"
+          },
+          "runFinished": {
+            "type": "boolean"
+          }
         }
       },
       "RunApprovalResolution": {
         "type": "object",
-        "required": ["runId", "decision"],
+        "required": [
+          "runId",
+          "decision"
+        ],
         "properties": {
-          "runId": { "type": "string" },
-          "decision": { "type": "string", "enum": ["approved", "rejected"] }
+          "runId": {
+            "type": "string"
+          },
+          "decision": {
+            "type": "string",
+            "enum": [
+              "approved",
+              "rejected"
+            ]
+          }
         }
       },
       "WorkspaceNotificationState": {
@@ -6231,6 +8715,366 @@
           }
         },
         "description": "PF-02 Task 累计预算。省略字段表示该维度不设累计上限；不支持的硬预算会明确失败，不会静默降级。"
+      },
+      "KnowledgeStatus": {
+        "type": "object",
+        "required": [
+          "enabled",
+          "level"
+        ],
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "level": {
+            "enum": [
+              "none",
+              "view",
+              "docs",
+              "bases"
+            ]
+          }
+        }
+      },
+      "KnowledgeDepartmentOption": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "primary"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "primary": {
+            "type": "boolean"
+          }
+        }
+      },
+      "KnowledgeGrant": {
+        "type": "object",
+        "required": [
+          "id",
+          "departmentId",
+          "departmentName",
+          "includeDescendants",
+          "grantedVia"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "departmentId": {
+            "type": "string"
+          },
+          "departmentName": {
+            "type": "string",
+            "description": "根部门显示为“全公司”。"
+          },
+          "includeDescendants": {
+            "type": "boolean"
+          },
+          "grantedVia": {
+            "enum": [
+              "employee",
+              "admin"
+            ]
+          }
+        }
+      },
+      "KnowledgeBase": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "description",
+          "ownerDepartmentId",
+          "ownerDepartmentName",
+          "canManageDocuments",
+          "canManageBase",
+          "documentCount",
+          "processingCount",
+          "updatedAt",
+          "grants"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "ownerDepartmentId": {
+            "type": "string"
+          },
+          "ownerDepartmentName": {
+            "type": "string"
+          },
+          "canManageDocuments": {
+            "type": "boolean"
+          },
+          "canManageBase": {
+            "type": "boolean"
+          },
+          "documentCount": {
+            "type": "integer"
+          },
+          "processingCount": {
+            "type": "integer"
+          },
+          "updatedAt": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "grants": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/KnowledgeGrant"
+            }
+          }
+        }
+      },
+      "KnowledgeBaseCreateRequest": {
+        "type": "object",
+        "required": [
+          "name",
+          "ownerDepartmentId"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 60
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 200
+          },
+          "ownerDepartmentId": {
+            "type": "string"
+          },
+          "includeDescendants": {
+            "type": "boolean",
+            "default": true
+          }
+        }
+      },
+      "KnowledgeDocument": {
+        "type": "object",
+        "required": [
+          "id",
+          "title",
+          "fileName",
+          "fileSize",
+          "status",
+          "errorMessage",
+          "uploadedBy",
+          "updatedAt"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "fileName": {
+            "type": "string"
+          },
+          "fileSize": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "status": {
+            "enum": [
+              "parsing",
+              "completed",
+              "failed"
+            ]
+          },
+          "errorMessage": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "uploadedBy": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "updatedAt": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "SessionKnowledgeBase": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "available"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "available": {
+            "type": "boolean"
+          }
+        }
+      },
+      "UserNotification": {
+        "type": "object",
+        "required": [
+          "id",
+          "kind",
+          "createdAt",
+          "read",
+          "visible",
+          "actor",
+          "workspace",
+          "objectName",
+          "detail",
+          "target"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "mention",
+              "task_assigned",
+              "task_completed",
+              "workspace_member_added",
+              "task_schedule_stopped",
+              "automation_failed",
+              "skill_review_result",
+              "dingtalk_bound_by_admin",
+              "dingtalk_binding_revoked",
+              "dingtalk_bind_reminder"
+            ],
+            "description": "dingtalk_*：管理员代绑钉钉、钉钉绑定被管理员解除或改绑（detail.reason 为 admin_unbind / rebound_to_other）、管理员提醒绑定钉钉；这三类不可在偏好中关闭，objectName 为钉钉姓名"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "read": {
+            "type": "boolean"
+          },
+          "visible": {
+            "type": "boolean",
+            "description": "本人当前是否仍能看到对应内容；为 false 时以下名称与跳转目标均为 null。"
+          },
+          "actor": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "required": [
+              "id",
+              "name"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              }
+            }
+          },
+          "workspace": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "required": [
+              "id",
+              "name"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              }
+            }
+          },
+          "objectName": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "任务标题、定时任务名称或提交的 Skill 名称；@ 我与被加入项目为 null。"
+          },
+          "detail": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "事件代码（NC-S3）：定时执行的 state（paused/stopped）与 reason、定时任务的 outcome（failed/skipped/missed/interrupted）、Skill 审核的 result（approved/rejected）；不含拒绝原因等正文。"
+          },
+          "target": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "required": [
+              "type",
+              "id",
+              "sessionId"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "message",
+                  "project_task",
+                  "workspace",
+                  "automation",
+                  "skill_submission",
+                  "dingtalk_binding"
+                ]
+              },
+              "id": {
+                "type": "string"
+              },
+              "sessionId": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "@ 我所在的会话、定时任务这次执行的会话或提交 Skill 的会话。"
+              }
+            }
+          }
+        }
       }
     }
   },

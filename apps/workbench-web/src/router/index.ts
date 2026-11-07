@@ -2,6 +2,7 @@ import { createRouter, createWebHistory } from 'vue-router'
 
 import { pinia } from '@/stores'
 import { useAuthStore } from '@/stores/auth'
+import { setContainerTitle } from '@/container/dingtalk'
 import { useUiModeStore } from '@/stores/ui-mode'
 import { locationForMode } from './mode-routes'
 
@@ -132,23 +133,14 @@ const router = createRouter({
     { path: '/history', name: 'history', component: () => import('@/views/HistoryView.vue'), meta: { title: '历史对话', section: '员工工作台' } },
     { path: '/sessions/:id', name: 'session-detail', component: () => import('@/views/SessionResumeView.vue'), meta: { title: '对话', section: '员工工作台' } },
     { path: '/chat/:sessionId', redirect: (to) => ({ name: 'session-detail', params: { id: String(to.params.sessionId) } }) },
+    // 企业知识库（WK-S2）：两种模式共用，与定时任务一样不绑定模式。
+    { path: '/knowledge', name: 'knowledge', component: () => import('@/views/KnowledgeBasesView.vue'), meta: { title: '知识库', section: '员工工作台' } },
+    { path: '/knowledge/:id', name: 'knowledge-detail', component: () => import('@/views/KnowledgeBaseDetailView.vue'), meta: { title: '知识库', section: '员工工作台' } },
     {
       path: '/automations',
       name: 'automations',
       component: () => import('@/views/AutomationsView.vue'),
       meta: { title: '定时任务', section: '员工工作台' },
-    },
-    {
-      path: '/knowledge',
-      name: 'knowledge-bases',
-      component: () => import('@/views/knowledge-bases/index.vue'),
-      meta: { title: '知识库', section: '员工工作台' },
-    },
-    {
-      path: '/knowledge/:kbId',
-      name: 'knowledge-base',
-      component: () => import('@/views/knowledge-base/index.vue'),
-      meta: { title: '知识库', section: '员工工作台' },
     },
     {
       path: '/artifacts',
@@ -199,6 +191,8 @@ router.beforeEach(async (to) => {
 
 router.afterEach((to) => {
   document.title = `${String(to.meta.title ?? '员工工作台')} · dsh-work`
+  // 钉钉容器内导航栏标题随页面变化（钉钉接入方案 4.3 容器适配）；钉钉外不做任何事。
+  setContainerTitle(String(to.meta.title ?? 'dsh-work'))
 })
 
 export default router

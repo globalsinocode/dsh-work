@@ -352,6 +352,29 @@ lines.on('line', (line) => {
       })()
       return
     }
+    // Skill 创建专家：只在消息含 `[mock:skill-draft]` 时在工作区写一个 Skill 目录并保存草稿；
+    // 含 `[mock:skill-draft-invalid]` 时写一个缺少 description 的目录，用来观察工具报错。
+    if (process.env.DSH_PLATFORM_TOOL_SOCKET && currentText.includes('[mock:skill-draft')
+      && (JSON.parse(process.env.DSH_ALLOWED_TOOLS_JSON ?? '[]') as string[]).includes('skill_draft_save')) {
+      void (async () => {
+        try {
+          const workspace = process.env.DSH_WORKSPACE_ROOT
+          if (!workspace) throw new Error('DSH_WORKSPACE_ROOT is missing')
+          const directory = join(workspace, 'drafts', 'weekly-report')
+          await mkdir(join(directory, 'scripts'), { recursive: true })
+          const description = currentText.includes('[mock:skill-draft-invalid]') ? '' : 'description: 每周把各区域销售日报汇总成周报，含环比与结论。\n'
+          await writeFile(join(directory, 'SKILL.md'), `---\nname: 销售周报汇总\n${description}---\n\n按区域汇总员工上传的一周销售日报，运行 scripts/weekly_report.py 计算环比，再写一段结论。\n`)
+          await writeFile(join(directory, 'scripts', 'weekly_report.py'), 'import os\nprint(os.environ.get("DSH_INPUT_DIR", ""))\n')
+          await callPlatformTool('list_available_skills', {})
+          pending.answer = await callPlatformTool('skill_draft_save', { directory: 'drafts/weekly-report' })
+          finishPrompt(pending, 'end_turn')
+        } catch (error) {
+          pending.answer = `草稿未保存：${error instanceof Error ? error.message : String(error)}`
+          finishPrompt(pending, 'end_turn')
+        }
+      })()
+      return
+    }
     // 平台内置 Skill（dsh-work-*）出现在每个员工侧运行的目录中；替身只激活已安装 Skill，
     // 只有内置 Skill 时照常走普通回答，不改变其他用例的行为。
     const mockSkillName = mockActivationTarget(process.env.DSH_AGENT_SYSTEM_PROMPT ?? '')

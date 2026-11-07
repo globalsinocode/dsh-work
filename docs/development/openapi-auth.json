@@ -57,6 +57,19 @@
                     "aiHubEnabled": {
                       "type": "boolean",
                       "description": "是否允许用户主动选择 AI Hub 登录"
+                    },
+                    "dingtalk": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "corpId"
+                      ],
+                      "description": "仅员工端、且部署配置了钉钉企业内部应用时返回：钉钉容器内调用 JSAPI requestAuthCode 所需的企业 corpId（非秘密）。管理端不返回",
+                      "properties": {
+                        "corpId": {
+                          "type": "string"
+                        }
+                      }
                     }
                   }
                 }
@@ -227,6 +240,33 @@
                     "location": {
                       "type": "string",
                       "format": "uri"
+                    },
+                    "binding": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "status"
+                      ],
+                      "properties": {
+                        "status": {
+                          "type": "string",
+                          "enum": [
+                            "bound",
+                            "refused",
+                            "password_change_required"
+                          ],
+                          "description": "bound：已绑定并签发 dingtalk 会话；refused：未绑定，已签发普通密码会话；password_change_required：需先修改初始密码，改密请求带回同一凭证后绑定"
+                        },
+                        "reason": {
+                          "type": "string",
+                          "enum": [
+                            "dingtalk_account_bound_to_other",
+                            "account_has_other_binding",
+                            "self_bind_locked",
+                            "ticket_invalid"
+                          ]
+                        }
+                      }
                     }
                   }
                 }
@@ -237,7 +277,7 @@
             "description": "账号或密码错误，或会话已失效"
           },
           "403": {
-            "description": "来源或权限不允许；初始密码未修改时业务 API 返回 password_change_required"
+            "description": "来源或权限不允许；初始密码未修改时业务 API 返回 password_change_required；钉钉会话（dingtalk）不能用于修改密码（password_session_required）"
           },
           "421": {
             "description": "请求入口不在允许列表"
@@ -275,6 +315,11 @@
                   },
                   "returnTo": {
                     "type": "string"
+                  },
+                  "dingtalkBindingToken": {
+                    "type": "string",
+                    "writeOnly": true,
+                    "description": "仅员工端、钉钉内“修改初始密码并绑定”：bind-login 返回 password_change_required 时保留的待绑定凭证。改密成功后在同一事务中绑定；凭证失效时改密照常成功，binding 为 refused/ticket_invalid"
                   }
                 }
               }
@@ -538,6 +583,259 @@
         "responses": {
           "302": {
             "description": "登录成功回到 return_to；失败转到带错误码的登录页"
+          }
+        }
+      }
+    },
+    "/auth/workbench/dingtalk/login": {
+      "post": {
+        "operationId": "dingtalkLogin",
+        "tags": [
+          "钉钉"
+        ],
+        "summary": "钉钉容器内免登：一次性授权码换取钉钉 userid；有有效绑定时签发 dingtalk 会话，否则返回待绑定凭证",
+        "description": "钉钉接入方案 4.3。授权码由钉钉 JSAPI requestAuthCode 取得，一次性，服务端不缓存、不重放；只能用本企业应用的 access_token 换取，非本企业授权码换取失败。dingtalk 会话有效期默认 12 小时（钉钉集成 › 应用配置），只撤销该账号此前的 dingtalk 会话，与桌面密码会话并存。没有有效绑定时不自动建账号。",
+        "parameters": [
+          {
+            "name": "Origin",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "必须与当前受信入口（DSH_WORK_WORKBENCH_ORIGINS）同源"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "authCode"
+                ],
+                "properties": {
+                  "authCode": {
+                    "type": "string",
+                    "writeOnly": true,
+                    "maxLength": 256
+                  },
+                  "returnTo": {
+                    "type": "string",
+                    "description": "只接受同源路径；其他取值回到首页"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "signed_in：Set-Cookie 设置 HttpOnly 员工端会话（dsh_work_local_workbench_session）；binding_required：不设置 Cookie，返回服务端保存、单次有效、约 5 分钟过期的待绑定凭证与钉钉姓名、部门（部门读取失败时为 null）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "status",
+                        "location"
+                      ],
+                      "properties": {
+                        "status": {
+                          "const": "signed_in"
+                        },
+                        "location": {
+                          "type": "string",
+                          "format": "uri"
+                        }
+                      }
+                    },
+                    {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "status",
+                        "bindingToken",
+                        "expiresInSeconds",
+                        "dingtalkName",
+                        "dingtalkDepartment"
+                      ],
+                      "properties": {
+                        "status": {
+                          "const": "binding_required"
+                        },
+                        "bindingToken": {
+                          "type": "string"
+                        },
+                        "expiresInSeconds": {
+                          "type": "integer"
+                        },
+                        "dingtalkName": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "dingtalkDepartment": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "授权码无效、已使用或不属于本企业（dingtalk_auth_code_invalid）"
+          },
+          "403": {
+            "description": "来源校验失败；或钉钉绑定的账号已停用、需先修改初始密码、没有员工端权限"
+          },
+          "421": {
+            "description": "请求入口不在允许列表（公网 origin 未登记）"
+          },
+          "422": {
+            "description": "输入无效"
+          },
+          "429": {
+            "description": "按账号或钉钉 userid 的尝试次数超限"
+          },
+          "503": {
+            "description": "钉钉应用未配置（dingtalk_not_configured）或暂时无法连接钉钉（dingtalk_unavailable）；不降级为其他登录方式"
+          }
+        }
+      }
+    },
+    "/auth/workbench/dingtalk/bind-login": {
+      "post": {
+        "operationId": "dingtalkBindLogin",
+        "tags": [
+          "钉钉"
+        ],
+        "summary": "钉钉内首次登录即绑定：账号密码 + 待绑定凭证，同一事务内登录并绑定",
+        "description": "钉钉接入方案 4.2 方式一。按密码登录的顺序锁定账号与凭据，校验密码与员工端权限，消费待绑定凭证（重复使用、过期、来源不符返回 409 dingtalk_ticket_invalid，不签发会话），写入绑定（bound_by = self）并签发关联该绑定的 dingtalk 会话。不允许绑定时只签发普通密码会话并在 binding 中说明原因：钉钉账号已绑定其他员工、本账号已有另一个有效钉钉绑定（只凭密码不替换）、管理员锁定了自行绑定。需先修改初始密码时不消费凭证，签发密码会话并跳转改密页，改密请求带回凭证后绑定。",
+        "parameters": [
+          {
+            "name": "Origin",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "必须与当前受信入口（DSH_WORK_WORKBENCH_ORIGINS）同源"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "username",
+                  "password",
+                  "bindingToken"
+                ],
+                "properties": {
+                  "username": {
+                    "type": "string"
+                  },
+                  "password": {
+                    "type": "string",
+                    "format": "password",
+                    "writeOnly": true
+                  },
+                  "bindingToken": {
+                    "type": "string",
+                    "writeOnly": true
+                  },
+                  "returnTo": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "登录成功；Set-Cookie 设置员工端会话（bound 时为 dingtalk 来源，其余为 local-password）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "location",
+                    "binding"
+                  ],
+                  "properties": {
+                    "location": {
+                      "type": "string",
+                      "format": "uri"
+                    },
+                    "binding": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "status"
+                      ],
+                      "properties": {
+                        "status": {
+                          "type": "string",
+                          "enum": [
+                            "bound",
+                            "refused",
+                            "password_change_required"
+                          ],
+                          "description": "bound：已绑定并签发 dingtalk 会话；refused：未绑定，已签发普通密码会话；password_change_required：需先修改初始密码，改密请求带回同一凭证后绑定"
+                        },
+                        "reason": {
+                          "type": "string",
+                          "enum": [
+                            "dingtalk_account_bound_to_other",
+                            "account_has_other_binding",
+                            "self_bind_locked",
+                            "ticket_invalid"
+                          ]
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "账号或密码错误，或账号已停用"
+          },
+          "409": {
+            "description": "待绑定凭证重复使用、过期或来源不符（dingtalk_ticket_invalid）；请重新在钉钉中打开"
+          },
+          "403": {
+            "description": "来源校验失败；或钉钉绑定的账号已停用、需先修改初始密码、没有员工端权限"
+          },
+          "421": {
+            "description": "请求入口不在允许列表（公网 origin 未登记）"
+          },
+          "422": {
+            "description": "输入无效"
+          },
+          "429": {
+            "description": "按账号或钉钉 userid 的尝试次数超限"
+          },
+          "503": {
+            "description": "钉钉应用未配置（dingtalk_not_configured）或暂时无法连接钉钉（dingtalk_unavailable）；不降级为其他登录方式"
           }
         }
       }

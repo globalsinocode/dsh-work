@@ -1,4 +1,10 @@
 import { isAuthorizationChangeCode, notifyAuthorizationChange } from '../utils/authorization-change'
+import type {
+  KnowledgeAdminBaseList,
+  KnowledgeAdminDepartment,
+  KnowledgeAdminOverview,
+  KnowledgeConnectionInput,
+} from '../types/knowledge'
 import type { AdminConversation, SkillInstallation } from '../types/assistant'
 import type {
   AdminSession,
@@ -24,6 +30,12 @@ import type {
   McpConnectorDeletionResult,
   McpInvocationAudit,
   DirectorySyncState,
+  DingTalkBindingView,
+  DingTalkBindPreview,
+  DingTalkIntegrationOverview,
+  DingTalkSettings,
+  DingTalkSettingsInput,
+  DingTalkUnboundEmployee,
   EmployeeModelUsageSummary,
   GrantSourceReconciliationView,
   HealthComponent,
@@ -33,6 +45,7 @@ import type {
   IdentityUserSummary,
   ListPage,
   LocalPermissionDefinition,
+  OrganizationSnapshot,
   ModelUsagePage,
   ManagedWorkspaceDefinition,
   ModelProvider,
@@ -59,6 +72,8 @@ import type {
   UpdateRuntimeConfigurationInput,
   UpdateSkillInput,
   UsagePoint,
+  SkillSubmissionReviewDetail,
+  SkillSubmissionReviewItem,
 } from '../types/domain'
 
 interface ApiEnvelope<T> {
@@ -141,6 +156,24 @@ function redirectToLogin() {
 }
 
 export const adminApi = {
+  // 企业知识库（weknora-knowledge-plan 第 9 节，WK-S3）。
+  getKnowledgeOverview: () => request<KnowledgeAdminOverview>('/knowledge'),
+  updateKnowledgeConnection: (input: KnowledgeConnectionInput) =>
+    request<KnowledgeAdminOverview>('/knowledge/connection', { method: 'PUT', body: JSON.stringify(input) }),
+  testKnowledgeConnection: (input: { baseUrl?: string; apiKey?: string } = {}) =>
+    request<{ ok: boolean; reason: string | null }>('/knowledge/connection/test', { method: 'POST', body: JSON.stringify(input) }),
+  listKnowledgeBases: () => request<KnowledgeAdminBaseList>('/knowledge/bases'),
+  listKnowledgeDepartments: () => request<KnowledgeAdminDepartment[]>('/knowledge/departments'),
+  createKnowledgeBase: (input: { name: string; description?: string; ownerDepartmentId: string }) =>
+    request<KnowledgeAdminBaseList>('/knowledge/bases', { method: 'POST', body: JSON.stringify(input) }),
+  updateKnowledgeBaseOwner: (knowledgeBaseId: string, ownerDepartmentId: string) =>
+    request<KnowledgeAdminBaseList>(`/knowledge/bases/${encodeURIComponent(knowledgeBaseId)}`, { method: 'PATCH', body: JSON.stringify({ ownerDepartmentId }) }),
+  deleteKnowledgeBase: (knowledgeBaseId: string) =>
+    request<KnowledgeAdminBaseList>(`/knowledge/bases/${encodeURIComponent(knowledgeBaseId)}`, { method: 'DELETE' }),
+  addKnowledgeGrant: (knowledgeBaseId: string, input: { departmentId: string; includeDescendants?: boolean }) =>
+    request<KnowledgeAdminBaseList>(`/knowledge/bases/${encodeURIComponent(knowledgeBaseId)}/grants`, { method: 'POST', body: JSON.stringify(input) }),
+  revokeKnowledgeGrant: (knowledgeBaseId: string, grantId: string) =>
+    request<KnowledgeAdminBaseList>(`/knowledge/bases/${encodeURIComponent(knowledgeBaseId)}/grants/${encodeURIComponent(grantId)}`, { method: 'DELETE' }),
   getExperienceIterationAgents: () =>
     request<ExperienceIterationAgentSummary[]>('/experience-iterations/agents'),
   getExperienceIterationApplications: (agentId?: string, status?: ExperienceIterationApplication['status']) => {
@@ -323,6 +356,8 @@ export const adminApi = {
     dataScopes: string[]
     approvalPolicy: ToolDefinition['approvalPolicy']
   }) => request<ToolDefinition>('/tools/permissions', { method: 'PATCH', body: JSON.stringify(input) }),
+  discardSkillDraft: (skillId: string) =>
+    request<{ skill: SkillDefinition | null; discardedVersionIds: string[]; discardedSkillIds: string[] }>(`/skills/${encodeURIComponent(skillId)}/draft/discard`, { method: 'POST' }),
   getMcpConnectors: () => request<ConnectorDefinition[]>('/connectors'),
   getDshRuntimeToolConnector: () => request<DshRuntimeToolConnectorStatus>('/runtimes/dsh-tool-connector'),
   checkDshRuntimeToolConnector: () => request<DshRuntimeToolConnectorStatus>('/runtimes/dsh-tool-connector/check', { method: 'POST' }),
@@ -330,6 +365,20 @@ export const adminApi = {
   getBuiltinSkills: () => request<BuiltinSkillStatus>('/skills/builtin'),
   setSkillBuiltinCoverage: (input: { skillId: string; scenarios: BuiltinSkillScenario[] }) =>
     request<SkillDefinition>('/skills/builtin-coverage', { method: 'PATCH', body: JSON.stringify(input) }),
+  getSkillSubmissions: () => request<SkillSubmissionReviewItem[]>('/skill-submissions'),
+  getSkillSubmission: (id: string) => request<SkillSubmissionReviewDetail>(`/skill-submissions/${encodeURIComponent(id)}`),
+  getSkillSubmissionFile: (id: string, versionId: string, path: string) =>
+    request<{ path: string; size: number; content: string }>(`/skill-submissions/${encodeURIComponent(id)}/versions/${encodeURIComponent(versionId)}/file?path=${encodeURIComponent(path)}`),
+  startSkillSubmissionTestRun: (id: string, versionId: string) =>
+    request<SkillTestRunProgress>(`/skill-submissions/${encodeURIComponent(id)}/test-runs`, { method: 'POST', body: JSON.stringify({ versionId }) }),
+  getSkillSubmissionTestRun: (id: string, runId: string) =>
+    request<SkillTestRunProgress>(`/skill-submissions/${encodeURIComponent(id)}/test-runs/${encodeURIComponent(runId)}`),
+  approveSkillSubmission: (id: string, input: { versionId: string; visibleRoleIds: string[] | null }) =>
+    request<SkillSubmissionReviewDetail & { skill: SkillDefinition }>(`/skill-submissions/${encodeURIComponent(id)}/approve`, { method: 'POST', body: JSON.stringify(input) }),
+  rejectSkillSubmission: (id: string, input: { versionId: string; note: string }) =>
+    request<SkillSubmissionReviewDetail>(`/skill-submissions/${encodeURIComponent(id)}/reject`, { method: 'POST', body: JSON.stringify(input) }),
+  setSkillVisibility: (skillId: string, input: { roleIds: string[] | null; reason: string }) =>
+    request<SkillDefinition>(`/skills/${encodeURIComponent(skillId)}/visibility`, { method: 'PUT', body: JSON.stringify(input) }),
   getMcpInvocationAudits: (connectorId: string) =>
     request<McpInvocationAudit[]>(`/connectors/mcp/invocations?connector_id=${encodeURIComponent(connectorId)}`),
   testMcpConnection: (input: {
@@ -422,10 +471,11 @@ export const adminApi = {
     enabled: boolean
   }) => request<ModelRoute>('/model-routes', { method: 'POST', body: JSON.stringify(input) }),
   getPlatformStatus: () => request<PlatformStatus>('/platform-status'),
-  getIdentityUsers: (input: { query?: string; status?: string; page?: number; pageSize?: number } = {}) => {
+  getIdentityUsers: (input: { query?: string; status?: string; dingtalk?: string; page?: number; pageSize?: number } = {}) => {
     const query = new URLSearchParams()
     if (input.query) query.set('query', input.query)
     if (input.status && input.status !== 'all') query.set('status', input.status)
+    if (input.dingtalk && input.dingtalk !== 'all') query.set('dingtalk', input.dingtalk)
     query.set('page', String(input.page ?? 1))
     query.set('page_size', String(input.pageSize ?? 20))
     const suffix = query.size > 0 ? `?${query.toString()}` : ''
@@ -473,7 +523,7 @@ export const adminApi = {
       `/identity/users/${encodeURIComponent(userId)}/sessions/revoke`,
       { method: 'POST' },
     ),
-  createLocalAccount: (input: { username: string; password: string; name: string; department?: string; email?: string }) =>
+  createLocalAccount: (input: { username: string; password: string; name: string; departmentId?: string; email?: string }) =>
     request<{ userId: string; username: string }>('/identity/users', { method: 'POST', body: JSON.stringify(input) }),
   checkLocalLoginAccount: (username: string) =>
     request<{ username: string; available: boolean }>('/identity/login-account/check', { method: 'POST', body: JSON.stringify({ username }) }),
@@ -481,7 +531,50 @@ export const adminApi = {
     request<{ userId: string }>(`/identity/users/${encodeURIComponent(userId)}/password`, { method: 'POST', body: JSON.stringify({ password }) }),
   setLocalAccountStatus: (userId: string, status: 'active' | 'disabled') =>
     request<{ userId: string; status: string }>(`/identity/users/${encodeURIComponent(userId)}/status`, { method: 'PATCH', body: JSON.stringify({ status }) }),
+  getOrganization: () => request<OrganizationSnapshot>('/organization'),
+  createDepartment: (parentId: string, name: string) =>
+    request<OrganizationSnapshot>('/organization/departments', { method: 'POST', body: JSON.stringify({ parentId, name }) }),
+  updateDepartment: (departmentId: string, input: { name?: string; parentId?: string }) =>
+    request<OrganizationSnapshot>(`/organization/departments/${encodeURIComponent(departmentId)}`, { method: 'PATCH', body: JSON.stringify(input) }),
+  reorderDepartment: (departmentId: string, direction: 'up' | 'down') =>
+    request<OrganizationSnapshot>(`/organization/departments/${encodeURIComponent(departmentId)}/reorder`, { method: 'POST', body: JSON.stringify({ direction }) }),
+  removeDepartment: (departmentId: string) =>
+    request<OrganizationSnapshot>(`/organization/departments/${encodeURIComponent(departmentId)}`, { method: 'DELETE' }),
+  addDepartmentMembers: (departmentId: string, userIds: string[]) =>
+    request<OrganizationSnapshot>(`/organization/departments/${encodeURIComponent(departmentId)}/members`, { method: 'POST', body: JSON.stringify({ userIds }) }),
+  removeDepartmentMember: (departmentId: string, userId: string, newPrimaryDepartmentId?: string) => request<OrganizationSnapshot>(
+    `/organization/departments/${encodeURIComponent(departmentId)}/members/${encodeURIComponent(userId)}${newPrimaryDepartmentId ? `?new_primary_department_id=${encodeURIComponent(newPrimaryDepartmentId)}` : ''}`,
+    { method: 'DELETE' },
+  ),
+  grantDepartmentRole: (departmentId: string, roleId: string, includeDescendants: boolean) =>
+    request<OrganizationSnapshot>(`/organization/departments/${encodeURIComponent(departmentId)}/grants`, { method: 'POST', body: JSON.stringify({ roleId, includeDescendants }) }),
+  revokeDepartmentGrant: (grantId: string) =>
+    request<OrganizationSnapshot>(`/organization/grants/${encodeURIComponent(grantId)}`, { method: 'DELETE' }),
+  setPrimaryDepartment: (departmentId: string, userId: string) => request<OrganizationSnapshot>(
+    `/organization/departments/${encodeURIComponent(departmentId)}/members/${encodeURIComponent(userId)}/primary`,
+    { method: 'PUT' },
+  ),
   getDirectorySyncState: () => request<DirectorySyncState>('/identity/directory-sync'),
+  // 钉钉接入 DT-S1：管理员代绑、解绑与“钉钉集成”页。
+  getDingTalkBinding: (userId: string) => request<DingTalkBindingView>(`/identity/users/${encodeURIComponent(userId)}/dingtalk-binding`),
+  previewDingTalkBinding: (userId: string, mobile: string) =>
+    request<DingTalkBindPreview>(`/identity/users/${encodeURIComponent(userId)}/dingtalk-binding/preview`, { method: 'POST', body: JSON.stringify({ mobile }) }),
+  confirmDingTalkBinding: (userId: string, input: { confirmationToken: string; identityConfirmed?: boolean; rebind?: boolean }) =>
+    request<DingTalkBindingView>(`/identity/users/${encodeURIComponent(userId)}/dingtalk-binding/confirm`, { method: 'POST', body: JSON.stringify(input) }),
+  unbindDingTalk: (userId: string, lockSelfRebind = false) =>
+    request<DingTalkBindingView>(`/identity/users/${encodeURIComponent(userId)}/dingtalk-binding${lockSelfRebind ? '?lock_self_rebind=true' : ''}`, { method: 'DELETE' }),
+  unlockDingTalkSelfBinding: (userId: string) =>
+    request<DingTalkBindingView>(`/identity/users/${encodeURIComponent(userId)}/dingtalk-binding/unlock`, { method: 'POST' }),
+  getDingTalkOverview: () => request<DingTalkIntegrationOverview>('/dingtalk/overview'),
+  getDingTalkSettings: () => request<DingTalkSettings>('/dingtalk/settings'),
+  saveDingTalkSettings: (input: DingTalkSettingsInput) => request<DingTalkSettings>('/dingtalk/settings', { method: 'PUT', body: JSON.stringify(input) }),
+  clearDingTalkSettings: () => request<DingTalkSettings>('/dingtalk/settings', { method: 'DELETE' }),
+  checkDingTalkConnection: () => request<DingTalkIntegrationOverview>('/dingtalk/connection-check', { method: 'POST' }),
+  getDingTalkUnbound: (page = 1) => request<{ items: DingTalkUnboundEmployee[]; total: number; page: number; pageSize: number }>(`/dingtalk/unbound?page=${page}&page_size=50`),
+  remindDingTalkBinding: (input: { userIds?: string[]; all?: boolean }) =>
+    request<{ reminded: number }>('/dingtalk/reminders', { method: 'POST', body: JSON.stringify(input) }),
+  decideDingTalkDepartureCheck: (runId: string, decision: 'confirm' | 'dismiss') =>
+    request<{ invalidated: number }>(`/dingtalk/departure-checks/${encodeURIComponent(runId)}/decision`, { method: 'POST', body: JSON.stringify({ decision }) }),
   synchronizeDirectory: (full = false) => request<DirectorySyncState>(
     `/identity/directory-sync${full ? '?full=true' : ''}`,
     { method: 'POST' },

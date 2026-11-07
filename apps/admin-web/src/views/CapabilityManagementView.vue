@@ -6,13 +6,15 @@ import { useRoute, useRouter } from 'vue-router'
 
 import { StatusTag } from '@dsh-work/ui-core'
 import SkillInstallationPanel from '@/components/SkillInstallationPanel.vue'
+import SkillSubmissionReviewPanel from '@/components/SkillSubmissionReviewPanel.vue'
 import { useListPagination } from '@/composables/use-list-pagination'
 import { useAuthStore } from '@/stores/auth'
 import { useContentStore } from '@/stores/content'
 import { useToolGovernanceStore } from '@/stores/toolGovernance'
-import type { BuiltinSkill, BuiltinSkillScenario, ConnectorDefinition, McpConnectionTestResult, SkillDefinition, SkillReleaseRecord, SkillTestRunProgress, SkillVersionRecord, ToolDefinition } from '@/types/domain'
+import { adminApi } from '@/api/client'
+import type { BuiltinSkill, BuiltinSkillScenario, ConnectorDefinition, IdentityRoleSummary, McpConnectionTestResult, SkillDefinition, SkillReleaseRecord, SkillTestRunProgress, SkillVersionRecord, ToolDefinition } from '@/types/domain'
 
-type CapabilityTab = 'skills' | 'install' | 'tools' | 'connectors'
+type CapabilityTab = 'skills' | 'review' | 'install' | 'tools' | 'connectors'
 
 const authStore = useAuthStore()
 const contentStore = useContentStore()
@@ -22,15 +24,24 @@ const route = useRoute()
 const activeTab = computed<CapabilityTab>(() => {
   if (route.path === '/skills/install') return authStore.canManage ? 'install' : 'skills'
   if (route.path === '/tools') return 'tools'
+  if (route.path === '/skills/review') return 'review'
   if (route.path === '/connectors') return 'connectors'
   return 'skills'
 })
 const managedSkills = computed(() => contentStore.skills.filter(skill => skill.installationRole !== 'dependency'))
 const tabs = computed<Array<{ id: CapabilityTab; label: string; count?: number }>>(() => [
   { id: 'skills', label: 'Skill 列表', count: managedSkills.value.length },
+  // 员工经 Skill 创建专家提交的 Skill（skill-creator-plan 4.4）。
+  { id: 'review', label: '待审核', ...(pendingSubmissionCount.value === undefined ? {} : { count: pendingSubmissionCount.value }) },
   ...(authStore.canManage ? [{ id: 'install' as const, label: '新增 Skill' }] : []),
 ])
-const skillSection = computed(() => activeTab.value === 'skills' || activeTab.value === 'install')
+const skillSection = computed(() => activeTab.value !== 'connectors' && activeTab.value !== 'tools')
+const pendingSubmissionCount = ref<number>()
+// 待审核数量在 Skill 列表与新增页签显示；“待审核”页签由面板加载后报告，连接器页不请求。
+watch(activeTab, async tab => {
+  if (tab === 'connectors' || tab === 'tools' || tab === 'review' || pendingSubmissionCount.value !== undefined) return
+  try { pendingSubmissionCount.value = (await adminApi.getSkillSubmissions()).length } catch { pendingSubmissionCount.value = undefined }
+}, { immediate: true })
 const query = ref('')
 const toolRuntimeStatusFilter = ref<'all' | ToolDefinition['status']>('all')
 const toolAdmissionFilter = ref<'all' | NonNullable<ToolDefinition['admissionStatus']>>('all')
@@ -134,7 +145,10 @@ const builtinDetailOpen = ref(false)
 const coverageDraft = ref<BuiltinSkillScenario[]>([])
 const coverageChanged = computed(() =>
   [...coverageDraft.value].sort().join(',') !== [...(selectedSkill.value?.coveredBuiltinScenarios ?? [])].sort().join(','))
-watch(selectedSkill, skill => { coverageDraft.value = [...(skill?.coveredBuiltinScenarios ?? [])] }, { immediate: true })
+// 只在切换 Skill 或已保存值变化时重置草稿；列表刷新替换对象不应丢掉未保存的勾选。
+watch(() => `${selectedSkill.value?.id ?? ''}|${[...(selectedSkill.value?.coveredBuiltinScenarios ?? [])].sort().join(',')}`, () => {
+  coverageDraft.value = [...(selectedSkill.value?.coveredBuiltinScenarios ?? [])]
+}, { immediate: true })
 
 function builtinScenarioLabel(scenario: string) {
   return builtinScenarioOptions.value.find(item => item.id === scenario)?.label ?? scenario
@@ -154,6 +168,46 @@ async function saveSkillCoverage() {
     ElMessage.success('覆盖内置场景已保存，对新运行立即生效')
   } catch (cause) {
     ElMessage.error(cause instanceof Error ? cause.message : '覆盖内置场景保存失败，请稍后重试')
+  } finally {
+    actionLoading.value = ''
+  }
+}
+
+// Skill 可见范围（skill-creator-plan 4.5）：只限制员工在 Skill 广场选用，Agent 固定引用不受限。
+const roleOptions = ref<IdentityRoleSummary[]>([])
+const visibilityDraft = reactive({ scope: 'all' as 'all' | 'roles', roleIds: [] as string[], reason: '' })
+const visibilityChanged = computed(() => {
+  const current = selectedSkill.value?.visibleRoleIds ?? null
+  if (visibilityDraft.scope === 'all') return current !== null
+  return current === null || [...visibilityDraft.roleIds].sort().join(',') !== [...current].sort().join(',')
+})
+const visibilityInvalid = computed(() => (visibilityDraft.scope === 'roles' && !visibilityDraft.roleIds.length) || !visibilityDraft.reason.trim())
+// 切换 Skill、保存后与重新打开详情时，草稿回到已保存的范围。
+watch([selectedSkill, detailOpen], ([skill]) => {
+  const current = skill?.visibleRoleIds ?? null
+  visibilityDraft.scope = current ? 'roles' : 'all'
+  visibilityDraft.roleIds = [...(current ?? [])]
+  visibilityDraft.reason = ''
+}, { immediate: true })
+// 角色列表只在需要显示或选择角色时加载：已限定角色的 Skill，或改为“指定角色”。
+watch(() => detailType.value === 'skill' && (visibilityDraft.scope === 'roles' || Boolean(selectedSkill.value?.visibleRoleIds)), async needed => {
+  if (!needed || roleOptions.value.length) return
+  try { roleOptions.value = await adminApi.getIdentityRoles() } catch { roleOptions.value = [] }
+}, { immediate: true })
+
+function visibilityRoleName(id: string) {
+  return roleOptions.value.find(role => role.id === id)?.name ?? id
+}
+
+async function saveSkillVisibility() {
+  const skill = selectedSkill.value
+  if (!skill || visibilityInvalid.value) return
+  actionLoading.value = `skill-visibility:${skill.id}`
+  try {
+    await contentStore.setSkillVisibility(skill.id, visibilityDraft.scope === 'all' ? null : [...visibilityDraft.roleIds], visibilityDraft.reason.trim())
+    ElMessage.success('可见范围已保存，Skill 广场与之后的运行立即按新范围执行')
+  } catch (cause) {
+    ElMessage.error(cause instanceof Error ? cause.message : '可见范围保存失败，请稍后重试')
   } finally {
     actionLoading.value = ''
   }
@@ -210,6 +264,7 @@ function switchTab(tab: CapabilityTab) {
   query.value = ''
   const paths: Record<CapabilityTab, string> = {
     skills: '/skills',
+    review: '/skills/review',
     install: '/skills/install',
     tools: '/tools',
     connectors: '/connectors',
@@ -534,6 +589,36 @@ async function rollbackSkill(version: SkillVersionRecord) {
     inspectSkill(updated)
     skillDetailTab.value = 'releases'
     ElMessage.success(`Skill 已回滚到 v${version.version}`)
+  } catch (cause) {
+    if (cause instanceof Error) ElMessage.error(cause.message)
+  } finally {
+    actionLoading.value = ''
+  }
+}
+
+/** 只有当前待发布、由安装得到的入口草稿可以放弃；员工提交的草稿在“待审核”中处理。 */
+function canDiscardSkillDraft(version: SkillVersionRecord) {
+  const skill = selectedSkill.value
+  return Boolean(authStore.canManage && skill && version.status === 'draft' && skill.status === 'draft'
+    && version.version === skill.version && !skill.submissionDraft && skill.installationRole !== 'dependency')
+}
+
+async function discardSkillDraft(version: SkillVersionRecord) {
+  const skill = selectedSkill.value
+  if (!skill) return
+  try {
+    await ElMessageBox.confirm(
+      skill.activeVersion
+        ? `草稿 v${version.version} 将停用，已发布的 v${skill.activeVersion} 继续生效。之后可重新上传修正后的包。`
+        : `草稿 v${version.version} 将停用，这个 Skill 尚未发布过，放弃后从列表移除。之后可重新上传修正后的包。`,
+      `放弃“${skill.name}”的草稿？`,
+      { confirmButtonText: '确认放弃', cancelButtonText: '取消', type: 'warning' },
+    )
+    actionLoading.value = `skill-discard:${version.id}`
+    const updated = await contentStore.discardSkillDraft(skill.id)
+    if (updated) inspectSkill(updated)
+    else detailOpen.value = false
+    ElMessage.success(`已放弃草稿 v${version.version}`)
   } catch (cause) {
     if (cause instanceof Error) ElMessage.error(cause.message)
   } finally {
@@ -901,7 +986,7 @@ onUnmounted(() => clearSkillTestPoll())
       <div v-if="skillSection" class="status-tabs" role="tablist" aria-label="Skill 管理" @keydown="navigateTabs">
         <button v-for="tab in tabs" :id="`capability-tab-${tab.id}`" :key="tab.id" class="status-tab" :class="{ active: activeTab === tab.id }" type="button" role="tab" :aria-selected="activeTab === tab.id" :aria-controls="`capability-panel-${tab.id}`" :tabindex="activeTab === tab.id ? 0 : -1" @click="switchTab(tab.id)">{{ tab.label }} <span v-if="tab.count !== undefined" class="tab-count">{{ tab.count }}</span></button>
       </div>
-      <div v-if="activeTab !== 'install'" class="filter-bar capability-toolbar">
+      <div v-if="activeTab !== 'install' && activeTab !== 'review'" class="filter-bar capability-toolbar">
         <el-input v-model="query" :prefix-icon="Search" clearable :placeholder="activeTab === 'skills' ? '搜索 Skill 名称、说明或负责人' : activeTab === 'tools' ? '搜索 DSH 内置工具名称、标识或说明' : '搜索 MCP 名称、标识或 serverName'" />
         <div v-if="activeTab === 'tools'" class="tool-filter-controls" aria-label="工具筛选">
           <el-select v-model="toolRuntimeStatusFilter" aria-label="运行状态" data-testid="tool-runtime-status-filter">
@@ -935,7 +1020,11 @@ onUnmounted(() => clearSkillTestPoll())
       <SkillInstallationPanel @back="switchTab('skills')" @assistant="router.push('/assistant?context=skills')" @installed="refreshInstalledSkills" />
     </div>
 
-    <section v-if="activeTab !== 'install'" :id="`capability-panel-${activeTab}`" class="content-panel content-panel--flush capability-panel" role="tabpanel" :aria-labelledby="skillSection ? `capability-tab-${activeTab}` : undefined" :aria-label="activeTab === 'tools' ? 'DSH 内置工具列表' : activeTab === 'connectors' ? 'MCP 连接器列表' : undefined">
+    <div v-if="activeTab === 'review'" id="capability-panel-review" role="tabpanel" aria-labelledby="capability-tab-review">
+      <SkillSubmissionReviewPanel @count="pendingSubmissionCount = $event" @published="refreshInstalledSkills" />
+    </div>
+
+    <section v-if="activeTab !== 'install' && activeTab !== 'review'" :id="`capability-panel-${activeTab}`" class="content-panel content-panel--flush capability-panel" role="tabpanel" :aria-labelledby="skillSection ? `capability-tab-${activeTab}` : undefined" :aria-label="activeTab === 'tools' ? 'DSH 内置工具列表' : activeTab === 'connectors' ? 'MCP 连接器列表' : undefined">
       <template v-if="activeTab === 'skills'">
       <el-table class="data-table" v-loading="contentStore.loading" :data="pagedSkills" empty-text="暂无匹配的 Skill">
         <el-table-column label="Skill" min-width="360">
@@ -944,6 +1033,7 @@ onUnmounted(() => clearSkillTestPoll())
               <div class="skill-primary-cell__name">
                 <strong>{{ scope.row.name }}</strong>
                 <span v-if="scope.row.installationRole === 'root'" class="skill-entry-label">入口 Skill</span>
+                <span v-if="scope.row.missingPythonDependencies?.length" class="skill-dependency-gap-label" :title="`执行镜像缺少：${scope.row.missingPythonDependencies.join('、')}`">依赖缺失</span>
               </div>
               <small>{{ scope.row.description }}</small>
               <div v-if="scope.row.dependencies?.length" class="skill-dependencies" aria-label="依赖 Skill">
@@ -971,7 +1061,7 @@ onUnmounted(() => clearSkillTestPoll())
         <el-table-column prop="owner" label="负责人" min-width="140" />
         <el-table-column label="状态" width="108"><template #default="scope"><StatusTag :status="scope.row.status" /></template></el-table-column>
         <el-table-column prop="updatedAt" label="更新时间" width="120" />
-        <el-table-column label="操作" width="210" fixed="right"><template #default="scope"><el-button link type="primary" :icon="View" data-action="view-skill" @click="inspectSkill(scope.row)">查看</el-button><el-button v-if="authStore.canManage" link type="primary" :loading="actionLoading === `skill:${scope.row.id}`" :data-action="scope.row.status === 'published' ? 'disable-skill' : 'publish-skill'" @click="changeSkillStatus(scope.row)">{{ scope.row.status === 'published' ? '停用' : scope.row.status === 'draft' ? (scope.row.packageSha256 ? '试运行并发布' : '校验并发布') : '启用' }}</el-button></template></el-table-column>
+        <el-table-column label="操作" width="210" fixed="right"><template #default="scope"><el-button link type="primary" :icon="View" data-action="view-skill" @click="inspectSkill(scope.row)">查看</el-button><el-button v-if="authStore.canManage && scope.row.submissionDraft" link type="primary" data-action="review-skill-submission" @click="switchTab('review')">去审核</el-button><el-button v-else-if="authStore.canManage" link type="primary" :loading="actionLoading === `skill:${scope.row.id}`" :data-action="scope.row.status === 'published' ? 'disable-skill' : 'publish-skill'" @click="changeSkillStatus(scope.row)">{{ scope.row.status === 'published' ? '停用' : scope.row.status === 'draft' ? (scope.row.packageSha256 ? '试运行并发布' : '校验并发布') : '启用' }}</el-button></template></el-table-column>
       </el-table>
       <div class="table-footer table-footer--pager"><el-pagination v-model:current-page="skillPage" background layout="prev, pager, next" :total="filteredSkills.length" :page-size="10" /></div>
       <section class="builtin-skills" aria-labelledby="builtin-skills-title">
@@ -1154,6 +1244,7 @@ onUnmounted(() => clearSkillTestPoll())
 
     <el-drawer v-model="detailOpen" size="min(620px, 100vw)" :title="detailTitle">
       <div v-if="detailType === 'skill'" class="capability-detail__notice"><el-icon><Connection /></el-icon><p>Skill 发布后当前版本不可原地编辑，Agent 引用时锁定具体版本。</p></div>
+      <div v-if="detailType === 'skill' && selectedSkill?.missingPythonDependencies?.length" class="capability-detail__notice capability-detail__notice--warning" role="alert"><el-icon><Connection /></el-icon><p>当前执行镜像缺少已发布版本需要的 Python 依赖：{{ selectedSkill.missingPythonDependencies.join('、') }}。员工直接选用时会在运行前被拒绝；固定引用它的 AI 同事本次不装配它，验证与发布这些 AI 同事会被拒绝。请把对应的包加入执行镜像并部署，或发布不需要它的新版本。</p></div>
       <div v-if="detailType === 'skill'" class="status-tabs capability-detail__tabs" role="tablist" aria-label="Skill 详情类型">
         <button class="status-tab" :class="{ active: skillDetailTab === 'config' }" type="button" role="tab" :aria-selected="skillDetailTab === 'config'" @click="skillDetailTab = 'config'">配置详情</button>
         <button class="status-tab" :class="{ active: skillDetailTab === 'versions' }" type="button" role="tab" :aria-selected="skillDetailTab === 'versions'" @click="skillDetailTab = 'versions'">版本历史 <span class="tab-count">{{ selectedSkillVersions.length }}</span></button>
@@ -1179,12 +1270,28 @@ onUnmounted(() => clearSkillTestPoll())
         </el-checkbox-group>
         <el-button v-if="authStore.canManage" size="small" type="primary" :disabled="!coverageChanged" :loading="actionLoading === `skill-coverage:${selectedSkill.id}`" data-action="save-builtin-coverage" @click="saveSkillCoverage">保存覆盖场景</el-button>
       </section>
+      <section v-if="detailType === 'skill' && skillDetailTab === 'config' && selectedSkill" class="capability-detail__coverage" aria-labelledby="skill-visibility-title">
+        <h3 id="skill-visibility-title">可见范围</h3>
+        <p>决定哪些员工能在 Skill 广场选用这个 Skill。把它加入某个 Agent 后，能使用该 Agent 的员工都能间接用到它。</p>
+        <p v-if="!authStore.canManage">{{ selectedSkill.visibleRoleIds ? selectedSkill.visibleRoleIds.map(visibilityRoleName).join('、') : '全员' }}</p>
+        <template v-else>
+          <el-radio-group v-model="visibilityDraft.scope" aria-labelledby="skill-visibility-title">
+            <el-radio value="all">全员</el-radio>
+            <el-radio value="roles">指定角色</el-radio>
+          </el-radio-group>
+          <el-select v-if="visibilityDraft.scope === 'roles'" v-model="visibilityDraft.roleIds" multiple filterable aria-label="可见角色" placeholder="选择可以使用这个 Skill 的员工角色" class="capability-detail__visibility-roles">
+            <el-option v-for="role in roleOptions" :key="role.id" :label="role.status === 'active' ? role.name : `${role.name}（已停用）`" :value="role.id" :disabled="role.status !== 'active' && !visibilityDraft.roleIds.includes(role.id)" />
+          </el-select>
+          <el-input v-if="visibilityChanged" v-model="visibilityDraft.reason" maxlength="500" aria-label="调整原因" placeholder="调整原因（必填，写入审计）" class="capability-detail__visibility-reason" />
+          <el-button size="small" type="primary" :disabled="!visibilityChanged || visibilityInvalid" :loading="actionLoading === `skill-visibility:${selectedSkill.id}`" data-action="save-skill-visibility" @click="saveSkillVisibility">保存可见范围</el-button>
+        </template>
+      </section>
       <section v-if="detailType === 'skill' && skillDetailTab === 'versions'" class="capability-detail__table">
         <el-table class="data-table" :data="pagedSkillVersions" empty-text="暂无版本记录">
           <el-table-column label="版本" width="95"><template #default="scope"><span class="mono">v{{ scope.row.version }}</span></template></el-table-column>
           <el-table-column label="变更说明" min-width="210"><template #default="scope"><div class="version-summary"><strong>{{ scope.row.summary }}</strong><small>{{ scope.row.createdBy }} · {{ scope.row.createdAt }}</small></div></template></el-table-column>
           <el-table-column label="状态" width="95"><template #default="scope"><StatusTag :status="scope.row.status" /></template></el-table-column>
-          <el-table-column label="操作" width="100" fixed="right"><template #default="scope"><el-button v-if="authStore.canManage && scope.row.status === 'published' && scope.row.version !== selectedSkill?.activeVersion" link type="primary" :loading="actionLoading === `skill-rollback:${scope.row.id}`" @click="rollbackSkill(scope.row)">回滚至此</el-button><span v-else class="muted">—</span></template></el-table-column>
+          <el-table-column label="操作" width="100" fixed="right"><template #default="scope"><el-button v-if="authStore.canManage && scope.row.status === 'published' && scope.row.version !== selectedSkill?.activeVersion" link type="primary" :loading="actionLoading === `skill-rollback:${scope.row.id}`" @click="rollbackSkill(scope.row)">回滚至此</el-button><el-button v-else-if="canDiscardSkillDraft(scope.row)" link type="danger" :loading="actionLoading === `skill-discard:${scope.row.id}`" @click="discardSkillDraft(scope.row)">放弃草稿</el-button><span v-else class="muted">—</span></template></el-table-column>
         </el-table>
         <el-pagination v-model:current-page="skillVersionPage" class="list-pagination" background hide-on-single-page layout="prev, pager, next" :total="selectedSkillVersions.length" :page-size="10" />
       </section>
@@ -1293,6 +1400,7 @@ onUnmounted(() => clearSkillTestPoll())
 .skill-primary-cell { gap: 4px; padding: 3px 0; }
 .skill-primary-cell__name { display: flex; min-width: 0; align-items: center; gap: 8px; }
 .skill-entry-label { flex: none; padding: 2px 6px; border-radius: var(--radius-tag); color: var(--color-primary); background: var(--color-primary-light); font-size: var(--font-size-micro); font-weight: var(--font-weight-badge); }
+.skill-dependency-gap-label { flex: none; padding: 2px 6px; border-radius: var(--radius-tag); color: var(--color-warning-strong); background: var(--color-warning-light); font-size: var(--font-size-micro); font-weight: var(--font-weight-badge); }
 .skill-dependencies { display: flex; min-width: 0; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 5px; }
 .skill-dependencies__label { color: var(--color-text-muted); font-size: var(--font-size-micro); }
 .skill-dependency-chip { display: inline-flex; max-width: 230px; align-items: center; gap: 5px; padding: 3px 7px; border: 1px solid var(--color-border); border-radius: var(--radius-tag); color: var(--color-text-secondary); background: var(--color-bg-base); cursor: pointer; }
@@ -1320,6 +1428,7 @@ onUnmounted(() => clearSkillTestPoll())
 .mcp-form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 14px; }
 .capability-detail__notice { display: flex; align-items: flex-start; gap: 9px; padding: 13px; border-radius: var(--radius-button); color: var(--color-primary); background: var(--color-primary-light); }
 .capability-detail__notice p { margin: 0; font-size: var(--font-size-badge); line-height: 1.6; }
+.capability-detail__notice--warning { color: var(--color-warning-strong); background: var(--color-warning-light); }
 .capability-detail__rows { margin: 18px 0 0; }
 .capability-detail__tabs { margin-top: 16px; }
 .capability-detail__rows div { display: grid; grid-template-columns: 110px minmax(0, 1fr); gap: 12px; padding: 12px 2px; border-bottom: 1px solid var(--color-border); }
@@ -1336,6 +1445,7 @@ onUnmounted(() => clearSkillTestPoll())
 .capability-detail__coverage { display: grid; justify-items: start; gap: 10px; margin-top: 20px; padding: 14px; border: 1px solid var(--color-border); border-radius: var(--radius-card); }
 .capability-detail__coverage h3 { margin: 0; color: var(--color-text-heading); font-size: var(--font-size-caption); }
 .capability-detail__coverage p { margin: 0; color: var(--color-text-secondary); font-size: var(--font-size-badge); line-height: 1.6; }
+.capability-detail__visibility-roles, .capability-detail__visibility-reason { width: min(100%, 420px); }
 .builtin-skills { padding: 18px 0 4px; border-top: 1px solid var(--color-border); }
 .builtin-skills__header { padding: 0 18px 12px; }
 .builtin-skills__header h2 { margin: 0; color: var(--color-text-heading); font-size: var(--dsh-font-size-section); }

@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto'
 import type { DatabaseClient, DatabaseTransaction } from '../../infrastructure/postgres/database.ts'
 import { LOCAL_PERMISSIONS } from './types.ts'
 import { invalidRequest, notFound, stateConflict } from '../../domain/request-errors.ts'
+import { assertRoleDepartmentGrantable } from '../organization/postgres-organization-service.ts'
 
 const tenantId = 'tenant-dsh-work'
 const managedScopeCode = 'application'
@@ -10,6 +11,9 @@ const managedScopeCode = 'application'
 export const permissionCatalog = [
   { code: LOCAL_PERMISSIONS.workbenchUse, name: '使用员工工作台', category: '员工端', description: '登录并使用员工工作台。' },
   { code: LOCAL_PERMISSIONS.workbenchManage, name: '管理部门工作内容', category: '员工端', description: '执行员工端的部门管理操作。' },
+  { code: LOCAL_PERMISSIONS.knowledgeView, name: '查看企业知识库', category: '企业知识库', description: '浏览可见知识库与文档，对话中添加知识库后检索。' },
+  { code: LOCAL_PERMISSIONS.knowledgeDocs, name: '管理知识库文档', category: '企业知识库', description: '包含查看；在归属本人所属部门的知识库中上传和维护文档。' },
+  { code: LOCAL_PERMISSIONS.knowledgeBases, name: '管理知识库', category: '企业知识库', description: '包含文档管理；新建知识库，改名、删除和调整归属本人所属部门的知识库授权。' },
   { code: LOCAL_PERMISSIONS.adminRead, name: '读取管理配置', category: '管理端', description: '查看非审计类管理页面与配置。' },
   { code: LOCAL_PERMISSIONS.adminWrite, name: '变更管理配置', category: '管理端', description: '执行管理端写操作。' },
   { code: LOCAL_PERMISSIONS.auditRead, name: '读取安全审计', category: '安全', description: '查看审计与运行治理信息。' },
@@ -29,16 +33,38 @@ interface UserListRow {
   directorySyncedAt: Date | null
   authorizationVersion: number
   roles: Array<{ id: string; code: string; name: string; status: string }>
+  /** 来自部门授权的角色（组织架构 ORG-S2），只能在“组织架构”中修改。 */
+  departmentRoles: Array<{ id: string; code: string; name: string; status: string; departmentName: string; grantId: string }>
   dataScopes: string[]
   activeSessionCount: number
   lastSeenAt: Date | null
+  /**
+   * 钉钉绑定（钉钉接入方案 4.2）：只对独立账号返回；AI Hub 账号为 null（钉钉会话只签发给独立账号）。
+   * `status` 取最新记录：有有效记录为 bound，只有失效记录为 invalid，没有记录为 unbound。
+   */
+  dingtalk: {
+    status: 'bound' | 'unbound' | 'invalid'
+    boundBy: 'self' | 'admin' | null
+    dingtalkName: string | null
+    revokeReason: string | null
+    selfRebindLocked: boolean
+  } | null
 }
 
 interface UserListSummary {
   synchronized: number
   active: number
   authorized: number
+  /** 有效独立账号中的钉钉绑定情况（“员工与权限”顶部概况）。 */
+  dingtalk: { activeLocal: number; bound: number; selfBound: number; adminBound: number; unbound: number; invalid: number }
 }
+
+/** 最新一条钉钉绑定记录推导出的状态；别名 `u` 为 users。 */
+const dingtalkStatusSql = `(
+  case when u.identity_provider <> 'local' then null
+       when exists (select 1 from external_account_bindings b where b.tenant_id = u.tenant_id and b.user_id = u.id and b.channel = 'dingtalk' and b.status = 'valid') then 'bound'
+       when exists (select 1 from external_account_bindings b where b.tenant_id = u.tenant_id and b.user_id = u.id and b.channel = 'dingtalk') then 'invalid'
+       else 'unbound' end)`
 
 export class IdentityAdministrationService {
   private readonly database: DatabaseClient
@@ -50,9 +76,11 @@ export class IdentityAdministrationService {
     this.localAccounts = localAccounts
   }
 
-  async listUsers(input: { query?: string; status?: string; page?: number; pageSize?: number }) {
+  async listUsers(input: { query?: string; status?: string; dingtalk?: string; page?: number; pageSize?: number }) {
     const query = input.query?.trim().slice(0, 100) ?? ''
     const status = input.status === 'active' || input.status === 'disabled' ? input.status : ''
+    const dingtalk = input.dingtalk === 'bound' || input.dingtalk === 'unbound' || input.dingtalk === 'invalid' ? input.dingtalk : ''
+    const dingtalkStatus = this.database.unsafe(dingtalkStatusSql)
     const page = clampInteger(input.page, 1, 1_000_000, 1)
     const pageSize = clampInteger(input.pageSize, 10, 100, 20)
     const offset = (page - 1) * pageSize
@@ -64,9 +92,17 @@ export class IdentityAdministrationService {
                  select 1 from user_roles ur
                  join roles r on r.tenant_id = ur.tenant_id and r.id = ur.role_id
                   where ur.tenant_id = u.tenant_id and ur.user_id = u.id
-                    and ur.source_key = 'local' and r.status = 'active'
+                    and (ur.source_key = 'local' or ur.source_key like 'department:%') and r.status = 'active'
                     and (ur.valid_until is null or ur.valid_until > now())
-               ))::integer as authorized
+               ))::integer as authorized,
+               jsonb_build_object(
+                 'activeLocal', count(*) filter (where u.status = 'active' and u.identity_provider = 'local'),
+                 'bound', count(*) filter (where u.status = 'active' and ${dingtalkStatus} = 'bound'),
+                 'selfBound', count(*) filter (where u.status = 'active' and exists (select 1 from external_account_bindings b where b.tenant_id = u.tenant_id and b.user_id = u.id and b.channel = 'dingtalk' and b.status = 'valid' and b.bound_by = 'self')),
+                 'adminBound', count(*) filter (where u.status = 'active' and exists (select 1 from external_account_bindings b where b.tenant_id = u.tenant_id and b.user_id = u.id and b.channel = 'dingtalk' and b.status = 'valid' and b.bound_by = 'admin')),
+                 'unbound', count(*) filter (where u.status = 'active' and ${dingtalkStatus} = 'unbound'),
+                 'invalid', count(*) filter (where u.status = 'active' and ${dingtalkStatus} = 'invalid')
+               ) as dingtalk
           from users u
          where u.tenant_id = ${tenantId} and (u.identity_provider = 'ai-hub' or (${this.localAccounts} and exists (select 1 from local_user_credentials c where c.tenant_id = u.tenant_id and c.user_id = u.id)))
            and u.business_user
@@ -77,6 +113,7 @@ export class IdentityAdministrationService {
          where u.tenant_id = ${tenantId} and (u.identity_provider = 'ai-hub' or (${this.localAccounts} and exists (select 1 from local_user_credentials c where c.tenant_id = u.tenant_id and c.user_id = u.id)))
            and u.business_user
            and (${status} = '' or u.status = ${status})
+           and (${dingtalk} = '' or ${dingtalkStatus} = ${dingtalk})
            and (
              ${query} = ''
              or u.display_name ilike ${`%${query}%`}
@@ -108,6 +145,16 @@ export class IdentityAdministrationService {
                     and (ur.valid_until is null or ur.valid_until > now())
                ), '[]'::jsonb) as roles,
                coalesce((
+                 select jsonb_agg(jsonb_build_object(
+                   'id', r.id, 'code', r.code, 'name', r.name, 'status', r.status, 'departmentName', d.name, 'grantId', g.id
+                 ) order by r.name, d.name)
+                   from user_roles ur
+                   join roles r on r.tenant_id = ur.tenant_id and r.id = ur.role_id
+                   join org_department_grants g on g.tenant_id = ur.tenant_id and ur.source_key = 'department:' || g.id
+                   join org_departments d on d.tenant_id = g.tenant_id and d.id = g.department_id
+                  where ur.tenant_id = u.tenant_id and ur.user_id = u.id and ur.source_key like 'department:%'
+               ), '[]'::jsonb) as "departmentRoles",
+               coalesce((
                  select jsonb_agg(dsg.scope_value order by dsg.scope_value)
                   from data_scope_grants dsg
                   where dsg.tenant_id = u.tenant_id and dsg.subject_type = 'user'
@@ -117,11 +164,26 @@ export class IdentityAdministrationService {
                  where s.tenant_id = u.tenant_id and s.user_id = u.id
                    and s.revoked_at is null and s.expires_at > now()) as "activeSessionCount",
                (select max(s.last_seen_at) from authentication_sessions s
-                 where s.tenant_id = u.tenant_id and s.user_id = u.id) as "lastSeenAt"
+                 where s.tenant_id = u.tenant_id and s.user_id = u.id) as "lastSeenAt",
+               case when u.identity_provider = 'local' then (
+                 select jsonb_build_object(
+                   'status', ${dingtalkStatus},
+                   'boundBy', case when latest.status = 'valid' then latest.bound_by end,
+                   'dingtalkName', case when latest.status = 'valid' then latest.external_display_name end,
+                   'revokeReason', case when latest.status = 'invalid' then latest.revoke_reason end,
+                   'selfRebindLocked', exists (select 1 from external_account_bindings b where b.tenant_id = u.tenant_id and b.user_id = u.id and b.channel = 'dingtalk' and b.self_rebind_locked)
+                 ) from (select 1) one
+                 left join lateral (
+                   select b.status, b.bound_by, b.external_display_name, b.revoke_reason from external_account_bindings b
+                    where b.tenant_id = u.tenant_id and b.user_id = u.id and b.channel = 'dingtalk'
+                    order by (b.status = 'valid') desc, b.bound_at desc limit 1
+                 ) latest on true
+               ) end as dingtalk
          from users u
          where u.tenant_id = ${tenantId} and (u.identity_provider = 'ai-hub' or (${this.localAccounts} and exists (select 1 from local_user_credentials c where c.tenant_id = u.tenant_id and c.user_id = u.id)))
            and u.business_user
            and (${status} = '' or u.status = ${status})
+           and (${dingtalk} = '' or ${dingtalkStatus} = ${dingtalk})
            and (
              ${query} = ''
              or u.display_name ilike ${`%${query}%`}
@@ -139,7 +201,7 @@ export class IdentityAdministrationService {
         total: count?.total ?? 0,
         page,
         pageSize,
-        summary: summary ?? { synchronized: 0, active: 0, authorized: 0 },
+        summary: summary ?? { synchronized: 0, active: 0, authorized: 0, dingtalk: { activeLocal: 0, bound: 0, selfBound: 0, adminBound: 0, unbound: 0, invalid: 0 } },
       }
     })
   }
@@ -167,7 +229,7 @@ export class IdentityAdministrationService {
              (select count(distinct ur.user_id)::integer from user_roles ur
                join users u on u.tenant_id = ur.tenant_id and u.id = ur.user_id
               where ur.tenant_id = r.tenant_id and ur.role_id = r.id
-                and ur.source_key = 'local' and u.status = 'active'
+                and (ur.source_key = 'local' or ur.source_key like 'department:%') and u.status = 'active'
                 and (u.identity_provider = 'ai-hub' or (${this.localAccounts} and exists (select 1 from local_user_credentials c where c.tenant_id = u.tenant_id and c.user_id = u.id)))
                 and u.business_user
                 and (ur.valid_until is null or ur.valid_until > now())) as "userCount",
@@ -236,6 +298,10 @@ export class IdentityAdministrationService {
       }
     }
     await this.database.begin(async (transaction) => {
+      // 先锁住角色行：与组织架构的 grantRole（对角色加 for share）互斥，避免检查之后、
+      // 更新之前有人把这个角色授给部门，绕过“管理类角色不能授给部门”（OD8）。
+      await transaction`select 1 from roles where tenant_id = ${tenantId} and id = ${input.roleId} for update`
+      await assertRoleDepartmentGrantable(transaction, input.roleId, permissions)
       const [role] = await transaction<{ id: string }[]>`
         update roles set name = ${name}, description = ${description}, status = ${input.status},
                          permissions = ${transaction.json(permissions)}
@@ -407,6 +473,16 @@ export class IdentityAdministrationService {
                from user_roles ur join roles r on r.tenant_id = ur.tenant_id and r.id = ur.role_id
               where ur.tenant_id = u.tenant_id and ur.user_id = u.id and ur.source_key = 'local'
                 and (ur.valid_until is null or ur.valid_until > now())), '[]'::jsonb) as roles,
+             coalesce((
+                 select jsonb_agg(jsonb_build_object(
+                   'id', r.id, 'code', r.code, 'name', r.name, 'status', r.status, 'departmentName', d.name, 'grantId', g.id
+                 ) order by r.name, d.name)
+                   from user_roles ur
+                   join roles r on r.tenant_id = ur.tenant_id and r.id = ur.role_id
+                   join org_department_grants g on g.tenant_id = ur.tenant_id and ur.source_key = 'department:' || g.id
+                   join org_departments d on d.tenant_id = g.tenant_id and d.id = g.department_id
+                  where ur.tenant_id = u.tenant_id and ur.user_id = u.id and ur.source_key like 'department:%'
+               ), '[]'::jsonb) as "departmentRoles",
              coalesce((select jsonb_agg(dsg.scope_value order by dsg.scope_value)
                from data_scope_grants dsg where dsg.tenant_id = u.tenant_id
                 and dsg.subject_type = 'user' and dsg.subject_id = u.id

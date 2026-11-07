@@ -238,21 +238,67 @@ describe('Runtime Manifest compiler', () => {
     assert.throws(() => compileRuntimeManifest(invalid), /checksum mismatch/)
   })
 
-  it('renders only the permission-filtered, versioned knowledge context into the DSH prompt', () => {
+  it('renders the retrieved enterprise knowledge as reference material, not authorization (weknora 4.5)', () => {
     const input = manifest('run-knowledge', 'attempt-1')
+    input.knowledge_status = 'ok'
     input.knowledge_context = [{
-      documentId: 'knowledge-policy-v1',
+      documentId: 'weknora:knowledge-1',
       title: '库存管理规范',
-      version: '1.0',
+      version: '20260801.0930',
       effectiveDate: '2026-08-01',
-      dataScope: 'domain:supply-chain',
-      contentChecksum: 'a'.repeat(32),
+      dataScope: 'knowledge:供应链制度库',
+      contentChecksum: 'a'.repeat(64),
       excerpt: '可用库存低于安全库存时应进入预警。',
     }]
     const rendered = renderSystemPrompt(compileRuntimeManifest(input).manifest)
-    assert.match(rendered, /【1】库存管理规范 v1\.0/)
+    assert.match(rendered, /【1】库存管理规范（更新于 2026-08-01）/)
+    assert.doesNotMatch(rendered, / v20260801/)
     assert.match(rendered, /只能依据以下已授权知识片段/)
+    assert.match(rendered, /不是新的操作授权/)
     assert.match(rendered, /可用库存低于安全库存/)
+  })
+
+  it('tells the model which pinned Skills are unavailable because the image lacks their Python dependencies', () => {
+    const input = manifest('run-unavailable-skill', 'attempt-1')
+    input.unavailable_skills = [{ skill: 'skill-aging@0.1.0', name: '应收账款账龄分析', reason: 'python_dependency_missing', missing: ['pandas'] }]
+    const rendered = renderSystemPrompt(compileRuntimeManifest(input).manifest)
+    assert.match(rendered, /# 本次不可用的 Skill[\s\S]*- 应收账款账龄分析：缺少 pandas/)
+    assert.match(rendered, /不要假装已经使用/)
+    assert.doesNotMatch(renderSystemPrompt(compileRuntimeManifest(manifest('run-no-unavailable', 'attempt-1')).manifest), /本次不可用的 Skill/)
+    const assembled = manifest('run-unavailable-assembled', 'attempt-1')
+    const first = assembled.skills[0]!
+    assembled.unavailable_skills = [{ skill: `${first.id}@${first.version}`, name: 'x', reason: 'python_dependency_missing', missing: [] }]
+    assert.throws(() => compileRuntimeManifest(assembled), /both unavailable and assembled/)
+    const invalid = manifest('run-unavailable-invalid', 'attempt-1')
+    invalid.unavailable_skills = [{ skill: 'skill-aging@0.1.0', name: 'x', reason: 'other' as never, missing: [] }]
+    assert.throws(() => compileRuntimeManifest(invalid), /unavailable_skills.reason is invalid/)
+  })
+
+  it('tells the model why no enterprise knowledge was retrieved (WK18, 第 7 节)', () => {
+    const render = (status?: 'not_selected' | 'skipped' | 'ok' | 'unavailable') => {
+      const input = manifest(`run-knowledge-${status ?? 'none'}`, 'attempt-1')
+      if (status) input.knowledge_status = status
+      return renderSystemPrompt(compileRuntimeManifest(input).manifest)
+    }
+    assert.match(render('not_selected'), /本次没有查询企业知识库[\s\S]*添加相关知识库/)
+    assert.match(render('skipped'), /本次没有查询企业知识库/)
+    assert.doesNotMatch(render('skipped'), /添加相关知识库/)
+    assert.match(render('unavailable'), /企业知识库本次不可用/)
+    assert.doesNotMatch(render('ok'), /企业知识/)
+    assert.doesNotMatch(render(), /企业知识/)
+  })
+
+  it('rejects knowledge excerpts without an ok status and unknown statuses', () => {
+    const input = manifest('run-knowledge-invalid', 'attempt-1')
+    input.knowledge_status = 'not_selected'
+    input.knowledge_context = [{
+      documentId: 'weknora:knowledge-1', title: '规范', version: '20260801.0930', effectiveDate: '2026-08-01',
+      dataScope: 'knowledge:库', contentChecksum: 'a'.repeat(64), excerpt: '片段',
+    }]
+    assert.throws(() => compileRuntimeManifest(input), /knowledge_status ok/)
+    const unknown = manifest('run-knowledge-unknown', 'attempt-1')
+    ;(unknown as { knowledge_status?: string }).knowledge_status = 'not_applicable'
+    assert.throws(() => compileRuntimeManifest(unknown), /knowledge_status is invalid/)
   })
 
   it('renders the pinned project brief as reference context, not authorization (项目空间 S1)', () => {
@@ -601,6 +647,9 @@ describe('DSH ACP Runtime Adapter', () => {
     assert.match(renderSystemPrompt(input), /# 推荐 AI 同事（先于其他处理）[\s\S]*第一步先调用 list_colleague_agents，在查找文件、要求补充数据、调用其他工具或作答之前完成[\s\S]*recommend_agents/)
     // 有相符的同事时优先推荐，不自己展开解答；通用问题直接回答。
     assert.match(renderSystemPrompt(input), /有相符的同事时，优先用 recommend_agents 推荐 1～3 位[\s\S]*不要自己展开解答[\s\S]*通用问题（写作、润色、翻译、常识、一般性解释）时，不推荐，直接回答/)
+    // 第 4 项：通用问题不说出判断过程；推荐时给出发给同事的问题，用于预填。
+    assert.match(renderSystemPrompt(input), /不要在回复中提及是否推荐、问题属于哪一类等判断过程/)
+    assert.match(renderSystemPrompt(input), /为每位同事写 suggestedPrompt：以员工的口吻直接写给该同事/)
     // REC-P2 发现：推荐理由不得声称说明之外的能力（例如“能直接读取质量数据”）。
     assert.match(renderSystemPrompt(input), /只依据 list_colleague_agents 返回的该同事说明与示例问题来写，不要声称它能读取哪些数据/)
     assert.doesNotMatch(renderSystemPrompt(manifest('run-plain', 'attempt-plain')), /# 推荐 AI 同事/)
@@ -610,6 +659,33 @@ describe('DSH ACP Runtime Adapter', () => {
     assert.equal(result.status, 'completed', result.errorMessage ?? undefined)
     assert.deepEqual(calls.map(call => call.name), ['list_colleague_agents', 'recommend_agents'])
     assert.deepEqual(calls[1]?.input, { recommendations: [{ agentId: 'agent-contract', reason: '这类问题由这位同事负责。' }] })
+  })
+  it('routes the Skill creation tools with the Attempt workspace and explains saving drafts in the prompt', async () => {
+    const calls: Array<{ name: string; input: Record<string, unknown>; skillMd?: string }> = []
+    const adapter = await createAdapter(500, undefined, undefined, {
+      skillCreationTool: async (name, input, _manifest, workspaceDirectory) => {
+        const skillMd = name === 'skill_draft_save'
+          ? await readFile(join(workspaceDirectory, String(input['directory']), 'SKILL.md'), 'utf8')
+          : undefined
+        calls.push({ name, input, ...(skillMd ? { skillMd } : {}) })
+        return name === 'list_available_skills' ? { skills: [], total: 0 } : { submissionId: 's-1', versionId: 'v-1', compatibility: { status: 'compatible', issues: [] } }
+      },
+    })
+    const input = manifest('run-skill-draft', 'attempt-skill-draft', '帮我做一个周报 Skill[mock:skill-draft]')
+    input.tools = [...input.tools, { id: 'list_available_skills', version: '1.0.0' }, { id: 'skill_draft_save', version: '1.0.0' }]
+    const prompt = renderSystemPrompt(input)
+    assert.match(prompt, /# 保存 Skill 草稿[\s\S]*先调用 list_available_skills/)
+    assert.match(prompt, /用 bash 在工作区新建目录写这些文件[\s\S]*不要放在 output\/、input\/ 或 skills\/ 下/)
+    assert.match(prompt, /试运行不提供业务输入文件[\s\S]*完全没有提供输入时[\s\S]*改用写在脚本里的一小份内置样例运行[\s\S]*以退出码 0 结束/)
+    assert.match(prompt, /指定了输入文件却找不到或读不了时，要报出明确错误并以非 0 退出码结束，不能改跑样例/)
+    assert.match(prompt, /用示例输入和不给输入文件各运行一次，两次都跑通再保存/)
+    assert.match(prompt, /你不能替员工提交，也不要说已经提交或已经发布/)
+    assert.doesNotMatch(renderSystemPrompt(manifest('run-plain', 'attempt-plain')), /# 保存 Skill 草稿/)
+    const result = await (await adapter.execute(input)).done
+    assert.equal(result.status, 'completed', result.errorMessage ?? undefined)
+    assert.deepEqual(calls.map(call => call.name), ['list_available_skills', 'skill_draft_save'])
+    assert.deepEqual(calls[1]?.input, { directory: 'drafts/weekly-report' })
+    assert.match(calls[1]?.skillMd ?? '', /^---\nname: 销售周报汇总/, 'handler reads the same workspace the worker wrote')
   })
   it('rejects activating an emergency-disabled built-in Skill once, without failing the Attempt', async () => {
     const run = async (disabled: string[]) => {
@@ -1206,7 +1282,7 @@ describe('DSH ACP Runtime Adapter', () => {
     assert.equal(refused.status, 'failed', 'fails closed without a loader')
 
     const prompt = renderSystemPrompt(compileRuntimeManifest(withOriginal('run-original-prompt')).manifest)
-    assert.match(prompt, /原始文件（只读，供 bash 中的程序处理[^）]*）：input\/original\/01-data\.xlsx/)
+    assert.match(prompt, /原始文件（只读，供 bash 中的程序或 python_execute 运行的 Skill 脚本处理[^）]*）：input\/original\/01-data\.xlsx/)
     assert.match(prompt, /基于原始文件处理，把修改后的完整文件写入 output\/数据\.xlsx，平台会登记为第 2 版/)
     assert.doesNotMatch(prompt, /读取路径（解析文本）/, 'no text path when the file has none')
   })

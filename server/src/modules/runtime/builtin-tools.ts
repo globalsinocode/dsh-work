@@ -47,6 +47,7 @@ const outputOnly = '创建和修改限于 output 目录中的 Markdown、TXT 与
 const projectOnly = '只访问本次运行所在项目空间的任务'
 const actorLimited = '按发起成员的任务权限执行，定时执行不装配'
 const colleaguesOnly = '只涉及发起员工本人当前可用的 AI 同事，不含本 Agent'
+const skillCreationOnly = 'Agent 版本开启“可创建 Skill”时装配，仅个人对话'
 
 export const builtinTools: readonly BuiltinTool[] = [
   { name: 'read', label: '读取文本文件', source: 'dsh', effect: 'read', risk: 'low', assembly: 'always', constraints: [workspace] },
@@ -72,6 +73,8 @@ export const builtinTools: readonly BuiltinTool[] = [
   { name: 'prepare_admin_action', label: '准备管理动作', source: 'platform', effect: 'write', risk: 'low', assembly: 'purpose', constraints: ['仅管理助手', '只生成待确认动作'] },
   { name: 'list_colleague_agents', label: '查看可推荐的 AI 同事', source: 'platform', effect: 'read', risk: 'low', assembly: 'personal-conversation', constraints: [colleaguesOnly, '仅个人对话'] },
   { name: 'recommend_agents', label: '推荐 AI 同事', source: 'platform', effect: 'write', risk: 'low', assembly: 'personal-conversation', constraints: [colleaguesOnly, '每次 1～3 位，只记录推荐，不转交对话'] },
+  { name: 'list_available_skills', label: '查看可用的 Skill', source: 'platform', effect: 'read', risk: 'low', assembly: 'personal-conversation', constraints: [skillCreationOnly, '只列出发起员工可选用的 Skill 与平台内置 Skill'] },
+  { name: 'skill_draft_save', label: '保存 Skill 草稿', source: 'platform', effect: 'write', risk: 'low', assembly: 'personal-conversation', constraints: [skillCreationOnly, '只保存草稿，提交审核由员工决定', '按 Skill 包规则校验，不覆盖已有 Skill'] },
 ]
 
 const byName = new Map(builtinTools.map(tool => [tool.name, tool]))
@@ -120,6 +123,17 @@ export const agentRecommendationToolNamesList = ['list_colleague_agents', 'recom
 
 export function agentRecommendationToolNames(input: { enabled: boolean; personalConversation: boolean }): string[] {
   return input.enabled && input.personalConversation ? [...agentRecommendationToolNamesList] : []
+}
+
+/**
+ * Skill 创建工具（Skill 创建专家方案 4.2）：Agent 版本开启且是个人对话中员工发起的交互运行时装配。
+ * 草稿目录只能经执行容器中的 bash 写出（write 只写 output/ 中的文本成果），bash 不可用时不装配保存工具。
+ */
+export const skillCreationToolNamesList = ['list_available_skills', 'skill_draft_save'] as const
+
+export function skillCreationToolNames(input: { enabled: boolean; personalConversation: boolean; bashAvailable: boolean }): string[] {
+  if (!input.enabled || !input.personalConversation) return []
+  return input.bashAvailable ? [...skillCreationToolNamesList] : ['list_available_skills']
 }
 
 /**

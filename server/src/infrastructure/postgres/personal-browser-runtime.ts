@@ -14,6 +14,11 @@ export interface PersonalBrowserRuntimeHooks {
    * 模型调用 recommend_agents），随后正常完成回答。
    */
   recommendAgents?: (manifest: RuntimeManifest) => Promise<void>
+  /**
+   * `P1-创建Skill` 标记 prompt 的草稿回调：由启动脚本在临时工作区写出 Skill 目录并经草稿服务保存
+   * （对应真实 DSH 中模型用 bash 写目录后调用 skill_draft_save），随后正常完成回答。
+   */
+  saveSkillDraft?: (manifest: RuntimeManifest) => Promise<void>
 }
 
 interface PersonalBrowserRuntimeState {
@@ -67,6 +72,14 @@ export class PersonalBrowserRuntime implements AgentRuntimePort {
             emit('assistant.completed', '受控运行已完成：已生成两份报告（成果登记缺口夹具）。')
             snapshot.status = 'completed'; snapshot.endedAt = new Date().toISOString()
             emit('run.completed', 'P1 受控运行完成', { artifact_count: 2 })
+            resolve(structuredClone(snapshot))
+            return
+          }
+          if (manifest.input.message.includes('P1-创建Skill')) {
+            await this.hooks.saveSkillDraft?.(manifest)
+            emit('assistant.completed', '受控测试运行已完成（非真实模型回答）；Skill 草稿见下方，是否提交审核由你决定。')
+            snapshot.status = 'completed'; snapshot.endedAt = new Date().toISOString()
+            emit('run.completed', 'P1 受控运行完成')
             resolve(structuredClone(snapshot))
             return
           }

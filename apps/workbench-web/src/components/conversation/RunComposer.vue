@@ -67,5 +67,8 @@ const emit = defineEmits<{
     @open-files="emit('open-files')"
     @submit="emit('submit', $event)"
     @stop="emit('stop')"
-  />
+  >
+    <template v-if="$slots['composer-attachments']" #attachments><slot name="composer-attachments" /></template>
+    <template v-if="$slots['composer-actions']" #leading-actions><slot name="composer-actions" /></template>
+  </TaskComposer>
 </template>

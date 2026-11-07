@@ -3,6 +3,7 @@ import { onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { workbenchApi } from '@/api/client'
 import PageHeader from '@/components/PageHeader.vue'
+import DingTalkSettingsSection from '@/components/DingTalkSettingsSection.vue'
 import { User } from '@element-plus/icons-vue'
 
 import ExternalConnections from '@/components/external-connections/external-connections.vue'
@@ -95,6 +96,7 @@ onMounted(async () => {
       />
 
       <NotificationSettings :enabled="notificationSupported" />
+      <DingTalkSettingsSection v-if="authStore.identityProvider === 'local-password' || authStore.identityProvider === 'dingtalk' || authStore.identityProvider === 'prototype-sso'" />
 
       <section class="panel settings-section retention-notice">
         <h2>内容保留与账号停用</h2>

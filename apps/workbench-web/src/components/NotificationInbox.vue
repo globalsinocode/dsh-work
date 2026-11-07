@@ -3,11 +3,11 @@ import { computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { Bell } from '@element-plus/icons-vue'
 
-import { useNotificationStore } from '@/stores/notifications'
+import { useWorkspaceNotificationStore } from '@/stores/notifications'
 import { describeWorkspaceActivity } from '@dsh-work/workbench-components'
 import { useContentStore } from '@/stores/content'
 
-const store = useNotificationStore()
+const store = useWorkspaceNotificationStore()
 const contentStore = useContentStore()
 const router = useRouter()
 

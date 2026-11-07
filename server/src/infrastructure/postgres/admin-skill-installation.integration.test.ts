@@ -47,11 +47,20 @@ const body = '---\nname: installation-test\ndescription: Read a reference file a
 const bytes = zipSync({ 'SKILL.md': strToU8(body), 'references/value.txt': strToU8('SKILL_RESOURCE_MARKER_7F31') })
 const changedBytes = zipSync({ 'SKILL.md': strToU8(`${body}\nReturn the result as one concise line.\n`), 'references/value.txt': strToU8('SKILL_RESOURCE_MARKER_7F31') })
 const conflictingBytes = zipSync({ 'SKILL.md': strToU8(`${body}\nReturn the result as JSON.\n`), 'references/value.txt': strToU8('SKILL_RESOURCE_MARKER_7F31') })
+/** Entry Skill `root` delegating to `dg-dep`; both roots ship identical `dg-dep` content, so the second install reuses its draft. */
+function discardGraphBytes(root: string) {
+  return zipSync({
+    [`repo/${root}/SKILL.md`]: strToU8(`---\nname: ${root}\ndescription: Delegate to the dependency.\n---\nCall the Skill tool with "dg-dep" and follow its instructions exactly.\n`),
+    'repo/dg-dep/SKILL.md': strToU8(body.replace('installation-test', 'dg-dep')),
+    'repo/dg-dep/references/value.txt': strToU8('dg-dep-v2'),
+  })
+}
 async function fixtureAcquire(source: SkillSource) {
   const fixture = source.repository === 'fixture/multiple'
     ? zipSync({ 'repo/wanted/SKILL.md': strToU8(body.replace('installation-test', 'wanted')), 'repo/wanted/references/value.txt': strToU8('selected-marker'), 'repo/other/SKILL.md': strToU8(body.replace('installation-test', 'other').replace('description:', 'allowed-tools: [Bash]\ndescription:')) })
     : source.repository === 'fixture/delegated' || source.repository === 'fixture/delegated-updated'
       ? zipSync({ 'repo/grill-me/SKILL.md': strToU8(`---\nname: grill-me\ndescription: Delegate to the complete grilling workflow.\n---\nCall the Skill tool with "grilling" and follow its instructions exactly.${source.repository.endsWith('updated') ? '\nReturn a concise final answer.' : ''}\n`), 'repo/grilling/SKILL.md': strToU8(body.replace('installation-test', 'grilling')), 'repo/grilling/references/value.txt': strToU8('dependency-marker') })
+      : source.repository === 'fixture/discard-graph' || source.repository === 'fixture/discard-graph-other' ? discardGraphBytes(source.repository.endsWith('other') ? 'dg-other' : 'dg-root')
       : source.repository === 'fixture/changed' ? changedBytes
         : source.repository === 'fixture/conflicting' ? conflictingBytes : bytes
   return { bytes: fixture, resolvedUrl: source.url, resolvedRef: null }
@@ -412,6 +421,126 @@ test('ZIP upload reuses package parsing, compatibility planning, folder storage 
   assert.equal(version?.status, 'published')
   assert.equal((await artifactStore.read(version!.manifest.artifact)).files.find(file => file.path === 'references/value.txt')?.content, 'SKILL_RESOURCE_MARKER_7F31')
 })
+test('an installed draft can be discarded and replaced by a corrected package', { skip: real }, async () => {
+  const skills = new PostgresSkillService(database.client, operations, artifactStore)
+  const draftBody = body.replace('installation-test', 'discard-test')
+  const original = zipSync({ 'SKILL.md': strToU8(draftBody), 'references/value.txt': strToU8('v1') })
+  const corrected = zipSync({ 'SKILL.md': strToU8(`${draftBody}\nReturn one line.\n`), 'references/value.txt': strToU8('v1') })
+  const install = async (zip: Uint8Array) => {
+    const preview = await service.prepareZip(actor, { fileName: 'discard-test.zip', bytes: zip })
+    return service.confirmZip(actor, preview.id, preview.planSha256!)
+  }
+  const first = await install(original)
+  assert.deepEqual([first.resultType, first.installedVersion], ['created', '0.1.0'])
+  // A failed trial leaves the draft in place; a corrected package cannot silently replace it.
+  await assert.rejects(install(corrected), (error: Error & { status?: number }) => error.status === 409 && /放弃该草稿/.test(error.message))
+
+  const [firstVersion] = await database.client<{ id: string }[]>`select id from skill_versions where skill_id = ${first.skillId!} and version = '0.1.0'`
+  const discarded = await skills.discardDraft({ skillId: first.skillId!, actor })
+  assert.equal(discarded.skill, null, 'a never-published Skill leaves the list once its only draft is discarded')
+  assert.deepEqual(discarded.discardedVersionIds, [firstVersion!.id])
+  assert.equal((await skills.getSkills()).some(skill => skill.id === first.skillId), false)
+  const [state] = await database.client<{ versionStatus: string; installationStatus: string; audits: number }[]>`
+    select (select status from skill_versions where id = ${firstVersion!.id}) as "versionStatus",
+           (select status from skill_installations where id = ${first.id}) as "installationStatus",
+           (select count(*)::int from audit_events where action = 'skill.draft.discard' and object_id = ${first.skillId!}) as audits
+  `
+  assert.deepEqual(state, { versionStatus: 'disabled', installationStatus: 'cancelled', audits: 1 })
+  await assert.rejects(skills.discardDraft({ skillId: first.skillId!, actor }), /Skill 不存在/)
+
+  const second = await install(corrected)
+  assert.deepEqual([second.skillId, second.resultType, second.installedVersion], [first.skillId, 'updated', '0.2.0'])
+  assert.equal((await skills.getSkills()).find(skill => skill.id === first.skillId)?.status, 'draft')
+  // Re-uploading content identical to a discarded version creates a new draft instead of reviving the disabled one.
+  await skills.discardDraft({ skillId: first.skillId!, actor })
+  const third = await install(original)
+  assert.deepEqual([third.resultType, third.installedVersion], ['updated', '0.3.0'])
+})
+
+test('discarding works per installation graph and refuses drafts it does not own', { skip: real }, async () => {
+  const skills = new PostgresSkillService(database.client, operations, artifactStore)
+  const link = async (repository: string, selected?: string) => {
+    const preview = await service.prepareLink(actor, { url: `https://github.com/fixture/${repository}`, ...(selected ? { selected } : {}) })
+    return service.confirmDirect(actor, preview.id, preview.planSha256!)
+  }
+  const skillId = async (name: string) => (await database.client<{ id: string }[]>`select id from skills where name = ${name}`)[0]!.id
+  const draft = async (name: string) => (await database.client<{ version: string | null; status: string | null }[]>`
+    select sv.version, sv.status from skills s left join skill_versions sv on sv.id = s.draft_version_id where s.name = ${name}`)[0]
+  // dg-dep was once installed and published on its own, so it still has an installed entry installation.
+  const standalone = zipSync({ 'SKILL.md': strToU8(body.replace('installation-test', 'dg-dep')), 'references/value.txt': strToU8('dg-dep-v1') })
+  const preview = await service.prepareZip(actor, { fileName: 'dg-dep.zip', bytes: standalone })
+  const own = await service.confirmZip(actor, preview.id, preview.planSha256!)
+  await database.client`update skill_versions set status = 'published' where skill_id = ${own.skillId!} and version = '0.1.0'`
+  await database.client`update skills set active_version_id = draft_version_id, draft_version_id = null, status = 'published' where id = ${own.skillId!}`
+
+  await link('discard-graph', 'dg-root')
+  assert.equal((await draft('dg-dep'))?.status, 'draft', 'dg-root brings a new dg-dep draft')
+  await link('discard-graph-other', 'dg-other')
+  // The dg-dep draft belongs to dg-root's installation even though dg-dep was an entry before.
+  await assert.rejects(skills.discardDraft({ skillId: await skillId('dg-dep'), actor }), (error: Error & { status?: number }) => error.status === 409 && /入口 Skill/.test(error.message))
+  // dg-other reused that dg-dep draft, so discarding dg-root's graph would strand dg-other.
+  await assert.rejects(skills.discardDraft({ skillId: await skillId('dg-root'), actor }), (error: Error & { status?: number }) => error.status === 409 && /dg-other/.test(error.message))
+
+  const other = await skills.discardDraft({ skillId: await skillId('dg-other'), actor })
+  assert.deepEqual(other.discardedSkillIds, [await skillId('dg-other')], 'a reused dependency draft stays with its own installation')
+  const rooted = await skills.discardDraft({ skillId: await skillId('dg-root'), actor })
+  assert.deepEqual(new Set(rooted.discardedSkillIds), new Set([await skillId('dg-root'), await skillId('dg-dep')]))
+  assert.equal(rooted.discardedVersionIds.length, 2)
+  assert.equal(await draft('dg-dep').then(row => row?.version ?? null), null)
+  const dependency = (await skills.getSkills()).find(skill => skill.name === 'dg-dep')
+  assert.equal(dependency?.status, 'published', 'the published dg-dep stays on its active version')
+
+  // Drafts saved from an employee submission are reviewed under 待审核, not discarded here.
+  const submitted = zipSync({ 'SKILL.md': strToU8(body.replace('installation-test', 'dg-submitted')), 'references/value.txt': strToU8('s') })
+  const submittedPreview = await service.prepareZip(actor, { fileName: 'dg-submitted.zip', bytes: submitted })
+  const submittedSkill = await service.confirmZip(actor, submittedPreview.id, submittedPreview.planSha256!)
+  await database.client`update skill_versions set manifest = manifest || '{"submissionVersionId":"submission-version-test"}'::jsonb where skill_id = ${submittedSkill.skillId!}`
+  await assert.rejects(skills.discardDraft({ skillId: submittedSkill.skillId!, actor }), (error: Error & { code?: string }) => error.code === 'skill_submission_review_required')
+})
+
+test('published script Skills are rechecked against the execution image and refused at run time when it lacks a package', { skip: real }, async () => {
+  const skills = new PostgresSkillService(database.client, operations, artifactStore)
+  const modules = { stdlib: ['os', 'sys'], modules: { pandas: ['pandas'] } }
+  const installer = new AdminSkillInstallationService(database.client, orchestration, new PostgresAuthorizationService(database.client), fixtureAcquire, true, ['pandas'], artifactStore, undefined, modules)
+  // pandas is imported but never declared: the plan records it as a dependency found from the import.
+  const zip = zipSync({ 'SKILL.md': strToU8(body.replace('installation-test', 'py-gap')), 'references/value.txt': strToU8('v'), 'scripts/run.py': strToU8('import os\nimport pandas as pd\n') })
+  const preview = await installer.prepareZip(actor, { fileName: 'py-gap.zip', bytes: zip })
+  assert.equal(preview.plan?.compatibility.status, 'compatible')
+  assert.ok(preview.package?.requirements.some(item => item.name === 'python-package:pandas' && /由 import 识别/.test(item.evidence)))
+  const installed = await installer.confirmZip(actor, preview.id, preview.planSha256!)
+  await database.client`update skill_versions set status = 'published' where skill_id = ${installed.skillId!}`
+  await database.client`update skills set active_version_id = draft_version_id, draft_version_id = null, status = 'published' where id = ${installed.skillId!}`
+  const reference = `${installed.skillId}@${installed.installedVersion}`
+
+  skills.setPythonEnvironment({ image: 'execution@sha256:with-pandas', packages: ['pandas'], modules })
+  assert.deepEqual(await skills.recheckPublishedPythonDependencies(), [])
+  assert.equal((await skills.resolveRuntimeSkills([reference])).length, 1)
+
+  // A new image without pandas: the startup recheck lists the Skill, admin sees it, and runs are refused before starting.
+  skills.setPythonEnvironment({ image: 'execution@sha256:without-pandas', packages: [], modules: { stdlib: ['os', 'sys'], modules: {} } })
+  const affected = await skills.recheckPublishedPythonDependencies()
+  assert.deepEqual(affected.filter(item => item.skillId === installed.skillId).map(item => item.missing), [['pandas']])
+  assert.deepEqual((await skills.getSkills()).find(skill => skill.id === installed.skillId)?.missingPythonDependencies, ['pandas'])
+  await assert.rejects(skills.resolveRuntimeSkills([reference]), (error: Error & { code?: string }) => error.code === 'skill_python_dependency_missing' && /pandas/.test(error.message))
+  // An Agent's pinned Skill is left out of the run (and reported) instead of failing the Agent; saving skips the check.
+  const omitted: Array<{ reference: string; name: string; missing: string[] }> = []
+  assert.deepEqual(await skills.resolveRuntimeSkills([reference], { dependencyGaps: 'omit', omitted }), [])
+  assert.deepEqual(omitted, [{ reference, name: 'py-gap', missing: ['pandas'] }])
+  assert.equal((await skills.resolveRuntimeSkills([reference], { dependencyGaps: 'ignore' })).length, 1)
+  // An entry Skill left out because a dependency lacks a package is reported under its own name.
+  const rootZip = zipSync({ 'SKILL.md': strToU8(body.replace('installation-test', 'py-root')), 'references/value.txt': strToU8('v') })
+  const rootPreview = await installer.prepareZip(actor, { fileName: 'py-root.zip', bytes: rootZip })
+  const root = await installer.confirmZip(actor, rootPreview.id, rootPreview.planSha256!)
+  await database.client`update skill_versions set status = 'published', manifest = manifest || ${database.client.json({ dependencies: [reference] })} where skill_id = ${root.skillId!}`
+  await database.client`update skills set active_version_id = draft_version_id, draft_version_id = null, status = 'published' where id = ${root.skillId!}`
+  const rootReference = `${root.skillId}@${root.installedVersion}`
+  const omittedRoot: Array<{ reference: string; name: string; missing: string[] }> = []
+  assert.deepEqual(await skills.resolveRuntimeSkills([rootReference], { dependencyGaps: 'omit', omitted: omittedRoot }), [])
+  assert.deepEqual(omittedRoot, [{ reference: rootReference, name: 'py-root', missing: ['pandas（依赖 Skill“py-gap”）'] }])
+  skills.setPythonEnvironment(null)
+  assert.equal((await skills.getSkills()).find(skill => skill.id === installed.skillId)?.missingPythonDependencies, undefined)
+})
+
 test('one confirmed plan atomically installs, tests and publishes same-source Skill dependencies', { skip: real, timeout: 30000 }, async () => {
   const { sessionId, runId } = await send('npx skills@latest add fixture/delegated --skill=grill-me')
   const detail = await wait(sessionId)
@@ -458,14 +587,14 @@ test('one confirmed plan atomically installs, tests and publishes same-source Sk
   assert.equal(rootDefinition?.installationRole, 'root')
   assert.deepEqual(rootDefinition?.dependencies?.map(item => item.name), ['grilling'])
   assert.equal(dependencyDefinition?.installationRole, 'dependency')
-  assert.deepEqual((await skills.listWorkbenchSkills()).filter(item => ['grill-me', 'grilling'].includes(item.name)).map(item => item.name), ['grill-me'])
-  await assert.rejects(skills.resolveWorkbenchSkillVersion(dependencyDefinition!.id), /不存在、未发布或已停用/)
+  assert.deepEqual((await skills.listWorkbenchSkills([])).filter(item => ['grill-me', 'grilling'].includes(item.name)).map(item => item.name), ['grill-me'])
+  await assert.rejects(skills.resolveWorkbenchSkillVersion(dependencyDefinition!.id, []), /不存在、未发布或已停用/)
 
   const directDependencyRequest = await send('npx skills@latest add fixture/delegated --skill=grilling')
   const directDependencyDetail = await wait(directDependencyRequest.sessionId)
   await service.confirm(actor, directDependencyRequest.runId, directDependencyDetail.installations[0]!.planSha256!)
   assert.equal((await skills.getSkills()).find(item => item.id === dependencyDefinition!.id)?.installationRole, 'root')
-  assert.deepEqual((await skills.listWorkbenchSkills()).filter(item => ['grill-me', 'grilling'].includes(item.name)).map(item => item.name).sort(), ['grill-me', 'grilling'])
+  assert.deepEqual((await skills.listWorkbenchSkills([])).filter(item => ['grill-me', 'grilling'].includes(item.name)).map(item => item.name).sort(), ['grill-me', 'grilling'])
 
   const updatedRequest = await send('npx skills@latest add fixture/delegated-updated --skill=grill-me')
   const updatedDetail = await wait(updatedRequest.sessionId)

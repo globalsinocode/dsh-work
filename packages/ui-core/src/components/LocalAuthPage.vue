@@ -3,7 +3,35 @@ import { computed, onMounted, ref } from 'vue'
 import { ArrowRight, OfficeBuilding } from '@element-plus/icons-vue'
 import AppLogo from './AppLogo.vue'
 
-const props = defineProps<{ audience: 'admin' | 'workbench'; changePassword?: boolean }>()
+/**
+ * 钉钉内登录即绑定（钉钉接入方案 4.2 方式一，原型③）：`dingtalk` 为免登返回的待绑定凭证与钉钉姓名、部门，
+ * 登录改走 `bind-login`；`dingtalkBindingToken` 用于“修改初始密码并绑定”。结果交给调用方（员工端）跳转与提示。
+ */
+const props = defineProps<{
+  audience: 'admin' | 'workbench'
+  changePassword?: boolean
+  dingtalk?: { bindingToken: string; name: string | null; department: string | null } | null
+  dingtalkBindingToken?: string | null
+  dingtalkMessage?: string
+}>()
+type DingTalkOutcome = 'bound' | 'not_bound' | 'bound_after_change' | 'password_change'
+const emit = defineEmits<{
+  dingtalkComplete: [{ outcome: DingTalkOutcome; location: string; ticket?: string }]
+  dingtalkRetry: []
+}>()
+const refusals: Record<string, string> = {
+  dingtalk_account_bound_to_other: '此钉钉账号已绑定其他员工，本次不会绑定。如需更换，请联系管理员。',
+  account_has_other_binding: '你的账号已绑定另一个钉钉账号。请先在“用户中心 › 钉钉”中解除绑定，或联系管理员。',
+  self_bind_locked: '管理员已暂停你的钉钉自行绑定，请联系管理员。',
+  ticket_invalid: '钉钉登录凭证已过期，本次未绑定。下次在钉钉内打开时登录一次即可绑定。',
+}
+/** 不允许绑定时已签发普通会话：显示原因与“不绑定，继续使用”。 */
+const continueLocation = ref('')
+const ticketExpired = ref(false)
+const dingtalkAccount = computed(() => props.dingtalk?.name
+  ? `${props.dingtalk.name}${props.dingtalk.department ? `（${props.dingtalk.department}）` : ''}`
+  : '')
+const bindingChange = computed(() => Boolean(props.changePassword && props.dingtalkBindingToken))
 const username = ref('')
 const password = ref('')
 const newPassword = ref('')
@@ -71,8 +99,9 @@ async function initialize() {
 }
 
 async function submit() {
-  if (busy.value || !ready.value || !localEnabled.value) return
+  if (busy.value || !ready.value || !localEnabled.value || continueLocation.value) return
   error.value = ''
+  ticketExpired.value = false
   if (props.changePassword && newPassword.value !== confirmation.value) {
     error.value = '两次输入的新密码不一致'
     return
@@ -83,16 +112,39 @@ async function submit() {
   }
   saving.value = true
   try {
-    const response = await fetch(`/auth/${props.audience}/${props.changePassword ? 'password' : 'login'}`, {
+    const endpoint = props.changePassword ? 'password' : props.dingtalk ? 'dingtalk/bind-login' : 'login'
+    const response = await fetch(`/auth/${props.audience}/${endpoint}`, {
       method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(props.changePassword
-        ? { currentPassword: password.value, newPassword: newPassword.value, returnTo }
-        : { username: username.value, password: password.value, returnTo }),
+        ? { currentPassword: password.value, newPassword: newPassword.value, returnTo, ...(props.dingtalkBindingToken ? { dingtalkBindingToken: props.dingtalkBindingToken } : {}) }
+        : { username: username.value, password: password.value, returnTo, ...(props.dingtalk ? { bindingToken: props.dingtalk.bindingToken } : {}) }),
     })
-    const result = await response.json() as { location?: string; error?: { message?: string } }
-    if (!response.ok) throw new Error(result.error?.message ?? '登录服务暂不可用，请重试')
+    const result = await response.json() as { location?: string; binding?: { status: string; reason?: string }; error?: { code?: string; message?: string } }
+    if (!response.ok) {
+      if (result.error?.code === 'dingtalk_ticket_invalid') ticketExpired.value = true
+      throw new Error(result.error?.message ?? '登录服务暂不可用，请重试')
+    }
     const location = new URL(result.location ?? '/login', window.location.origin)
     if (location.origin !== window.location.origin) throw new Error('登录返回地址无效')
+    const binding = result.binding
+    if (binding && (props.dingtalk || bindingChange.value)) {
+      if (binding.status === 'bound') {
+        emit('dingtalkComplete', { outcome: bindingChange.value ? 'bound_after_change' : 'bound', location: location.toString() })
+        return
+      }
+      if (binding.status === 'password_change_required') {
+        emit('dingtalkComplete', { outcome: 'password_change', location: location.toString(), ticket: props.dingtalk?.bindingToken })
+        return
+      }
+      if (bindingChange.value) {
+        // 改密已成功，只是没有绑定：提示后进入首页。
+        emit('dingtalkComplete', { outcome: 'not_bound', location: location.toString() })
+        return
+      }
+      error.value = refusals[binding.reason ?? ''] ?? '本次未绑定钉钉账号，请联系管理员。'
+      continueLocation.value = location.toString()
+      return
+    }
     window.location.assign(location.toString())
   } catch (cause) {
     error.value = cause instanceof Error ? cause.message : '操作失败，请重试'
@@ -102,6 +154,10 @@ async function submit() {
     confirmation.value = ''
     saving.value = false
   }
+}
+
+function continueWithoutBinding() {
+  if (continueLocation.value) emit('dingtalkComplete', { outcome: 'not_bound', location: continueLocation.value })
 }
 
 function loginWithAiHub() {
@@ -126,10 +182,16 @@ onMounted(() => void initialize())
     <section v-loading="loading" class="local-auth-card" :aria-busy="loading || busy">
       <AppLogo class="local-auth-logo" dark />
       <header>
-        <h1>{{ changePassword ? '修改密码' : audience === 'admin' ? '登录运营平台' : '登录员工工作台' }}</h1>
-        <p class="local-auth-description">{{ changePassword ? '设置仅自己知道的密码，保存后直接进入系统。' : '使用管理员为你开通的账号登录。' }}</p>
+        <h1>{{ bindingChange ? '请先修改初始密码' : changePassword ? '修改密码' : audience === 'admin' ? '登录运营平台' : '登录员工工作台' }}</h1>
+        <p class="local-auth-description">{{ bindingChange ? '你的账号还在使用管理员设置的初始密码。修改后才会绑定钉钉账号。' : changePassword ? '设置仅自己知道的密码，保存后直接进入系统。' : '使用管理员为你开通的账号登录。' }}</p>
       </header>
+      <div v-if="dingtalk && !changePassword" class="local-auth-dingtalk" role="note" aria-label="钉钉账号绑定说明">
+        <template v-if="dingtalkAccount">当前钉钉账号：<strong>{{ dingtalkAccount }}</strong><br></template>
+        登录后将绑定此钉钉账号，之后在钉钉内打开无需再登录，并会收到 dsh-work 的钉钉提醒。
+      </div>
+      <el-alert v-if="dingtalkMessage" :title="dingtalkMessage" type="warning" :closable="false" show-icon />
       <el-alert v-if="error" :title="error" type="error" :closable="false" show-icon role="alert" />
+      <el-button v-if="ticketExpired" @click="emit('dingtalkRetry')">重新在钉钉中登录</el-button>
       <el-button v-if="!loading && !ready" @click="initialize">重试</el-button>
       <template v-if="ready">
       <el-alert v-if="!localEnabled" title="账号密码登录尚未启用，请联系管理员或使用 AI Hub 账号登录。" type="info" :closable="false" show-icon />
@@ -149,10 +211,11 @@ onMounted(() => void initialize())
             <el-input id="local-confirm-password" v-model="confirmation" type="password" show-password autocomplete="new-password" :minlength="8" :maxlength="64" required :disabled="saving" />
           </el-form-item>
         </template>
-        <el-button class="local-auth-submit" type="primary" native-type="submit" :loading="saving" :disabled="busy || !localEnabled">{{ saving ? '正在提交…' : changePassword ? '保存新密码' : '登录' }}</el-button>
+        <el-button class="local-auth-submit" type="primary" native-type="submit" :loading="saving" :disabled="busy || !localEnabled || Boolean(continueLocation)">{{ saving ? '正在提交…' : bindingChange ? '修改并绑定' : changePassword ? '保存新密码' : dingtalk ? '登录并绑定' : '登录' }}</el-button>
+        <el-button v-if="continueLocation" class="local-auth-secondary" @click="continueWithoutBinding">不绑定，继续使用</el-button>
       </el-form>
-      <p class="local-auth-hint local-auth-help">{{ changePassword ? '所有设备上的旧登录会话将失效。' : '没有账号或忘记密码？请联系管理员' }}</p>
-      <template v-if="!changePassword && aiHubEnabled">
+      <p class="local-auth-hint local-auth-help">{{ changePassword ? '所有设备上的旧登录会话将失效。' : dingtalk ? '绑定后可随时在“用户中心 › 钉钉”中解除。账号由管理员开通，忘记密码请联系管理员。' : '没有账号或忘记密码？请联系管理员' }}</p>
+      <template v-if="!changePassword && !dingtalk && aiHubEnabled">
         <div class="local-auth-divider">其他登录方式</div>
         <el-button class="local-auth-secondary" :disabled="busy" :loading="redirectingToAiHub" @click="loginWithAiHub"><el-icon v-if="!redirectingToAiHub"><OfficeBuilding /></el-icon><span>{{ redirectingToAiHub ? '正在前往 AI Hub…' : '使用 AI Hub 账号登录' }}</span><el-icon v-if="!redirectingToAiHub"><ArrowRight /></el-icon></el-button>
       </template>
@@ -184,6 +247,8 @@ h1 { margin: 0; font-size: var(--dsh-font-size-page-title); font-weight: 650; le
 .local-auth-divider { display: flex; align-items: center; gap: 14px; color: var(--dsh-color-muted); font-size: var(--dsh-font-size-badge); margin-top: 6px; }
 .local-auth-divider::before, .local-auth-divider::after { content: ''; height: 1px; flex: 1; background: var(--dsh-color-border); }
 .local-auth-back { color: var(--dsh-color-brand); text-align: center; }
+.local-auth-form .local-auth-secondary { margin-top: 10px; }
+.local-auth-dingtalk { padding: 12px 14px; border: 1px solid #bfdbfe; border-radius: var(--dsh-radius-md, 10px); background: #eff6ff; color: #1e3a8a; font-size: var(--dsh-font-size-body); line-height: 1.6; }
 .local-auth-footer { margin-top: 24px; text-align: center; color: var(--dsh-color-muted); font-size: var(--dsh-font-size-badge); }
 @media (max-width: 480px) { .local-auth-page { padding: 24px 16px; } .local-auth-card { padding: 24px; } .local-auth-form :deep(.el-input__inner) { font-size: var(--dsh-font-size-subheading); } }
 </style>
