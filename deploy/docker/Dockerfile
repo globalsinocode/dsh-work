@@ -2,6 +2,11 @@
 # Build: docker compose -f deploy/docker/compose.yaml build
 # Tags: dsh-work/server, dsh-work/web
 
+# Modern Docker CLI (>=28.1) is required: the execution backend passes
+# `--security-opt seccomp=builtin`, which older CLIs (Debian docker.io 20.10)
+# misread as a profile file path.
+FROM docker:cli AS docker-cli
+
 FROM node:22-bookworm-slim AS builder
 
 RUN apt-get update \
@@ -31,8 +36,10 @@ RUN pnpm build
 FROM node:22-bookworm-slim AS server
 
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends gosu git ca-certificates curl docker.io \
+  && apt-get install -y --no-install-recommends gosu git ca-certificates curl \
   && rm -rf /var/lib/apt/lists/*
+
+COPY --from=docker-cli /usr/local/bin/docker /usr/local/bin/docker
 
 COPY deploy/docker/server-entrypoint.sh /usr/local/bin/dsh-work-server-entrypoint.sh
 RUN chmod 755 /usr/local/bin/dsh-work-server-entrypoint.sh

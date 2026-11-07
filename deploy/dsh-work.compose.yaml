@@ -22,7 +22,18 @@ services:
       - ..:/work:cached
       - ../deploy/deepseek-harness:/work/deploy/deepseek-harness-seed:ro,cached
       - dsh-work-harness-linux:/work/deploy/deepseek-harness
+      - ../deploy/.dsh:/work/deploy/.dsh-seed:ro,cached
+      - dsh-work-dsh-home:/work/deploy/.dsh
       - dsh-work-node-modules:/work/node_modules
+      - dsh-work-nm-admin-web:/work/apps/admin-web/node_modules
+      - dsh-work-nm-shared:/work/apps/shared/node_modules
+      - dsh-work-nm-workbench-web:/work/apps/workbench-web/node_modules
+      - dsh-work-nm-admin-components:/work/packages/admin-components/node_modules
+      - dsh-work-nm-brand-assets:/work/packages/brand-assets/node_modules
+      - dsh-work-nm-design-tokens:/work/packages/design-tokens/node_modules
+      - dsh-work-nm-ui-core:/work/packages/ui-core/node_modules
+      - dsh-work-nm-workbench-components:/work/packages/workbench-components/node_modules
+      - dsh-work-nm-server:/work/server/node_modules
       - dsh-work-dsh-node-modules:/work/deploy/deepseek-harness/node_modules
       - /var/run/docker.sock:/var/run/docker.sock
     ports:
@@ -39,3 +50,13 @@ volumes:
   dsh-work-node-modules:
   dsh-work-dsh-node-modules:
   dsh-work-harness-linux:
+  dsh-work-dsh-home:
+  dsh-work-nm-admin-web:
+  dsh-work-nm-shared:
+  dsh-work-nm-workbench-web:
+  dsh-work-nm-admin-components:
+  dsh-work-nm-brand-assets:
+  dsh-work-nm-design-tokens:
+  dsh-work-nm-ui-core:
+  dsh-work-nm-workbench-components:
+  dsh-work-nm-server:

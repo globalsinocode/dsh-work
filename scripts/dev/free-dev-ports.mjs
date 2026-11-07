@@ -11,6 +11,10 @@ const DEFAULT_PORTS = {
 
 const KILL_TIMEOUT_MS = 20_000
 
+// Docker Desktop 自己的端口转发进程会以容器发布端口（如 4174）出现在 netstat 里；
+// 杀掉它们会让整个 Docker 引擎退出。这些 PID 必须跳过，容器端口由 compose 重建时自行交接。
+const WINDOWS_PROTECTED_PROCESS_NAMES = [/^com\.docker\.backend$/i, /^wslrelay$/i, /^vpnkit$/i]
+
 function devPorts() {
   return [
     Number(process.env.DSH_WORK_WORKBENCH_PORT ?? DEFAULT_PORTS.workbench),
@@ -68,6 +72,23 @@ function listeningPids(port) {
   return platform() === 'win32' ? listeningPidsWindows(port) : listeningPidsUnix(port)
 }
 
+function windowsProcessName(pid) {
+  try {
+    return execSync(
+      `powershell -NoProfile -Command "(Get-Process -Id ${pid} -ErrorAction Stop).ProcessName"`,
+      { encoding: 'utf8', windowsHide: true, timeout: KILL_TIMEOUT_MS },
+    ).trim()
+  } catch {
+    return undefined
+  }
+}
+
+function isProtectedWindowsProcess(pid) {
+  if (platform() !== 'win32') return false
+  const name = windowsProcessName(pid)
+  return name !== undefined && WINDOWS_PROTECTED_PROCESS_NAMES.some(pattern => pattern.test(name))
+}
+
 function killPid(pid) {
   if (pid === process.pid) return false
   try {
@@ -95,6 +116,10 @@ export function freeDevPorts(ports = devPorts()) {
     }
   }
   for (const [pid, port] of pidsByPort) {
+    if (isProtectedWindowsProcess(pid)) {
+      console.log(`跳过 Docker Desktop 端口转发进程 PID ${pid}（端口 ${port}），由容器重建自行交接。`)
+      continue
+    }
     if (killPid(pid)) killed.push({ port, pid })
   }
   return killed
