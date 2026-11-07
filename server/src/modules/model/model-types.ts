@@ -119,14 +119,6 @@ export interface SetProviderModelStatusInput {
   actor: string
 }
 
-export interface UpsertCredentialReferenceInput {
-  providerId: string
-  backend: CredentialBackend
-  externalRef: string
-  status: CredentialStatus
-  actor: string
-}
-
 export interface CreateModelRouteInput {
   key: string
   name: string

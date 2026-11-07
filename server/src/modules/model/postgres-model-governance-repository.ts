@@ -22,7 +22,6 @@ import type {
   SetProviderModelStatusInput,
   UpdateModelRouteInput,
   UpdateProviderInput,
-  UpsertCredentialReferenceInput,
 } from './model-types.ts'
 import { dependencyUnavailable, invalidRequest, notFound, stateConflict } from '../../domain/request-errors.ts'
 import type { PostgresEncryptedCredentialStore } from '../tool/postgres-encrypted-credential-store.ts'
@@ -202,45 +201,6 @@ export class PostgresModelGovernanceRepository implements ModelGovernanceReposit
     `
     await this.appendAudit(tenantId, input.actor, `provider_model.${input.status}`, input.modelId)
     return this.requireProvider(tenantId, row.providerId)
-  }
-
-  async upsertCredentialReference(tenantId: string, input: UpsertCredentialReferenceInput) {
-    await this.database.begin(async (transaction) => {
-      // 与 writeApiKey 一样先锁住 Provider 行再读凭据 ID，避免并发录入密钥时两边各建一条凭据。
-      const [provider] = await transaction<{ credentialRefId: string | null }[]>`
-        select credential_ref_id as "credentialRefId" from model_providers
-         where tenant_id = ${tenantId} and id = ${input.providerId}
-         for update
-      `
-      if (!provider) throw notFound(`Provider 不存在：${input.providerId}`)
-      const credentialId = provider.credentialRefId ?? `credential-${randomUUID()}`
-      await transaction`
-        insert into credential_refs (
-          id, tenant_id, backend, external_ref, status, last_verified_at, updated_by
-        ) values (
-          ${credentialId}, ${tenantId}, ${input.backend}, ${input.externalRef}, ${input.status},
-          ${input.status === 'configured' ? new Date() : null}, ${input.actor}
-        )
-        on conflict (id) do update
-          set backend = excluded.backend,
-              external_ref = excluded.external_ref,
-              status = excluded.status,
-              last_verified_at = excluded.last_verified_at,
-              updated_by = excluded.updated_by,
-              updated_at = now()
-      `
-      // 改回外部引用时删除平台加密保存的密钥，避免留下不再使用的密文。
-      await transaction`
-        delete from credential_secrets where tenant_id = ${tenantId} and credential_ref_id = ${credentialId}
-      `
-      await transaction`
-        update model_providers
-           set credential_ref_id = ${credentialId}, credential_hint = null, updated_at = now()
-         where tenant_id = ${tenantId} and id = ${input.providerId}
-      `
-    })
-    await this.appendAudit(tenantId, input.actor, 'model_provider.credential_ref.update', input.providerId)
-    return this.requireProvider(tenantId, input.providerId)
   }
 
   async listRoutes(tenantId: string): Promise<ModelRoute[]> {

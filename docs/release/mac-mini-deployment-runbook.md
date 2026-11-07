@@ -637,7 +637,7 @@ bash current/scripts/deploy/restore.sh \
 首次升级到模型路由生效的版本时（迁移 `0121_model_gateway_requests`），执行模型改为“平台默认路由 + 平台模型网关”，DSH 不再使用 `DSH_HOME` 中的厂商密钥：
 
 1. 确认 `runtime.env` 已配置 `DSH_CREDENTIAL_MASTER_KEY`（见第 7 节参数表）；
-2. 升级前在 Runtime 页面把调度切换为排空，等待执行中的 Attempt 结束（升级前创建、缺少路由快照的 Attempt 在升级后会以 `MODEL_ROUTE_UNAVAILABLE` 失败，员工重新执行即可）；
+2. 升级前在 Runtime 页面把调度切换为排空，等待执行中的 Attempt 结束。升级前创建、缺少路由快照的 Attempt 在升级后执行时会以 `MODEL_ROUTE_UNAVAILABLE` 失败，包括已排队未开始的 Attempt 与等待审批的恢复（批准后新建的 Attempt 沿用来源快照）；员工重新执行即可，待审批的操作在升级前处理完或升级后重新发起；
 3. 升级后在管理端“模型管理”为默认路由的 Provider 点击“密钥”录入 API Key。列表显示“需录入 API Key”的 Provider 仍是旧的 DSH 受管引用，模型网关无法使用；录入前所有 Agent 运行以 `MODEL_CREDENTIAL_INVALID` 失败；
 4. 发一条员工对话确认成功，再把 Runtime 调度恢复为接受；
 5. 确认无误后可以从 `DSH_HOME` 移除 DeepSeek 密钥（工具目录探测与 MCP 连接检查不发出模型请求，不受影响）。

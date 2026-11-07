@@ -98,7 +98,6 @@ test('an API key is stored for the provider without ever being returned', async 
   assert.equal(rotated.credential?.hint, '9999')
   assert.equal(rotated.credential?.id, created.credential?.id)
   assert.throws(() => service.setProviderApiKey({ providerId: created.id, apiKey: 'has space', actor }), /空白字符/)
-  assert.throws(() => service.upsertCredentialReference({ providerId: created.id, backend: 'postgres-encrypted', externalRef: 'x', status: 'configured', actor }), /直接录入密钥/)
 })
 
 test('a route cannot become the default while its target is disabled, and enabled must be explicit', async () => {

@@ -69,6 +69,9 @@ const EXECUTION_CONTAINER_IDLE_WAIT_MS = 3_000
 const EXECUTION_CONTAINER_SETTLE_WAIT_MS = 30_000
 /** Tools that can write output/: the system prompt explains artifacts and the Attempt collects them when any is assembled. */
 const ARTIFACT_WRITING_TOOLS = new Set(['write', 'bash', 'python_execute'])
+/** DSH 失败可能来自模型调用的通用错误码：只有这些才按网关记录改判（模型路由方案 4.7）。 */
+const MODEL_RELATED_FAILURES = new Set(['MODEL_INVOCATION_FAILED', 'RUNTIME_EXECUTION_FAILED', 'NETWORK_UNAVAILABLE'])
+
 /** Attempt 令牌在启动与执行时限之外多留的余量，覆盖收尾阶段；终态即吊销。 */
 const MODEL_GATEWAY_TOKEN_GRACE_MS = 60_000
 
@@ -949,19 +952,19 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
   }
 
   /**
-   * 模型路由方案 4.7：Attempt 失败时以网关对本 Attempt 最后一个请求的记录为准细分模型错误，不解析 DSH 错误文本；
-   * DSH 报告模型错误而网关没有收到任何请求（如网关不可用）时按 Runtime 不可用处理。
+   * 模型路由方案 4.7：Attempt 失败时以网关对本 Attempt 最后一个对话请求的记录为准细分模型错误，不解析 DSH 错误文本。
+   * 只在 DSH 的失败本身可能来自模型调用时改判（工具超时、Worker 崩溃等保留原错误码）；DSH 报告模型错误而网关
+   * 没有收到任何对话请求（如网关不可用）时按 Runtime 不可用处理。
    */
   private async classifyFailure(record: ExecutionRecord, error: unknown): Promise<{ code: string; message: string }> {
     if (error instanceof ModelRouteMissingError) return { code: 'MODEL_ROUTE_UNAVAILABLE', message: error.message }
     const generic = classifyRuntimeFailure(error)
     const gateway = this.configuration.modelGateway
-    if (!gateway || !record.modelGatewayTokenIssued) return generic
-    const tenantId = record.manifest.user_context.tenant_id
+    if (!gateway || !record.modelGatewayTokenIssued || !MODEL_RELATED_FAILURES.has(generic.code)) return generic
     try {
-      const model = await gateway.classifyAttemptFailure(tenantId, record.manifest.attempt_id)
-      if (model) return model
-      if (generic.code === 'MODEL_INVOCATION_FAILED' && !(await gateway.hasRequests(tenantId, record.manifest.attempt_id))) {
+      const inspected = await gateway.inspectAttemptFailure(record.manifest.user_context.tenant_id, record.manifest.attempt_id)
+      if (inspected.failure) return inspected.failure
+      if (generic.code === 'MODEL_INVOCATION_FAILED' && inspected.chatRequests === 0) {
         return { code: 'RUNTIME_UNAVAILABLE', message: `模型网关没有收到本次运行的模型请求：${generic.message}` }
       }
     } catch (classificationError) {
@@ -2255,8 +2258,6 @@ type FetchLike = (input: string | URL | Request, init?: RequestInit) => Promise<
  * Recover only the authentication classification with a side-effect-free ping;
  * capability discovery and all successful MCP traffic remain DSH-owned.
  */
-export { prepareMcpProcess }
-
 export async function diagnoseMcpAuthenticationFailure(
   connection: McpRuntimeConnection,
   failureText: string,

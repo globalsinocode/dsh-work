@@ -413,15 +413,6 @@ export const adminApi = {
   }) => request<ModelProvider>('/provider-models', { method: 'POST', body: JSON.stringify(input) }),
   setProviderModelStatus: (input: { modelId: string; status: 'active' | 'disabled' }) =>
     request<ModelProvider>('/provider-models/status', { method: 'PATCH', body: JSON.stringify(input) }),
-  updateCredentialReference: (input: {
-    providerId: string
-    backend: 'dsh-managed' | 'keychain' | 'secret-manager'
-    externalRef: string
-    status: 'configured' | 'missing' | 'revoked'
-  }) => request<ModelProvider>('/model-providers/credential-reference', {
-    method: 'PATCH',
-    body: JSON.stringify(input),
-  }),
   getModelRoutes: () => request<ModelRoute[]>('/model-routes'),
   createModelRoute: (input: {
     key: string

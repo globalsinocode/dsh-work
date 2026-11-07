@@ -271,7 +271,7 @@ onMounted(() => void load())
     </div>
 
     <el-alert v-if="error" type="error" :closable="false" show-icon :title="error" />
-    <el-alert class="route-effect-notice" type="info" :closable="false" show-icon title="默认路由决定新运行使用的模型，经平台模型网关调用" description="每次运行开始时固定当时启用的默认路由；更换默认路由只影响之后新建的运行，员工重新执行即使用新路由。模型请求经平台模型网关、用这里录入的厂商密钥转发，执行环境不持有厂商密钥；密钥缺失或无效时运行会失败并提示管理员处理。没有可用的默认路由（未启用、Provider 或模型已停用、密钥未配置）时，新运行会被拒绝。厂商密钥以平台主密钥加密保存，不能读取、回显或导出。联网搜索只在默认路由为 DeepSeek 官方时可用。" />
+    <el-alert class="route-effect-notice" type="info" :closable="false" show-icon title="默认路由决定新运行使用的模型，经平台模型网关调用" description="每次运行开始时固定当时启用的默认路由；更换默认路由只影响之后新建的运行，员工重新执行即使用新路由。模型请求经平台模型网关、用这里录入的厂商密钥转发，执行环境不持有厂商密钥；密钥缺失或无效（包括显示“需录入 API Key”的旧引用）时运行会失败并提示管理员处理。没有可用的默认路由（未启用、Provider 或模型已停用）时，新运行会被拒绝。厂商密钥以平台主密钥加密保存，不能读取、回显或导出。联网搜索只在默认路由为 DeepSeek 官方时可用。" />
 
     <section class="content-panel overview-strip" aria-label="模型治理概况">
       <dl class="overview-strip__stats">

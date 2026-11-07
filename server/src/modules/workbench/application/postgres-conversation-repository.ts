@@ -1715,7 +1715,7 @@ export function toRunError(runId: string, errorCode: string | null | undefined):
     },
     RUNTIME_UNAVAILABLE: {
       message: '执行服务暂时不可用',
-      reason: '平台模型网关没有收到本轮的模型请求。',
+      reason: '执行服务（DSH 或平台模型网关）暂时不可用，本轮没有完成。',
       suggestion: '稍后重新执行；若持续失败，请把运行编号交给管理员检查执行服务。',
       retryable: true,
     },

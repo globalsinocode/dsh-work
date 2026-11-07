@@ -10,7 +10,6 @@ import { AcpJsonRpcClient, buildAcpChildEnvironment } from './acp-json-rpc-clien
 import {
   diagnoseMcpAuthenticationFailure,
   DshAcpRuntimeAdapter,
-  prepareMcpProcess,
   renderMemoryProjection,
   renderSystemPrompt,
   renderUserPrompt,
@@ -18,6 +17,7 @@ import {
   type DurablePermissionContext,
 } from './dsh-acp-runtime-adapter.ts'
 import { createManagedDshAcpProcessConfiguration } from './dsh-acp-process-configuration.ts'
+import { prepareMcpProcess } from './dsh-attempt-patch.ts'
 import { ModelGateway } from '../model-gateway/model-gateway.ts'
 import { MemoryModelGatewayRequestLog } from '../model-gateway/model-gateway-request-log.ts'
 import { preflightDshRuntime, resolveDshRuntimeInstallation } from './dsh-runtime-installation.ts'
@@ -2202,6 +2202,30 @@ describe('模型路由生效与模型网关（MR-S2 / DLP-S1）', () => {
     const { adapter } = await setup()
     const result = await (await adapter.execute(routed('run-gateway-missing', '[model-failure]'))).done
     assert.equal(result.errorCode, 'RUNTIME_UNAVAILABLE')
+  })
+
+  it('工具超时、Worker 崩溃等非模型错误保留原错误码，不被网关的失败记录改判', async () => {
+    const runtimeRoot = await mkdtemp(join(tmpdir(), 'dsh-work-gateway-classify-'))
+    const adapter = new DshAcpRuntimeAdapter({
+      runtimeId: 'runtime-gateway-classify',
+      runtimeRoot,
+      dshRepository: process.cwd(),
+      process: { command: process.execPath, args: ['--experimental-strip-types', mockWorker, '--profile', 'acp'], cwd: process.cwd() },
+      shutdownGraceMs: 500,
+      modelGateway: {
+        baseUrl: 'http://127.0.0.1:1',
+        issueToken: () => 'dshwg_test',
+        revokeToken: () => undefined,
+        inspectAttemptFailure: async () => ({ failure: { code: 'MODEL_RATE_LIMITED', message: 'limited' }, chatRequests: 1 }),
+      },
+    })
+    adapters.push(adapter)
+    const timeout = await (await adapter.execute(routed('run-gateway-tool-timeout', '[tool-timeout]'))).done
+    assert.equal(timeout.errorCode, 'TOOL_TIMEOUT')
+    const crash = await (await adapter.execute(routed('run-gateway-crash', '[crash]'))).done
+    assert.equal(crash.errorCode, 'RUNTIME_WORKER_CRASH')
+    const model = await (await adapter.execute(routed('run-gateway-model', '[model-failure]'))).done
+    assert.equal(model.errorCode, 'MODEL_RATE_LIMITED')
   })
 
   it('联网搜索未装配时运行说明告知模型', async () => {

@@ -449,6 +449,9 @@ export interface RuntimeModelGatewayPort {
   readonly baseUrl: string
   issueToken(binding: RuntimeModelGatewayBinding): string
   revokeToken(attemptId: string): void
-  classifyAttemptFailure(tenantId: string, attemptId: string): Promise<{ code: string; message: string } | undefined>
-  hasRequests(tenantId: string, attemptId: string): Promise<boolean>
+  /** 按本 Attempt 的对话请求记录分类，一次查询同时给出对话请求数（不含联网搜索）。 */
+  inspectAttemptFailure(tenantId: string, attemptId: string): Promise<{
+    failure: { code: string; message: string } | undefined
+    chatRequests: number
+  }>
 }

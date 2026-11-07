@@ -5,7 +5,6 @@ import type {
   CreateModelRouteInput,
   CreateProviderInput,
   CreateProviderModelInput,
-  CredentialReference,
   ModelProvider,
   ModelRoute,
   ModelRouteSnapshot,
@@ -14,7 +13,6 @@ import type {
   SetProviderModelStatusInput,
   UpdateModelRouteInput,
   UpdateProviderInput,
-  UpsertCredentialReferenceInput,
 } from './model-types.ts'
 import { dependencyUnavailable, invalidRequest, notFound, stateConflict } from '../../domain/request-errors.ts'
 
@@ -97,23 +95,6 @@ export class MemoryModelGovernanceRepository implements ModelGovernanceRepositor
     const { provider, model } = this.requireModel(input.modelId)
     model.status = input.status
     provider.updatedAt = new Date().toISOString()
-    return clone(provider)
-  }
-
-  async upsertCredentialReference(_tenantId: string, input: UpsertCredentialReferenceInput) {
-    const provider = this.requireProvider(input.providerId)
-    const timestamp = new Date().toISOString()
-    const credential: CredentialReference = {
-      id: provider.credential?.id ?? `credential-${randomUUID()}`,
-      backend: input.backend,
-      externalRef: input.externalRef,
-      status: input.status,
-      hint: null,
-      lastVerifiedAt: input.status === 'configured' ? timestamp : null,
-      updatedAt: timestamp,
-    }
-    provider.credential = credential
-    provider.updatedAt = timestamp
     return clone(provider)
   }
 

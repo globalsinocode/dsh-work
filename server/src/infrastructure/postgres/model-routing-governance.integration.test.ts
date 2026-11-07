@@ -215,11 +215,7 @@ test('API keys are encrypted at rest, rotated in place, never returned, and remo
   assert.equal(rotated?.version, 2)
   assert.equal(await credentials.readBearerToken(tenantId, refId), 'fake-model-key-rotated-5678')
 
-  // 模型路由方案 4.5：网关上线后不能再改回 DSH 受管等外部引用，已保存的密文保留。
-  assert.throws(
-    () => service.upsertCredentialReference({ providerId: created.id, backend: 'dsh-managed', externalRef: 'KEYED_VENDOR_KEY', status: 'configured', actor }),
-    /只能由平台加密保存/,
-  )
+  // 模型路由方案 4.5：网关上线后没有改回 DSH 受管等外部引用的入口，已保存的密文保留。
   const [remaining] = await database<{ count: number }[]>`
     select count(*)::integer as count from credential_secrets where tenant_id = ${tenantId} and credential_ref_id = ${refId}
   `

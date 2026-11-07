@@ -10,7 +10,6 @@ import {
   type SetProviderModelStatusInput,
   type UpdateModelRouteInput,
   type UpdateProviderInput,
-  type UpsertCredentialReferenceInput,
 } from './model-types.ts'
 import { invalidRequest, stateConflict } from '../../domain/request-errors.ts'
 
@@ -86,12 +85,6 @@ export class ModelGovernanceService {
     assertActor(input.actor)
     if (!['active', 'disabled'].includes(input.status)) throw invalidRequest('模型状态无效')
     return this.repository.setProviderModelStatus(this.tenantId, input)
-  }
-
-  upsertCredentialReference(input: UpsertCredentialReferenceInput) {
-    assertActor(input.actor)
-    // 模型路由方案 4.5：模型请求经平台模型网关转发，DSH 不再持有厂商密钥，外部引用（含 DSH 受管）不再生效。
-    throw invalidRequest('模型厂商密钥只能由平台加密保存，请直接录入密钥（API Key）；DSH 受管引用等外部引用已不再生效')
   }
 
   listRoutes() {
