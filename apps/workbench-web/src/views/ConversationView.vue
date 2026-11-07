@@ -496,6 +496,15 @@ function openRecommendedFromCard(recommendation: AgentRecommendation) {
   openRecommendedAgent(recommendation, prompt)
 }
 
+/**
+ * EX-STYLE-01：一对一对话（员工与 AI 同事）中本人的消息只显示气泡，不显示头像与名字，
+ * 仍保留“我的消息，<时间>”的可访问名称；多人对话每条都显示发送人。
+ */
+function isCompactOwnMessage(message: ChatMessage) {
+  return !isTaskThreadRoute.value && currentWorkspace.value?.type !== 'team'
+    && message.role === 'user' && isOwnMessage(message)
+}
+
 function firstUserMessageIdByRunIn(messages: ThreadMessageLike[]) {
   const map = new Map<string, string>()
   for (const message of messages) {
@@ -1933,10 +1942,11 @@ watch(
             v-for="message in conversationMessages"
             :key="message.id"
             class="conversation-message"
-            :class="[`conversation-message--${message.role}`, { 'conversation-message--own': isOwnMessage(message) }]"
+            :class="[`conversation-message--${message.role}`, { 'conversation-message--own': isOwnMessage(message), 'conversation-message--compact': isCompactOwnMessage(message) }]"
+            :aria-label="isCompactOwnMessage(message) ? `我的消息，${message.createdAt}` : undefined"
           >
             <template v-if="message.role === 'user'">
-              <div class="assistant-identity">
+              <div v-if="!isCompactOwnMessage(message)" class="assistant-identity">
                 <span class="assistant-avatar assistant-avatar--user">{{ (message.senderName ?? '我').slice(0, 1) }}</span>
                 <div>
                   <strong>{{ message.senderName ?? '我' }}</strong>
