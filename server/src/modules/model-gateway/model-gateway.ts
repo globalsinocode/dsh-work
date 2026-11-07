@@ -109,6 +109,7 @@ export class ModelGateway {
    */
   issueToken(binding: ModelGatewayBinding): string {
     this.revokeToken(binding.attemptId)
+    this.sweepExpiredTokens()
     const token = `${TOKEN_PREFIX}${randomBytes(32).toString('base64url')}`
     const digest = tokenDigest(token)
     this.bindings.set(digest, structuredClone(binding))
@@ -124,13 +125,27 @@ export class ModelGateway {
     this.attemptTokens.delete(attemptId)
   }
 
-  /** Attempt 失败时按网关记录分类（模型路由方案 4.7）；本 Attempt 没有请求记录时返回 undefined。 */
-  async classifyAttemptFailure(tenantId: string, attemptId: string): Promise<{ code: ModelFailureCode; message: string } | undefined> {
-    return classifyAttemptModelFailure(await this.options.log.listForAttempt(tenantId, attemptId))
+  /**
+   * Attempt 失败时按网关记录分类（模型路由方案 4.7），一次查询同时给出对话请求数。只看对话请求：
+   * 联网搜索失败由 DSH 作为工具失败处理，不代表模型调用失败。
+   */
+  async inspectAttemptFailure(tenantId: string, attemptId: string): Promise<{
+    failure: { code: ModelFailureCode; message: string } | undefined
+    chatRequests: number
+  }> {
+    const chat = (await this.options.log.listForAttempt(tenantId, attemptId)).filter(record => record.endpoint === 'chat')
+    return { failure: classifyAttemptModelFailure(chat), chatRequests: chat.length }
   }
 
-  async hasRequests(tenantId: string, attemptId: string): Promise<boolean> {
-    return (await this.options.log.listForAttempt(tenantId, attemptId)).length > 0
+  /** 漏掉吊销的令牌（如异常退出）在下次签发时按过期时间清理，不在内存中长期滞留。 */
+  private sweepExpiredTokens(): void {
+    const now = this.now()
+    for (const [digest, binding] of this.bindings) {
+      if (binding.expiresAt <= now) {
+        this.bindings.delete(digest)
+        if (this.attemptTokens.get(binding.attemptId) === digest) this.attemptTokens.delete(binding.attemptId)
+      }
+    }
   }
 
   private async handle(request: IncomingMessage, response: ServerResponse): Promise<void> {
@@ -178,19 +193,27 @@ export class ModelGateway {
       startedAt,
       finishedAt: new Date(this.now()).toISOString(),
     })
+    // 写记录失败不能改变返回给 DSH 的状态码（否则 403/429 会变成可重试的 500），只记日志。
+    const save = async (entry: ModelGatewayRequestRecord) => {
+      try {
+        await this.options.log.record(entry)
+      } catch (error) {
+        this.options.onError?.(`model gateway request record failed: ${error instanceof Error ? error.message : String(error)}`)
+      }
+    }
     const rejectRecorded = async (status: number, code: ModelGatewayRejectionCode, message: string, modelKey: string) => {
-      await this.options.log.record(record({ modelKey, origin: 'gateway', outcome: 'failed', httpStatus: status, errorCode: code }))
+      await save(record({ modelKey, origin: 'gateway', outcome: 'failed', httpStatus: status, errorCode: code }))
       this.reject(response, status, code, message)
     }
 
     const body = await readBody(request, this.options.maxRequestBytes ?? DEFAULT_MAX_REQUEST_BYTES)
     if (!body) {
-      await rejectRecorded(413, 'MODEL_ROUTE_UNAVAILABLE', '模型请求体过大', binding.route.modelKey)
+      await rejectRecorded(413, 'MODEL_REQUEST_INVALID', '模型请求体过大', binding.route.modelKey)
       return
     }
     const requestedModel = readModel(body)
     if (requestedModel === undefined) {
-      await rejectRecorded(400, 'MODEL_ROUTE_UNAVAILABLE', '模型请求不是有效的 JSON 或未声明模型', binding.route.modelKey)
+      await rejectRecorded(400, 'MODEL_REQUEST_INVALID', '模型请求不是有效的 JSON 或未声明模型', binding.route.modelKey)
       return
     }
     const modelKey = requestedModel.slice(0, 200)
@@ -242,10 +265,10 @@ export class ModelGateway {
     } catch {
       clearTimeout(headersTimer)
       if (clientGone) {
-        await this.options.log.record(record({ modelKey, origin: 'transport', outcome: 'aborted', httpStatus: null, errorCode: null }))
+        await save(record({ modelKey, origin: 'transport', outcome: 'aborted', httpStatus: null, errorCode: null }))
         return
       }
-      await this.options.log.record(record({ modelKey, origin: 'transport', outcome: 'failed', httpStatus: null, errorCode: 'UPSTREAM_UNREACHABLE' }))
+      await save(record({ modelKey, origin: 'transport', outcome: 'failed', httpStatus: null, errorCode: 'UPSTREAM_UNREACHABLE' }))
       // 502 归入 DSH retryPolicy 的 SERVER，按次数重试。
       this.reject(response, 502, 'MODEL_UPSTREAM_UNAVAILABLE', '无法连接模型厂商')
       return
@@ -253,8 +276,11 @@ export class ModelGateway {
     clearTimeout(headersTimer)
 
     if (upstream.status >= 400) {
-      const errorBody = await readLimited(upstream, MAX_ERROR_BODY_BYTES)
-      await this.options.log.record(record({
+      // 错误正文同样受时限约束：厂商发完响应头后卡住时不让网关一直挂起。
+      const bodyTimer = setTimeout(() => controller.abort(), this.options.upstreamHeadersTimeoutMs ?? DEFAULT_HEADERS_TIMEOUT_MS)
+      const errorBody = await readLimited(upstream, MAX_ERROR_BODY_BYTES).finally(() => clearTimeout(bodyTimer))
+      response.off('close', onClose)
+      await save(record({
         modelKey, origin: 'upstream', outcome: 'failed', httpStatus: upstream.status, errorCode: vendorErrorCode(errorBody),
       }))
       // 厂商错误原样透传给 DSH（状态码、正文），由 DSH 按 retryPolicy 决定是否重试。
@@ -295,17 +321,18 @@ export class ModelGateway {
     } finally {
       response.off('close', onClose)
     }
+    const finalUsage = usage.finish()
+    // 200 流中途出现厂商错误事件（如 overloaded_error）：按厂商失败记录，不当成功。
+    const streamError = outcome === 'succeeded' ? usage.streamError : null
     // 先写记录再结束响应：DSH 收到结果（或中断）后若立即失败，Adapter 分类时读到的就是本次请求的记录。
-    await this.options.log.record(record({
+    await save(record({
       modelKey,
       origin,
-      outcome,
+      outcome: streamError ? 'failed' : outcome,
       httpStatus: upstream.status,
-      errorCode: outcome === 'failed' ? 'UPSTREAM_STREAM_INTERRUPTED' : null,
-      usage: usage.finish(),
-    })).catch((error: unknown) => {
-      this.options.onError?.(`model gateway usage record failed: ${error instanceof Error ? error.message : String(error)}`)
-    })
+      errorCode: streamError ?? (outcome === 'failed' ? 'UPSTREAM_STREAM_INTERRUPTED' : null),
+      usage: finalUsage,
+    }))
     if (outcome === 'succeeded') response.end()
     else response.destroy()
   }

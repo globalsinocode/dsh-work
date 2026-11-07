@@ -10,6 +10,7 @@ export type ModelFailureCode =
   | 'MODEL_INVOCATION_FAILED'
   | 'DATA_POLICY_UNAVAILABLE'
 
+// MODEL_REQUEST_INVALID（请求体过大、不是有效 JSON）不在此列，按通用模型调用失败处理，不提示“重新执行即可”。
 const GATEWAY_CODES = new Set<string>(['MODEL_ROUTE_UNAVAILABLE', 'MODEL_CREDENTIAL_INVALID', 'MODEL_UPSTREAM_UNAVAILABLE', 'DATA_POLICY_UNAVAILABLE'])
 const QUOTA_CODE = /quota|insufficient|balance|billing|credit/i
 
@@ -19,13 +20,15 @@ const messages: Record<ModelFailureCode, string> = {
   MODEL_QUOTA_EXHAUSTED: '模型厂商额度或余额已用尽，请管理员处理后重试',
   MODEL_RATE_LIMITED: '模型厂商限流，重试后仍未成功，请稍后再试',
   MODEL_UPSTREAM_UNAVAILABLE: '模型厂商服务暂时不可用（连接失败、超时或服务端错误），请稍后再试',
-  MODEL_INVOCATION_FAILED: '模型调用失败',
+  MODEL_INVOCATION_FAILED: '模型调用失败（请求被模型厂商或网关拒绝）',
   DATA_POLICY_UNAVAILABLE: '数据防护暂时不可用，本轮未发送给模型',
 }
 
 /** 按网关记录的来源、状态码与厂商错误码分类，不解析 DSH 的错误文本。 */
 export function classifyGatewayRecord(record: ModelGatewayRequestRecord): ModelFailureCode | undefined {
   if (record.outcome === 'succeeded') return undefined
+  // DSH 断开（取消、超时）导致的中止不是模型错误，不论是否已收到响应头。
+  if (record.outcome === 'aborted') return undefined
   if (record.origin === 'gateway') {
     return record.errorCode && GATEWAY_CODES.has(record.errorCode) ? record.errorCode as ModelFailureCode : 'MODEL_INVOCATION_FAILED'
   }
@@ -35,8 +38,8 @@ export function classifyGatewayRecord(record: ModelGatewayRequestRecord): ModelF
   if (status === 402) return 'MODEL_QUOTA_EXHAUSTED'
   if (status === 429) return record.errorCode && QUOTA_CODE.test(record.errorCode) ? 'MODEL_QUOTA_EXHAUSTED' : 'MODEL_RATE_LIMITED'
   if (status === 408 || status >= 500) return 'MODEL_UPSTREAM_UNAVAILABLE'
-  // 流式回复中途被客户端中止不是模型错误。
-  if (record.outcome === 'aborted') return undefined
+  // 200 流中途的厂商错误事件：过载、服务端错误按上游不可用，其余保留通用模型错误。
+  if (status < 300 && record.errorCode && /overload|server|unavailable|internal|timeout/i.test(record.errorCode)) return 'MODEL_UPSTREAM_UNAVAILABLE'
   return 'MODEL_INVOCATION_FAILED'
 }
 

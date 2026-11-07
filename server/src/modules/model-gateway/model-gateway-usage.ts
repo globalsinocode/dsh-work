@@ -12,6 +12,9 @@ export class UsageAccumulator {
   private anthropic: { input?: number; cacheRead?: number; cacheCreation?: number; output?: number } = {}
   private sawAnthropic = false
   private pending = ''
+  private nextEventIsError = false
+  /** 200 流中途出现的厂商错误事件的错误码或类型（已清洗）；没有时为 null。 */
+  streamError: string | null = null
 
   /** 读取非流式 JSON 回复。 */
   acceptJson(body: unknown): void {
@@ -51,9 +54,16 @@ export class UsageAccumulator {
   }
 
   private acceptSseLine(line: string): void {
+    // Anthropic 兼容流的错误以 `event: error` 开头；OpenAI 兼容流在 data 中给出 `error` 对象。
+    if (line.startsWith('event:')) {
+      this.nextEventIsError = line.slice(6).trim() === 'error'
+      return
+    }
     if (!line.startsWith('data:')) return
     const payload = line.slice(5).trim()
-    if (!payload || payload === '[DONE]' || !payload.includes('usage')) return
+    const errorEvent = this.nextEventIsError
+    this.nextEventIsError = false
+    if (!payload || payload === '[DONE]' || (!errorEvent && !payload.includes('usage') && !payload.includes('"error"'))) return
     let event: unknown
     try {
       event = JSON.parse(payload)
@@ -61,6 +71,11 @@ export class UsageAccumulator {
       return
     }
     if (!isRecord(event)) return
+    if (errorEvent || event['type'] === 'error' || isRecord(event['error'])) {
+      this.streamError ??= streamErrorCode(event)
+      return
+    }
+    if (!payload.includes('usage')) return
     // Anthropic：message_start 带 message.usage，message_delta 带 usage（输出为累计值）。
     if (isRecord(event['message']) && isRecord(event['message']['usage'])) {
       this.acceptUsage(event['message']['usage'], 'anthropic')
@@ -93,6 +108,17 @@ export class UsageAccumulator {
     if (output !== undefined) this.usage.outputTokens = output
     if (cacheRead !== undefined) this.usage.cacheReadTokens = cacheRead
   }
+}
+
+function streamErrorCode(event: Record<string, unknown>): string {
+  const error = isRecord(event['error']) ? event['error'] : event
+  for (const key of ['code', 'type']) {
+    const value = error[key]
+    if ((typeof value === 'string' && value && value !== 'error') || typeof value === 'number') {
+      return String(value).replace(/[^\w.:-]/g, '_').slice(0, 80)
+    }
+  }
+  return 'UPSTREAM_STREAM_ERROR'
 }
 
 function detectProtocol(usage: unknown): 'openai' | 'anthropic' {

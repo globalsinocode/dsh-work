@@ -70,7 +70,7 @@ test('网关用管理端录入的加密密钥转发，并把用量与失败写�
     records.map(record => [record.outcome, record.httpStatus, record.inputTokens, record.cacheReadTokens, record.cacheWriteTokens, record.errorCode]),
     [['succeeded', 200, 11, 4, null, null], ['failed', 429, null, null, null, 'rate_limit_exceeded']],
   )
-  assert.equal((await gateway.classifyAttemptFailure(tenantId, 'attempt-gateway'))?.code, 'MODEL_RATE_LIMITED')
+  assert.equal((await gateway.inspectAttemptFailure(tenantId, 'attempt-gateway')).failure?.code, 'MODEL_RATE_LIMITED')
   const [stored] = await database.client<{ text: string }[]>`select row_to_json(r)::text as text from model_gateway_requests r limit 1`
   assert.doesNotMatch(stored?.text ?? '', /sk-gateway-test-secret|dshwg_/)
 })
