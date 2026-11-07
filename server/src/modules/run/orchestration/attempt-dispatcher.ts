@@ -265,7 +265,6 @@ export class AttemptDispatcher {
         excerpt: memory.excerpt,
       })) } : {}),
       ...(thread?.projectContext ? { project_context: thread.projectContext } : {}),
-      model_route_id: route.routeId,
       input: {
         message: (input.message ?? input.prompt).trim(),
         file_mounts: preparedFiles.flatMap(file => file.mount ? [file.mount] : []),

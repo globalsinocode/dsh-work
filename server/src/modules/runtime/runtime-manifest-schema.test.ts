@@ -440,7 +440,7 @@ describe('Runtime Manifest Schema / compiler boundary', () => {
 
     const badModel = structuredClone(pinned)
     badModel.model_route!.model_key = 'model"\n- id: acp'
-    assert.throws(() => compileRuntimeManifest(badModel), /model_key is invalid/)
+    assertBothReject(badModel, /model_key is invalid/, 'model route with an unsafe model key')
 
     const mismatch = structuredClone(pinned)
     mismatch.model_route_id = 'route-other'

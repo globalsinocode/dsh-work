@@ -113,7 +113,6 @@ export class ProjectArchiveEntry {
       tools: [],
       data_scopes: [],
       knowledge_context: [],
-      model_route_id: route.routeId,
       input: { message: prompt.message, file_mounts: [] },
       budget: await this.budget.manifest(run, limits),
       limits,

@@ -131,7 +131,7 @@ export class AdminRunEntry implements AdminRunLauncher {
       principal_context: await this.dispatcher.principalContextForRun(run, `principal-system-${tenantId}`, 1),
       permission_policy: { approval_mode: 'never', network_policy: 'deny', write_policy: 'deny' },
       skills: [], tools: adminTools(purpose), data_scopes: [], knowledge_context: [],
-      model_route_id: route.routeId, input: { message: prompt, file_mounts: [], ...(history?.length ? { conversation_history: history } : {}) },
+      input: { message: prompt, file_mounts: [], ...(history?.length ? { conversation_history: history } : {}) },
       budget: await this.budget.manifest(run, limits),
       limits,
       created_at: new Date().toISOString(), trace_id: `trace-${run.id}`,
