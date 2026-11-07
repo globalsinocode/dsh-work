@@ -913,7 +913,9 @@ export class PostgresAgentService {
     }[]>`
       select av.id, av.agent_id as "agentId", av.version, av.status as "versionStatus",
              a.status as "agentStatus", av.skill_refs as skills, av.tool_refs as tools,
-             av.visible_role_ids as "visibleRoleIds", av.data_scopes as "dataScopes"
+             -- 可见角色的唯一权威是 Agent 级 visible_role_ids（0090）：av 列只是发布快照，
+             -- 管理端改可见性只写 agents，按版本快照判定会把已授可见的员工拒掉。
+             a.visible_role_ids as "visibleRoleIds", av.data_scopes as "dataScopes"
         from agent_versions av
         join agents a on a.tenant_id = av.tenant_id and a.id = av.agent_id
         join execution_principals ep on ep.tenant_id = a.tenant_id and ep.agent_id = a.id

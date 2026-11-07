@@ -485,6 +485,11 @@ function skillDraftsForMessage(message: ChatMessage) {
 }
 
 function openRecommendedFromCard(recommendation: AgentRecommendation) {
+  // 推荐自带建议问题时用它；否则带入触发推荐的那个问题（与 RunMessageList 同口径）。
+  if (recommendation.suggestedPrompt) {
+    openRecommendedAgent(recommendation, recommendation.suggestedPrompt)
+    return
+  }
   if (!task.value) return
   const prompt = task.value.messages.find(message => message.role === 'user' && message.runId === recommendation.runId)?.content
     ?? (recommendation.runId === task.value.id ? task.value.prompt : '')
@@ -2008,9 +2013,8 @@ watch(
                   >
                     <el-icon><Share /></el-icon>
                   </button>
-                  <span v-if="belongsToCurrentRun(message)" class="assistant-run-meta">
-                    {{ task.tokenUsage ? `${task.tokenUsage.toLocaleString()} Token` : '自动' }}
-                    · {{ task.agentVersion.split('@')[0] }}
+                  <span v-if="belongsToCurrentRun(message) && task.tokenUsage" class="assistant-run-meta">
+                    {{ task.tokenUsage.toLocaleString() }} Token
                   </span>
                 </div>
               </div>
