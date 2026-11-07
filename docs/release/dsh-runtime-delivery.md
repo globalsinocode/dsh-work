@@ -125,14 +125,19 @@ DSH_EXPECTED_COMMIT=b150a551b8d465e31e418e1b2eaf5e79bbb7d28e
 
 兼容模式只在非生产环境有效；未知模式、遗漏模式、Version 或 Commit 不匹配都会拒绝启动。
 
-正式 ACP profile 首次启动时会在 `$DSH_HOME/profiles/acp` 初始化随附模板。模型凭据由
-DSH 的 settings/credentials provider 从独立 `DSH_HOME` 解析；密钥正文不得写入
-dsh-work 的环境文件、数据库、日志或 Release。
+正式 ACP profile 首次启动时会在 `$DSH_HOME/profiles/acp` 初始化随附模板。**模型路由生效后
+（MR-S2 + DLP-S1）DSH 不再持有厂商密钥**：厂商密钥由管理员在管理端“模型管理”录入，以
+`DSH_CREDENTIAL_MASTER_KEY` 加密保存在 PostgreSQL；每个正式 Attempt 的 patch 把 pi-ai 路由与
+联网搜索指向平台模型网关（本机端口，`DSH_WORK_MODEL_GATEWAY_HOST`/`PORT`，默认 `127.0.0.1` 与系统分配端口），
+DSH 只拿到本 Attempt 的短期令牌（环境变量 `DSH_WORK_MODEL_GATEWAY_ATTEMPT_VALUE`）。每个 Attempt 的
+`settings.path` 指向 Attempt 目录内的独立文件，`$DSH_HOME/settings.yaml` 与 DSH Models 页面的写入
+不影响平台运行。升级上线前：排空执行中的 Attempt，确认默认路由的 Provider 已在管理端录入密钥，
+之后可以从 `DSH_HOME` 移除 DeepSeek 密钥（工具目录探测与 MCP 连接检查只到 `session/new`，不发出模型请求）。
 
 `server/config/dsh/acp-managed-credentials.cordis.yml` 是最后应用的受信任 Overlay：
 
 - 保留上游正式 `acp-app` bridge 和 ACP v1；
-- 模型路由固定为 `deepseek-official / deepseek-v4-pro`；
+- `acp.provider/model`（`deepseek-official / deepseek-v4-pro`）只作为工具目录探测与 MCP 连接检查的默认值；正式执行由每 Attempt patch 覆盖为平台默认路由；
 - 每个 Attempt 的系统提示词由 dsh-work 显式注入；
 - Session JSONL 写入 dsh-work 的受控数据目录；
 - dsh-work Tool Policy 在执行前强制 Manifest Allowlist、工作区边界和审批关联。

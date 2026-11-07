@@ -107,6 +107,8 @@ import { migrateSkillFilesToFileSystem } from './modules/skill/skill-file-storag
 import { builtinTools, missingDshBuiltinTools, type BuiltinToolStatus } from './modules/runtime/builtin-tools.ts'
 import { PostgresMcpConnectorService } from './modules/tool/postgres-mcp-connector-service.ts'
 import { PostgresEncryptedCredentialStore } from './modules/tool/postgres-encrypted-credential-store.ts'
+import { ModelGateway } from './modules/model-gateway/model-gateway.ts'
+import { PostgresModelGatewayRequestLog } from './modules/model-gateway/model-gateway-request-log.ts'
 import { WeKnoraKnowledgeProvider } from './modules/knowledge/weknora-knowledge-provider.ts'
 import { PostgresKnowledgeBaseService } from './modules/knowledge/postgres-knowledge-base-service.ts'
 import { PostgresKnowledgeConnection } from './modules/knowledge/knowledge-connection.ts'
@@ -303,6 +305,24 @@ async function start() {
   const projectTaskToolsRef: { current?: ProjectTaskTools } = {}
   const agentRecommendationsRef: { current?: AgentRecommendationService } = {}
   const skillSubmissionsRef: { current?: SkillSubmissionService } = {}
+  // 平台模型网关（模型路由方案第 7 节、数据防护方案 DLP-S1）：正式执行的全部模型请求与联网搜索经网关，
+  // 用 DSH_CREDENTIAL_MASTER_KEY 加密保存的厂商密钥转发；DSH 只持有 Attempt 短期令牌。只监听本机。
+  const modelGateway = dshInstallation ? new ModelGateway({
+    log: new PostgresModelGatewayRequestLog(database),
+    credentials: {
+      readSecret: async (tenantId, credentialRefId) => {
+        if (!credentialSecrets) throw new Error('服务未配置 DSH_CREDENTIAL_MASTER_KEY，无法解析模型厂商密钥')
+        return credentialSecrets.readBearerToken(tenantId, credentialRefId)
+      },
+    },
+    host: process.env.DSH_WORK_MODEL_GATEWAY_HOST ?? '127.0.0.1',
+    port: Number(process.env.DSH_WORK_MODEL_GATEWAY_PORT ?? 0),
+    onError: message => { console.warn(message) },
+  }) : undefined
+  if (modelGateway) {
+    console.log(`dsh-work model gateway listening on ${await modelGateway.start()}`)
+    if (!credentialSecrets) console.warn('未配置 DSH_CREDENTIAL_MASTER_KEY：模型网关无法解析厂商密钥，Agent 运行将以 MODEL_CREDENTIAL_INVALID 失败')
+  }
   const dshAdapter: AgentRuntimePort = dshInstallation ? new DshAcpRuntimeAdapter({
     runtimeId: 'runtime-local-01',
     runtimeRoot: resolve(dataRoot, 'dsh-attempts'),
@@ -312,6 +332,7 @@ async function start() {
     protocolVersion: dshInstallation.protocolVersion,
     launchMode: dshInstallation.launchMode,
     process: dshInstallation.process,
+    modelGateway,
     authorizeExecution: async manifest => {
       if (!orchestration) throw new Error('运行授权服务尚未就绪')
       await orchestration.assertCurrentRunAuthorization(manifest)
@@ -726,6 +747,7 @@ async function start() {
         if (revocationSweep) revocationSweep.close()
         persistentWait?.close()
         if (orchestration) await orchestration.close()
+        await modelGateway?.stop()
         extractionExecutor?.close()
         attemptContainers?.close()
         await database.end()

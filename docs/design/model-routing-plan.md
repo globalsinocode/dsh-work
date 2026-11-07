@@ -1,6 +1,6 @@
 # 平台模型路由生效方案
 
-**状态：** 已评审（2026-11-06）。MR-S1 已达到代码级（2026-11-06，迁移 `0120_model_routing_governance.sql`，单元与 PostgreSQL 集成测试）；MR-S2 起尚未实施，路由仍只记录、不决定执行模型。本文其余能力在实施并通过第 8 节验收前均不可用。<br>
+**状态：** 已评审（2026-11-06）。MR-S1 已达到代码级（2026-11-06，迁移 `0120_model_routing_governance.sql`）；MR-S2 与数据防护方案 DLP-S1 已达到代码级（2026-11-07，迁移 `0121_model_gateway_requests.sql`；单元、PostgreSQL 集成与 Worker 替身用例），第 8 节 P1 已在本机受控 DSH `0.1.2-rc.1` 上执行主要场景（`test:model-gateway:e2e`：路由生效、共享 settings.yaml 隔离、401/400/402 不重试、429 与 5xx 重试后分类、联网搜索经网关），“停用路由不影响进行中 Attempt”“更换默认路由后重试与 PF-04 恢复”“探测路径不发出模型请求”尚无受控 DSH 用例；P2 未执行，不得视为已验收。MR-S3 起尚未实施。<br>
 **更新日期：** 2026-11-06（DLP-S0：R4 验证可行，补充 `compat.thinkingFormat` 与 `web_search` 风险）；2026-11-06（简化：路由用途只保留 `default`，取消备用路由与备用重试；DeepSeek 统一以 `openai-completions` 接入；模型校验只保留网关一道，取消 `currentValue` 校验与会话日志核对；快照去掉 `data_policy_version`；移除推理强度）；2026-11-06（网关计量增加缓存读写 token；PR 81 评审修订：升级前 Manifest 不再按默认模型执行、按用途解析路由、重试重新解析而恢复沿用快照、复用 `postgres-encrypted` 凭据、错误按网关记录分类；不做 DSH 持有凭据的阶段，路由生效与模型网关同批实施）；2026-10-26（第 7 节与执行隔离方案对齐）<br>
 **依据：** 当前 Model 模块、Run 编排与 Runtime Adapter 代码；DSH `0.1.2-rc.1`（`76fda72979`）的 `dsh-acp`、`dsh-llm-pi-ai`、`dsh-settings-file`、`dsh-credentials-local` 源码与 README；2026-10-25 本地探针（第 3 节）；[发往模型的数据防护方案](model-data-protection-plan.md)。<br>
 **执行基线：** 每个 Attempt 一个独立 DSH ACP Worker（`--profile acp --patch`），不改变进程模型。
@@ -241,7 +241,7 @@ Mock 或 P1 通过不能代替 P2，未完成 P2 前总览仍须标注路由生�
 | --- | --- | --- | --- |
 | MR-S1 治理数据补强（代码级已完成） | `provider_type` 枚举与历史取值迁移、`trust_level`、用途收敛与按用途解析、路由编辑与模型启停、管理端录入厂商密钥（加密保存，MR-S2 起生效）；不改变执行行为 | 无，可先行 | 管理端与接口用例通过；执行仍按 Profile 默认模型 |
 | DLP-S0 探针（已完成，2026-11-06） | 见数据防护方案 4.1：pi-ai 接 DeepSeek 的推理内容与工具调用兼容、4xx 不重试、429 与 5xx 按次数重试 | 无 | R4 可行；`web_search` 经网关（D12） |
-| MR-S2 + DLP-S1 路由生效与网关 | Manifest `model_route`、统一 patch 生成器、令牌、网关校验转发与计量、平台加密凭据、模型错误细分 | MR-S1、DLP-S0（`web_search` 按数据防护方案 D12 经网关） | 所有正式执行经网关，路由决定实际模型；第 8 节 P1（MR-S2）通过 |
+| MR-S2 + DLP-S1 路由生效与网关（代码级，2026-11-07） | Manifest `model_route`、统一 patch 生成器、令牌、网关校验转发与计量、平台加密凭据、模型错误细分 | MR-S1、DLP-S0（`web_search` 按数据防护方案 D12 经网关） | 所有正式执行经网关，路由决定实际模型；第 8 节 P1（MR-S2）通过（主要场景已在受控 DSH 通过，余项见状态行） |
 | MR-S3 证据与展示 | `effective_model` 与用量归属、运行详情、文档更新 | MR-S2 | 第 8 节 P1（MR-S3）与管理端用例通过 |
 | MR-P2 真实验收 | 第 8 节 P2 | MR-S3 | 留证完成，总览去掉“未真实验收” |
 

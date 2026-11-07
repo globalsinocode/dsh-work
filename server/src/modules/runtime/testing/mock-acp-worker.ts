@@ -1,6 +1,7 @@
 import { request } from 'node:http'
 import { createHash } from 'node:crypto'
-import { appendFileSync } from 'node:fs'
+import { appendFileSync, readFileSync } from 'node:fs'
+import { parse as parseYaml } from 'yaml'
 import { appendFile, mkdir, rename, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { createInterface } from 'node:readline'
@@ -99,6 +100,22 @@ lines.on('line', (line) => {
     pendingPrompts.set(sessionId, pending)
 
     if (text.includes('[crash]')) process.exit(17)
+    // 模型路由方案 4.4：像 DSH 一样按 Attempt patch 中的 pi-ai 路由，以令牌变量向网关发出一次模型请求。
+    if (text.includes('[gateway-call]')) {
+      void callGatewayFromPatch(text.includes('[gateway-wrong-model]')).then(result => {
+        if (result.ok) {
+          pending.answer = `gateway ok: ${result.model}`
+          finishPrompt(pending, 'end_turn')
+        } else {
+          pendingPrompts.delete(pending.sessionId)
+          send({ jsonrpc: '2.0', id: pending.id, error: { code: -32603, message: `turn failed: ${result.status}: ${result.body}` } })
+        }
+      }, (error: unknown) => {
+        pendingPrompts.delete(pending.sessionId)
+        send({ jsonrpc: '2.0', id: pending.id, error: { code: -32603, message: `turn failed: ${error instanceof Error ? error.message : String(error)}`, data: { category: 'model' } } })
+      })
+      return
+    }
     if (text.includes('[model-failure]')) {
       failPrompt(pending, 'Model invocation failed', 'model')
       return
@@ -475,6 +492,21 @@ function failPrompt(pending: PendingPrompt, message: string, category: string): 
     id: pending.id,
     error: { code: -32000, message, data: { category } },
   })
+}
+
+async function callGatewayFromPatch(wrongModel: boolean): Promise<{ ok: boolean; status: number; body: string; model: string }> {
+  const patchIndex = process.argv.lastIndexOf('--patch')
+  const patch = parseYaml(readFileSync(process.argv[patchIndex + 1]!, 'utf8')) as Array<{ id?: string; config?: Record<string, unknown> }>
+  const acp = patch.find(entry => entry.id === 'acp')?.config as { provider: string; model: string }
+  const providers = (patch.find(entry => entry.id === 'llm-pi-ai')?.config as { providers: Record<string, { baseURL: string; apiKeyEnv: string }> }).providers
+  const route = providers[acp.provider]!
+  const model = wrongModel ? `${acp.model}-other` : acp.model
+  const response = await fetch(`${route.baseURL}/chat/completions`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${process.env[route.apiKeyEnv] ?? ''}`, 'content-type': 'application/json' },
+    body: JSON.stringify({ model, stream: true, messages: [{ role: 'user', content: 'hi' }] }),
+  })
+  return { ok: response.ok, status: response.status, body: await response.text(), model }
 }
 
 function send(message: JsonRpcMessage): void {

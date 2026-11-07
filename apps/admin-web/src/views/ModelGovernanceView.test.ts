@@ -53,15 +53,15 @@ function buttonByText(wrapper: VueWrapper, text: string) {
 }
 
 describe('ModelGovernanceView', () => {
-  it('states that model routes are recorded only and do not choose the executing model', async () => {
+  it('states that the default route chooses the model of new runs through the model gateway', async () => {
     const wrapper = await render()
-    const notice = wrapper.find('.record-only-notice')
+    const notice = wrapper.find('.route-effect-notice')
     expect(notice.exists()).toBe(true)
-    expect(notice.text()).toContain('模型路由目前仅记录')
-    expect(notice.text()).toContain('DSH Profile')
+    expect(notice.text()).toContain('默认路由决定新运行使用的模型')
+    expect(notice.text()).toContain('平台模型网关')
     expect(notice.text()).toContain('新运行会被拒绝')
-    expect(wrapper.text()).toContain('模型路由（仅记录）')
-    expect(wrapper.text()).toContain('仅记录到运行快照')
+    expect(wrapper.text()).not.toContain('仅记录')
+    expect(wrapper.text()).not.toContain('DSH Profile')
   })
 
   it('shows the provider protocol and trust level and the current default route', async () => {

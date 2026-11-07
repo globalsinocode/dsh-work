@@ -78,7 +78,7 @@ dsh-work 保存可面向用户和治理的业务状态；DSH 保存运行时技�
 - **DSH 持有单次 Attempt 内的执行循环。** 模型交互、工具调用编排与循环上下文由 DSH 负责；平台复用现有 Runtime Adapter 处理启动、取消、超时、事件转换和进程回收。
 - **平台持有业务事实和工具实现。** 身份与权限、会话和安装记录、队列调度、Attempt 重试、断线恢复、幂等及审计由平台负责。下载、解包、校验、入库和版本发布是受控业务工具；其确定性流程与事务恢复不属于另一套 Agent Loop。管理端安装工具按管理身份授权，不扩大员工 Agent 的工具权限。
 - **暂不提供 Agent 委派。** 原 PF-06 `delegate_agent` 已于 2026-10-16 删除；AI 员工之间需要交接工作时再按 AI 员工交接场景重新设计。历史委派子 Task 保留记录但不能重试。
-- **模型治理不承担 Agent 执行。** Model 模块只承担路由、凭据引用和计量等治理职责，不能自行发起一条绕过 DSH 的业务 Agent 路线；当前路由也尚未传给 DSH（见 4.4）。
+- **模型治理不承担 Agent 执行。** Model 模块只承担路由、凭据引用和计量等治理职责，不能自行发起一条绕过 DSH 的业务 Agent 路线。模型网关只做认证、转发与计量，模型请求仍由 DSH 在 Agent Loop 中发起（见 4.4）。
 - **DSH 不可用时禁止绕过。** 需要 Agent 的对话和试运行明确报告不可用，不能自动降级到直接调用模型。已有安装记录和确定性平台管理操作可按自身权限继续工作；这不代表 Agent 仍可运行。
 - **扩展现有链路。** 安装助手所需工具调用或资源能力不足时，应扩展现有 Run/Runtime 契约和 DSH 能力。Runtime 可替换表示通过既有端口统一迁移执行内核，不表示允许各业务场景自行选择或维护第二套引擎。Mock Runtime 仅供测试与原型使用，不是生产回退方案。
 
@@ -126,7 +126,7 @@ flowchart TB
   subgraph Dependencies[基础设施与外部依赖]
     PG[(PostgreSQL)]
     Storage[本地数据目录<br/>文件 / Skill / Attempt]
-    Models[模型<br/>DSH Profile 固定，凭据在 DSH_HOME]
+    Models[模型<br/>平台默认路由，经模型网关转发]
     MCP[MCP 服务<br/>企业知识 / 业务系统]
   end
 
@@ -183,7 +183,7 @@ DSH 直接调用模型并直连 MCP 服务，平台不设模型或连接器网�
 
 ### 4.4 平台能力层
 
-- Model 模块保存 Provider、模型和路由策略，只持久化凭据引用。**当前路由只记录、不生效**：DSH ACP 使用 Profile 固定的模型（`deepseek-v4-pro`），凭据由 DSH 在 `DSH_HOME` 中管理；平台路由只写入 Attempt 快照，不决定实际调用的模型；Manifest 声明了模型能力要求的运行会被拒绝（`MODEL_CAPABILITY_UNAVAILABLE`）。让路由真正生效需要把它作为每次 Attempt 的配置传给 DSH，并经平台模型网关转发（[模型路由方案](../design/model-routing-plan.md)，已评审未实施）；
+- Model 模块保存 Provider、模型和路由策略；厂商密钥以 `postgres-encrypted` 加密保存。**默认路由决定新运行的模型（MR-S2，代码级，未真实验收）**：Dispatcher 把启用的默认路由写成 Manifest 的 `model_route` 快照（不含密钥）；Runtime Adapter 为正式执行签发 Attempt 短期令牌，每 Attempt patch 把 pi-ai 路由与联网搜索指向平台模型网关（`model-gateway` 模块，本机独立端口），网关校验令牌与请求模型后用平台密钥转发并记录用量与结果（`model_gateway_requests`）；DSH 不持有厂商密钥。Attempt 失败按网关记录细分为路由、凭据、额度、限流、上游五类错误码；缺少快照的升级前 Attempt 以 `MODEL_ROUTE_UNAVAILABLE` 失败，不回退到 Profile 默认模型。Manifest 声明了模型能力要求的运行仍被拒绝（`MODEL_CAPABILITY_UNAVAILABLE`）。见[模型路由方案](../design/model-routing-plan.md)与[数据防护方案](../design/model-data-protection-plan.md) DLP-S1；
 - Connector/Tool 模块保存版本、Schema、风险、角色、数据范围和健康状态；
 - Artifact/Content 模块保存文件与成果元数据、不可覆盖版本、权限和存储键；
 - 审计与运营投影不保存提示词、回答正文、文件内容或密钥正文。
@@ -299,7 +299,7 @@ flowchart LR
 - **组织架构：** 第一期 ORG-S1（本地维护的部门树、成员与主部门、新建账号选择部门）已达到代码级（`ORG-P0-01`、`ORG-01`～`ORG-04`，P0/P1）；ORG-S2（按部门授予角色、管理类角色限制与角色来源显示）已达到代码级（`ORG-P0-02`、`ORG-05`～`ORG-07`）；钉钉通讯录同步为后续阶段。规则见[功能规则第 10 节](feature-rules.md#10-组织架构org-s1org-s2)，设计见[组织架构方案](../design/org-structure-plan.md)。
 - **企业知识库（WeKnora）：** WK-S1 后端检索链路、WK-S2 员工端“知识库”页与对话中添加知识库、WK-S3 管理端“企业知识库”（连接配置与加密 API Key、全部知识库与跨部门授权）已达到代码级（基于 WeKnora v0.9.0 测试替身的 P0、P1 用例），原有本地知识库已删除。WK-S4 已于 2026-11-02 在本机 WeKnora v0.9.0（在线嵌入模型、未配置重排序）完成真实环境验收：契约测试与最低相关度校准（0.5）、员工端建库上传与对话引用（经 DSH 链路）、撤销授权后不可见与不检索、删除、WeKnora 停机降级；受控生产环境的重排序配置、并发压测与门槛复核在切换前按发布流程执行。规则见[功能规则 11](feature-rules.md#11-企业知识库weknorawk-s1-起)，设计见[接入方案](../design/weknora-knowledge-plan.md)。
 - **钉钉接入（DT-S1）：** 账号绑定（钉钉内登录即绑定、管理员代绑、解绑与锁定、改绑、每日离职检查）、`dingtalk` 会话来源（按 `binding_id` 校验、按来源撤销）、管理端“钉钉集成”页（含在页面配置钉钉应用，AppSecret 加密入库，DT30）、员工端钉钉内登录页与用户中心 › 钉钉、钉钉容器内固定协作模式已达到代码级（验收目录 `DT-ID-01`、`DT-ADM-01`～`03`、`DT-EMP-01`、`02`、`DT-EMP-P0`，钉钉开放平台为测试替身或假 HTTP 服务）。未验收：真实钉钉企业内部应用、公网入口与安全基线、真实错误码（含离职员工）、iOS/Android 钉钉内的免登与容器适配（返回键、软键盘、上传下载、安全区）（`DT-P2`）。钉钉工作通知与群组提醒（DT-S2）尚未实现。规则见[功能规则第 12 节](feature-rules.md#12-钉钉账号绑定dt-s1)，设计见[钉钉接入方案](../design/dingtalk-integration-plan.md)，部署见 [Mac mini 部署手册第 14 节](../release/mac-mini-deployment-runbook.md)。
-- **模型路由、模型网关与数据防护：** 方案已评审（2026-11-06）。MR-S1（Provider 协议类型枚举与信任级别、路由只保留默认用途并按用途解析、路由编辑与模型启停）已达到代码级；其余尚未实施，当前路由只记录不生效，DSH 仍直连模型厂商，发往模型的请求不做遮盖或拦截。路由生效与网关同批交付，见[模型路由方案](../design/model-routing-plan.md)第 9 节与[发往模型的数据防护方案](../design/model-data-protection-plan.md)。
+- **模型路由、模型网关与数据防护：** 方案已评审（2026-11-06）。MR-S1 与 MR-S2 + DLP-S1（路由快照随 Manifest 固定、统一每 Attempt patch、Attempt 令牌、模型网关校验转发与计量、联网搜索经网关、模型错误细分）已达到代码级（单元、PostgreSQL 集成、Worker 替身用例，以及本机受控 DSH + 假上游的 P1 主要场景）；**未在真实厂商下验收**（模型路由方案第 8 节 P1 余项与 P2 未执行）。上线前须在管理端为默认路由的 Provider 录入厂商密钥并配置 `DSH_CREDENTIAL_MASTER_KEY`，否则运行以 `MODEL_CREDENTIAL_INVALID` 失败。运行详情中的实际模型与用量归属（MR-S3）、发往模型的遮盖与拦截（DLP-S2 起）尚未实施。见[模型路由方案](../design/model-routing-plan.md)第 9 节与[发往模型的数据防护方案](../design/model-data-protection-plan.md)。
 - **已交付功能的遗留项：** 团队空间、管理助手、Skill 安装、Python 执行和自动任务的未完成部分列在[功能规则](feature-rules.md)各节末尾。
 
 开发模式、自动化和上线前验证入口见 [开发与测试](development.md)；身份协议与生命周期见 [独立登录](../release/local-authentication.md) 或 [AI Hub 接入](../release/ai-hub-sso-integration.md)。

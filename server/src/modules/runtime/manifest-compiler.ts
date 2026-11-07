@@ -174,6 +174,19 @@ export function compileRuntimeManifest(input: RuntimeManifest): CompiledRuntimeM
       if (!Array.isArray(item.missing) || item.missing.length > 64 || item.missing.some(name => typeof name !== 'string' || name.length > 200)) throw new TypeError('unavailable_skills.missing is invalid')
     }
   }
+  if (input.unavailable_tools !== undefined) {
+    const unavailable = input.unavailable_tools
+    if (!Array.isArray(unavailable) || unavailable.length === 0 || unavailable.length > 8) throw new TypeError('unavailable_tools must be a non-empty bounded array')
+    const toolIds = new Set(input.tools.map(tool => tool.id))
+    for (const item of unavailable) {
+      for (const key of Object.keys(item)) {
+        if (!['tool', 'reason'].includes(key)) throw new TypeError(`unavailable_tools contains unsupported field: ${key}`)
+      }
+      if (item.tool !== 'web_search') throw new TypeError('unavailable_tools.tool is invalid')
+      if (item.reason !== 'model_route_unsupported') throw new TypeError('unavailable_tools.reason is invalid')
+      if (toolIds.has(item.tool)) throw new TypeError(`Tool is both unavailable and assembled: ${item.tool}`)
+    }
+  }
   if (input.test_scenario !== undefined) {
     if (input.purpose !== 'admin-skill-test') throw new TypeError('test_scenario requires admin-skill-test purpose')
     normalizeSkillTestScenario(input.test_scenario, input.agent_configuration.skill_instructions)

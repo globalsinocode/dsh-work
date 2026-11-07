@@ -469,6 +469,21 @@
       ],
       "description": "由平台模型网关按企业策略选择，不属于 Agent 创建表单。"
     },
+    "unavailable_tools": {
+      "type": "array",
+      "description": "数据防护方案 D12 补充：本次未装配的平台工具及原因（默认路由不是 DeepSeek 官方时联网搜索不可用），运行说明告知模型。",
+      "minItems": 1,
+      "maxItems": 8,
+      "items": {
+        "type": "object",
+        "required": ["tool", "reason"],
+        "additionalProperties": false,
+        "properties": {
+          "tool": { "enum": ["web_search"] },
+          "reason": { "enum": ["model_route_unsupported"] }
+        }
+      }
+    },
     "model_route": {
       "type": "object",
       "description": "模型路由方案 4.2：本 Attempt 固定的模型路由快照，不含密钥值。base_url 与 credential_ref_id 只供模型网关使用，不写入 DSH patch。",

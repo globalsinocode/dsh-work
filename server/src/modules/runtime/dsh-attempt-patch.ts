@@ -6,8 +6,12 @@ import type { McpRuntimeConnection, RuntimeModelRoute } from './runtime-types.ts
 import { invalidRequest } from '../../domain/request-errors.ts'
 import { DEEPSEEK_WEB_SEARCH_MODEL, isDeepSeekOfficialBaseUrl } from '../../domain/deepseek-official.ts'
 
-/** DSH 读取 Attempt 短期令牌的环境变量名（模型路由方案 4.5）。patch 只写变量名，不写令牌值。 */
-export const MODEL_GATEWAY_TOKEN_ENV = 'DSH_WORK_MODEL_GATEWAY_TOKEN'
+/**
+ * DSH 读取 Attempt 短期令牌的环境变量名（模型路由方案 4.5）。patch 只写变量名，不写令牌值。
+ * 与 MCP 的 `DSH_MCP_VALUE_*` 一致以 VALUE 结尾：ACP 子进程环境拦截形如 *_TOKEN 的长期凭据变量，
+ * 这里是只对本 Attempt 有效、终态即吊销的令牌。
+ */
+export const MODEL_GATEWAY_TOKEN_ENV = 'DSH_WORK_MODEL_GATEWAY_ATTEMPT_VALUE'
 
 /**
  * 平台为 pi-ai 路由显式给出的重试策略（模型路由方案 4.3）：只重试空回复、限流、服务端错误、超时与传输错误，
