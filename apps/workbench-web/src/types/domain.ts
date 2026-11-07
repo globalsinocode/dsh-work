@@ -710,37 +710,6 @@ export interface WorkspaceNotificationView extends WorkspaceActivityPage {
   unreadCount: number
 }
 
-export interface AccountNotificationItem {
-  id: string
-  workspaceId: string
-  sequence: number
-  kind: WorkspaceActivityKind
-  actorUserId: string
-  actorDisplayName: string
-  objectType: WorkspaceActivityObjectType
-  objectId: string
-  safeMetadata: Record<string, unknown>
-  occurredAt: string
-}
-
-export interface AccountNotificationPage {
-  items: AccountNotificationItem[]
-  nextCursor: string | null
-}
-
-export interface AccountNotificationCounts {
-  total: number
-  byWorkspace: Record<string, number>
-  lastReadSequence: number
-}
-
-export interface AccountNotificationQuery {
-  cursor?: string
-  limit?: number
-  unread?: boolean
-  workspaceId?: string
-}
-
 /**
  * 空间用量时间窗（TW-09 / 4-T2 契约 §2）：只接受 `7d`/`30d`，缺省 `7d`。
  * 服务端按日零填充返回该窗口内的 token 与调用次数，不返回金额或币种。

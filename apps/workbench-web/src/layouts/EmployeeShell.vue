@@ -24,11 +24,10 @@ import {
 import { AppLogo } from '@dsh-work/ui-core'
 import ModeSwitchMenu from '@/components/ModeSwitchMenu.vue'
 import NotificationCenter from '@/components/NotificationCenter.vue'
-import NotificationInbox from '@/components/NotificationInbox.vue'
 import { useModeSwitch } from '@/composables/useModeSwitch'
 import { roleLabels, useAuthStore } from '@/stores/auth'
 import { useContentStore } from '@/stores/content'
-import { useNotificationStore, useWorkspaceNotificationStore } from '@/stores/notifications'
+import { useNotificationStore } from '@/stores/notifications'
 import { useKnowledgeStore } from '@/stores/knowledge'
 import { useTaskStore } from '@/stores/tasks'
 import type { TaskRun } from '@/types/domain'
@@ -47,7 +46,6 @@ const router = useRouter()
 const authStore = useAuthStore()
 const taskStore = useTaskStore()
 const notificationStore = useNotificationStore()
-const workspaceNotificationStore = useWorkspaceNotificationStore()
 const contentStore = useContentStore()
 
 const mobileOpen = ref(false)
@@ -167,14 +165,12 @@ watch(() => authStore.user.id, (id, previous) => {
     taskStore.reset()
     contentStore.reset()
     notificationStore.reset()
-    workspaceNotificationStore.reset()
   }
   if (id === '—') return
   void Promise.all([
     taskStore.load(),
     contentStore.load(),
     notificationStore.load(),
-    workspaceNotificationStore.load(),
   ]).catch(cause => notifyActionFailure('加载工作台', '工作内容', cause))
 }, { immediate: true })
 const authorizationHandler = createAuthorizationChangeHandler(() => authStore.refresh())
@@ -326,7 +322,6 @@ onBeforeUnmount(() => {
             </el-dropdown-menu>
           </template>
         </el-dropdown>
-        <NotificationInbox />
       </div>
     </aside>
 

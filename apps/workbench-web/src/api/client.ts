@@ -49,9 +49,6 @@ import type {
   WorkspaceLifecycleResult,
   WorkspaceMember,
   WorkspaceMemberDirectory,
-  AccountNotificationCounts,
-  AccountNotificationPage,
-  AccountNotificationQuery,
   WorkspaceNotificationState,
   WorkspaceNotificationView,
   NotificationPreferences,
@@ -724,23 +721,6 @@ export const workbenchApi = {
       `/workspaces/${encodeURIComponent(workspaceId)}/notifications/unmute`,
       { method: 'POST' },
     ),
-  listNotifications: (input: AccountNotificationQuery = {}) => {
-    const search = new URLSearchParams()
-    if (input.cursor) search.set('cursor', input.cursor)
-    if (input.limit !== undefined) search.set('limit', String(input.limit))
-    if (input.unread) search.set('unread', 'true')
-    if (input.workspaceId) search.set('workspaceId', input.workspaceId)
-    const suffix = search.size > 0 ? `?${search.toString()}` : ''
-    return request<AccountNotificationPage>(`/notifications${suffix}`)
-  },
-  getNotificationCounts: () => request<AccountNotificationCounts>('/notifications/counts'),
-  markNotificationsRead: (input: { throughSequence: number; workspaceId?: string }) =>
-    request<{ lastReadSequence: number }>('/notifications/read', {
-      method: 'POST',
-      body: JSON.stringify(input),
-    }),
-  notificationEventsUrl: (since?: number) =>
-    `${baseUrl}/notifications/events${since !== undefined ? `?since=${encodeURIComponent(String(since))}` : ''}`,
   /**
    * 空间用量（TW-09 / 4-T2，读取轨）。只展示 token 与调用次数，服务端不返回金额
    * （口径 §1）。仅负责人／管理员可读：普通成员与只读成员服务端返回 403，个人空间
