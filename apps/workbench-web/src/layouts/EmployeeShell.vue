@@ -498,13 +498,8 @@ onBeforeUnmount(() => {
 .recent-conversation:hover .recent-conversation__menu,
 .recent-conversation:focus-within .recent-conversation__menu { opacity: 1; pointer-events: auto; }
 
-.employee-sidebar__footer {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 9px 9px 11px;
-  border-top: 1px solid #e3e3e0;
-}
+/* 站内通知（方案 NC2）：footer 保持块级布局，铃铛独占一行、位于头像上方。 */
+.employee-sidebar__footer { padding: 9px 9px 11px; border-top: 1px solid #e3e3e0; }
 
 .employee-sidebar__footer > :deep(.el-dropdown) {
   min-width: 0;

@@ -429,9 +429,9 @@ describe('ConversationView 归档只读态（design §2.7 / AC-23）', () => {
 
     expect(wrapper.get('.user-message p').text()).toBe('**不要加粗**')
     expect(wrapper.find('.user-message strong').exists()).toBe(false)
-    // renderMarkdownPreview 按原文层级输出标题（## → h2）；此处只验证结构化渲染，
-    // 不再假设旧渲染器「降两级」的行为。
-    expect(wrapper.get('.assistant-answer h2').text()).toBe('无法安装的原因')
+    // AssistantMessageContent（与 admin 端共享）把标题降级渲染：# → h3、## → h4；
+    // 此处只验证结构化渲染，不再假设旧本地渲染器的原层级输出。
+    expect(wrapper.get('.assistant-answer h4').text()).toBe('无法安装的原因')
     expect(wrapper.get('.assistant-answer strong').text()).toBe('运行时未授权工具')
     expect(wrapper.get('.assistant-answer pre code').text()).toBe('Error: tool is not authorized')
     expect(wrapper.get('.assistant-answer').text()).not.toContain('```')
@@ -1777,13 +1777,16 @@ describe('ConversationView 成果预拉取不得自激成请求环（v2026.10.19
       getRun: () => Promise.reject(Object.assign(new Error('员工工作台接口请求失败（504）'), { status: 504, code: 'gateway_timeout' })),
     })
 
+    // 上游统一后的暂时性故障文案（NC 方案）：标题「暂时无法加载对话」+ 重试按钮。
     const text = wrapper.text()
-    expect(text).toContain('对话加载失败')
+    expect(text).toContain('暂时无法加载对话')
     expect(text).not.toContain('未找到对话')
-    expect(wrapper.findAll('button').some(button => button.text().includes('重新加载'))).toBe(true)
+    expect(wrapper.findAll('button').some(button => button.text().includes('重试'))).toBe(true)
   })
 
   it('still reports “未找到对话” when the run really does not exist', async () => {
+    // Run 与 Session 都明确答复 404 才算「确实不存在」；夹具只让一边 404 会把结果误导成暂时性故障。
+    api.getSessionThread.mockRejectedValue(Object.assign(new Error('不存在'), { status: 404 }))
     const { wrapper } = await mountView({
       item: null,
       workspace: workspace({ id: 'ws-personal', type: 'personal' }),
@@ -1791,6 +1794,6 @@ describe('ConversationView 成果预拉取不得自激成请求环（v2026.10.19
     })
 
     expect(wrapper.text()).toContain('未找到对话')
-    expect(wrapper.text()).not.toContain('对话加载失败')
+    expect(wrapper.find('[data-testid="conversation-unavailable"]').exists()).toBe(false)
   })
 })

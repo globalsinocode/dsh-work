@@ -1325,12 +1325,9 @@ async function reconcileConversationRoute() {
  * 服务端基线轮补推 session.archived。
  */
 const contentSyncedAt = ref<string>(new Date().toISOString())
-/** Run 详情暂时取不到（5xx/超时/断网）时的失败态：与「确实不存在」分开展示。 */
-const targetLoadFailed = ref(false)
 
 async function loadConversationTarget(id: string): Promise<SessionThread | null> {
   targetLoading.value = true
-  targetLoadFailed.value = false
   targetUnavailable.value = false
   contentSyncedAt.value = new Date().toISOString()
   let runError: unknown
@@ -1345,7 +1342,6 @@ async function loadConversationTarget(id: string): Promise<SessionThread | null>
     const thread = await loadSessionMode(id)
     if (!thread && runError !== undefined && !isMissingResource(runError)) {
       threadMissing.value = false
-      targetLoadFailed.value = true
       targetUnavailable.value = true
     }
     return thread
@@ -1377,10 +1373,7 @@ async function loadSessionMode(id: string): Promise<SessionThread | null> {
     return thread
   } catch (error) {
     if (isMissingResource(error)) threadMissing.value = true
-    else {
-      targetLoadFailed.value = true
-      targetUnavailable.value = true
-    }
+    else targetUnavailable.value = true
     return null
   }
 }
@@ -1856,23 +1849,13 @@ watch(
     <el-result
       v-else-if="!task"
       class="conversation-state"
-      :icon="targetLoadFailed ? 'error' : 'warning'"
-      :title="targetLoadFailed ? '对话加载失败' : '未找到对话'"
-      :sub-title="targetLoadFailed
-        ? '工作台暂时没能取回这个对话，通常是网络或服务繁忙。稍后点「重新加载」即可，对话内容不会丢失。'
-        : '该对话可能已从历史中移除，或当前账号无权访问。文件和成果按保留策略独立管理。'"
+      icon="warning"
+      title="未找到对话"
+      sub-title="该对话可能已从历史中移除，或当前账号无权访问。文件和成果按保留策略独立管理。"
     >
       <template #extra>
         <el-button
-          v-if="targetLoadFailed"
           type="primary"
-          :loading="targetLoading"
-          @click="initializeConversation"
-        >
-          重新加载
-        </el-button>
-        <el-button
-          :type="targetLoadFailed ? 'default' : 'primary'"
           @click="isEmbeddedInWorkspace ? router.push(spaceRoutes.home(embeddedWorkspaceId)) : router.push('/workbench')"
         >
           {{ isEmbeddedInWorkspace ? '返回工作空间' : '返回工作台' }}
