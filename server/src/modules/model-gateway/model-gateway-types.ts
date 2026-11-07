@@ -28,7 +28,7 @@ export type ModelGatewayOrigin = 'gateway' | 'upstream' | 'transport'
 export type ModelGatewayOutcome = 'succeeded' | 'failed' | 'aborted'
 
 /** 网关自身拒绝时返回的平台错误码（模型路由方案 4.7、数据防护方案 5.6.2）。 */
-export type ModelGatewayRejectionCode = 'MODEL_ROUTE_UNAVAILABLE' | 'MODEL_CREDENTIAL_INVALID' | 'MODEL_UPSTREAM_UNAVAILABLE'
+export type ModelGatewayRejectionCode = 'MODEL_ROUTE_UNAVAILABLE' | 'MODEL_CREDENTIAL_INVALID' | 'MODEL_UPSTREAM_UNAVAILABLE' | 'MODEL_REQUEST_INVALID'
 
 export interface ModelGatewayUsage {
   inputTokens: number | null
