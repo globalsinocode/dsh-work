@@ -289,14 +289,13 @@ export class ModelGateway {
           // 非 JSON 回复不计量。
         }
       }
-      response.end()
     } catch {
       outcome = clientGone ? 'aborted' : 'failed'
       if (!clientGone) origin = 'transport'
-      response.destroy()
     } finally {
       response.off('close', onClose)
     }
+    // 先写记录再结束响应：DSH 收到结果（或中断）后若立即失败，Adapter 分类时读到的就是本次请求的记录。
     await this.options.log.record(record({
       modelKey,
       origin,
@@ -307,6 +306,8 @@ export class ModelGateway {
     })).catch((error: unknown) => {
       this.options.onError?.(`model gateway usage record failed: ${error instanceof Error ? error.message : String(error)}`)
     })
+    if (outcome === 'succeeded') response.end()
+    else response.destroy()
   }
 
   private authenticate(request: IncomingMessage): ModelGatewayBinding | undefined {

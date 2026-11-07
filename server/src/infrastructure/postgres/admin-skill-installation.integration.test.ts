@@ -776,7 +776,7 @@ test('review 8a: same-version resource change cannot relabel a completed trial o
   await skills.setStatus({ skillId, actor, status: 'published' })
 })
 
-test('review 8a: retry preserves every pinned Skill and original model route', { skip: real, timeout: 30000 }, async () => {
+test('review 8a: retry preserves every pinned Skill and re-resolves the default model route', { skip: real, timeout: 30000 }, async () => {
   const child = { id: 'retry-child', version: '1.0.0', instructions: 'Follow this exact child instruction in the controlled test.', tools: [] }
   const root = { id: 'retry-root', version: '1.0.0', instructions: 'Follow this exact root instruction in the controlled test.', tools: [],
     dependencies: ['retry-child@1.0.0'], dependencySkills: [child] }
@@ -798,7 +798,12 @@ test('review 8a: retry preserves every pinned Skill and original model route', {
     assert.deepEqual(newAttempt.manifest.skills, oldAttempt.manifest.skills)
     assert.deepEqual(newAttempt.manifest.tools, oldAttempt.manifest.tools)
     assert.deepEqual(newAttempt.manifest.input, oldAttempt.manifest.input)
-    assert.deepEqual(newAttempt.modelRouteSnapshot, oldAttempt.modelRouteSnapshot)
+    // 模型路由方案 4.2：重试重新解析当前默认路由（只有 PF-04 恢复沿用快照），Manifest 携带新解析的路由。
+    const { resolvedAt: _newResolvedAt, ...newRoute } = newAttempt.modelRouteSnapshot as Record<string, unknown>
+    const { resolvedAt: _oldResolvedAt, ...oldRoute } = oldAttempt.modelRouteSnapshot as Record<string, unknown>
+    assert.deepEqual(newRoute, oldRoute)
+    assert.notEqual(_newResolvedAt, _oldResolvedAt, 'the route is resolved again for the retry')
+    assert.equal((newAttempt.manifest as unknown as RuntimeManifest).model_route?.route_id, newRoute['routeId'])
     assert.ok(newAttempt.manifest.budget, 'pre-PF-02 Skill trial retries must receive an upgraded budget snapshot')
   } finally {
     if (newAttempt) await waitForAttemptStart(newAttempt.id)

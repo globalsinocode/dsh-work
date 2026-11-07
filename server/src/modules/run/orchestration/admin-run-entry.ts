@@ -14,7 +14,7 @@ import type { AttemptDispatcher } from './attempt-dispatcher.ts'
 import type { AttemptScheduler } from './attempt-scheduler.ts'
 import type { RunCancellation } from './run-cancellation.ts'
 import { adminContinuationBounds, withContinuationOutputs } from './continuation.ts'
-import { adminSystemPrompt, adminTools, assertPrompt, flattenSkillDependencies, toCapabilityReference, toRuntimeManifestSkill } from './manifest-helpers.ts'
+import { adminSystemPrompt, adminTools, assertPrompt, flattenSkillDependencies, toCapabilityReference, toRuntimeManifestSkill, toRuntimeModelRoute } from './manifest-helpers.ts'
 import { tenantId, runtimeId, type OrchestrationDependencies } from './orchestration-dependencies.ts'
 
 /** Entry point for admin assistant, Skill installation and Skill test Runs. */
@@ -76,13 +76,16 @@ export class AdminRunEntry implements AdminRunLauncher {
     if (manifest.purpose === 'admin-skill-test') {
       // Reuse the full immutable graph, tool allowlist and original input. The
       // root-only reconstruction dropped dependencies and mixed configurations.
+      // 模型路由方案 4.2：重试重新解析当前默认路由（修复凭据或更换路由后重试即生效），只有 PF-04 恢复沿用快照。
+      const route = await this.deps.models.resolveDefaultRoute()
       const retried: RuntimeManifest = { ...structuredClone(manifest),
-        attempt_id: `attempt-${randomUUID()}`, created_at: new Date().toISOString() }
+        attempt_id: `attempt-${randomUUID()}`, created_at: new Date().toISOString(),
+        model_route_id: route.routeId, model_route: toRuntimeModelRoute(route) }
       await this.deps.runtime.assertAvailable?.(retried)
       const compiled = compileRuntimeManifest(retried)
       await this.deps.runs.createAttempt({ attemptId: retried.attempt_id, tenantId, runId: run.id, runtimeId,
         manifest: JSON.parse(compiled.canonicalJson) as JsonObject, manifestSha256: compiled.sha256,
-        modelRouteSnapshot: attempt.modelRouteSnapshot })
+        modelRouteSnapshot: JSON.parse(JSON.stringify(route)) as JsonObject })
       this.scheduler.enqueue(run, retried)
     } else {
       // 不从上一次 Attempt 的 manifest 续叠：其中的 message 已是续写指令、history 已并入

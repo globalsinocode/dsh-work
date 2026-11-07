@@ -211,7 +211,7 @@ requireFragments('src/views/ModelGovernanceView.vue', [
   'class="data-table"',
   'v-loading',
   'empty-text=',
-  '密钥正文未进入 dsh-work',
+  '执行环境不持有厂商密钥',
   'Agent 不单独配置模型',
 ])
 requireFragments('src/views/AuditView.vue', ['data-action="view-audit"'])

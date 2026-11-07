@@ -49,7 +49,7 @@ dsh-work 不是 AI Hub 的另一个容器，也不是纯镜像部署。其前后
 | dsh-work 根目录 | `/Users/deploy/services/dsh-work` | 首次安装的新目录；不能是 AI Hub 或 DSH 目录 |
 | AI Hub 根目录 | `/Users/deploy/services/ai-hub` | 现有部署的真实目录，只读引用其证书 |
 | DSH 安装目录 | `/Users/deploy/services/deepseek-harness` | 已安装且完成构建的独立 checkout |
-| DSH 配置目录 | `/Users/deploy/.dsh` | 已配置模型凭据的 `DSH_HOME`，不是安装目录 |
+| DSH 配置目录 | `/Users/deploy/.dsh` | DSH 的独立配置目录（`DSH_HOME`），不是安装目录；模型路由生效后不再需要保存厂商密钥（见 12.2） |
 | Node 可执行文件 | `/opt/homebrew/bin/node` | 满足预检要求的真实绝对路径 |
 | 异机备份目录 | `/Volumes/dsh-work-backups` | 已挂载、可写、启用加密和访问控制的 NAS/异机存储 |
 
@@ -209,8 +209,9 @@ AI Hub 必须健康，DSH tracked files 必须干净。当前 DSH 锁定版本�
 Commit 为 `76fda729799fe9b3848dbe2c211d4b231032b81e`；第 8 节会用目标发布包再次
 进行严格比对和真实 ACP 握手。“已经安装 DSH”不等于版本一定兼容；不一致时先停止并按
 [Runtime 交付基线](dsh-runtime-delivery.md)安排独立升级，不能在现有目录直接拉取最新版。
-若 `DSH_HOME` 尚未配置模型凭据，由运维按现有 DSH 凭据流程完成配置，不要复制其他人员的
-整个配置目录，也不能把仅通过握手的环境记录为业务验收通过。
+模型厂商密钥不再放在 `DSH_HOME`：部署后由管理员在管理端“模型管理”为默认路由的 Provider 录入
+API Key（以 `DSH_CREDENTIAL_MASTER_KEY` 加密保存），模型请求经平台模型网关转发（见 12.2）。不要复制其他人员的
+整个 DSH 配置目录，也不能把仅通过握手的环境记录为业务验收通过。
 
 备份目录必须确实位于 NAS/另一台机器。可在 AI Hub 已有的异机挂载卷中准备 dsh-work
 独立子目录，但不能混用备份文件或回执。禁止用 `mkdir /Volumes/...` 创建本机空目录假装
@@ -349,7 +350,9 @@ openssl x509 -in "${DWP_ROOT}/certs/server.crt" -noout -checkend 2592000
 | `DSH_WORK_DATA_ROOT` | `<dsh-work 根目录>/data`；`skills/` 保存不可变 Skill 文件夹，必须持久化并与数据库成组备份 |
 | `DSH_WORK_DSH_SESSIONS_ROOT` | `<dsh-work 根目录>/data/dsh-sessions`，保持在备份覆盖的数据目录内 |
 | `DSH_WORK_OFF_HOST_BACKUP_DIRECTORY` | 已确认的 dsh-work 异机备份目录 |
-| `DSH_RUNTIME_HOME`、`DSH_HOME` | 已安装 DSH 的 checkout 路径、其独立凭据/配置目录 |
+| `DSH_RUNTIME_HOME`、`DSH_HOME` | 已安装 DSH 的 checkout 路径、其独立配置目录（不再需要厂商密钥） |
+| `DSH_CREDENTIAL_MASTER_KEY`、`DSH_CREDENTIAL_MASTER_KEY_ID` | **必填**。`openssl rand -base64 32` 生成一次，与 PostgreSQL 分开备份；模型厂商密钥、MCP Bearer Token、企业知识库 API Key 与钉钉 AppSecret 都以它加密。缺失时模型网关无法解析厂商密钥，所有 Agent 运行以 `MODEL_CREDENTIAL_INVALID` 失败（启动日志有警告）。主密钥丢失后已保存的密钥无法解密，只能重新录入 |
+| `DSH_WORK_MODEL_GATEWAY_HOST`、`DSH_WORK_MODEL_GATEWAY_PORT` | 平台模型网关监听地址，保持 `127.0.0.1` 与 `0`（系统分配端口）；只供本机 DSH Worker 访问，不在 Nginx 中暴露。启动日志 `dsh-work model gateway listening on …` 一行给出实际地址 |
 | `DSH_EXPECTED_VERSION`、`DSH_EXPECTED_COMMIT` | 生产主 Runtime Lock：`0.1.2-rc.1` 和 `76fda729799fe9b3848dbe2c211d4b231032b81e` |
 | `DSH_RUNTIME_COMPATIBILITY` | 必须保持未设置；这是本地开发专用开关 |
 | `DSH_WORK_EXECUTION_IMAGE` | **必填**（执行隔离方案 4.9：执行容器为必需）。所有 DSH 子进程、员工侧运行的 `bash` 与 `python_execute` 都在每 Attempt 的执行容器内运行，所有已发布 Agent 的员工侧运行都具备运行命令的能力。镜像须按摘要锁定并通过启动时的工具链检查（必需 `bash`、`rg`、LibreOffice `soffice` 与 `pdftoppm`，`python_execute` 另需 `python3`；服务日志 `execution container toolchain:` 一行列出检查到的工具与版本），服务须以非 root 账号运行，需要 Docker 26 及以上。当前镜像为 `ghcr.io/tonycc/dsh-work/execution@sha256:a59f988be919b4332a79d5a4ad92fff3af542e56cbffbb58dc47bf6be195f42c`（2026-10-27 构建，GHCR 包为公开，无需登录即可拉取）。正式执行镜像由 [执行镜像工作流](../../.github/workflows/execution-image.yml) 从 [deploy/execution-image](../../deploy/execution-image/Dockerfile) 构建、检查并推送 GHCR（附来源证明），运行摘要见该次运行的 Summary；在 Mac mini 上按摘要拉取一次（`docker pull ghcr.io/<owner>/<repo>/execution@sha256:…`，可先用 `gh attestation verify oci://<同一引用> --repo <owner>/<repo>` 核对来源），再把同一引用填入本项。服务以 `--pull never` 运行，不联网拉取；部署预检在镜像未设置、未按摘要锁定或本机不存在时拒绝部署。更换镜像时先拉取新镜像，再部署改了引用的配置。启动检查（含 DSH 工具调度的独占性核对）失败时服务照常启动，但不在宿主执行 DSH：所有 Agent 运行在创建前以“执行容器不可用”失败，`/health` 的 `executionCapabilities.executionContainer` 与管理端 Runtime 页面显示不可用，原因见服务日志；修复后重启服务。Office/PDF 成果的解析文本另由同一镜像的一次性容器（`dsh-py-*`，最多 2 个）生成，失败只记日志；镜像须以 `名称@sha256:` 引用（本地镜像 ID 不能用于解析容器）。运行中的执行容器以 `dsh-exec-*` 命名，启动时与 `dsh-py-*` 一并清扫。每个 Attempt 工作区上限 2 GB；数据卷剩余空间低于 10 GB 或 10% 时不运行命令（`/health` 的 `executionCapabilities.executionContainer.diskLow` 与管理端 Runtime 页面告警）。`<数据根>/dsh-attempts/` 下的 Attempt 工作区在 Attempt 结束后删除（失败的保留 3 天），服务启动后与每 6 小时按同一规则清扫历史目录，`manifest.json` 等元数据文件保留。验收按 [C 档 P2 验收清单](c-tier-p2-acceptance.md) |
@@ -628,6 +631,18 @@ bash current/scripts/deploy/restore.sh \
 2. 在 Mac mini 上按摘要拉取新镜像，把 `runtime.env` 中的 `DSH_WORK_EXECUTION_IMAGE` 改为新引用，按第 8 节部署（或重启服务）。
 3. 服务启动时会用新镜像复查所有已发布 Skill 的依赖：缺包的 Skill 记入服务日志（`skill python dependencies missing in execution image`），在管理端 Skill 列表标“依赖缺失”；员工直接选用时在运行前被拒绝，固定引用它的 AI 同事本次不装配它、其余照常。去掉包之前先确认没有已发布 Skill 依赖它。
 4. 镜像摘要是脚本型 Skill 试运行证据的一部分：换镜像后，待发布的脚本型 Skill 版本须重新严格试运行才能发布；已发布且依赖仍满足的版本不受影响。
+
+### 12.2 模型路由生效（MR-S2 + DLP-S1）的升级步骤
+
+首次升级到模型路由生效的版本时（迁移 `0121_model_gateway_requests`），执行模型改为“平台默认路由 + 平台模型网关”，DSH 不再使用 `DSH_HOME` 中的厂商密钥：
+
+1. 确认 `runtime.env` 已配置 `DSH_CREDENTIAL_MASTER_KEY`（见第 7 节参数表）；
+2. 升级前在 Runtime 页面把调度切换为排空，等待执行中的 Attempt 结束（升级前创建、缺少路由快照的 Attempt 在升级后会以 `MODEL_ROUTE_UNAVAILABLE` 失败，员工重新执行即可）；
+3. 升级后在管理端“模型管理”为默认路由的 Provider 点击“密钥”录入 API Key。列表显示“需录入 API Key”的 Provider 仍是旧的 DSH 受管引用，模型网关无法使用；录入前所有 Agent 运行以 `MODEL_CREDENTIAL_INVALID` 失败；
+4. 发一条员工对话确认成功，再把 Runtime 调度恢复为接受；
+5. 确认无误后可以从 `DSH_HOME` 移除 DeepSeek 密钥（工具目录探测与 MCP 连接检查不发出模型请求，不受影响）。
+
+联网搜索只在默认路由的 Provider 为 DeepSeek 官方时可用；更换为其他厂商后，开启联网搜索的 AI 同事本轮不装配该工具，并在回答中说明暂时不可用。
 
 ## 13. 多 IP、固定域名与证书
 

@@ -90,15 +90,8 @@ export class ModelGovernanceService {
 
   upsertCredentialReference(input: UpsertCredentialReferenceInput) {
     assertActor(input.actor)
-    if (!['dsh-managed', 'keychain', 'secret-manager'].includes(input.backend)) {
-      throw invalidRequest('密钥后端无效；平台加密保存的密钥请直接录入密钥')
-    }
-    if (!input.externalRef.trim()) throw stateConflict('密钥引用不能为空')
-    if (!['configured', 'missing', 'revoked'].includes(input.status)) throw invalidRequest('凭据状态无效')
-    return this.repository.upsertCredentialReference(this.tenantId, {
-      ...input,
-      externalRef: input.externalRef.trim(),
-    })
+    // 模型路由方案 4.5：模型请求经平台模型网关转发，DSH 不再持有厂商密钥，外部引用（含 DSH 受管）不再生效。
+    throw invalidRequest('模型厂商密钥只能由平台加密保存，请直接录入密钥（API Key）；DSH 受管引用等外部引用已不再生效')
   }
 
   listRoutes() {
