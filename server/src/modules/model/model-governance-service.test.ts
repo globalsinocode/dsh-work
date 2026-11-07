@@ -118,3 +118,19 @@ test('route ids are required before reaching the repository', () => {
   assert.throws(() => service.createRoute({ key: 'no-model', name: '缺少模型', providerModelId: undefined as never, enabled: false, actor }), /请指定目标模型/)
   assert.throws(() => service.updateRoute({ routeId: '', name: '缺少路由', providerModelId: 'model-x', enabled: false, actor }), /请指定模型路由/)
 })
+
+test('model keys follow the vendor model id: dots, underscores, slashes and upper case are allowed', async () => {
+  const service = new ModelGovernanceService(new MemoryModelGovernanceRepository())
+  const provider = (await service.listProviders())[0]!
+  for (const modelKey of ['qwen3.8-flash', 'gpt-4.1', 'Qwen/Qwen3-8B', 'claude-3-5-sonnet@20240620', 'glm_4.5']) {
+    const updated = await service.createProviderModel({ providerId: provider.id, modelKey, displayName: `模型 ${modelKey}`, capabilities: ['text'], actor })
+    assert.ok(updated.models.some(model => model.modelKey === modelKey), modelKey)
+  }
+  for (const modelKey of ['', '-leading', 'has space', 'line\nbreak', 'quote"x', 'a'.repeat(201)]) {
+    assert.throws(
+      () => service.createProviderModel({ providerId: provider.id, modelKey, displayName: '非法模型', capabilities: ['text'], actor }),
+      /模型标识须与厂商的模型 id 一致/,
+      JSON.stringify(modelKey),
+    )
+  }
+})

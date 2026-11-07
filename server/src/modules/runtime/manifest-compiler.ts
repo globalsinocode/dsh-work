@@ -1,4 +1,5 @@
 import { normalizeSkillTestScenario } from '../../domain/skill-test-scenario.ts'
+import { MODEL_KEY_PATTERN } from '../../domain/model-key.ts'
 import { archiveDigest, normalizeArchiveItems } from '../../domain/project-archive.ts'
 import { MAX_SKILL_FILES, MAX_SKILL_BYTES } from '../../domain/skill-package-limits.ts'
 import { SKILL_ARTIFACT_REF_PATTERN } from '../../domain/skill-artifact-ref.ts'
@@ -30,8 +31,6 @@ function assertId(name: string, value: string): void {
 
 const MODEL_ROUTE_FIELDS = new Set(['route_id', 'route_key', 'provider_key', 'provider_type', 'model_key', 'base_url', 'credential_ref_id', 'trust_level'])
 const PROVIDER_KEY_PATTERN = /^[a-z][a-z0-9-]{2,47}$/
-// 模型 id 会进入 DSH patch（JSON 字符串）与网关校验，只允许常见的模型名字符。
-const MODEL_KEY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,199}$/
 
 /** 模型路由方案 4.2：路由快照的内容校验；结构由 Schema 约束，这里保证生成 patch 与网关转发时安全。 */
 function assertModelRoute(route: NonNullable<RuntimeManifest['model_route']>, routeId: RuntimeManifest['model_route_id']): void {

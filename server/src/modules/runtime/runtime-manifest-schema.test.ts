@@ -8,6 +8,7 @@ import Ajv2020Module from 'ajv/dist/2020.js'
 import { MAX_SKILL_BYTES } from '../../domain/skill-package-limits.ts'
 import { archiveDigest } from '../../domain/project-archive.ts'
 import { compileRuntimeManifest } from './manifest-compiler.ts'
+import { MODEL_KEY_PATTERN } from '../../domain/model-key.ts'
 import { canonicalJson } from './canonical-json.ts'
 import { normalizePersistedRuntimeManifest } from './runtime-manifest-compatibility.ts'
 import type { RuntimeManifest } from './runtime-types.ts'
@@ -445,6 +446,10 @@ describe('Runtime Manifest Schema / compiler boundary', () => {
     const mismatch = structuredClone(pinned)
     mismatch.model_route_id = 'route-other'
     assert.throws(() => compileRuntimeManifest(mismatch), /does not match model_route_id/)
+  })
+
+  it('Schema 中的模型标识正则与代码共用的 MODEL_KEY_PATTERN 一致', () => {
+    assert.equal(schema.properties.model_route.properties.model_key.pattern, MODEL_KEY_PATTERN.source)
   })
 
   it('数据防护方案 D12 补充：记录未装配的联网搜索，拒绝同时装配或未知原因', () => {
