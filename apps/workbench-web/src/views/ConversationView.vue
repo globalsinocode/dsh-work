@@ -500,6 +500,28 @@ function openRecommendedFromCard(recommendation: AgentRecommendation) {
  * EX-STYLE-01：一对一对话（员工与 AI 同事）中本人的消息只显示气泡，不显示头像与名字，
  * 仍保留“我的消息，<时间>”的可访问名称；多人对话每条都显示发送人。
  */
+/** 较早一轮被停止或失败且没有回复时，在该轮最后一条员工消息下留一行说明（不随新一轮消失）。 */
+const pastRunNotes = computed(() => {
+  const answered = new Set(conversationMessages.value.filter(message => message.role === 'assistant').map(message => message.runId))
+  const byRun = new Map<string, string>()
+  for (const run of task.value?.threadRuns ?? []) {
+    if (run.runId === task.value?.id || answered.has(run.runId)) continue
+    if (run.status === 'cancelled') byRun.set(run.runId, run.stoppedBy ? `已停止（${run.stoppedBy}），没有生成回复` : '已停止，没有生成回复')
+    else if (run.status === 'failed') byRun.set(run.runId, '这一轮没有完成，没有生成回复')
+  }
+  const byMessage = new Map<string, string>()
+  const lastUserByRun = new Map<string, string>()
+  for (const message of conversationMessages.value) {
+    if (message.role === 'user' && message.runId && byRun.has(message.runId)) lastUserByRun.set(message.runId, message.id)
+  }
+  for (const [runId, messageId] of lastUserByRun) byMessage.set(messageId, byRun.get(runId)!)
+  return byMessage
+})
+
+function pastRunNote(message: ChatMessage) {
+  return pastRunNotes.value.get(message.id)
+}
+
 function isCompactOwnMessage(message: ChatMessage) {
   return !isTaskThreadRoute.value && currentWorkspace.value?.type !== 'team'
     && message.role === 'user' && isOwnMessage(message)
@@ -1972,6 +1994,7 @@ watch(
                   </li>
                 </ul>
               </div>
+              <p v-if="pastRunNote(message)" class="conversation-past-run" data-testid="past-run-note">{{ pastRunNote(message) }}</p>
             </template>
 
             <template v-else>
@@ -2064,25 +2087,14 @@ watch(
           <section
             v-if="task.result.error"
             class="conversation-notice error-notice"
-            data-testid="run-failure-notice"
+            data-testid="run-error-notice"
             role="alert"
           >
             <span class="conversation-notice__icon"><el-icon><Close /></el-icon></span>
             <div>
               <strong>{{ task.result.error.message }}</strong>
-              <dl>
-                <div><dt>对象</dt><dd>{{ task.result.error.object }}</dd></div>
-                <div>
-                  <dt>原因</dt>
-                  <dd
-                    class="error-notice__reason"
-                    :class="{ 'error-notice__reason--detail': runFailureDetail }"
-                    data-testid="run-failure-reason"
-                  >
-                    {{ runFailureDetail || task.result.error.reason }}
-                  </dd>
-                </div>
-              </dl>
+              <!-- 员工先看到原因与下一步；运行编号与错误码收进技术详情，排查时再展开复制给管理员。 -->
+              <p data-testid="run-failure-reason">{{ runFailureDetail || task.result.error.reason }}</p>
               <p><strong>下一步：</strong>{{ task.result.error.suggestion }}</p>
               <p v-if="teamRunMissingPinnedAgent" class="error-notice__hint" data-testid="run-retry-requires-mention">
                 此运行无法使用「重新执行本轮」。请在下方输入框重新 @Agent 发起执行。
@@ -2090,7 +2102,13 @@ watch(
               <ul v-if="task.result.pendingItems.some(item => item.kind === 'external_effect_unknown')" class="result-pending">
                 <li v-for="item in task.result.pendingItems.filter(item => item.kind === 'external_effect_unknown')" :key="item.message">{{ item.message }}</li>
               </ul>
-              <code>{{ task.result.error.code }}</code>
+              <details class="error-notice__details" data-testid="run-error-details">
+                <summary>技术详情</summary>
+                <dl>
+                  <div><dt>对象</dt><dd>{{ task.result.error.object }}</dd></div>
+                  <div><dt>错误码</dt><dd><code>{{ task.result.error.code }}</code></dd></div>
+                </dl>
+              </details>
             </div>
             <el-button
               v-if="canRetry"
@@ -2105,8 +2123,13 @@ watch(
             </el-button>
           </section>
 
+          <!-- 停止是员工的主动操作，不再另用“目标未达成”的警示卡片重复说明，只留一行。 -->
+          <p v-if="task.status === 'cancelled'" class="conversation-stopped-by" data-testid="run-stopped-by">
+            {{ task.stoppedBy ? `本轮执行已由 ${task.stoppedBy} 停止` : '本轮执行已停止' }}
+          </p>
+
           <section
-            v-if="isTerminalRun && task.result.outcome === 'not_achieved' && !task.result.error"
+            v-if="isTerminalRun && task.result.outcome === 'not_achieved' && !task.result.error && task.status !== 'cancelled'"
             class="conversation-notice verify-notice verify-notice--neutral"
             data-testid="run-result-not-achieved"
           >

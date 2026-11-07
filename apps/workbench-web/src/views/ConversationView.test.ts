@@ -285,7 +285,7 @@ describe('ConversationView 归档只读态（design §2.7 / AC-23）', () => {
       }),
     })
 
-    const notice = wrapper.get('[data-testid="run-failure-notice"]')
+    const notice = wrapper.get('[data-testid="run-error-notice"]')
     expect(notice.text()).toContain('本轮执行失败')
     expect(wrapper.get('[data-testid="run-failure-reason"]').text()).toBe('Runtime 成果目录无效')
     expect(notice.text()).toContain('RUNTIME_EXECUTION_FAILED')
