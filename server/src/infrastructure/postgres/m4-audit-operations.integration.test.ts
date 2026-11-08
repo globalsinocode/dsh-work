@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { after, before, test } from 'node:test'
 
+import { PostgresModelUsageService } from '../../modules/admin/application/postgres-model-usage-service.ts'
 import { PostgresOperationsService } from '../../modules/admin/application/postgres-operations-service.ts'
 import { AuthorizationDeniedError } from '../../domain/authorization-errors.ts'
 import { classifyHttpError } from '../../http/router.ts'
@@ -200,13 +201,11 @@ test('admin list endpoints paginate and filter on the server', async () => {
   assert.ok(filtered.items.some((event) => event.runId === runId))
   assert.ok(filtered.total <= auditPage.total)
 
-  const usagePage = await operations.getModelUsage({ status: 'failed' })
-  assert.ok(usagePage.items.some((record) => record.runId === runId))
-  assert.ok(usagePage.items.every((record) => record.status === 'failed'))
-  assert.ok(usagePage.summary.callCount >= 1)
-  assert.ok(usagePage.facets.employees.some((employee) => employee.employeeId === 'U00001'))
-
-  const employeePage = await operations.getModelUsageEmployees({ page: 1, pageSize: 10 })
-  const owner = employeePage.items.find((item) => item.employeeId === 'U00001')
-  assert.ok(owner && owner.failedCount >= 1 && owner.callCount >= owner.failedCount)
+  // 模型用量页：失败的执行出现在明细里，并按员工统计失败次数。
+  const usage = new PostgresModelUsageService(database, 'Asia/Shanghai')
+  const executions = await usage.getExecutions({ range: '30d' }, 1, 100)
+  assert.ok(executions.items.some((record) => record.runId === runId && record.status === 'failed'))
+  const employees = await usage.getBreakdown({ range: '30d' }, 'employee')
+  const owner = employees.find((row) => row.key === 'U00001')
+  assert.ok(owner && owner.failedExecutions >= 1 && owner.executions >= owner.failedExecutions)
 })

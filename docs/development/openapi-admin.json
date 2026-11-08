@@ -1403,10 +1403,35 @@
         }
       }
     },
-    "/model-usage": {
+    "/model-usage/overview": {
       "get": {
-        "operationId": "getModelUsage",
-        "summary": "查询包含员工归属的 Token 和延迟明细",
+        "operationId": "getModelUsageOverview",
+        "summary": "模型用量概况与趋势：统计全部运行（含定时任务、主动任务与系统运行）经模型网关的 Token、缓存命中、请求与执行次数；今天按小时、其余按天（平台时区），按模型堆叠，估算数据单独计",
+        "parameters": [{"name": "range", "in": "query", "schema": {"type": "string", "enum": ["today", "7d", "30d"]}}, {"name": "model", "in": "query", "schema": {"type": "string"}}, {"name": "source", "in": "query", "schema": {"type": "string", "enum": ["conversation", "automation", "routine", "validation", "api", "event", "delegation", "system"]}}, {"name": "agent", "in": "query", "schema": {"type": "string"}}, {"name": "employee", "in": "query", "schema": {"type": "string"}}, {"name": "department", "in": "query", "schema": {"type": "string"}}],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          }
+        }
+      }
+    },
+    "/model-usage/breakdown": {
+      "get": {
+        "operationId": "getModelUsageBreakdown",
+        "summary": "按模型、Agent、员工、部门或来源统计模型用量；筛选条件与概况相同",
+        "parameters": [{"name": "range", "in": "query", "schema": {"type": "string", "enum": ["today", "7d", "30d"]}}, {"name": "model", "in": "query", "schema": {"type": "string"}}, {"name": "source", "in": "query", "schema": {"type": "string", "enum": ["conversation", "automation", "routine", "validation", "api", "event", "delegation", "system"]}}, {"name": "agent", "in": "query", "schema": {"type": "string"}}, {"name": "employee", "in": "query", "schema": {"type": "string"}}, {"name": "department", "in": "query", "schema": {"type": "string"}}, {"name": "dimension", "in": "query", "required": true, "schema": {"type": "string", "enum": ["model", "agent", "employee", "department", "source"]}}],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          }
+        }
+      }
+    },
+    "/model-usage/executions": {
+      "get": {
+        "operationId": "listModelUsageExecutions",
+        "summary": "模型用量执行明细：每次执行一行（对话与联网搜索合并），含实际模型、计量来源（网关计量 / 会话日志 / 估算）、请求次数与缓存读写",
+        "parameters": [{"name": "range", "in": "query", "schema": {"type": "string", "enum": ["today", "7d", "30d"]}}, {"name": "model", "in": "query", "schema": {"type": "string"}}, {"name": "source", "in": "query", "schema": {"type": "string", "enum": ["conversation", "automation", "routine", "validation", "api", "event", "delegation", "system"]}}, {"name": "agent", "in": "query", "schema": {"type": "string"}}, {"name": "employee", "in": "query", "schema": {"type": "string"}}, {"name": "department", "in": "query", "schema": {"type": "string"}}, {"name": "page", "in": "query", "schema": {"type": "integer", "minimum": 1}}, {"name": "page_size", "in": "query", "schema": {"type": "integer", "minimum": 1, "maximum": 100}}],
         "responses": {
           "200": {
             "$ref": "#/components/responses/Ok"
@@ -2906,66 +2931,6 @@
       "get": {
         "operationId": "getUsage",
         "summary": "查询平台运行与资源用量汇总",
-        "responses": {
-          "200": {
-            "$ref": "#/components/responses/Ok"
-          },
-          "403": {
-            "$ref": "#/components/responses/Error"
-          }
-        }
-      }
-    },
-    "/model-usage/employees": {
-      "get": {
-        "operationId": "listModelUsageEmployees",
-        "summary": "按员工汇总模型 Token 与调用次数，筛选条件与 /model-usage 相同",
-        "parameters": [
-          {
-            "name": "query",
-            "in": "query",
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "employee",
-            "in": "query",
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "provider",
-            "in": "query",
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "status",
-            "in": "query",
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "page",
-            "in": "query",
-            "schema": {
-              "type": "integer",
-              "minimum": 1
-            }
-          },
-          {
-            "name": "page_size",
-            "in": "query",
-            "schema": {
-              "type": "integer",
-              "minimum": 1
-            }
-          }
-        ],
         "responses": {
           "200": {
             "$ref": "#/components/responses/Ok"

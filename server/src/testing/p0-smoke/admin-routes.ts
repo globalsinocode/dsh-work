@@ -188,22 +188,9 @@ export function registerAdminRoutes(router: Router, service: AdminQueryService) 
   router.get(`${basePath}/operations/summary`, async () => envelope('admin', await service.getOperationsSummary()))
   router.get(`${basePath}/health`, async () => envelope('admin', await service.getHealth()))
   router.get(`${basePath}/usage`, async () => envelope('admin', await service.getUsage()))
-  router.get(`${basePath}/model-usage`, async (_request, context) => envelope('admin', await service.getModelUsage(prototypeModelUsageQuery(context))))
-  router.get(`${basePath}/model-usage/employees`, async (_request, context) =>
-    envelope('admin', await service.getModelUsageEmployees(prototypeModelUsageQuery(context))))
   router.get(`${basePath}/platform-status`, () => envelope('admin', service.getPlatformStatus()))
 }
 
-function prototypeModelUsageQuery(context: { url: URL }) {
-  return {
-    query: context.url.searchParams.get('query') ?? undefined,
-    employee: context.url.searchParams.get('employee') ?? undefined,
-    provider: context.url.searchParams.get('provider') ?? undefined,
-    status: context.url.searchParams.get('status') ?? undefined,
-    page: Number(context.url.searchParams.get('page') ?? undefined),
-    pageSize: Number(context.url.searchParams.get('page_size') ?? undefined),
-  }
-}
 
 function prototypeSkillVersion(skill: SkillDefinition): SkillVersionRecord {
   return {

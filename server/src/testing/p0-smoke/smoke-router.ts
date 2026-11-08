@@ -28,6 +28,8 @@ import { MemoryKnowledgeBaseStore } from './memory-knowledge.ts'
 import { MemoryKnowledgeAdminStore } from './memory-knowledge-admin.ts'
 import { MemoryWorkspaceTimeline } from './memory-workspace-timeline.ts'
 import { registerAdminRoutes } from './admin-routes.ts'
+import { registerModelUsageRoutes } from '../../http/admin/model-usage-routes.ts'
+import { SmokeModelUsageService } from './model-usage-service.ts'
 import { registerSmokeProjectRoutes } from './project-routes.ts'
 import { SmokeRepository } from './smoke-repository.ts'
 import { registerUnavailableWorkbenchCommandRoutes } from './unavailable-routes.ts'
@@ -64,7 +66,9 @@ export function createSmokeRouter() {
   })
   // 冒烟只有一个测试身份：授权直接通过，成员与归档口径由 PostgreSQL 集成测试覆盖。
   registerWorkspaceTimelineRoutes(router, new MemoryWorkspaceTimeline(repository), { authorizeWorkbench: async () => undefined as never }, 'prototype-memory')
-  registerAdminRoutes(router, new AdminQueryService(repository))
+  const modelUsage = new SmokeModelUsageService()
+  registerAdminRoutes(router, new AdminQueryService(repository, modelUsage))
+  registerModelUsageRoutes(router, modelUsage, 'prototype-memory')
   registerModelGovernanceRoutes(router, new ModelGovernanceService(new MemoryModelGovernanceRepository()))
   registerOrganizationRoutes(router, new MemoryOrganizationStore(), 'prototype-memory')
   registerKnowledgeAdminRoutes(router, new MemoryKnowledgeAdminStore(), 'prototype-memory')

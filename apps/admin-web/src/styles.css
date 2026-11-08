@@ -22,6 +22,14 @@
   --color-danger: #ef4444;
   --color-danger-light: #fef2f2;
   --color-danger-strong: #dc2626;
+  /* 图表分类色（模型用量趋势等）：相邻颜色明度不同，便于区分。 */
+  --color-chart-1: var(--color-primary);
+  --color-chart-2: var(--color-warning);
+  --color-chart-3: var(--color-success);
+  --color-chart-4: #8b5cf6;
+  --color-chart-5: var(--color-danger);
+  --color-chart-6: #0ea5e9;
+  --color-chart-7: var(--color-text-secondary);
   --font-size-heading: var(--dsh-font-size-heading);
   --font-size-title: var(--dsh-font-size-title);
   --font-size-body: var(--dsh-font-size-body);

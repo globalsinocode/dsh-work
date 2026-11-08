@@ -6,7 +6,6 @@ import {
   mockAuditEvents,
   mockConnectors,
   mockHealth,
-  mockModelUsage,
   mockRuntimes,
   mockSkills,
   mockTasks,
@@ -149,7 +148,6 @@ const prototypeData = {
   auditEvents: mockAuditEvents,
   health: mockHealth,
   usage: mockUsage,
-  modelUsage: mockModelUsage,
   users: prototypeUsers,
 }
 

@@ -35,7 +35,6 @@ import type {
   DingTalkSettings,
   DingTalkSettingsInput,
   DingTalkUnboundEmployee,
-  EmployeeModelUsageSummary,
   GrantSourceReconciliationView,
   HealthComponent,
   IdentityRoleSummary,
@@ -45,7 +44,11 @@ import type {
   ListPage,
   LocalPermissionDefinition,
   OrganizationSnapshot,
-  ModelUsagePage,
+  ModelUsageBreakdownRow,
+  ModelUsageDimension,
+  ModelUsageExecution,
+  ModelUsageFilter,
+  ModelUsageOverview,
   ManagedWorkspaceDefinition,
   ModelProvider,
   ModelRoute,
@@ -382,10 +385,12 @@ export const adminApi = {
   getRunOperations: (runId: string) => request<AuditEvent[]>(`/operations/runs/${encodeURIComponent(runId)}`),
   getHealth: () => request<HealthComponent[]>('/health'),
   getUsage: () => request<UsagePoint[]>('/usage'),
-  getModelUsage: (input: { query?: string; employee?: string; provider?: string; status?: string; page?: number; pageSize?: number } = {}) =>
-    request<ModelUsagePage>(`/model-usage${listQuery(input)}`),
-  getModelUsageEmployees: (input: { query?: string; employee?: string; provider?: string; status?: string; page?: number; pageSize?: number } = {}) =>
-    request<ListPage<EmployeeModelUsageSummary>>(`/model-usage/employees${listQuery(input)}`),
+  getModelUsageOverview: (filter: ModelUsageFilter) =>
+    request<ModelUsageOverview>(`/model-usage/overview${listQuery({ ...filter })}`),
+  getModelUsageBreakdown: (filter: ModelUsageFilter, dimension: ModelUsageDimension) =>
+    request<ModelUsageBreakdownRow[]>(`/model-usage/breakdown${listQuery({ ...filter, dimension })}`),
+  getModelUsageExecutions: (filter: ModelUsageFilter, page: number, pageSize: number) =>
+    request<ListPage<ModelUsageExecution>>(`/model-usage/executions${listQuery({ ...filter, page, pageSize })}`),
   getModelProviders: () => request<ModelProvider[]>('/model-providers'),
   createModelProvider: (input: {
     key: string

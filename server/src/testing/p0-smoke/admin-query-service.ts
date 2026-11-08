@@ -1,3 +1,4 @@
+import { SmokeModelUsageService } from './model-usage-service.ts'
 import { randomUUID } from 'node:crypto'
 
 import { assertAgentSpecLimits } from '../../modules/agent/agent-spec.ts'
@@ -13,12 +14,8 @@ import type {
   ConnectorConfiguration,
   CreateAgentDraftInput,
   CreateSkillInput,
-  EmployeeModelUsageSummary,
   ListPage,
   ManagedWorkspaceDefinition,
-  ModelUsageListQuery,
-  ModelUsagePage,
-  ModelUsageRecord,
   OperationsSummary,
   PublishStatus,
   SessionListPage,
@@ -49,8 +46,11 @@ export class AdminQueryService {
   /** 冒烟服务直接加载仓库中的内置 Skill，与正式服务同一份内容。 */
   private readonly builtinSkills = loadBuiltinSkillCatalog(fileURLToPath(new URL('../../../config/builtin-skills', import.meta.url)))
 
-  constructor(repository: SmokeRepository) {
+  private readonly modelUsage: SmokeModelUsageService
+
+  constructor(repository: SmokeRepository, modelUsage: SmokeModelUsageService = new SmokeModelUsageService()) {
     this.repository = repository
+    this.modelUsage = modelUsage
   }
 
   getSession() {
@@ -510,17 +510,17 @@ export class AdminQueryService {
   }
 
   async getOperationsSummary(): Promise<OperationsSummary> {
-    const [tasks, auditEvents, modelUsage, artifacts] = await Promise.all([
+    const [tasks, auditEvents, usageToday, artifacts] = await Promise.all([
       this.repository.read('tasks'),
       this.repository.read('auditEvents'),
-      this.repository.read('modelUsage'),
+      this.modelUsage.getOverview({ range: 'today' }),
       this.repository.read('artifacts'),
     ])
     return {
       runs24h: tasks.length,
       successfulRuns24h: tasks.filter(task => task.status === 'succeeded').length,
       failedRuns24h: tasks.filter(task => task.status === 'failed').length,
-      modelTokens24h: modelUsage.reduce((total, record) => total + record.totalTokens, 0),
+      modelTokens24h: usageToday.totals.totalTokens,
       toolCalls24h: auditEvents.filter(event => event.category === 'tool').length,
       artifacts24h: artifacts.length,
       attentionEvents24h: auditEvents.filter(event => event.status === 'failed' || event.status === 'blocked').length,
@@ -533,84 +533,6 @@ export class AdminQueryService {
 
   getUsage() {
     return this.repository.read('usage')
-  }
-
-  async getModelUsage(input: ModelUsageListQuery = {}): Promise<ModelUsagePage> {
-    const records = await this.repository.read('modelUsage')
-    const filtered = filterModelUsage(records, input)
-    const successful = filtered.filter((record) => record.status === 'success')
-    const providers = [...new Set(records.map((record) => record.provider))].sort()
-    const employeeFacets = new Map<string, { employeeId: string; employeeName: string; department: string }>()
-    for (const record of records) {
-      employeeFacets.set(record.employeeId, {
-        employeeId: record.employeeId,
-        employeeName: record.employeeName,
-        department: record.department,
-      })
-    }
-    return paginate(filtered, input, (items, page, pageSize) => ({
-      items,
-      total: filtered.length,
-      page,
-      pageSize,
-      summary: {
-        callCount: filtered.length,
-        employeeCount: new Set(filtered.map((record) => record.employeeId)).size,
-        totalTokens: filtered.reduce((sum, record) => sum + record.totalTokens, 0),
-        averageLatencyMs: successful.length
-          ? Math.round(successful.reduce((sum, record) => sum + record.latencyMs, 0) / successful.length)
-          : 0,
-      },
-      facets: {
-        providers,
-        employees: [...employeeFacets.values()]
-          .sort((left, right) => left.employeeName.localeCompare(right.employeeName, 'zh-CN')),
-      },
-    }))
-  }
-
-  async getModelUsageEmployees(input: ModelUsageListQuery = {}): Promise<ListPage<EmployeeModelUsageSummary>> {
-    const records = await this.repository.read('modelUsage')
-    const filtered = filterModelUsage(records, input)
-    const summaries = new Map<string, EmployeeModelUsageSummary & { latencyTotal: number }>()
-    for (const record of filtered) {
-      const current = summaries.get(record.employeeId) ?? {
-        employeeId: record.employeeId,
-        employeeName: record.employeeName,
-        department: record.department,
-        callCount: 0,
-        successCount: 0,
-        failedCount: 0,
-        blockedCount: 0,
-        successRate: 0,
-        promptTokens: 0,
-        completionTokens: 0,
-        totalTokens: 0,
-        averageLatencyMs: 0,
-        lastUsedAt: record.time,
-        latencyTotal: 0,
-      }
-      current.callCount += 1
-      current.promptTokens += record.promptTokens
-      current.completionTokens += record.completionTokens
-      current.totalTokens += record.totalTokens
-      if (record.status === 'success') {
-        current.successCount += 1
-        current.latencyTotal += record.latencyMs
-      } else if (record.status === 'failed') {
-        current.failedCount += 1
-      } else {
-        current.blockedCount += 1
-      }
-      current.successRate = current.callCount ? current.successCount / current.callCount : 0
-      current.averageLatencyMs = current.successCount ? Math.round(current.latencyTotal / current.successCount) : 0
-      if (record.time > current.lastUsedAt) current.lastUsedAt = record.time
-      summaries.set(record.employeeId, current)
-    }
-    const items = [...summaries.values()]
-      .sort((left, right) => right.totalTokens - left.totalTokens || left.employeeName.localeCompare(right.employeeName, 'zh-CN'))
-      .map(({ latencyTotal: _latencyTotal, ...summary }) => summary)
-    return paginate(items, input)
   }
 
   getPlatformStatus(): PlatformStatus {
@@ -645,15 +567,6 @@ function paginate<T, R extends ListPage<T>>(
   return wrap(source.slice((page - 1) * pageSize, page * pageSize), page, pageSize)
 }
 
-function filterModelUsage(records: ModelUsageRecord[], input: ModelUsageListQuery) {
-  const keyword = normalizeKeyword(input.query)
-  return records.filter((record) =>
-    (!keyword || `${record.employeeName} ${record.employeeId} ${record.department} ${record.provider} ${record.model} ${record.modelRoute} ${record.agentId} ${record.runId} ${record.traceId}`.toLowerCase().includes(keyword))
-    && (!input.employee || record.employeeId === input.employee)
-    && (!input.provider || record.provider === input.provider)
-    && (!input.status || record.status === input.status),
-  )
-}
 
 function prototypeTimestamp() {
   return new Date().toISOString().slice(0, 16).replace('T', ' ')

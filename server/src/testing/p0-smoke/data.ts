@@ -5,7 +5,6 @@ import type {
   AuditEvent,
   ConnectorDefinition,
   HealthComponent,
-  ModelUsageRecord,
   RuntimeDefinition,
   SkillDefinition,
   TaskRun,
@@ -1318,12 +1317,3 @@ export const mockUsage: UsagePoint[] = [
   { day: '08/28', runs: 96, tokens: 720000 },
 ]
 
-export const mockModelUsage: ModelUsageRecord[] = [
-  { id: 'model-call-001', time: '2026-08-28 10:43:22', runId: 'run-260828-002', agentId: 'dsh-work-assistant', employeeId: 'U10086', employeeName: '林岚', department: '供应链中心', provider: '企业模型网关', model: 'DeepSeek-V3', modelRoute: 'default', status: 'success', promptTokens: 2840, completionTokens: 1126, totalTokens: 3966, latencyMs: 2810, traceId: 'tr_92af80d18d' },
-  { id: 'model-call-002', time: '2026-08-28 09:51:00', runId: 'run-260828-003', agentId: 'dsh-work-assistant', employeeId: 'U00008', employeeName: '陈默', department: '数字化中心', provider: '企业模型网关', model: '外部模型-自动选择', modelRoute: 'default', status: 'blocked', promptTokens: 0, completionTokens: 0, totalTokens: 0, latencyMs: 18, traceId: 'tr_3127ad981f' },
-  { id: 'model-call-003', time: '2026-08-28 09:21:44', runId: 'run-260828-001', agentId: 'dsh-work-assistant', employeeId: 'U10021', employeeName: '周衡', department: '供应链中心', provider: '企业模型网关', model: 'Qwen3-32B', modelRoute: 'analysis', status: 'success', promptTokens: 10320, completionTokens: 8020, totalTokens: 18340, latencyMs: 8420, traceId: 'tr_abe490071c' },
-  { id: 'model-call-004', time: '2026-08-27 16:09:26', runId: 'run-260827-004', agentId: 'dsh-work-assistant', employeeId: 'U10086', employeeName: '林岚', department: '供应链中心', provider: '企业模型网关', model: 'Qwen3-32B', modelRoute: 'analysis', status: 'success', promptTokens: 4822, completionTokens: 1770, totalTokens: 6592, latencyMs: 5180, traceId: 'tr_c4d871e065' },
-  { id: 'model-call-005', time: '2026-08-27 15:23:24', runId: 'run-260826-008', agentId: 'dsh-work-assistant', employeeId: 'U10086', employeeName: '林岚', department: '供应链中心', provider: '企业模型网关', model: 'DeepSeek-V3', modelRoute: 'default', status: 'failed', promptTokens: 1450, completionTokens: 0, totalTokens: 1450, latencyMs: 30000, traceId: 'tr_6a7c31e02d' },
-  { id: 'model-call-006', time: '2026-08-27 11:33:12', runId: 'run-260827-002', agentId: 'dsh-work-assistant', employeeId: 'U10021', employeeName: '周衡', department: '供应链中心', provider: '企业模型网关', model: 'DeepSeek-V3', modelRoute: 'default', status: 'success', promptTokens: 2790, completionTokens: 1470, totalTokens: 4260, latencyMs: 1920, traceId: 'tr_628aae109c' },
-  { id: 'model-call-007', time: '2026-08-26 14:18:03', runId: 'run-260826-005', agentId: 'operations-analyst', employeeId: 'U10021', employeeName: '周衡', department: '供应链中心', provider: '企业模型网关', model: 'GLM-4.5', modelRoute: 'fallback', status: 'success', promptTokens: 6240, completionTokens: 2890, totalTokens: 9130, latencyMs: 4360, traceId: 'tr_70c92ab116' },
-]

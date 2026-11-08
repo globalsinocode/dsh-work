@@ -857,25 +857,6 @@ export interface UsagePoint {
   tokens: number
 }
 
-export interface ModelUsageRecord {
-  id: string
-  time: string
-  runId: string
-  agentId: string
-  employeeId: string
-  employeeName: string
-  department: string
-  provider: string
-  model: string
-  modelRoute: string
-  status: 'success' | 'failed' | 'blocked'
-  promptTokens: number
-  completionTokens: number
-  totalTokens: number
-  latencyMs: number
-  traceId: string
-}
-
 export interface ListPage<T> {
   items: T[]
   total: number
@@ -895,33 +876,78 @@ export interface SessionListPage extends ListPage<SessionDefinition> {
   }
 }
 
-export interface ModelUsagePage extends ListPage<ModelUsageRecord> {
-  summary: {
-    callCount: number
-    employeeCount: number
-    totalTokens: number
-    averageLatencyMs: number
-  }
-  facets: {
-    providers: string[]
-    employees: { employeeId: string; employeeName: string; department: string }[]
-  }
+/** 模型用量页（管理端）：与服务端 domain/model-usage.ts 同构。 */
+export type ModelUsageRange = 'today' | '7d' | '30d'
+export type RunSource = 'conversation' | 'automation' | 'routine' | 'validation' | 'api' | 'event' | 'delegation' | 'system'
+export type ModelUsageDimension = 'model' | 'agent' | 'employee' | 'department' | 'source'
+export type ModelUsageMeasurement = 'gateway' | 'session-log' | 'estimated'
+
+export interface ModelUsageFilter {
+  range: ModelUsageRange
+  model?: string
+  source?: string
+  agent?: string
+  employee?: string
+  department?: string
 }
 
-export interface EmployeeModelUsageSummary {
+export interface ModelUsageTotals {
+  totalTokens: number
+  inputTokens: number
+  outputTokens: number
+  cacheReadTokens: number
+  cacheInputTokens: number
+  requests: number
+  failedRequests: number
+  requestsKnown: boolean
+  executions: number
+  failedExecutions: number
+  estimatedTokens: number
+}
+
+export interface ModelUsageOverview {
+  range: ModelUsageRange
+  from: string
+  to: string
+  granularity: 'hour' | 'day'
+  totals: ModelUsageTotals & { employees: number }
+  trend: Array<{ bucket: string; label: string; models: Array<{ model: string; tokens: number; estimatedTokens: number }> }>
+  facets: { models: string[]; sources: RunSource[] }
+}
+
+export interface ModelUsageBreakdownRow extends ModelUsageTotals {
+  key: string
+  label: string
+  sub: string
+}
+
+export interface ModelUsageExecution {
+  attemptId: string
+  runId: string
+  time: string
+  source: RunSource
+  agentId: string | null
+  agentName: string
   employeeId: string
   employeeName: string
   department: string
-  callCount: number
-  successCount: number
-  failedCount: number
-  blockedCount: number
-  successRate: number
-  promptTokens: number
-  completionTokens: number
+  providerKey: string
+  providerName: string
+  model: string
+  routeName: string
+  status: 'success' | 'failed' | 'blocked' | 'cancelled'
+  errorCode: string | null
   totalTokens: number
-  averageLatencyMs: number
-  lastUsedAt: string
+  inputTokens: number
+  outputTokens: number
+  cacheReadTokens: number | null
+  cacheWriteTokens: number | null
+  requests: number | null
+  failedRequests: number | null
+  measurement: ModelUsageMeasurement
+  search: { model: string; inputTokens: number; outputTokens: number; requests: number | null } | null
+  durationMs: number
+  traceId: string
 }
 
 export type ProviderStatus = 'active' | 'disabled'

@@ -123,7 +123,7 @@ for (const name of businessViews) {
 
 // 服务端分页视图自行管理拉取与错误（usePagedList 的 error ref + el-alert）
 requireFragments('src/views/SessionManagementView.vue', ['ops-page', 'sessionsError'])
-requireFragments('src/views/ModelUsageView.vue', ['ops-page', 'pageError'])
+requireFragments('src/views/ModelUsageView.vue', ['ops-page', 'el-alert v-if="error"'])
 
 for (const name of listViews) {
   requireFragments(`src/views/${name}`, ['filter-panel', 'class="data-table"', 'v-loading', 'empty-text='])
@@ -200,11 +200,13 @@ forbidFragments('src/views/CapabilityManagementView.vue', [
   'SkillEditorDialog',
   'data-action="create-skills"',
 ])
+// 模型用量页（ADMIN-E2E-06）：时间范围、按维度统计并可下钻、执行详情；不提供导出。
 requireFragments('src/views/ModelUsageView.vue', [
+  'aria-label="时间范围"',
+  'aria-label="统计维度"',
+  'data-testid="usage-drill"',
   'data-action="view-model-usage"',
-  'data-action="view-employee-model-usage"',
-  '员工统计',
-  '筛选员工',
+  '执行用量详情',
 ])
 requireFragments('src/views/ModelGovernanceView.vue', [
   'ops-page',

@@ -1,5 +1,6 @@
 import type { DatabaseClient } from '../../infrastructure/postgres/database.ts'
 import { notFound } from '../../domain/request-errors.ts'
+import { runSourceOf } from '../../domain/model-usage.ts'
 
 const tenantId = 'tenant-dsh-work'
 const MAX_LIMIT = 50
@@ -87,13 +88,7 @@ export class PostgresAgentRunHistory {
 }
 
 function sourceOf(row: Row): AgentRunSource {
-  if (row.purpose === 'agent-release-trial') return 'validation'
-  switch (row.sourceType) {
-    case 'session': return 'conversation'
-    case 'agent_routine': return 'routine'
-    case 'automation': return 'automation'
-    case 'api': return 'api'
-    case 'event': return 'event'
-    default: return 'system'
-  }
+  // 与模型用量页同一套映射（domain/model-usage.ts）；委派运行在此归入系统。
+  const source = runSourceOf(row.sourceType, row.purpose)
+  return source === 'delegation' ? 'system' : source
 }

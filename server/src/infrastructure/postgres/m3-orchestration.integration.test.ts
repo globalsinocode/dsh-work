@@ -10,6 +10,7 @@ import { after, before, test } from 'node:test'
 import { registerTaskExecutionRoutes, registerTaskOperationAdminRoutes } from '../../http/workbench/task-execution-routes.ts'
 import { Router } from '../../http/router.ts'
 import type { PostgresAgentService, RuntimeAgentSnapshot } from '../../modules/agent/postgres-agent-service.ts'
+import { PostgresModelUsageService } from '../../modules/admin/application/postgres-model-usage-service.ts'
 import { PostgresOperationsService } from '../../modules/admin/application/postgres-operations-service.ts'
 import { PostgresAuthorizationService } from '../../modules/authorization/postgres-authorization-service.ts'
 import { testApiAuthenticator } from '../../testing/test-identity.ts'
@@ -143,11 +144,12 @@ test('real PostgreSQL orchestration persists the assistant result without publis
   const resumed = await runs.readEventsAfterEvent('tenant-dsh-work', created.id, events.at(-2)?.id)
   assert.deepEqual(resumed.map((event) => event.eventType), ['run.completed'])
 
-  const usage = await new PostgresOperationsService(database).getModelUsage()
+  const usage = await new PostgresModelUsageService(database, 'Asia/Shanghai').getExecutions({ range: 'today' }, 1, 100)
   const usageRecord = usage.items.find((record) => record.runId === created.id)
   assert.ok(usageRecord && usageRecord.totalTokens > 0)
   assert.equal(usageRecord.employeeId, 'U00001')
   assert.equal(usageRecord.employeeName, '林岚')
+  assert.equal(usageRecord.source, 'conversation')
   // 组织架构 ORG-S1 迁移清空了种子员工的历史部门文本，未分配部门时显示“未归属部门”。
   assert.equal(usageRecord.department, '未归属部门')
 })

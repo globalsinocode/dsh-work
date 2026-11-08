@@ -11,6 +11,8 @@ import { registerToolRoutes } from './http/admin/tool-routes.ts'
 import { registerModelGovernanceRoutes } from './http/admin/model-routes.ts'
 import { HttpProviderModelCatalog } from './modules/model/provider-model-catalog.ts'
 import { registerOperationsRoutes } from './http/admin/operations-routes.ts'
+import { registerModelUsageRoutes } from './http/admin/model-usage-routes.ts'
+import { PostgresModelUsageService } from './modules/admin/application/postgres-model-usage-service.ts'
 import { registerOrganizationRoutes } from './http/admin/organization-routes.ts'
 import { PostgresOrganizationService } from './modules/organization/postgres-organization-service.ts'
 import { registerIdentityAdministrationRoutes } from './http/admin/identity-routes.ts'
@@ -678,6 +680,7 @@ async function start() {
   registerWorkspaceAgentMemberRoutes(router, workspaceAgentMembers, authorization)
   registerProjectRoutes(router, projects, authorization, projectArchive)
   registerOperationsRoutes(router, operations, new PostgresGrantReconciliationService(database, operations))
+  registerModelUsageRoutes(router, new PostgresModelUsageService(database, resolvePlatformTimezone(process.env.DSH_WORK_TIMEZONE)))
   registerAgentRoutes(router, agents, new PostgresAgentAccessService(database))
   const agentValidation = new PostgresAgentValidationService(database, agents, skills, orchestration, mcpService)
   // 启动收敛：重启前尚未取得 Run 的验证案例标为“服务重启中断”，可单独重跑；

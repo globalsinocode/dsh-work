@@ -680,25 +680,6 @@ export interface UsagePoint {
   tokens: number
 }
 
-export interface ModelUsageRecord {
-  id: string
-  time: string
-  runId: string
-  agentId: string
-  employeeId: string
-  employeeName: string
-  department: string
-  provider: string
-  model: string
-  modelRoute: string
-  status: 'success' | 'failed' | 'blocked'
-  promptTokens: number
-  completionTokens: number
-  totalTokens: number
-  latencyMs: number
-  traceId: string
-}
-
 export interface ListPage<T> {
   items: T[]
   total: number
@@ -735,38 +716,3 @@ export interface AuditEventListQuery extends ListPageQuery {
   category?: string
 }
 
-export interface ModelUsageListQuery extends ListPageQuery {
-  query?: string
-  employee?: string
-  provider?: string
-  status?: string
-}
-
-export interface ModelUsagePage extends ListPage<ModelUsageRecord> {
-  summary: {
-    callCount: number
-    employeeCount: number
-    totalTokens: number
-    averageLatencyMs: number
-  }
-  facets: {
-    providers: string[]
-    employees: { employeeId: string; employeeName: string; department: string }[]
-  }
-}
-
-export interface EmployeeModelUsageSummary {
-  employeeId: string
-  employeeName: string
-  department: string
-  callCount: number
-  successCount: number
-  failedCount: number
-  blockedCount: number
-  successRate: number
-  promptTokens: number
-  completionTokens: number
-  totalTokens: number
-  averageLatencyMs: number
-  lastUsedAt: string
-}

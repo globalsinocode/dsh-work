@@ -6,13 +6,9 @@ import type { BuiltinSkillCatalog } from '../../skill/builtin-skills.ts'
 import type {
   AuditEvent,
   AuditEventListQuery,
-  EmployeeModelUsageSummary,
   HealthComponent,
   ListPage,
   ManagedWorkspaceDefinition,
-  ModelUsageListQuery,
-  ModelUsagePage,
-  ModelUsageRecord,
   OperationsSummary,
   RuntimeDefinition,
   SessionDefinition,
@@ -581,209 +577,6 @@ export class PostgresOperationsService {
     return rows
   }
 
-  async getModelUsage(input: ModelUsageListQuery = {}): Promise<ModelUsagePage> {
-    const query = input.query?.trim().slice(0, 100) ?? ''
-    const employee = input.employee?.trim().slice(0, 100) ?? ''
-    const provider = input.provider?.trim().slice(0, 100) ?? ''
-    const status = auditStatusFilters.has(input.status ?? '') ? (input.status ?? '') : ''
-    const page = clampInteger(input.page, 1, 1_000_000, 1)
-    const pageSize = clampInteger(input.pageSize, 1, 500, 10)
-    const offset = (page - 1) * pageSize
-    const like = `%${query}%`
-    return this.database.begin(async (transaction) => {
-      const [summary] = await transaction<{
-        callCount: number; employeeCount: number; totalTokens: number; averageLatencyMs: number | null
-      }[]>`
-        select count(*)::integer as "callCount",
-               count(distinct u.id)::integer as "employeeCount",
-               coalesce(sum(mu.input_tokens + mu.output_tokens), 0)::integer as "totalTokens",
-               avg(mu.latency_ms) filter (where mu.status = 'success') as "averageLatencyMs"
-          from model_usage_events mu
-          join runs r on r.tenant_id = mu.tenant_id and r.id = mu.run_id
-          join users u on u.tenant_id = r.tenant_id and u.id = r.requested_by
-          join sessions s on s.tenant_id = r.tenant_id and s.id = r.session_id
-          join agent_versions av on av.tenant_id = s.tenant_id and av.id = s.agent_version_id
-          join agents a on a.tenant_id = av.tenant_id and a.id = av.agent_id
-          join run_attempts ra on ra.tenant_id = mu.tenant_id and ra.id = mu.attempt_id
-         where mu.tenant_id = ${tenantId}
-           and (${status} = '' or mu.status = ${status})
-           and (${employee} = '' or u.id = ${employee})
-           and (${provider} = '' or mu.provider = ${provider})
-           and (${query} = '' or
-                u.display_name ilike ${like} or u.id ilike ${like}
-                or (case u.department_id when 'supply-chain' then '供应链中心' when 'platform' then '数字化中心' else coalesce(nullif(trim(u.department_id), ''), '未归属部门') end) ilike ${like}
-                or mu.provider ilike ${like} or mu.model ilike ${like}
-                or coalesce(ra.model_route_snapshot ->> 'routeKey', 'default') ilike ${like}
-                or a.id ilike ${like} or mu.run_id ilike ${like} or mu.trace_id ilike ${like})
-      `
-      const rows = await transaction<{
-        id: string; occurredAt: Date; runId: string; provider: string; model: string; status: ModelUsageRecord['status'];
-        inputTokens: number; outputTokens: number; latencyMs: number | null; traceId: string;
-        employeeId: string; employeeName: string; departmentId: string | null; agentId: string; modelRoute: string
-      }[]>`
-        select mu.id, mu.occurred_at as "occurredAt", mu.run_id as "runId", mu.provider, mu.model, mu.status,
-               mu.input_tokens::integer as "inputTokens", mu.output_tokens::integer as "outputTokens",
-               mu.latency_ms as "latencyMs", mu.trace_id as "traceId",
-               u.id as "employeeId", u.display_name as "employeeName", u.department_id as "departmentId",
-               a.id as "agentId", coalesce(ra.model_route_snapshot ->> 'routeKey', 'default') as "modelRoute"
-          from model_usage_events mu
-          join runs r on r.tenant_id = mu.tenant_id and r.id = mu.run_id
-          join users u on u.tenant_id = r.tenant_id and u.id = r.requested_by
-          join sessions s on s.tenant_id = r.tenant_id and s.id = r.session_id
-          join agent_versions av on av.tenant_id = s.tenant_id and av.id = s.agent_version_id
-          join agents a on a.tenant_id = av.tenant_id and a.id = av.agent_id
-          join run_attempts ra on ra.tenant_id = mu.tenant_id and ra.id = mu.attempt_id
-         where mu.tenant_id = ${tenantId}
-           and (${status} = '' or mu.status = ${status})
-           and (${employee} = '' or u.id = ${employee})
-           and (${provider} = '' or mu.provider = ${provider})
-           and (${query} = '' or
-                u.display_name ilike ${like} or u.id ilike ${like}
-                or (case u.department_id when 'supply-chain' then '供应链中心' when 'platform' then '数字化中心' else coalesce(nullif(trim(u.department_id), ''), '未归属部门') end) ilike ${like}
-                or mu.provider ilike ${like} or mu.model ilike ${like}
-                or coalesce(ra.model_route_snapshot ->> 'routeKey', 'default') ilike ${like}
-                or a.id ilike ${like} or mu.run_id ilike ${like} or mu.trace_id ilike ${like})
-         order by mu.occurred_at desc
-         limit ${pageSize} offset ${offset}
-      `
-      const providers = await transaction<{ provider: string }[]>`
-        select distinct mu.provider from model_usage_events mu
-         where mu.tenant_id = ${tenantId}
-         order by mu.provider
-      `
-      const employees = await transaction<{ employeeId: string; employeeName: string; departmentId: string | null }[]>`
-        select distinct u.id as "employeeId", u.display_name as "employeeName", u.department_id as "departmentId"
-          from model_usage_events mu
-          join runs r on r.tenant_id = mu.tenant_id and r.id = mu.run_id
-          join users u on u.tenant_id = r.tenant_id and u.id = r.requested_by
-         where mu.tenant_id = ${tenantId}
-         order by u.display_name
-      `
-      return {
-        items: rows.map((row) => ({
-          id: row.id, time: formatDateTime(row.occurredAt), runId: row.runId,
-          agentId: row.agentId, employeeId: row.employeeId, employeeName: row.employeeName,
-          department: departmentLabel(row.departmentId), provider: row.provider,
-          model: row.model, modelRoute: row.modelRoute, status: row.status,
-          promptTokens: row.inputTokens, completionTokens: row.outputTokens,
-          totalTokens: row.inputTokens + row.outputTokens, latencyMs: row.latencyMs ?? 0,
-          traceId: row.traceId,
-        })),
-        total: summary?.callCount ?? 0,
-        page,
-        pageSize,
-        summary: {
-          callCount: summary?.callCount ?? 0,
-          employeeCount: summary?.employeeCount ?? 0,
-          totalTokens: summary?.totalTokens ?? 0,
-          averageLatencyMs: Math.round(summary?.averageLatencyMs ?? 0),
-        },
-        facets: {
-          providers: providers.map((row) => row.provider),
-          employees: employees.map((row) => ({
-            employeeId: row.employeeId,
-            employeeName: row.employeeName,
-            department: departmentLabel(row.departmentId),
-          })),
-        },
-      }
-    })
-  }
-
-  async getModelUsageEmployees(input: ModelUsageListQuery = {}): Promise<ListPage<EmployeeModelUsageSummary>> {
-    const query = input.query?.trim().slice(0, 100) ?? ''
-    const employee = input.employee?.trim().slice(0, 100) ?? ''
-    const provider = input.provider?.trim().slice(0, 100) ?? ''
-    const status = auditStatusFilters.has(input.status ?? '') ? (input.status ?? '') : ''
-    const page = clampInteger(input.page, 1, 1_000_000, 1)
-    const pageSize = clampInteger(input.pageSize, 1, 500, 10)
-    const offset = (page - 1) * pageSize
-    const like = `%${query}%`
-    return this.database.begin(async (transaction) => {
-      const [count] = await transaction<{ total: number }[]>`
-        select count(*)::integer as total
-          from (
-            select u.id
-              from model_usage_events mu
-              join runs r on r.tenant_id = mu.tenant_id and r.id = mu.run_id
-              join users u on u.tenant_id = r.tenant_id and u.id = r.requested_by
-              join sessions s on s.tenant_id = r.tenant_id and s.id = r.session_id
-              join agent_versions av on av.tenant_id = s.tenant_id and av.id = s.agent_version_id
-              join agents a on a.tenant_id = av.tenant_id and a.id = av.agent_id
-              join run_attempts ra on ra.tenant_id = mu.tenant_id and ra.id = mu.attempt_id
-             where mu.tenant_id = ${tenantId}
-               and (${status} = '' or mu.status = ${status})
-               and (${employee} = '' or u.id = ${employee})
-               and (${provider} = '' or mu.provider = ${provider})
-               and (${query} = '' or
-                    u.display_name ilike ${like} or u.id ilike ${like}
-                    or (case u.department_id when 'supply-chain' then '供应链中心' when 'platform' then '数字化中心' else coalesce(nullif(trim(u.department_id), ''), '未归属部门') end) ilike ${like}
-                    or mu.provider ilike ${like} or mu.model ilike ${like}
-                    or coalesce(ra.model_route_snapshot ->> 'routeKey', 'default') ilike ${like}
-                    or a.id ilike ${like} or mu.run_id ilike ${like} or mu.trace_id ilike ${like})
-             group by u.id
-          ) filtered
-      `
-      const rows = await transaction<{
-        employeeId: string; employeeName: string; departmentId: string | null;
-        callCount: number; successCount: number; failedCount: number; blockedCount: number;
-        promptTokens: number; completionTokens: number; totalTokens: number;
-        averageLatencyMs: number | null; lastUsedAt: Date
-      }[]>`
-        select u.id as "employeeId", u.display_name as "employeeName", u.department_id as "departmentId",
-               count(*)::integer as "callCount",
-               count(*) filter (where mu.status = 'success')::integer as "successCount",
-               count(*) filter (where mu.status = 'failed')::integer as "failedCount",
-               count(*) filter (where mu.status = 'blocked')::integer as "blockedCount",
-               coalesce(sum(mu.input_tokens), 0)::integer as "promptTokens",
-               coalesce(sum(mu.output_tokens), 0)::integer as "completionTokens",
-               coalesce(sum(mu.input_tokens + mu.output_tokens), 0)::integer as "totalTokens",
-               avg(mu.latency_ms) filter (where mu.status = 'success') as "averageLatencyMs",
-               max(mu.occurred_at) as "lastUsedAt"
-          from model_usage_events mu
-          join runs r on r.tenant_id = mu.tenant_id and r.id = mu.run_id
-          join users u on u.tenant_id = r.tenant_id and u.id = r.requested_by
-          join sessions s on s.tenant_id = r.tenant_id and s.id = r.session_id
-          join agent_versions av on av.tenant_id = s.tenant_id and av.id = s.agent_version_id
-          join agents a on a.tenant_id = av.tenant_id and a.id = av.agent_id
-          join run_attempts ra on ra.tenant_id = mu.tenant_id and ra.id = mu.attempt_id
-         where mu.tenant_id = ${tenantId}
-           and (${status} = '' or mu.status = ${status})
-           and (${employee} = '' or u.id = ${employee})
-           and (${provider} = '' or mu.provider = ${provider})
-           and (${query} = '' or
-                u.display_name ilike ${like} or u.id ilike ${like}
-                or (case u.department_id when 'supply-chain' then '供应链中心' when 'platform' then '数字化中心' else coalesce(nullif(trim(u.department_id), ''), '未归属部门') end) ilike ${like}
-                or mu.provider ilike ${like} or mu.model ilike ${like}
-                or coalesce(ra.model_route_snapshot ->> 'routeKey', 'default') ilike ${like}
-                or a.id ilike ${like} or mu.run_id ilike ${like} or mu.trace_id ilike ${like})
-         group by u.id, u.display_name, u.department_id
-         order by "totalTokens" desc, u.display_name
-         limit ${pageSize} offset ${offset}
-      `
-      return {
-        items: rows.map((row) => ({
-          employeeId: row.employeeId,
-          employeeName: row.employeeName,
-          department: departmentLabel(row.departmentId),
-          callCount: row.callCount,
-          successCount: row.successCount,
-          failedCount: row.failedCount,
-          blockedCount: row.blockedCount,
-          successRate: row.callCount ? row.successCount / row.callCount : 0,
-          promptTokens: row.promptTokens,
-          completionTokens: row.completionTokens,
-          totalTokens: row.totalTokens,
-          averageLatencyMs: Math.round(row.averageLatencyMs ?? 0),
-          lastUsedAt: formatDateTime(row.lastUsedAt),
-        })),
-        total: count?.total ?? 0,
-        page,
-        pageSize,
-      }
-    })
-  }
-
   async getPlatformStatus() {
     const health = await this.runtime?.health()
     return { architecture: 'node-modular-monolith', persistence: 'postgres', sso: this.sso, dshRuntime: health && health.status !== 'offline' ? 'connected' : 'not-connected', database: 'configured', artifactStorage: 'local-mvp' }
@@ -954,11 +747,6 @@ function clampInteger(value: number | undefined, minimum: number, maximum: numbe
   return Math.min(maximum, Math.max(minimum, value as number))
 }
 
-function departmentLabel(departmentId: string | null) {
-  if (departmentId === 'supply-chain') return '供应链中心'
-  if (departmentId === 'platform') return '数字化中心'
-  return departmentId?.trim() || '未归属部门'
-}
 function auditObjectType(action: string) {
   const prefix = action.split('.')[0]
   if (prefix === 'model_provider' || prefix === 'provider_model' || prefix === 'model_route') return 'model_governance'
