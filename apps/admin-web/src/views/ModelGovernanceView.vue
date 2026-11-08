@@ -30,7 +30,9 @@ const providerTypeOptions: { value: ProviderType; label: string; disabled: boole
 
 const providerForm = reactive({ key: '', name: '', providerType: 'openai-completions' as ProviderType, trustLevel: '' as ProviderTrustLevel | '', baseUrl: '', apiKey: '' })
 const providerEditForm = reactive({ name: '', baseUrl: '', trustLevel: 'external' as ProviderTrustLevel })
-const modelForm = reactive({ modelKey: '', displayName: '', capabilities: ['text'] as string[] })
+// 厂商的 /models 接口不返回模型能力，默认全选平台已知能力，由管理员按厂商文档取消不具备的项。
+const ALL_MODEL_CAPABILITIES = ['text', 'thinking', 'tool-calling']
+const modelForm = reactive({ modelKey: '', displayName: '', capabilities: [...ALL_MODEL_CAPABILITIES] })
 // 厂商模型目录：只是输入建议；拉取失败或厂商不支持时仍可手动输入。
 const catalogKeys = ref<string[]>([])
 const catalogLoading = ref(false)
@@ -39,6 +41,9 @@ let catalogRequest = 0
 let autoDisplayName = ''
 const existingModelKeys = computed(() => new Set(selectedProvider.value?.models.map((model) => model.modelKey) ?? []))
 const apiKeyInput = ref('')
+const capabilityDialogOpen = ref(false)
+const editingModel = ref<ProviderModel | null>(null)
+const capabilityForm = reactive({ capabilities: [] as string[] })
 const routeForm = reactive({ key: '', name: '', providerModelId: '', enabled: true })
 
 const activeProviderCount = computed(() => providers.value.filter((item) => item.status === 'active').length)
@@ -105,7 +110,7 @@ function openProviderEditDialog(provider: ModelProvider) {
 
 function openModelDialog(provider: ModelProvider) {
   selectedProvider.value = provider
-  Object.assign(modelForm, { modelKey: '', displayName: '', capabilities: ['text'] })
+  Object.assign(modelForm, { modelKey: '', displayName: '', capabilities: [...ALL_MODEL_CAPABILITIES] })
   autoDisplayName = ''
   modelDialogOpen.value = true
   void loadModelCatalog()
@@ -214,6 +219,44 @@ async function createModel() {
     await load()
   } catch (cause) {
     ElMessage.error(cause instanceof Error ? cause.message : '模型添加失败')
+  }
+}
+
+function openCapabilityDialog(model: ProviderModel) {
+  editingModel.value = model
+  capabilityForm.capabilities = [...model.capabilities]
+  capabilityDialogOpen.value = true
+}
+
+async function saveCapabilities() {
+  if (!editingModel.value) return
+  try {
+    await adminApi.updateProviderModelCapabilities({ modelId: editingModel.value.id, capabilities: [...capabilityForm.capabilities] })
+    capabilityDialogOpen.value = false
+    ElMessage.success('模型能力已更新，之后新建的运行按新能力校验')
+    await load()
+  } catch (cause) {
+    ElMessage.error(cause instanceof Error ? cause.message : '模型能力更新失败')
+  }
+}
+
+async function deleteModel(model: ProviderModel) {
+  const using = routes.value.filter((route) => route.providerModelId === model.id)
+  if (using.length) {
+    ElMessage.error(`模型“${model.displayName}”正被模型路由${using.map((route) => `“${route.name}”`).join('、')}使用，不能删除；请先把这些路由改为指向其他模型`)
+    return
+  }
+  try {
+    await ElMessageBox.confirm(`删除后该模型从 Provider 中移除，不能恢复；已完成的运行记录不受影响。如需再用，可重新添加。`, `删除 ${model.displayName}（${model.modelKey}）`, { type: 'warning', confirmButtonText: '删除', confirmButtonClass: 'el-button--danger' })
+  } catch {
+    return
+  }
+  try {
+    await adminApi.deleteProviderModel(model.id)
+    ElMessage.success('模型已删除')
+    await load()
+  } catch (cause) {
+    ElMessage.error(cause instanceof Error ? cause.message : '模型删除失败')
   }
 }
 
@@ -380,7 +423,7 @@ onMounted(() => void load())
         <el-table-column label="密钥" min-width="180"><template #default="scope"><div class="stack-cell"><el-tag :type="credentialStatusType(scope.row)" effect="plain">{{ credentialStatusLabel(scope.row) }}</el-tag><span>{{ credentialSummary(scope.row) }}</span></div></template></el-table-column>
         <el-table-column label="状态" width="80"><template #default="scope"><el-tag :type="scope.row.status === 'active' ? 'success' : 'info'" effect="plain">{{ scope.row.status === 'active' ? '启用' : '停用' }}</el-tag></template></el-table-column>
         <el-table-column v-if="authStore.canManage" label="操作" width="260" fixed="right"><template #default="scope"><el-button link type="primary" @click="openProviderEditDialog(scope.row)">编辑</el-button><el-button link type="primary" @click="openModelDialog(scope.row)">添加模型</el-button><el-button link type="primary" @click="openCredentialDialog(scope.row)">密钥</el-button><el-button link :type="scope.row.status === 'active' ? 'danger' : 'primary'" @click="toggleProvider(scope.row)">{{ scope.row.status === 'active' ? '停用' : '启用' }}</el-button></template></el-table-column>
-        <el-table-column type="expand" width="48"><template #default="scope"><div class="model-expansion"><h3>已注册模型</h3><el-empty v-if="scope.row.models.length === 0" description="尚未添加模型" :image-size="54" /><div v-else class="model-card-grid"><article v-for="model in scope.row.models" :key="model.id"><div><strong>{{ model.displayName }}</strong><span>{{ model.modelKey }}</span></div><el-tag :type="model.status === 'active' ? 'success' : 'info'" effect="plain">{{ model.status === 'active' ? '启用' : '停用' }}</el-tag><p>{{ model.capabilities.join(' · ') || '未声明能力' }}</p><el-button v-if="authStore.canManage" class="model-card__action" link :type="model.status === 'active' ? 'danger' : 'primary'" @click="toggleModel(model)">{{ model.status === 'active' ? '停用模型' : '启用模型' }}</el-button></article></div></div></template></el-table-column>
+        <el-table-column type="expand" width="48"><template #default="scope"><div class="model-expansion"><h3>已注册模型</h3><el-empty v-if="scope.row.models.length === 0" description="尚未添加模型" :image-size="54" /><div v-else class="model-card-grid"><article v-for="model in scope.row.models" :key="model.id"><div><strong>{{ model.displayName }}</strong><span>{{ model.modelKey }}</span></div><el-tag :type="model.status === 'active' ? 'success' : 'info'" effect="plain">{{ model.status === 'active' ? '启用' : '停用' }}</el-tag><p>{{ model.capabilities.join(' · ') || '未声明能力' }}</p><div v-if="authStore.canManage" class="model-card__actions"><el-button class="model-card__action" link :type="model.status === 'active' ? 'danger' : 'primary'" @click="toggleModel(model)">{{ model.status === 'active' ? '停用模型' : '启用模型' }}</el-button><el-button class="model-card__action" link type="primary" :aria-label="`编辑模型能力 ${model.displayName}`" @click="openCapabilityDialog(model)">编辑能力</el-button><el-button class="model-card__action" link type="danger" :aria-label="`删除模型 ${model.displayName}`" @click="deleteModel(model)">删除</el-button></div></article></div></div></template></el-table-column>
       </el-table>
 
       <el-table v-else v-loading="loading" class="data-table" :data="pagedRoutes" empty-text="暂无模型路由">
@@ -403,6 +446,10 @@ onMounted(() => void load())
       <template #footer><el-button @click="providerEditDialogOpen = false">取消</el-button><el-button type="primary" @click="updateProvider">保存</el-button></template>
     </el-dialog>
 
+    <el-dialog v-model="capabilityDialogOpen" :title="`编辑能力：${editingModel?.displayName ?? ''}（${editingModel?.modelKey ?? ''}）`" width="520px" destroy-on-close>
+      <el-form label-position="top"><el-form-item label="能力"><el-select v-model="capabilityForm.capabilities" class="capability-select" multiple allow-create filterable aria-label="编辑能力"><el-option label="文本" value="text" /><el-option label="深度思考" value="thinking" /><el-option label="工具调用" value="tool-calling" /></el-select><div class="catalog-hint">按厂商文档勾选该模型实际具备的能力。修改只影响之后新建的运行，已开始的运行不变。</div></el-form-item></el-form>
+      <template #footer><el-button @click="capabilityDialogOpen = false">取消</el-button><el-button type="primary" @click="saveCapabilities">保存能力</el-button></template>
+    </el-dialog>
     <el-dialog v-model="modelDialogOpen" :title="`为 ${selectedProvider?.name ?? ''} 添加模型`" width="600px" destroy-on-close>
       <el-form label-position="top" :model="modelForm"><div class="form-grid"><el-form-item label="模型标识" required>
         <div class="catalog-field">
@@ -410,7 +457,7 @@ onMounted(() => void load())
           <el-button :icon="Refresh" :loading="catalogLoading" :disabled="!selectedProvider || !usableCredential(selectedProvider)" aria-label="重新获取模型列表" @click="loadModelCatalog" />
         </div>
         <div class="catalog-hint" role="status">{{ catalogLoading ? '正在从厂商获取模型列表…' : catalogMessage }}</div>
-      </el-form-item><el-form-item label="模型名称" required><el-input v-model="modelForm.displayName" placeholder="例如：DeepSeek V4 Pro" /></el-form-item></div><el-form-item label="能力"><el-select v-model="modelForm.capabilities" multiple allow-create filterable><el-option label="文本" value="text" /><el-option label="深度思考" value="thinking" /><el-option label="工具调用" value="tool-calling" /></el-select></el-form-item></el-form>
+      </el-form-item><el-form-item label="模型名称" required><el-input v-model="modelForm.displayName" placeholder="例如：DeepSeek V4 Pro" /></el-form-item></div><el-form-item label="能力"><el-select v-model="modelForm.capabilities" multiple allow-create filterable aria-label="能力"><el-option label="文本" value="text" /><el-option label="深度思考" value="thinking" /><el-option label="工具调用" value="tool-calling" /></el-select><div class="catalog-hint">默认全选。厂商接口不提供模型能力，请按厂商文档取消该模型不具备的能力（例如不支持深度思考）；Agent 声明的能力要求按这里的勾选校验，添加后可在模型卡片上“编辑能力”。</div></el-form-item></el-form>
       <template #footer><el-button @click="modelDialogOpen = false">取消</el-button><el-button type="primary" @click="createModel">添加模型</el-button></template>
     </el-dialog>
 
@@ -448,10 +495,12 @@ onMounted(() => void load())
 .model-card-grid article div { display: flex; flex-direction: column; }
 .model-card-grid article span, .model-card-grid article p { color: var(--color-text-secondary); font-size: var(--font-size-caption); }
 .model-card-grid article p { grid-column: 1 / -1; margin: 0; }
-.model-card__action { grid-column: 1 / -1; justify-self: start; }
+.model-card__actions { grid-column: 1 / -1; display: flex; gap: 12px; justify-self: start; }
+.model-card__actions .el-button + .el-button { margin-left: 0; }
 .credential-legacy { margin-top: 10px; }
 .field-hint { margin: 6px 0 0; color: var(--color-text-secondary); font-size: var(--font-size-caption); line-height: 1.5; }
 .route-issue-alert { margin-bottom: 16px; }
+.capability-select { width: 100%; }
 .route-issue-alert p { margin: 0 0 8px; }
 .route-issue-text { color: var(--el-color-danger); }
 .route-issue-text--muted { color: var(--color-text-secondary); }

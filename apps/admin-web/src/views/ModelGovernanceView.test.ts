@@ -31,11 +31,11 @@ const route: ModelRoute = {
 
 const standbyRoute: ModelRoute = { ...route, id: 'route-standby', key: 'standby', name: '备用模型路由', enabled: false }
 
-async function render(routes: ModelRoute[] = [route]) {
+async function render(routes: ModelRoute[] = [route], providers: ModelProvider[] = [provider]) {
   const pinia = createPinia()
   setActivePinia(pinia)
   useAuthStore().$patch({ permissions: ['admin:write'] })
-  vi.spyOn(adminApi, 'getModelProviders').mockResolvedValue([provider])
+  vi.spyOn(adminApi, 'getModelProviders').mockResolvedValue(providers)
   vi.spyOn(adminApi, 'getModelRoutes').mockResolvedValue(routes)
   const wrapper = mount(ModelGovernanceView, {
     attachTo: document.body,
@@ -314,6 +314,69 @@ describe('ModelGovernanceView', () => {
     it('默认路由可用时不显示告警', async () => {
       const wrapper = await renderWith([{ ...provider, credential }], [route])
       expect(wrapper.find('.route-issue-alert').exists()).toBe(false)
+    })
+  })
+
+  describe('删除模型与默认能力', () => {
+    const extraModel = { id: 'model-2', providerId: 'provider-1', modelKey: 'qwen38flash', displayName: '录错的模型', capabilities: ['text'], status: 'disabled' as const }
+
+    async function expandProvider(wrapper: VueWrapper) {
+      await wrapper.find('.el-table__expand-icon').trigger('click')
+      await flushPromises()
+    }
+
+    it('删除未被路由引用的模型：确认后调用接口并刷新', async () => {
+      const wrapper = await render([route], [{ ...provider, models: [...provider.models, extraModel] }])
+      const { ElMessageBox } = await import('element-plus')
+      const confirm = vi.spyOn(ElMessageBox, 'confirm').mockResolvedValue('confirm' as never)
+      const remove = vi.spyOn(adminApi, 'deleteProviderModel').mockResolvedValue(provider)
+      await expandProvider(wrapper)
+      await wrapper.find('[aria-label="删除模型 录错的模型"]').trigger('click')
+      await flushPromises()
+      expect(confirm).toHaveBeenCalledWith(expect.stringContaining('不能恢复'), '删除 录错的模型（qwen38flash）', expect.anything())
+      expect(remove).toHaveBeenCalledWith('model-2')
+    })
+
+    it('被路由引用的模型不能删除，直接说明是哪条路由', async () => {
+      const wrapper = await render()
+      const { ElMessage, ElMessageBox } = await import('element-plus')
+      const error = vi.spyOn(ElMessage, 'error')
+      const confirm = vi.spyOn(ElMessageBox, 'confirm')
+      const remove = vi.spyOn(adminApi, 'deleteProviderModel')
+      await expandProvider(wrapper)
+      await wrapper.find('[aria-label="删除模型 DeepSeek V4 Pro"]').trigger('click')
+      await flushPromises()
+      expect(error).toHaveBeenCalledWith(expect.stringContaining('正被模型路由“平台默认模型路由”使用'))
+      expect(confirm).not.toHaveBeenCalled()
+      expect(remove).not.toHaveBeenCalled()
+    })
+
+    it('编辑能力：弹窗带出当前能力，保存后提交并刷新', async () => {
+      const wrapper = await render()
+      const update = vi.spyOn(adminApi, 'updateProviderModelCapabilities').mockResolvedValue(provider)
+      await expandProvider(wrapper)
+      await wrapper.find('[aria-label="编辑模型能力 DeepSeek V4 Pro"]').trigger('click')
+      await flushPromises()
+      expect(wrapper.text()).toContain('编辑能力：DeepSeek V4 Pro（deepseek-v4-pro）')
+      expect(wrapper.text()).toContain('只影响之后新建的运行')
+      await buttonByText(wrapper, '保存能力').trigger('click')
+      await flushPromises()
+      expect(update).toHaveBeenCalledWith({ modelId: 'model-1', capabilities: ['text'] })
+    })
+
+    it('添加模型时能力默认全选', async () => {
+      vi.spyOn(adminApi, 'listProviderModelCatalog').mockResolvedValue({ modelKeys: [] })
+      const create = vi.spyOn(adminApi, 'createProviderModel').mockResolvedValue(provider)
+      const wrapper = await render()
+      await buttonByText(wrapper, '添加模型').trigger('click')
+      await flushPromises()
+      expect(wrapper.text()).toContain('默认全选')
+      const inputs = wrapper.findAll('.catalog-field input')
+      await inputs[0]!.setValue('qwen-max')
+      const footer = wrapper.findAll('button').filter(item => item.text() === '添加模型')
+      await footer.at(-1)!.trigger('click')
+      await flushPromises()
+      expect(create).toHaveBeenCalledWith(expect.objectContaining({ modelKey: 'qwen-max', capabilities: ['text', 'thinking', 'tool-calling'] }))
     })
   })
 })

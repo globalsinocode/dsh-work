@@ -413,6 +413,10 @@ export const adminApi = {
     displayName: string
     capabilities: string[]
   }) => request<ModelProvider>('/provider-models', { method: 'POST', body: JSON.stringify(input) }),
+  updateProviderModelCapabilities: (input: { modelId: string; capabilities: string[] }) =>
+    request<ModelProvider>('/provider-models/capabilities', { method: 'PATCH', body: JSON.stringify(input) }),
+  deleteProviderModel: (modelId: string) =>
+    request<ModelProvider>(`/provider-models/${encodeURIComponent(modelId)}`, { method: 'DELETE' }),
   setProviderModelStatus: (input: { modelId: string; status: 'active' | 'disabled' }) =>
     request<ModelProvider>('/provider-models/status', { method: 'PATCH', body: JSON.stringify(input) }),
   getModelRoutes: () => request<ModelRoute[]>('/model-routes'),

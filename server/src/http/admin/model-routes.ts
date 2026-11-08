@@ -31,6 +31,12 @@ export function registerModelGovernanceRoutes(router: Router, service: ModelGove
     const input = await readJsonBody<WithoutActor<ModelGovernanceService['setProviderModelStatus']>>(request)
     return envelope('admin', await service.setProviderModelStatus({ ...input, actor: requireRequestIdentity(context, 'admin').userId }))
   })
+  router.patch(`${basePath}/provider-models/capabilities`, async (request, context) => {
+    const input = await readJsonBody<WithoutActor<ModelGovernanceService['updateProviderModelCapabilities']>>(request)
+    return envelope('admin', await service.updateProviderModelCapabilities({ ...input, actor: requireRequestIdentity(context, 'admin').userId }))
+  })
+  router.delete(`${basePath}/provider-models/:modelId`, async (_request, context) => envelope('admin',
+    await service.deleteProviderModel({ modelId: context.params.modelId ?? '', actor: requireRequestIdentity(context, 'admin').userId })))
   router.patch(`${basePath}/model-providers/api-key`, async (request, context) => {
     const input = await readJsonBody<WithoutActor<ModelGovernanceService['setProviderApiKey']>>(request)
     return envelope('admin', await service.setProviderApiKey({ ...input, actor: requireRequestIdentity(context, 'admin').userId }))

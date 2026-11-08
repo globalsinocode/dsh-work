@@ -173,3 +173,38 @@ test('缺少模型标识或名称时返回校验错误而不是 500', async () =
   assert.throws(() => service.createProviderModel({ providerId: provider.id, modelKey: undefined as unknown as string, displayName: '名称', capabilities: [], actor }), { status: 422 })
   assert.throws(() => service.createProviderModel({ providerId: provider.id, modelKey: 'qwen-max', displayName: undefined as unknown as string, capabilities: [], actor }), { status: 422 })
 })
+
+test('删除模型：被任何路由（含停用路由）引用时拒绝并列出路由，未引用时删除', async () => {
+  const service = new ModelGovernanceService(new MemoryModelGovernanceRepository())
+  const provider = (await service.listProviders())[0]!
+  const seeded = provider.models[0]!
+  await assert.rejects(service.deleteProviderModel({ modelId: seeded.id, actor }), (error: RequestError) => {
+    assert.equal(error.status, 409)
+    assert.match(error.message, /正被模型路由“平台默认模型路由”使用，不能删除/)
+    return true
+  })
+
+  const added = await service.createProviderModel({ providerId: provider.id, modelKey: 'qwen38flash', displayName: '录错的模型', capabilities: ['text'], actor })
+  const wrong = added.models.find(item => item.modelKey === 'qwen38flash')!
+  const standby = await service.createRoute({ key: 'standby', name: '备用路由', providerModelId: wrong.id, enabled: false, actor })
+  await assert.rejects(service.deleteProviderModel({ modelId: wrong.id, actor }), /“备用路由”使用/)
+
+  await service.updateRoute({ routeId: standby.id, name: '备用路由', providerModelId: seeded.id, enabled: false, actor })
+  const after = await service.deleteProviderModel({ modelId: wrong.id, actor })
+  assert.deepEqual(after.models.map(item => item.modelKey), [seeded.modelKey])
+  await assert.rejects(service.deleteProviderModel({ modelId: wrong.id, actor }), /Provider 模型不存在/)
+  assert.throws(() => service.deleteProviderModel({ modelId: '', actor }), /请指定模型/)
+})
+
+test('编辑模型能力：规范化后保存，之后解析的路由快照使用新能力', async () => {
+  const service = new ModelGovernanceService(new MemoryModelGovernanceRepository())
+  const provider = (await service.listProviders())[0]!
+  const model = provider.models[0]!
+  const updated = await service.updateProviderModelCapabilities({ modelId: model.id, capabilities: [' text ', 'tool-calling', 'text', ''], actor })
+  assert.deepEqual(updated.models[0]?.capabilities, ['text', 'tool-calling'])
+  assert.deepEqual((await service.resolveDefaultRoute()).modelCapabilities, ['text', 'tool-calling'])
+  await assert.rejects(service.resolveDefaultRoute(['thinking']), { code: 'MODEL_CAPABILITY_MISMATCH' })
+  assert.throws(() => service.updateProviderModelCapabilities({ modelId: model.id, capabilities: 'text' as unknown as string[], actor }), /文本列表/)
+  assert.throws(() => service.updateProviderModelCapabilities({ modelId: model.id, capabilities: ['x'.repeat(65)], actor }), /不超过 64/)
+  await assert.rejects(service.updateProviderModelCapabilities({ modelId: 'model-missing', capabilities: [], actor }), /Provider 模型不存在/)
+})

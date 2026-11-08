@@ -1,4 +1,4 @@
-import { RequestError } from '../../domain/request-errors.ts'
+import { RequestError, stateConflict } from '../../domain/request-errors.ts'
 
 /**
  * 默认模型路由未就绪（无启用路由、目标模型或 Provider 已停用、凭据未配置）：发起运行时拒绝。
@@ -28,4 +28,11 @@ export const routeTargetDisabled = (detail: { routeName: string; providerName: s
 export const routeCredentialMissing = (providerName: string) => modelRouteNotReady(
   `Provider 凭据未配置：默认路由所用的 Provider“${providerName}”尚未录入 API Key`,
   '请管理员在管理端“模型配置 → Provider”中为该 Provider 录入 API Key。',
+)
+
+/** 模型仍被路由引用时不能删除（含已停用的路由）：先把路由改为指向其他模型。 */
+export const modelInUse = (modelName: string, routeNames: string[]) => stateConflict(
+  routeNames.length
+    ? `模型“${modelName}”正被模型路由${routeNames.map((name) => `“${name}”`).join('、')}使用，不能删除；请先把这些路由改为指向其他模型`
+    : `模型“${modelName}”正被模型路由使用，不能删除；请刷新后先把相关路由改为指向其他模型`,
 )

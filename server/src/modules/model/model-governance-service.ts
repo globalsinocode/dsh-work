@@ -6,6 +6,8 @@ import {
   type CreateModelRouteInput,
   type CreateProviderInput,
   type CreateProviderModelInput,
+  type DeleteProviderModelInput,
+  type UpdateProviderModelCapabilitiesInput,
   type ProviderStatus,
   type SetProviderApiKeyInput,
   type SetProviderModelStatusInput,
@@ -84,6 +86,7 @@ export class ModelGovernanceService {
       ...input,
       modelKey: input.modelKey.trim(),
       displayName: input.displayName.trim(),
+      capabilities: normalizeCapabilities(input.capabilities),
     })
   }
 
@@ -105,6 +108,18 @@ export class ModelGovernanceService {
     assertActor(input.actor)
     if (!['active', 'disabled'].includes(input.status)) throw invalidRequest('模型状态无效')
     return this.repository.setProviderModelStatus(this.tenantId, input)
+  }
+
+  updateProviderModelCapabilities(input: UpdateProviderModelCapabilitiesInput) {
+    assertActor(input.actor)
+    assertId(input.modelId, '模型')
+    return this.repository.updateProviderModelCapabilities(this.tenantId, { ...input, capabilities: normalizeCapabilities(input.capabilities) })
+  }
+
+  deleteProviderModel(input: DeleteProviderModelInput) {
+    assertActor(input.actor)
+    assertId(input.modelId, '模型')
+    return this.repository.deleteProviderModel(this.tenantId, input)
   }
 
   listRoutes() {
@@ -167,6 +182,15 @@ function assertTrustLevel(value: string) {
   if (!providerTrustLevels.includes(value as never)) {
     throw invalidRequest('请选择 Provider 信任级别：内部部署（internal）或外部厂商（external）')
   }
+}
+
+/** 能力标签：字符串数组，去首尾空白与重复，最多 20 个、每个最长 64 字符；可为空（未声明能力）。 */
+function normalizeCapabilities(value: unknown): string[] {
+  if (value === undefined) return []
+  if (!Array.isArray(value) || value.some((item) => typeof item !== 'string')) throw invalidRequest('模型能力须为文本列表')
+  const capabilities = [...new Set((value as string[]).map((item) => item.trim()).filter(Boolean))]
+  if (capabilities.length > 20 || capabilities.some((item) => item.length > 64)) throw invalidRequest('模型能力最多 20 项，每项不超过 64 个字符')
+  return capabilities
 }
 
 function assertId(value: unknown, objectName: string) {

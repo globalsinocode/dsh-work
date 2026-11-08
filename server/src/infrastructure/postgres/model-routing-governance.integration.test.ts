@@ -249,3 +249,67 @@ test('API keys are encrypted at rest, rotated in place, never returned, and remo
   assert.ok(audit.some(row => row.action === 'model_provider.api_key.update'))
   assert.equal(JSON.stringify(audit).includes('fake-model-key'), false)
 })
+
+test('删除模型：被路由引用时 409 并列出路由；未引用时删除并记审计', async () => {
+  const provider = (await service.listProviders()).find(item => item.id === 'provider-deepseek-official')!
+  const used = provider.models[0]!
+  await assert.rejects(service.deleteProviderModel({ modelId: used.id, actor }), (error: { status?: number; message: string }) => {
+    assert.equal(error.status, 409)
+    assert.match(error.message, /正被模型路由“.+”使用，不能删除/)
+    return true
+  })
+  const added = await service.createProviderModel({ providerId: provider.id, modelKey: 'deepseek-delete-me', displayName: '待删除模型', capabilities: ['text'], actor })
+  const target = added.models.find(item => item.modelKey === 'deepseek-delete-me')!
+  const after = await service.deleteProviderModel({ modelId: target.id, actor })
+  assert.equal(after.models.some(item => item.id === target.id), false)
+  const audits = await database<{ safeContext: Record<string, unknown> }[]>`
+    select safe_context as "safeContext" from audit_events
+     where tenant_id = ${tenantId} and action = 'provider_model.delete' and object_id = ${target.id}
+  `
+  assert.equal(audits.length, 1)
+  assert.deepEqual(audits[0]?.safeContext, {
+    provider_id: provider.id, provider_key: provider.key, provider_name: provider.name,
+    model_key: 'deepseek-delete-me', display_name: '待删除模型',
+  })
+})
+
+test('删除模型时审计写入失败则删除回滚', async () => {
+  const provider = (await service.listProviders()).find(item => item.id === 'provider-deepseek-official')!
+  const added = await service.createProviderModel({ providerId: provider.id, modelKey: 'deepseek-audit-rollback', displayName: '回滚模型', capabilities: [], actor })
+  const target = added.models.find(item => item.modelKey === 'deepseek-audit-rollback')!
+  // 绕过服务层的操作人校验，直接让仓储以空 actor 写审计：actor_id 非空约束使审计插入失败，模拟审计写入故障。
+  const repository = new PostgresModelGovernanceRepository(database, credentials)
+  await assert.rejects(repository.deleteProviderModel(tenantId, { modelId: target.id, actor: null as unknown as string }), /actor_id|null/)
+  const [row] = await database<{ count: number }[]>`select count(*)::int as count from provider_models where id = ${target.id}`
+  assert.equal(row?.count, 1, '审计失败时模型仍在')
+})
+
+test('保存路由与删除其目标模型并发：路由先锁住模型，删除方得到明确冲突', async () => {
+  const provider = (await service.listProviders()).find(item => item.id === 'provider-deepseek-official')!
+  const added = await service.createProviderModel({ providerId: provider.id, modelKey: 'deepseek-race-target', displayName: '并发目标', capabilities: [], actor })
+  const target = added.models.find(item => item.modelKey === 'deepseek-race-target')!
+  const results = await Promise.allSettled([
+    service.createRoute({ key: 'race-delete', name: '并发路由', providerModelId: target.id, enabled: false, actor }),
+    service.deleteProviderModel({ modelId: target.id, actor }),
+  ])
+  for (const result of results) {
+    if (result.status === 'rejected') {
+      const error = result.reason as { status?: number }
+      assert.ok(error.status === 409 || error.status === 422, `并发失败须为业务冲突而不是 500：${String(result.reason)}`)
+    }
+  }
+})
+
+test('编辑模型能力：持久化并记审计前后值', async () => {
+  const provider = (await service.listProviders()).find(item => item.id === 'provider-deepseek-official')!
+  const model = provider.models[0]!
+  const before = model.capabilities
+  const updated = await service.updateProviderModelCapabilities({ modelId: model.id, capabilities: ['text', 'tool-calling'], actor })
+  assert.deepEqual(updated.models.find(item => item.id === model.id)?.capabilities, ['text', 'tool-calling'])
+  const [audit] = await database<{ safeContext: Record<string, unknown> }[]>`
+    select safe_context as "safeContext" from audit_events
+     where tenant_id = ${tenantId} and action = 'provider_model.capabilities.update' and object_id = ${model.id}
+  `
+  assert.deepEqual(audit?.safeContext, { model_key: model.modelKey, before, after: ['text', 'tool-calling'] })
+  await service.updateProviderModelCapabilities({ modelId: model.id, capabilities: before, actor })
+})

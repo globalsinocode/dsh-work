@@ -1487,6 +1487,38 @@
         }
       }
     },
+    "/provider-models/capabilities": {
+      "patch": {
+        "operationId": "updateProviderModelCapabilities",
+        "summary": "修改模型能力标签（用于 Agent model.requirements 准入）；只影响之后新建的运行，记审计前后值",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          }
+        }
+      }
+    },
+    "/provider-models/{modelId}": {
+      "delete": {
+        "operationId": "deleteProviderModel",
+        "summary": "删除未被任何模型路由（含停用路由）引用的模型；被引用时返回 409 并列出路由",
+        "parameters": [
+          {
+            "name": "modelId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          }
+        }
+      }
+    },
     "/provider-models/status": {
       "patch": {
         "operationId": "setProviderModelStatus",

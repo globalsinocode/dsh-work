@@ -2,6 +2,8 @@ import type {
   CreateModelRouteInput,
   CreateProviderInput,
   CreateProviderModelInput,
+  DeleteProviderModelInput,
+  UpdateProviderModelCapabilitiesInput,
   ModelProvider,
   ModelRoute,
   ModelRouteSnapshot,
@@ -24,6 +26,10 @@ export interface ModelGovernanceRepository {
   ): Promise<ModelProvider>
   createProviderModel(tenantId: string, input: CreateProviderModelInput): Promise<ModelProvider>
   setProviderModelStatus(tenantId: string, input: SetProviderModelStatusInput): Promise<ModelProvider>
+  /** 删除未被任何模型路由引用的模型；被引用时拒绝并列出路由名。 */
+  deleteProviderModel(tenantId: string, input: DeleteProviderModelInput): Promise<ModelProvider>
+  /** 修改模型能力标签；只影响之后解析的路由快照，已开始的运行不变。 */
+  updateProviderModelCapabilities(tenantId: string, input: UpdateProviderModelCapabilitiesInput): Promise<ModelProvider>
   /** 录入或轮换平台加密保存的厂商密钥（backend = postgres-encrypted）。 */
   setProviderApiKey(tenantId: string, input: SetProviderApiKeyInput): Promise<ModelProvider>
   listRoutes(tenantId: string): Promise<ModelRoute[]>
