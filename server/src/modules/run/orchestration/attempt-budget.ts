@@ -3,6 +3,7 @@ import type { RunRecord } from '../run-types.ts'
 import { notFound } from '../../../domain/request-errors.ts'
 import { nonNegativeInteger } from './manifest-helpers.ts'
 import { tenantId, type OrchestrationDependencies } from './orchestration-dependencies.ts'
+import type { AttemptModelUsageLine } from '../model-usage-meter-port.ts'
 
 /** Task budget: what an Attempt may reserve and what it actually consumed. */
 export class AttemptBudget {
@@ -12,18 +13,28 @@ export class AttemptBudget {
     this.deps = deps
   }
 
-  /** Settles the Attempt against its Task budget from the terminal Runtime event. */
+  /**
+   * Settles the Attempt against its Task budget from the terminal Runtime event. When the
+   * model gateway metered the Attempt, its token totals win over the DSH session log so that
+   * the budget and the model usage page report the same numbers.
+   */
   async settle(
     event: RuntimeEvent,
     terminalStatus: 'succeeded' | 'failed' | 'cancelled',
     output: string,
+    gatewayUsage: readonly AttemptModelUsageLine[] = [],
   ): Promise<void> {
     if (!this.deps.tasks) return
     const attempt = await this.deps.runs.getAttempt(tenantId, event.attempt_id)
     if (!attempt) throw notFound(`Attempt 不存在，不能结算预算：${event.attempt_id}`)
-    const reportedInput = nonNegativeInteger(event.safe_metadata['input_tokens'])
-    const reportedOutput = nonNegativeInteger(event.safe_metadata['output_tokens'])
-    const hasReportedTokens = event.safe_metadata['token_usage_source'] === 'dsh-session-log'
+    const metered = gatewayUsage.length > 0
+    const reportedInput = metered
+      ? gatewayUsage.reduce((total, line) => total + line.inputTokens, 0)
+      : nonNegativeInteger(event.safe_metadata['input_tokens'])
+    const reportedOutput = metered
+      ? gatewayUsage.reduce((total, line) => total + line.outputTokens, 0)
+      : nonNegativeInteger(event.safe_metadata['output_tokens'])
+    const hasReportedTokens = (metered || event.safe_metadata['token_usage_source'] === 'dsh-session-log')
       && reportedInput !== null && reportedOutput !== null
     const elapsed = nonNegativeInteger(event.safe_metadata['elapsed_ms'])
     const toolUsageAvailable = event.safe_metadata['usage_source'] === 'dsh-session-log'

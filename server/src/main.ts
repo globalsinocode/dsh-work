@@ -109,6 +109,7 @@ import { builtinTools, missingDshBuiltinTools, type BuiltinToolStatus } from './
 import { PostgresMcpConnectorService } from './modules/tool/postgres-mcp-connector-service.ts'
 import { PostgresEncryptedCredentialStore } from './modules/tool/postgres-encrypted-credential-store.ts'
 import { ModelGateway } from './modules/model-gateway/model-gateway.ts'
+import { ModelGatewayUsageMeter } from './modules/model-gateway/model-gateway-usage-meter.ts'
 import { PostgresModelGatewayRequestLog } from './modules/model-gateway/model-gateway-request-log.ts'
 import { WeKnoraKnowledgeProvider } from './modules/knowledge/weknora-knowledge-provider.ts'
 import { PostgresKnowledgeBaseService } from './modules/knowledge/postgres-knowledge-base-service.ts'
@@ -543,6 +544,8 @@ async function start() {
       projectArchive,
       timezone: resolvePlatformTimezone(process.env.DSH_WORK_TIMEZONE),
       builtinSkills,
+      // MR-S3：运行结束时按模型网关的逐次请求记录写入用量（实际模型、请求次数、缓存读写）。
+      ...(modelGateway ? { modelUsage: new ModelGatewayUsageMeter(new PostgresModelGatewayRequestLog(database)) } : {}),
     },
   )
   projects.attachRunStarter(orchestration)

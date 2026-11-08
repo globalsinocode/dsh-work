@@ -17,6 +17,7 @@ import { ModelGovernanceService } from '../../modules/model/model-governance-ser
 import { compileRuntimeManifest } from '../../modules/runtime/manifest-compiler.ts'
 import { PostgresModelGovernanceRepository } from '../../modules/model/postgres-model-governance-repository.ts'
 import { RunOrchestrationService } from '../../modules/run/run-orchestration-service.ts'
+import type { AttemptModelUsageLine } from '../../modules/run/model-usage-meter-port.ts'
 import { PostgresRunRepository } from '../../modules/run/postgres-run-repository.ts'
 import type {
   AgentRuntimePort,
@@ -51,6 +52,8 @@ let tasks: PostgresTaskRepository
 let taskQueries: PostgresTaskQueryService
 let apiServer: Server
 let apiBaseUrl = ''
+/** 模型网关计量替身：测试按需设置下一次运行结束时返回的用量行。 */
+let meteredLines: AttemptModelUsageLine[] = []
 
 before(async () => {
   // 一次性库：避免共享 dev 库的历史数据累积影响断言。
@@ -74,7 +77,7 @@ before(async () => {
     undefined,
     undefined,
     authorization,
-    { tasks },
+    { tasks, modelUsage: { summarizeAttempt: async () => meteredLines } },
   )
   const router = new Router({ authenticateApi: async (request, audience) => {
     const identity = await testApiAuthenticator(request, audience)
@@ -147,6 +150,55 @@ test('real PostgreSQL orchestration persists the assistant result without publis
   assert.equal(usageRecord.employeeName, '林岚')
   // 组织架构 ORG-S1 迁移清空了种子员工的历史部门文本，未分配部门时显示“未归属部门”。
   assert.equal(usageRecord.department, '未归属部门')
+})
+
+test('MR-S3：有网关计量时按对话、联网搜索各写一行，记录实际模型、请求次数与缓存，预算用同一组数字', async () => {
+  meteredLines = [
+    { endpoint: 'chat', providerKey: 'bailian', modelKey: 'qwen3.8-flash', requests: 3, failedRequests: 1, succeededRequests: 2, usageReported: true,
+      inputTokens: 12000, outputTokens: 900, cacheReadTokens: 4000, cacheWriteTokens: null },
+    { endpoint: 'search', providerKey: 'deepseek-official', modelKey: 'deepseek-v4-flash', requests: 1, failedRequests: 0, succeededRequests: 1, usageReported: true,
+      inputTokens: 1200, outputTokens: 300, cacheReadTokens: null, cacheWriteTokens: null },
+  ]
+  try {
+    const session = await orchestration.createSession({ userId: 'U00001', title: 'MR-S3 网关计量' })
+    const created = await orchestration.startRun({
+      userId: 'U00001', sessionId: session.id, prompt: '生成 MR-S3 回答', idempotencyKey: randomUUID(),
+    })
+    assert.ok(created)
+    await waitForTask(created.id, 'succeeded')
+    const rows = await database<{
+      id: string; endpoint: string; measurement: string; estimated: boolean; provider: string; model: string
+      inputTokens: number; outputTokens: number; cacheReadTokens: number | null; cacheWriteTokens: number | null
+      requestCount: number; failedRequestCount: number; status: string
+    }[]>`
+      select id, endpoint, measurement, estimated, provider, model, input_tokens::integer as "inputTokens",
+             output_tokens::integer as "outputTokens", cache_read_tokens::integer as "cacheReadTokens",
+             cache_write_tokens::integer as "cacheWriteTokens", request_count as "requestCount",
+             failed_request_count as "failedRequestCount", status
+        from model_usage_events where run_id = ${created.id} order by endpoint
+    `
+    assert.deepEqual(rows.map(({ id, ...rest }) => ({ suffix: id.endsWith('-search') ? 'search' : 'chat', ...rest })), [
+      { suffix: 'chat', endpoint: 'chat', measurement: 'gateway', estimated: false, provider: 'bailian', model: 'qwen3.8-flash',
+        inputTokens: 12000, outputTokens: 900, cacheReadTokens: 4000, cacheWriteTokens: null, requestCount: 3, failedRequestCount: 1, status: 'success' },
+      { suffix: 'search', endpoint: 'search', measurement: 'gateway', estimated: false, provider: 'deepseek-official', model: 'deepseek-v4-flash',
+        inputTokens: 1200, outputTokens: 300, cacheReadTokens: null, cacheWriteTokens: null, requestCount: 1, failedRequestCount: 0, status: 'success' },
+    ])
+    const [budget] = await database<{ inputTokens: number | null; outputTokens: number | null; tokenMeasurement: string }[]>`
+      select input_tokens::integer as "inputTokens", output_tokens::integer as "outputTokens", token_measurement as "tokenMeasurement"
+        from attempt_budget_usage where run_id = ${created.id}
+    `
+    assert.deepEqual(budget, { inputTokens: 13200, outputTokens: 1200, tokenMeasurement: 'reported' }, '预算与用量按同一组网关数字结算')
+
+    // 运营事件视图每次执行只出现一条模型调用；会话 Token 合计包含联网搜索行
+    const [events] = await database<{ count: number }[]>`
+      select count(*)::integer as count from operational_events where run_id = ${created.id} and action = 'model.invoke'
+    `
+    assert.equal(events?.count, 1)
+    const sessions = await operations.getSessions({ query: session.id })
+    assert.equal(sessions.items.find(item => item.id === session.id)?.tokenUsage, 14400)
+  } finally {
+    meteredLines = []
+  }
 })
 
 test('PF-01 API Task executes through the governed Runtime without creating a Session', async () => {

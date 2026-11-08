@@ -454,17 +454,18 @@ test('服务层直接调用同样执行完整门禁（防御性：不依赖路�
 // 迁移 0028：runs 活动索引 + model_usage_events 每 attempt 唯一（5-T3）
 // ---------------------------------------------------------------------------
 
-test('0028：两个索引在完整迁移链上存在，且注释写明它服务哪些查询 / 去重策略', async () => {
+test('0028/0122：两个索引在完整迁移链上存在，且注释写明它服务哪些查询 / 去重策略', async () => {
   const [indexes] = await database<{ runsActive: string | null, usageByAttempt: string | null }[]>`
     select to_regclass('public.runs_active_by_tenant')::text as "runsActive",
-           to_regclass('public.model_usage_by_attempt')::text as "usageByAttempt"
+           to_regclass('public.model_usage_by_attempt_endpoint')::text as "usageByAttempt"
   `
   assert.equal(indexes?.runsActive, 'runs_active_by_tenant', 'runs 活动索引必须存在')
-  assert.equal(indexes?.usageByAttempt, 'model_usage_by_attempt', '每 attempt 唯一索引必须存在')
+  // 0122 起按 (attempt, endpoint) 唯一：对话与联网搜索各一行。
+  assert.equal(indexes?.usageByAttempt, 'model_usage_by_attempt_endpoint', '每 attempt 每类请求唯一索引必须存在')
 
   const [comments] = await database<{ runsComment: string | null, usageComment: string | null }[]>`
     select obj_description(to_regclass('public.runs_active_by_tenant'), 'pg_class') as "runsComment",
-           obj_description(to_regclass('public.model_usage_by_attempt'), 'pg_class') as "usageComment"
+           obj_description(to_regclass('public.model_usage_by_attempt_endpoint'), 'pg_class') as "usageComment"
   `
   assert.ok(comments?.runsComment, 'runs 活动索引必须有注释说明它服务哪些查询')
   assert.ok(comments?.usageComment, '每 attempt 唯一索引必须有注释写出去重策略与理由')
@@ -612,6 +613,29 @@ test('0028 去重：同一 attempt 保留 occurred_at 最早者、并列取 id �
     await pre.dispose()
     await rm(preDirectory, { recursive: true, force: true })
   }
+})
+
+test('0122：同一 Attempt 的对话与联网搜索两行只算一次调用，token 两行都计入', async () => {
+  const ws = uniqueWorkspace('search-line')
+  const owner = `${ws}-owner`
+  await seedUser(owner, '联网搜索计数负责人')
+  await seedTeamWorkspace(ws, [{ userId: owner, role: 'owner' }])
+  const { runId, attemptId } = await seedUsageAttempt(database, { workspaceId: ws, userId: owner })
+  await insertUsageEvent(database, { id: `usage-${attemptId}`, runId, attemptId, occurredAt: new Date(), inputTokens: 100 })
+  await database`
+    insert into model_usage_events (
+      id, tenant_id, run_id, attempt_id, provider, model, input_tokens, output_tokens,
+      latency_ms, cost_amount, cost_currency, status, trace_id, estimated, occurred_at, endpoint, measurement
+    ) values (
+      ${`usage-${attemptId}-search`}, ${tenantId}, ${runId}, ${attemptId}, 'deepseek-official', 'deepseek-v4-flash',
+      50, 5, 10, 0, 'CNY', 'success', 'trace-search', false, now(), 'search', 'gateway'
+    )
+  `
+  const response = await api('GET', `/api/workbench/v1/workspaces/${ws}/usage?range=7d`, { as: owner })
+  assert.equal(response.status, 200)
+  const view = response.body.data as WorkspaceUsageView
+  assert.equal(view.totals.callCount, 1)
+  assert.equal(view.totals.inputTokens, 150)
 })
 
 // ---------------------------------------------------------------------------

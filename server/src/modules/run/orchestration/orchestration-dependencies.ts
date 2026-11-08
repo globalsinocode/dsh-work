@@ -4,6 +4,7 @@ import type { AgentRuntimePort } from '../../runtime/runtime-types.ts'
 import type { PostgresConversationRepository } from '../../workbench/application/postgres-conversation-repository.ts'
 import type { PostgresContentService } from '../../workbench/application/postgres-content-service.ts'
 import type { RunOperationsPort } from '../run-operations-port.ts'
+import type { ModelUsageMeterPort } from '../model-usage-meter-port.ts'
 import type { PostgresAgentService } from '../../agent/postgres-agent-service.ts'
 import type { ExecutionToolCheckPort } from '../current-execution-authorization.ts'
 import type { KnowledgeProvider } from '../../knowledge/knowledge-provider.ts'
@@ -36,6 +37,8 @@ export interface OrchestrationDependencies {
   readonly runtime: AgentRuntimePort
   readonly content?: PostgresContentService
   readonly operations?: RunOperationsPort
+  /** 模型网关计量（MR-S3）：运行结束时按网关记录汇总用量；未接线时沿用会话日志或估算。 */
+  readonly modelUsage?: ModelUsageMeterPort
   readonly agents?: PostgresAgentService
   /** 企业知识库（WeKnora）；未配置时不检索企业知识。 */
   readonly knowledge?: KnowledgeProvider

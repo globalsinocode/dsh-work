@@ -57,7 +57,7 @@ interface UsageDayRow {
  * 空间用量（批次 4 / 4-T1 / TW-09，AC-30）。
  *
  * 只读聚合面：仅负责人/管理员可读，读取轨（归档空间仍可读），个人空间 422，
- * 非成员与不存在空间不可枚举。数据源是 `model_usage_events`（每次 attempt 一行，
+ * 非成员与不存在空间不可枚举。数据源是 `model_usage_events`（每次 attempt 的对话一行、联网搜索另一行，
  * 由 DSH 上报或平台估算），严格按该空间会话所属 Run 过滤；不展示金额、币种、
  * provider/model 或员工身份（最小必要面）。
  *
@@ -100,7 +100,7 @@ export class PostgresWorkspaceUsageService {
     // estimatedCount ⊆ callCount；将来真出现第三个状态时也不会出现「总数与分项对不上」。
     const rows = await this.database<UsageDayRow[]>`
       with workspace_usage_events as (
-        select mu.occurred_at, mu.input_tokens, mu.output_tokens, mu.status, mu.estimated
+        select mu.attempt_id, mu.occurred_at, mu.input_tokens, mu.output_tokens, mu.status, mu.estimated
           from sessions s
           join runs r
             on r.tenant_id = s.tenant_id and r.session_id = s.id
@@ -114,10 +114,11 @@ export class PostgresWorkspaceUsageService {
       ),
       daily as (
         select date_trunc('day', occurred_at)::date as day,
-               count(*) as "callCount",
-               count(*) filter (where status = 'success') as "successCount",
-               count(*) filter (where status = 'failed') as "failedCount",
-               count(*) filter (where estimated) as "estimatedCount",
+               -- 0122 起同一 Attempt 可有对话与联网搜索两行，调用次数按 Attempt 去重。
+               count(distinct attempt_id) as "callCount",
+               count(distinct attempt_id) filter (where status = 'success') as "successCount",
+               count(distinct attempt_id) filter (where status = 'failed') as "failedCount",
+               count(distinct attempt_id) filter (where estimated) as "estimatedCount",
                coalesce(sum(input_tokens), 0) as "inputTokens",
                coalesce(sum(output_tokens), 0) as "outputTokens"
           from workspace_usage_events

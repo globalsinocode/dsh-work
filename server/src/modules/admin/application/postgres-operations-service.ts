@@ -1,3 +1,4 @@
+import type { AttemptModelUsageLine } from '../../run/model-usage-meter-port.ts'
 import { randomUUID } from 'node:crypto'
 
 import { normalizeDisabledTools } from '../../runtime/builtin-tools.ts'
@@ -335,7 +336,7 @@ export class PostgresOperationsService {
                a.id as "agentId", a.name as "agentName", av.version as "agentVersion",
                latest.id as "runId", latest.status, count(distinct r.id)::integer as "runCount",
                count(distinct m.id)::integer as "messageCount",
-               coalesce(sum(distinct mu.input_tokens + mu.output_tokens), 0)::integer as "tokenUsage",
+               coalesce(usage.tokens, 0)::integer as "tokenUsage",
                s.created_at as "createdAt", s.last_active_at as "updatedAt", ev.trace_id as "traceId"
           from sessions s
           join users u on u.tenant_id = s.tenant_id and u.id = s.created_by
@@ -345,7 +346,13 @@ export class PostgresOperationsService {
           left join lateral (select id, status, current_attempt_id from runs where tenant_id = s.tenant_id and session_id = s.id order by created_at desc limit 1) latest on true
           left join runs r on r.tenant_id = s.tenant_id and r.session_id = s.id
           left join messages m on m.tenant_id = s.tenant_id and m.session_id = s.id
-          left join model_usage_events mu on mu.tenant_id = s.tenant_id and mu.run_id = r.id
+          -- 会话 Token 合计单独汇总：与 runs/messages 的连接会把用量行重复，sum(distinct) 又会吞掉数值相同的行。
+          left join lateral (
+            select sum(mu.input_tokens + mu.output_tokens) as tokens
+              from runs ur
+              join model_usage_events mu on mu.tenant_id = ur.tenant_id and mu.run_id = ur.id
+             where ur.tenant_id = s.tenant_id and ur.session_id = s.id
+          ) usage on true
           left join lateral (select trace_id from run_events where tenant_id = s.tenant_id and run_id = latest.id order by stream_position desc limit 1) ev on true
          where s.tenant_id = ${tenantId}
            and (${workspace} = '' or s.workspace_id = ${workspace})
@@ -353,7 +360,7 @@ export class PostgresOperationsService {
            and (${query} = '' or s.title ilike ${like} or s.id ilike ${like}
                 or u.display_name ilike ${like} or a.name ilike ${like}
                 or latest.id ilike ${like} or ev.trace_id ilike ${like})
-         group by s.id, u.display_name, w.name, a.id, a.name, av.version, latest.id, latest.status, ev.trace_id
+         group by s.id, u.display_name, w.name, a.id, a.name, av.version, latest.id, latest.status, ev.trace_id, usage.tokens
          order by s.last_active_at desc
          limit ${pageSize} offset ${offset}
       `
@@ -783,20 +790,44 @@ export class PostgresOperationsService {
   }
 
   async recordModelUsage(input: {
-    run: RunRecord; attempt: RunAttemptRecord; prompt: string; output: string; status: 'success' | 'failed'; traceId: string;
-    inputTokens?: number; outputTokens?: number
+    run: RunRecord; attempt: RunAttemptRecord; prompt: string; output: string; status: 'success' | 'failed' | 'cancelled'; traceId: string;
+    inputTokens?: number; outputTokens?: number; gatewayUsage?: readonly AttemptModelUsageLine[]
   }) {
     const route = input.attempt.modelRouteSnapshot
     const started = input.attempt.startedAt ? new Date(input.attempt.startedAt).getTime() : Date.now()
+    const latencyMs = Math.max(0, Date.now() - started)
+    // 模型网关计量（MR-S3）：对话与联网搜索各一行，记录实际模型、请求次数与缓存读写。
+    if (input.gatewayUsage && input.gatewayUsage.length > 0) {
+      const lines = input.gatewayUsage
+      // 对话与联网搜索两行同进同退；耗时是整次执行的，只记在对话行上。
+      await this.database.begin(async (transaction) => {
+        for (const line of lines) {
+          await transaction`
+            insert into model_usage_events (
+              id, tenant_id, run_id, attempt_id, provider, model, input_tokens, output_tokens,
+              latency_ms, cost_amount, cost_currency, status, trace_id, estimated, occurred_at,
+              endpoint, measurement, cache_read_tokens, cache_write_tokens, request_count, failed_request_count
+            ) values (
+              ${line.endpoint === 'chat' ? `usage-${input.attempt.id}` : `usage-${input.attempt.id}-${line.endpoint}`},
+              ${tenantId}, ${input.run.id}, ${input.attempt.id}, ${line.providerKey}, ${line.modelKey},
+              ${line.inputTokens}, ${line.outputTokens}, ${line.endpoint === 'chat' ? latencyMs : null}, 0, 'CNY', ${input.status}, ${input.traceId}, false, now(),
+              ${line.endpoint}, 'gateway', ${line.cacheReadTokens}, ${line.cacheWriteTokens}, ${line.requests}, ${line.failedRequests}
+            ) on conflict (id) do nothing
+          `
+        }
+      })
+      return
+    }
+    const estimated = input.inputTokens === undefined || input.outputTokens === undefined
     await this.database`
       insert into model_usage_events (
         id, tenant_id, run_id, attempt_id, provider, model, input_tokens, output_tokens,
-        latency_ms, cost_amount, cost_currency, status, trace_id, estimated, occurred_at
+        latency_ms, cost_amount, cost_currency, status, trace_id, estimated, occurred_at, endpoint, measurement
       ) values (
         ${`usage-${input.attempt.id}`}, ${tenantId}, ${input.run.id}, ${input.attempt.id},
         ${String(route['providerKey'] ?? 'dsh-default')}, ${String(route['modelKey'] ?? 'dsh-default')},
-        ${input.inputTokens ?? estimateTokens(input.prompt)}, ${input.outputTokens ?? estimateTokens(input.output)}, ${Math.max(0, Date.now() - started)},
-        0, 'CNY', ${input.status}, ${input.traceId}, ${input.inputTokens === undefined || input.outputTokens === undefined}, now()
+        ${input.inputTokens ?? estimateTokens(input.prompt)}, ${input.outputTokens ?? estimateTokens(input.output)}, ${latencyMs},
+        0, 'CNY', ${input.status}, ${input.traceId}, ${estimated}, now(), 'chat', ${estimated ? 'estimated' : 'session-log'}
       ) on conflict (id) do nothing
     `
   }

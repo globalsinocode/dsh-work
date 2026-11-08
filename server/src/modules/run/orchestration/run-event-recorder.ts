@@ -1,3 +1,4 @@
+import type { AttemptModelUsageLine } from '../model-usage-meter-port.ts'
 import type { RuntimeEvent, RuntimeManifest } from '../../runtime/runtime-types.ts'
 import type { JsonObject, RunRecord, StoredRunEvent } from '../run-types.ts'
 import type { AttemptBudget } from './attempt-budget.ts'
@@ -133,15 +134,30 @@ export class RunEventRecorder {
     } else if (event.event_type === 'run.cancel_requested') {
       await this.transitionIfNeeded(run.id, event.attempt_id, 'cancel_requested')
     } else if (event.event_type === 'run.cancelled') {
-      await this.budget.settle(event, 'cancelled', this.assistantOutputs.get(event.attempt_id) ?? '')
+      const gatewayUsage = await this.meteredUsage(event.attempt_id, true)
+      await this.budget.settle(event, 'cancelled', this.assistantOutputs.get(event.attempt_id) ?? '', gatewayUsage)
       await this.transitionIfNeeded(run.id, event.attempt_id, 'cancelled')
+      // 取消前已在网关上发生的消耗照实记录；没有网关记录时与以前一样不记用量。
+      if (gatewayUsage.length > 0) {
+        const attempt = await this.deps.runs.getAttempt(tenantId, event.attempt_id)
+        if (attempt) await this.deps.operations?.recordModelUsage({
+          run,
+          attempt,
+          prompt: '',
+          output: this.assistantOutputs.get(event.attempt_id) ?? '',
+          status: 'cancelled',
+          traceId: event.trace_id,
+          gatewayUsage,
+        })
+      }
       await this.deps.persistentWait?.cancelPreparingForAttempt({ runId: run.id, attemptId: event.attempt_id })
       if (!run.sessionId) await this.onSystemRunTerminal(run, 'cancelled', '')
     } else if (event.event_type === 'run.failed') {
       const code = typeof event.safe_metadata['error_code'] === 'string'
         ? event.safe_metadata['error_code']
         : 'RUNTIME_EXECUTION_FAILED'
-      await this.budget.settle(event, 'failed', this.assistantOutputs.get(event.attempt_id) ?? '')
+      const gatewayUsage = await this.meteredUsage(event.attempt_id)
+      await this.budget.settle(event, 'failed', this.assistantOutputs.get(event.attempt_id) ?? '', gatewayUsage)
       await this.deps.runs.transitionAttempt(tenantId, event.attempt_id, 'failed', code)
       await this.deps.runs.transitionRun(tenantId, run.id, 'failed')
       await this.deps.persistentWait?.cancelPreparingForAttempt({ runId: run.id, attemptId: event.attempt_id })
@@ -153,6 +169,7 @@ export class RunEventRecorder {
         output: this.assistantOutputs.get(event.attempt_id) ?? '',
         status: 'failed',
         traceId: event.trace_id,
+        gatewayUsage,
       })
       await this.deps.operations?.appendAudit('system', 'run.failed', run.id, 'failed', event.trace_id, code)
       if (!run.sessionId) await this.onSystemRunTerminal(run, 'failed', '')
@@ -161,7 +178,8 @@ export class RunEventRecorder {
     } else if (event.event_type === 'run.completed') {
       const attempt = await this.deps.runs.getAttempt(tenantId, event.attempt_id)
       const assistantOutput = this.assistantOutputs.get(event.attempt_id) ?? ''
-      await this.budget.settle(event, 'succeeded', assistantOutput)
+      const gatewayUsage = await this.meteredUsage(event.attempt_id)
+      await this.budget.settle(event, 'succeeded', assistantOutput, gatewayUsage)
       await this.deps.runs.transitionAttempt(tenantId, event.attempt_id, 'succeeded')
       await this.deps.runs.transitionRun(tenantId, run.id, 'succeeded')
       await this.deps.persistentWait?.cancelPreparingForAttempt({ runId: run.id, attemptId: event.attempt_id })
@@ -176,6 +194,7 @@ export class RunEventRecorder {
           && typeof event.safe_metadata['input_tokens'] === 'number' ? event.safe_metadata['input_tokens'] : undefined,
         outputTokens: event.safe_metadata['token_usage_source'] === 'dsh-session-log'
           && typeof event.safe_metadata['output_tokens'] === 'number' ? event.safe_metadata['output_tokens'] : undefined,
+        gatewayUsage,
       })
       await this.deps.operations?.appendAudit('system', 'run.completed', run.id, 'success', event.trace_id, 'DSH Runtime 执行完成')
       // EX-02：会话 Run 结束后按需在后台生成摘要；无 Session 的 Run 可能就是摘要运行本身。
@@ -216,6 +235,24 @@ export class RunEventRecorder {
   private async onSystemRunTerminal(run: RunRecord, status: 'succeeded' | 'failed' | 'cancelled', output: string) {
     if (await this.deps.projectArchivist?.onRunTerminal(run, status, output)) return
     await this.deps.sessionSummaries?.onRunTerminal(run, status, output)
+  }
+
+  /**
+   * 网关计量（MR-S3）：读取失败不影响运行收尾，退回会话日志或估算，并在日志中留下原因。
+   */
+  private async meteredUsage(attemptId: string, afterCancel = false): Promise<readonly AttemptModelUsageLine[]> {
+    if (!this.deps.modelUsage) return []
+    let lines: readonly AttemptModelUsageLine[]
+    try {
+      lines = await this.deps.modelUsage.summarizeAttempt(tenantId, attemptId, { afterCancel })
+    } catch (error) {
+      console.warn(`模型网关用量汇总失败，按会话日志或估算记录（${attemptId}）：${error instanceof Error ? error.message : String(error)}`)
+      return []
+    }
+    // 有请求成功却没有任何一次带回用量（厂商未返回用量）时，网关数字不可信，退回会话日志或估算。
+    // 所有请求都失败或被中止时没有消耗，按网关记录记 0 是真实情况。
+    if (lines.some(line => line.succeededRequests > 0) && !lines.some(line => line.usageReported)) return []
+    return lines
   }
 
   private async transitionIfNeeded(runId: string, attemptId: string, state: 'cancel_requested' | 'cancelled') {

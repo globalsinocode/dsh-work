@@ -98,6 +98,8 @@ export class RunOrchestrationService {
       timezone?: string
       /** 平台内置 Skill；未接线（测试替身等）时员工侧运行不装配内置 Skill。 */
       builtinSkills?: OrchestrationDependencies['builtinSkills']
+      /** 模型网关计量（MR-S3）；未接线时用量沿用会话日志或估算。 */
+      modelUsage?: OrchestrationDependencies['modelUsage']
     },
   ) {
     this.deps = {
@@ -112,6 +114,7 @@ export class RunOrchestrationService {
       projectTasks: options?.projectTasks,
       projectArchive: options?.projectArchive,
       builtinSkills: options?.builtinSkills,
+      modelUsage: options?.modelUsage,
     }
     const budget = new AttemptBudget(this.deps)
     const events = new RunEventRecorder(this.deps, budget)

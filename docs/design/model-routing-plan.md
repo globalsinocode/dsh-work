@@ -1,6 +1,6 @@
 # 平台模型路由生效方案
 
-**状态：** 已评审（2026-11-06）。MR-S1 已达到代码级（2026-11-06，迁移 `0120_model_routing_governance.sql`）；MR-S2 与数据防护方案 DLP-S1 已达到代码级（2026-11-07，迁移 `0121_model_gateway_requests.sql`；单元、PostgreSQL 集成与 Worker 替身用例），第 8 节 P1 已在本机受控 DSH `0.1.2-rc.1` 上执行主要场景（`test:model-gateway:e2e`：路由生效、共享 settings.yaml 隔离、401/400/402 不重试、429 与 5xx 重试后分类、联网搜索经网关），“停用路由不影响进行中 Attempt”“更换默认路由后重试与 PF-04 恢复”“探测路径不发出模型请求”尚无受控 DSH 用例；P2 未执行，不得视为已验收。MR-S3 起尚未实施。<br>
+**状态：** 已评审（2026-11-06）。MR-S1 已达到代码级（2026-11-06，迁移 `0120_model_routing_governance.sql`）；MR-S2 与数据防护方案 DLP-S1 已达到代码级（2026-11-07，迁移 `0121_model_gateway_requests.sql`；单元、PostgreSQL 集成与 Worker 替身用例），第 8 节 P1 已在本机受控 DSH `0.1.2-rc.1` 上执行主要场景（`test:model-gateway:e2e`：路由生效、共享 settings.yaml 隔离、401/400/402 不重试、429 与 5xx 重试后分类、联网搜索经网关），“停用路由不影响进行中 Attempt”“更换默认路由后重试与 PF-04 恢复”“探测路径不发出模型请求”尚无受控 DSH 用例；P2 未执行，不得视为已验收。MR-S3 的用量归属已达到代码级（2026-11-08，迁移 `0122_model_usage_gateway_metering.sql`：网关计量写入用量记录与预算结算；单元与 PostgreSQL 集成用例），模型用量页改版另行交付，第 8 节 P1（MR-S3）的受控 DSH 用例尚未执行。<br>
 **更新日期：** 2026-11-06（DLP-S0：R4 验证可行，补充 `compat.thinkingFormat` 与 `web_search` 风险）；2026-11-06（简化：路由用途只保留 `default`，取消备用路由与备用重试；DeepSeek 统一以 `openai-completions` 接入；模型校验只保留网关一道，取消 `currentValue` 校验与会话日志核对；快照去掉 `data_policy_version`；移除推理强度）；2026-11-06（网关计量增加缓存读写 token；PR 81 评审修订：升级前 Manifest 不再按默认模型执行、按用途解析路由、重试重新解析而恢复沿用快照、复用 `postgres-encrypted` 凭据、错误按网关记录分类；不做 DSH 持有凭据的阶段，路由生效与模型网关同批实施）；2026-10-26（第 7 节与执行隔离方案对齐）<br>
 **依据：** 当前 Model 模块、Run 编排与 Runtime Adapter 代码；DSH `0.1.2-rc.1`（`76fda72979`）的 `dsh-acp`、`dsh-llm-pi-ai`、`dsh-settings-file`、`dsh-credentials-local` 源码与 README；2026-10-25 本地探针（第 3 节）；[发往模型的数据防护方案](model-data-protection-plan.md)。<br>
 **执行基线：** 每个 Attempt 一个独立 DSH ACP Worker（`--profile acp --patch`），不改变进程模型。
@@ -146,7 +146,7 @@ Adapter 目前有三条启动 DSH 的路径，只有正式执行使用路由：
 
 - **模型校验：** 网关校验每个请求的令牌与模型：令牌须属于本 Attempt，请求模型须等于快照 `model_key`，否则拒绝，Attempt 以 `MODEL_ROUTE_UNAVAILABLE` 结束。patch 配置错误（如模型未声明）在 `session/new` 时已由 DSH 报错；其余配置错误在首个模型请求时由网关发现，不另做 `currentValue` 校验。
 - **网关计量字段：** 每个请求一条记录，包括输入、输出、**缓存读取**、**缓存写入** token。DSH 的每次重试都是一个独立请求、各有一条记录，尝试次数按同一 Attempt 的记录条数统计，不另设字段。缓存字段从厂商响应的用量中读取：OpenAI 兼容协议取 `prompt_tokens_details.cached_tokens`，DeepSeek 取 `prompt_cache_hit_tokens` / `prompt_cache_miss_tokens`，Anthropic 取 `cache_read_input_tokens` / `cache_creation_input_tokens`。厂商没有返回时记为 `null`，不记为 0，以免把“未知”统计成“未命中”。输入 token 是否已包含缓存部分按各厂商口径换算，统一为“输入总量 + 其中缓存读取量”。缓存数据用于观察提示词缓存命中率，包括数据防护遮盖带来的变化（[数据防护方案第 8 节](model-data-protection-plan.md#8-风险)）；第一期只记录与展示，不参与计费。
-- **实际模型与用量：** 终态时以网关记录的模型与 token 用量写入终态事件的 `effective_model` 并用于用量归属。
+- **实际模型与用量：** 终态时按本 Attempt 的网关记录汇总，写入用量记录 `model_usage_events`（MR-S3，迁移 0122）：对话与联网搜索各一行，实际模型取厂商成功返回的请求（网关拒绝的记录保存的是请求方声明的模型，不作为实际模型），并记录请求次数、失败次数与缓存读写 token；同一组数字用于 Task 预算结算。终态事件的 Adapter 发出路径为同步，不再另写 `effective_model` 字段。取消的运行有网关记录时同样记录；被中止的流式请求厂商不返回用量，会少计，且中止记录可能晚于取消事件写入。
 - 管理端运行详情展示路由快照与实际模型；不展示凭据。
 
 ### 4.7 失败语义
