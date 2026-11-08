@@ -17,6 +17,7 @@ export const permissionCatalog = [
   { code: LOCAL_PERMISSIONS.adminRead, name: '读取管理配置', category: '管理端', description: '查看非审计类管理页面与配置。' },
   { code: LOCAL_PERMISSIONS.adminWrite, name: '变更管理配置', category: '管理端', description: '执行管理端写操作。' },
   { code: LOCAL_PERMISSIONS.auditRead, name: '读取安全审计', category: '安全', description: '查看审计与运行治理信息。' },
+  { code: LOCAL_PERMISSIONS.dataProtectionTerms, name: '数据防护词表', category: '安全', description: '查看和维护保密词表与白名单。词表是机密内容，不默认授予所有管理员。' },
   { code: LOCAL_PERMISSIONS.adminAll, name: '全部管理权限', category: '系统', description: '系统级管理通配权限，仅用于平台管理员。' },
 ] as const
 

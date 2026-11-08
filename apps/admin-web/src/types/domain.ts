@@ -876,6 +876,69 @@ export interface SessionListPage extends ListPage<SessionDefinition> {
   }
 }
 
+/** 数据防护页（管理端）：与服务端 domain/data-protection.ts 同构。 */
+export interface DataProtectionFilter {
+  range: ModelUsageRange
+  category?: string
+  action?: string
+  employee?: string
+}
+export interface DataProtectionOverview {
+  externalRequests: number
+  maskedRequests: number
+  blockedMessages: number
+  imageRequests: number
+  secret: number
+  personal: number
+  term: number
+}
+export interface DataProtectionRecord {
+  id: string
+  time: string
+  employeeId: string | null
+  employeeName: string
+  department: string
+  source: RunSource
+  action: 'masked' | 'blocked'
+  secret: number
+  personal: number
+  term: number
+  runId: string | null
+  attemptId: string | null
+  providerName: string | null
+  model: string | null
+  endpoint: 'chat' | 'search' | null
+  trustLevel: 'internal' | 'external' | null
+  hasImage: boolean
+  entry: string | null
+  sessionId: string | null
+}
+export interface DataProtectionRecordPage {
+  items: DataProtectionRecord[]
+  total: number
+  page: number
+  pageSize: number
+}
+export interface DataProtectionTermRecord {
+  id: string
+  value: string
+  caseSensitive: boolean
+  wholeWord: boolean
+  createdAt: string
+}
+export interface DataProtectionAllowRecord {
+  id: string
+  value: string
+  createdAt: string
+}
+export interface DataProtectionPreview {
+  maskedText: string
+  secret: number
+  personal: number
+  term: number
+  wouldBlock: boolean
+}
+
 /** 模型用量页（管理端）：与服务端 domain/model-usage.ts 同构。 */
 export type ModelUsageRange = 'today' | '7d' | '30d'
 export type RunSource = 'conversation' | 'automation' | 'routine' | 'validation' | 'api' | 'event' | 'delegation' | 'system'

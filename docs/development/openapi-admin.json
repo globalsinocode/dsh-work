@@ -20,23 +20,395 @@
   ],
   "paths": {
     "/agents/{agentId}/routines": {
-      "get": { "operationId": "listAgentRoutines", "summary": "列出 Agent 拥有的主动任务规则", "parameters": [{ "name": "agentId", "in": "path", "required": true, "schema": { "type": "string" } }], "responses": { "200": { "$ref": "#/components/responses/Ok" }, "403": { "$ref": "#/components/responses/Error" } } },
-      "post": { "operationId": "createAgentRoutine", "summary": "创建固定版本、触发规则、接收人与预算的草稿", "parameters": [{ "name": "agentId", "in": "path", "required": true, "schema": { "type": "string" } }], "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AgentRoutineDraft" } } } }, "responses": { "201": { "$ref": "#/components/responses/Ok" }, "403": { "$ref": "#/components/responses/Error" } } }
+      "get": {
+        "operationId": "listAgentRoutines",
+        "summary": "列出 Agent 拥有的主动任务规则",
+        "parameters": [
+          {
+            "name": "agentId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      },
+      "post": {
+        "operationId": "createAgentRoutine",
+        "summary": "创建固定版本、触发规则、接收人与预算的草稿",
+        "parameters": [
+          {
+            "name": "agentId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AgentRoutineDraft"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
     },
     "/agents/{agentId}/routines/{routineId}": {
-      "patch": { "operationId": "updateAgentRoutine", "summary": "按修订更新草稿或已暂停规则；更新后必须重新确认授权", "parameters": [{ "name": "agentId", "in": "path", "required": true, "schema": { "type": "string" } }, { "name": "routineId", "in": "path", "required": true, "schema": { "type": "string" } }], "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["expectedRevision"], "properties": { "expectedRevision": { "type": "integer" }, "name": { "type": "string" }, "agentVersionId": { "type": "string" }, "workspaceId": { "type": "string" }, "recipientUserId": { "type": "string" }, "schedule": { "$ref": "#/components/schemas/AgentRoutineSchedule" }, "inputTemplate": { "$ref": "#/components/schemas/AgentRoutineInput" } } } } } }, "responses": { "200": { "$ref": "#/components/responses/Ok" }, "409": { "$ref": "#/components/responses/Error" } } },
-      "delete": { "operationId": "disableAgentRoutine", "summary": "永久停用规则；保留审计与执行记录", "parameters": [{ "name": "agentId", "in": "path", "required": true, "schema": { "type": "string" } }, { "name": "routineId", "in": "path", "required": true, "schema": { "type": "string" } }], "responses": { "200": { "$ref": "#/components/responses/Ok" } } }
+      "patch": {
+        "operationId": "updateAgentRoutine",
+        "summary": "按修订更新草稿或已暂停规则；更新后必须重新确认授权",
+        "parameters": [
+          {
+            "name": "agentId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "routineId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "expectedRevision"
+                ],
+                "properties": {
+                  "expectedRevision": {
+                    "type": "integer"
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "agentVersionId": {
+                    "type": "string"
+                  },
+                  "workspaceId": {
+                    "type": "string"
+                  },
+                  "recipientUserId": {
+                    "type": "string"
+                  },
+                  "schedule": {
+                    "$ref": "#/components/schemas/AgentRoutineSchedule"
+                  },
+                  "inputTemplate": {
+                    "$ref": "#/components/schemas/AgentRoutineInput"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      },
+      "delete": {
+        "operationId": "disableAgentRoutine",
+        "summary": "永久停用规则；保留审计与执行记录",
+        "parameters": [
+          {
+            "name": "agentId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "routineId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          }
+        }
+      }
     },
-    "/agents/{agentId}/routines/{routineId}/enable": { "post": { "operationId": "enableAgentRoutine", "summary": "确认 Agent 角色和数据范围上限并启用", "parameters": [{ "name": "agentId", "in": "path", "required": true, "schema": { "type": "string" } }, { "name": "routineId", "in": "path", "required": true, "schema": { "type": "string" } }], "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["expectedRevision", "roleIds", "dataScopes"], "properties": { "expectedRevision": { "type": "integer" }, "roleIds": { "type": "array", "items": { "type": "string" } }, "dataScopes": { "type": "array", "items": { "type": "string" } } } } } } }, "responses": { "200": { "$ref": "#/components/responses/Ok" }, "403": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" } } } },
-    "/agents/{agentId}/routines/{routineId}/pause": { "post": { "operationId": "pauseAgentRoutine", "summary": "暂停规则并阻止后续执行授权", "parameters": [{ "name": "agentId", "in": "path", "required": true, "schema": { "type": "string" } }, { "name": "routineId", "in": "path", "required": true, "schema": { "type": "string" } }], "responses": { "200": { "$ref": "#/components/responses/Ok" } } } },
-    "/agents/{agentId}/routines/{routineId}/run-now": { "post": { "operationId": "runAgentRoutineNow", "summary": "使用幂等键手动触发已启用规则", "parameters": [{ "name": "agentId", "in": "path", "required": true, "schema": { "type": "string" } }, { "name": "routineId", "in": "path", "required": true, "schema": { "type": "string" } }], "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["idempotencyKey"], "properties": { "idempotencyKey": { "type": "string" } } } } } }, "responses": { "200": { "$ref": "#/components/responses/Ok" } } } },
-    "/agents/{agentId}/routines/{routineId}/events": { "post": { "operationId": "triggerAgentRoutineEvent", "summary": "由受信管理员按来源与事件 ID 去重触发事件规则", "parameters": [{ "name": "agentId", "in": "path", "required": true, "schema": { "type": "string" } }, { "name": "routineId", "in": "path", "required": true, "schema": { "type": "string" } }], "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["eventType", "source", "eventId"], "properties": { "eventType": { "type": "string" }, "source": { "type": "string" }, "eventId": { "type": "string" } } } } } }, "responses": { "200": { "$ref": "#/components/responses/Ok" }, "403": { "$ref": "#/components/responses/Error" } } } },
-    "/agents/{agentId}/routines/{routineId}/executions": { "get": { "operationId": "listAgentRoutineExecutions", "summary": "查询受理、跳过、Run 终态与业务结果", "parameters": [{ "name": "agentId", "in": "path", "required": true, "schema": { "type": "string" } }, { "name": "routineId", "in": "path", "required": true, "schema": { "type": "string" } }], "responses": { "200": { "$ref": "#/components/responses/Ok" } } } },
+    "/agents/{agentId}/routines/{routineId}/enable": {
+      "post": {
+        "operationId": "enableAgentRoutine",
+        "summary": "确认 Agent 角色和数据范围上限并启用",
+        "parameters": [
+          {
+            "name": "agentId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "routineId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "expectedRevision",
+                  "roleIds",
+                  "dataScopes"
+                ],
+                "properties": {
+                  "expectedRevision": {
+                    "type": "integer"
+                  },
+                  "roleIds": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "dataScopes": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/agents/{agentId}/routines/{routineId}/pause": {
+      "post": {
+        "operationId": "pauseAgentRoutine",
+        "summary": "暂停规则并阻止后续执行授权",
+        "parameters": [
+          {
+            "name": "agentId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "routineId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          }
+        }
+      }
+    },
+    "/agents/{agentId}/routines/{routineId}/run-now": {
+      "post": {
+        "operationId": "runAgentRoutineNow",
+        "summary": "使用幂等键手动触发已启用规则",
+        "parameters": [
+          {
+            "name": "agentId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "routineId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "idempotencyKey"
+                ],
+                "properties": {
+                  "idempotencyKey": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          }
+        }
+      }
+    },
+    "/agents/{agentId}/routines/{routineId}/events": {
+      "post": {
+        "operationId": "triggerAgentRoutineEvent",
+        "summary": "由受信管理员按来源与事件 ID 去重触发事件规则",
+        "parameters": [
+          {
+            "name": "agentId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "routineId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "eventType",
+                  "source",
+                  "eventId"
+                ],
+                "properties": {
+                  "eventType": {
+                    "type": "string"
+                  },
+                  "source": {
+                    "type": "string"
+                  },
+                  "eventId": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/agents/{agentId}/routines/{routineId}/executions": {
+      "get": {
+        "operationId": "listAgentRoutineExecutions",
+        "summary": "查询受理、跳过、Run 终态与业务结果",
+        "parameters": [
+          {
+            "name": "agentId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "routineId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          }
+        }
+      }
+    },
     "/experience-iterations/agents": {
       "get": {
         "operationId": "listExperienceIterationAgents",
         "summary": "查询每个 Agent 的经验迭代申请汇总",
-        "responses": { "200": { "$ref": "#/components/responses/Ok" } }
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          }
+        }
       }
     },
     "/experience-iterations/applications": {
@@ -48,16 +420,28 @@
             "name": "agentId",
             "in": "query",
             "required": false,
-            "schema": { "type": "string" }
+            "schema": {
+              "type": "string"
+            }
           },
           {
             "name": "status",
             "in": "query",
             "required": false,
-            "schema": { "enum": ["pending", "approved", "rejected"] }
+            "schema": {
+              "enum": [
+                "pending",
+                "approved",
+                "rejected"
+              ]
+            }
           }
         ],
-        "responses": { "200": { "$ref": "#/components/responses/Ok" } }
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          }
+        }
       }
     },
     "/experience-iterations/agents/{agentId}/experiences": {
@@ -65,8 +449,21 @@
         "operationId": "listAgentExperiences",
         "summary": "列出 Agent 已发布的经验及其版本",
         "description": "每条经验含全部不可变版本与当前版本；当前版本为空表示已停用、不再被检索。来源授权撤回、超过保留期或来源不可访问的版本不返回正文且不可设为当前版本。",
-        "parameters": [{ "name": "agentId", "in": "path", "required": true, "schema": { "type": "string" } }],
-        "responses": { "200": { "$ref": "#/components/responses/Ok" } }
+        "parameters": [
+          {
+            "name": "agentId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          }
+        }
       }
     },
     "/experience-iterations/agents/{agentId}/experiences/{entryId}/current": {
@@ -75,8 +472,22 @@
         "summary": "停用、启用或回滚 Agent 经验",
         "description": "只移动经验的当前版本指针，已发布版本不变：versionId 为 null 即停用，此后不再检索，引用它的排队或执行中 Attempt 在执行前复核时拒绝；指向较早版本为回滚，指向任一可用版本为启用。expectedVersionId 必须等于读取时的当前版本，否则返回 409；原因写入审计。",
         "parameters": [
-          { "name": "agentId", "in": "path", "required": true, "schema": { "type": "string" } },
-          { "name": "entryId", "in": "path", "required": true, "schema": { "type": "string" } }
+          {
+            "name": "agentId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "entryId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
         ],
         "requestBody": {
           "required": true,
@@ -85,21 +496,47 @@
               "schema": {
                 "type": "object",
                 "additionalProperties": false,
-                "required": ["versionId", "expectedVersionId", "reason"],
+                "required": [
+                  "versionId",
+                  "expectedVersionId",
+                  "reason"
+                ],
                 "properties": {
-                  "versionId": { "type": ["string", "null"] },
-                  "expectedVersionId": { "type": ["string", "null"] },
-                  "reason": { "type": "string", "minLength": 2, "maxLength": 500 }
+                  "versionId": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "expectedVersionId": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "reason": {
+                    "type": "string",
+                    "minLength": 2,
+                    "maxLength": 500
+                  }
                 }
               }
             }
           }
         },
         "responses": {
-          "200": { "$ref": "#/components/responses/Ok" },
-          "404": { "$ref": "#/components/responses/Error" },
-          "409": { "$ref": "#/components/responses/Error" },
-          "422": { "$ref": "#/components/responses/Error" }
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          }
         }
       }
     },
@@ -108,29 +545,57 @@
         "operationId": "reviewExperienceIterationApplication",
         "summary": "审核并发布或拒绝 Agent 经验迭代申请",
         "description": "申请归属于稳定 Agent，来源固定到成功 Run/Attempt。批准后创建独立不可变经验版本；相同决定和 resolutionKey 可幂等重放，其他并发决定返回冲突。",
-        "parameters": [{
-          "name": "applicationId",
-          "in": "path",
-          "required": true,
-          "schema": { "type": "string" }
-        }],
+        "parameters": [
+          {
+            "name": "applicationId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "requestBody": {
           "required": true,
-          "content": { "application/json": { "schema": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": ["decision", "resolutionKey"],
-            "properties": {
-              "decision": { "enum": ["approved", "rejected"] },
-              "resolutionKey": { "type": "string", "minLength": 1 },
-              "comment": { "type": "string", "maxLength": 1000 }
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "decision",
+                  "resolutionKey"
+                ],
+                "properties": {
+                  "decision": {
+                    "enum": [
+                      "approved",
+                      "rejected"
+                    ]
+                  },
+                  "resolutionKey": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "comment": {
+                    "type": "string",
+                    "maxLength": 1000
+                  }
+                }
+              }
             }
-          } } }
+          }
         },
         "responses": {
-          "200": { "$ref": "#/components/responses/Ok" },
-          "409": { "$ref": "#/components/responses/Error" },
-          "422": { "$ref": "#/components/responses/Error" }
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          }
         }
       }
     },
@@ -138,35 +603,100 @@
       "get": {
         "operationId": "listPersistentApprovals",
         "summary": "查询持久化动作审批",
-        "parameters": [{ "name": "status", "in": "query", "required": false, "schema": { "enum": ["pending", "approved", "rejected", "expired", "cancelled"] } }],
-        "responses": { "200": { "$ref": "#/components/responses/Ok" } }
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "enum": [
+                "pending",
+                "approved",
+                "rejected",
+                "expired",
+                "cancelled"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          }
+        }
       }
     },
     "/approvals/{approvalId}": {
       "get": {
         "operationId": "getPersistentApproval",
         "summary": "查询动作审批详情",
-        "parameters": [{ "name": "approvalId", "in": "path", "required": true, "schema": { "type": "string" } }],
-        "responses": { "200": { "$ref": "#/components/responses/Ok" } }
+        "parameters": [
+          {
+            "name": "approvalId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          }
+        }
       }
     },
     "/approvals/{approvalId}/resolve": {
       "post": {
         "operationId": "resolvePersistentApproval",
         "summary": "批准或拒绝动作快照",
-        "parameters": [{ "name": "approvalId", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "parameters": [
+          {
+            "name": "approvalId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "requestBody": {
           "required": true,
-          "content": { "application/json": { "schema": {
-            "type": "object", "additionalProperties": false, "required": ["decision", "resolutionKey"],
-            "properties": {
-              "decision": { "enum": ["approved", "rejected"] },
-              "resolutionKey": { "type": "string", "minLength": 1 },
-              "comment": { "type": "string", "maxLength": 1000 }
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "decision",
+                  "resolutionKey"
+                ],
+                "properties": {
+                  "decision": {
+                    "enum": [
+                      "approved",
+                      "rejected"
+                    ]
+                  },
+                  "resolutionKey": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "comment": {
+                    "type": "string",
+                    "maxLength": 1000
+                  }
+                }
+              }
             }
-          } } }
+          }
         },
-        "responses": { "200": { "$ref": "#/components/responses/Ok" } }
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          }
+        }
       }
     },
     "/session": {
@@ -936,8 +1466,22 @@
         "operationId": "getSkillTestRun",
         "summary": "读取 Skill 严格试运行的真实 Run、激活与脚本执行进度",
         "parameters": [
-          { "name": "skillId", "in": "path", "required": true, "schema": { "type": "string" } },
-          { "name": "runId", "in": "path", "required": true, "schema": { "type": "string" } }
+          {
+            "name": "skillId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "runId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
         ],
         "responses": {
           "200": {
@@ -1078,10 +1622,18 @@
         "operationId": "registerMcpConnector",
         "summary": "重新执行连通与 Tool 发现后登记 Streamable HTTP MCP Server，登记时发现的 Tool 即为生效清单；Bearer Token 加密入库且不回显",
         "responses": {
-          "200": { "$ref": "#/components/responses/Ok" },
-          "409": { "$ref": "#/components/responses/Error" },
-          "422": { "$ref": "#/components/responses/Error" },
-          "503": { "$ref": "#/components/responses/Error" }
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
         }
       }
     },
@@ -1090,9 +1642,15 @@
         "operationId": "testMcpConnection",
         "summary": "使用待登记配置通过 DSH 测试 MCP 连通性并发现 Tool；不持久化 Token 或 Connector",
         "responses": {
-          "200": { "$ref": "#/components/responses/Ok" },
-          "422": { "$ref": "#/components/responses/Error" },
-          "503": { "$ref": "#/components/responses/Error" }
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
         }
       }
     },
@@ -1101,11 +1659,22 @@
         "operationId": "deleteMcpConnector",
         "summary": "删除 MCP Connector，停止所有 Agent 使用、销毁独占凭据并保留能力快照与调用证据",
         "parameters": [
-          { "name": "connectorId", "in": "path", "required": true, "schema": { "type": "string" } }
+          {
+            "name": "connectorId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
         ],
         "responses": {
-          "200": { "$ref": "#/components/responses/Ok" },
-          "404": { "$ref": "#/components/responses/Error" }
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          }
         }
       }
     },
@@ -1114,8 +1683,12 @@
         "operationId": "rotateMcpCredential",
         "summary": "轮换 MCP Connector 的 Bearer Token，并要求重新检查连接状态",
         "responses": {
-          "200": { "$ref": "#/components/responses/Ok" },
-          "409": { "$ref": "#/components/responses/Error" }
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          }
         }
       }
     },
@@ -1124,9 +1697,20 @@
         "operationId": "listMcpInvocationAudits",
         "summary": "查询一个 MCP Connector 最近 50 条实际 Tool 调用审计",
         "parameters": [
-          { "name": "connector_id", "in": "query", "required": true, "schema": { "type": "string" } }
+          {
+            "name": "connector_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
         ],
-        "responses": { "200": { "$ref": "#/components/responses/Ok" } }
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          }
+        }
       }
     },
     "/connectors/check": {
@@ -1137,7 +1721,9 @@
           "200": {
             "$ref": "#/components/responses/Ok"
           },
-          "409": { "$ref": "#/components/responses/Error" }
+          "409": {
+            "$ref": "#/components/responses/Error"
+          }
         }
       }
     },
@@ -1151,18 +1737,30 @@
             "application/json": {
               "schema": {
                 "type": "object",
-                "required": ["connectorId", "capabilityDigest"],
+                "required": [
+                  "connectorId",
+                  "capabilityDigest"
+                ],
                 "properties": {
-                  "connectorId": { "type": "string" },
-                  "capabilityDigest": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+                  "connectorId": {
+                    "type": "string"
+                  },
+                  "capabilityDigest": {
+                    "type": "string",
+                    "pattern": "^[a-f0-9]{64}$"
+                  }
                 }
               }
             }
           }
         },
         "responses": {
-          "200": { "$ref": "#/components/responses/Ok" },
-          "409": { "$ref": "#/components/responses/Error" }
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          }
         }
       }
     },
@@ -1171,8 +1769,12 @@
         "operationId": "setMcpConnectorStatus",
         "summary": "启用或停用 MCP Connector；Bearer 连接器重新启用前须已完成加密凭据录入",
         "responses": {
-          "200": { "$ref": "#/components/responses/Ok" },
-          "409": { "$ref": "#/components/responses/Error" }
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          }
         }
       }
     },
@@ -1206,7 +1808,9 @@
         "operationId": "getBuiltinTools",
         "summary": "只读查看内置工具注册表、Runtime 当前停用清单与启动时的 DSH 工具目录比对结果；内置工具由代码管理，没有写接口",
         "responses": {
-          "200": { "$ref": "#/components/responses/Ok" }
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          }
         }
       }
     },
@@ -1215,7 +1819,9 @@
         "operationId": "getBuiltinSkills",
         "summary": "只读查看平台内置 Skill（随代码发布，含正文、版本与场景）、固定场景清单与 Runtime 当前的内置 Skill 停用清单；内置 Skill 没有编辑、发布或删除接口",
         "responses": {
-          "200": { "$ref": "#/components/responses/Ok" }
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          }
         }
       }
     },
@@ -1229,20 +1835,45 @@
             "application/json": {
               "schema": {
                 "type": "object",
-                "required": ["skillId", "scenarios"],
+                "required": [
+                  "skillId",
+                  "scenarios"
+                ],
                 "properties": {
-                  "skillId": { "type": "string" },
-                  "scenarios": { "type": "array", "items": { "type": "string", "enum": ["file-analysis", "html-page", "office-document"] } }
+                  "skillId": {
+                    "type": "string"
+                  },
+                  "scenarios": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "file-analysis",
+                        "html-page",
+                        "office-document"
+                      ]
+                    }
+                  }
                 }
               }
             }
           }
         },
         "responses": {
-          "200": { "$ref": "#/components/responses/Ok" },
-          "403": { "$ref": "#/components/responses/Error" },
-          "404": { "$ref": "#/components/responses/Error", "description": "Skill 不存在（平台内置 Skill 不能设置覆盖）" },
-          "422": { "$ref": "#/components/responses/Error", "description": "场景不在固定清单中" }
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error",
+            "description": "Skill 不存在（平台内置 Skill 不能设置覆盖）"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error",
+            "description": "场景不在固定清单中"
+          }
         }
       }
     },
@@ -1287,27 +1918,62 @@
       "put": {
         "operationId": "setSkillVisibility",
         "summary": "设置 Skill 可见范围：null 为全员，否则为非空、现存且启用的角色；Skill 级配置，不随版本固定。只约束员工在 Skill 广场选用、会话选择与执行前复核，Agent 固定引用不受限；须填写原因并写审计",
-        "parameters": [{ "name": "skillId", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "parameters": [
+          {
+            "name": "skillId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "requestBody": {
           "required": true,
           "content": {
             "application/json": {
               "schema": {
                 "type": "object",
-                "required": ["roleIds", "reason"],
+                "required": [
+                  "roleIds",
+                  "reason"
+                ],
                 "properties": {
-                  "roleIds": { "type": ["array", "null"], "items": { "type": "string" }, "minItems": 1 },
-                  "reason": { "type": "string", "minLength": 1, "maxLength": 500 }
+                  "roleIds": {
+                    "type": [
+                      "array",
+                      "null"
+                    ],
+                    "items": {
+                      "type": "string"
+                    },
+                    "minItems": 1
+                  },
+                  "reason": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 500
+                  }
                 }
               }
             }
           }
         },
         "responses": {
-          "200": { "$ref": "#/components/responses/Ok" },
-          "403": { "$ref": "#/components/responses/Error" },
-          "404": { "$ref": "#/components/responses/Error", "description": "Skill 不存在" },
-          "422": { "$ref": "#/components/responses/Error", "description": "角色为空、不存在或已停用，或缺少原因" }
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error",
+            "description": "Skill 不存在"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error",
+            "description": "角色为空、不存在或已停用，或缺少原因"
+          }
         }
       }
     },
@@ -1407,7 +2073,65 @@
       "get": {
         "operationId": "getModelUsageOverview",
         "summary": "模型用量概况与趋势：统计全部运行（含定时任务、主动任务与系统运行）经模型网关的 Token、缓存命中、请求与执行次数；今天按小时、其余按天（平台时区），按模型堆叠，估算数据单独计",
-        "parameters": [{"name": "range", "in": "query", "schema": {"type": "string", "enum": ["today", "7d", "30d"]}}, {"name": "model", "in": "query", "schema": {"type": "string"}}, {"name": "source", "in": "query", "schema": {"type": "string", "enum": ["conversation", "automation", "routine", "validation", "api", "event", "delegation", "system"]}}, {"name": "agent", "in": "query", "schema": {"type": "string"}}, {"name": "employee", "in": "query", "schema": {"type": "string"}}, {"name": "department", "in": "query", "schema": {"type": "string"}}],
+        "parameters": [
+          {
+            "name": "range",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "today",
+                "7d",
+                "30d"
+              ]
+            }
+          },
+          {
+            "name": "model",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "source",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "conversation",
+                "automation",
+                "routine",
+                "validation",
+                "api",
+                "event",
+                "delegation",
+                "system"
+              ]
+            }
+          },
+          {
+            "name": "agent",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "employee",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "department",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "$ref": "#/components/responses/Ok"
@@ -1419,7 +2143,80 @@
       "get": {
         "operationId": "getModelUsageBreakdown",
         "summary": "按模型、Agent、员工、部门或来源统计模型用量；筛选条件与概况相同",
-        "parameters": [{"name": "range", "in": "query", "schema": {"type": "string", "enum": ["today", "7d", "30d"]}}, {"name": "model", "in": "query", "schema": {"type": "string"}}, {"name": "source", "in": "query", "schema": {"type": "string", "enum": ["conversation", "automation", "routine", "validation", "api", "event", "delegation", "system"]}}, {"name": "agent", "in": "query", "schema": {"type": "string"}}, {"name": "employee", "in": "query", "schema": {"type": "string"}}, {"name": "department", "in": "query", "schema": {"type": "string"}}, {"name": "dimension", "in": "query", "required": true, "schema": {"type": "string", "enum": ["model", "agent", "employee", "department", "source"]}}],
+        "parameters": [
+          {
+            "name": "range",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "today",
+                "7d",
+                "30d"
+              ]
+            }
+          },
+          {
+            "name": "model",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "source",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "conversation",
+                "automation",
+                "routine",
+                "validation",
+                "api",
+                "event",
+                "delegation",
+                "system"
+              ]
+            }
+          },
+          {
+            "name": "agent",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "employee",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "department",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "dimension",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "model",
+                "agent",
+                "employee",
+                "department",
+                "source"
+              ]
+            }
+          }
+        ],
         "responses": {
           "200": {
             "$ref": "#/components/responses/Ok"
@@ -1431,7 +2228,82 @@
       "get": {
         "operationId": "listModelUsageExecutions",
         "summary": "模型用量执行明细：每次执行一行（对话与联网搜索合并），含实际模型、计量来源（网关计量 / 会话日志 / 估算）、请求次数与缓存读写",
-        "parameters": [{"name": "range", "in": "query", "schema": {"type": "string", "enum": ["today", "7d", "30d"]}}, {"name": "model", "in": "query", "schema": {"type": "string"}}, {"name": "source", "in": "query", "schema": {"type": "string", "enum": ["conversation", "automation", "routine", "validation", "api", "event", "delegation", "system"]}}, {"name": "agent", "in": "query", "schema": {"type": "string"}}, {"name": "employee", "in": "query", "schema": {"type": "string"}}, {"name": "department", "in": "query", "schema": {"type": "string"}}, {"name": "page", "in": "query", "schema": {"type": "integer", "minimum": 1}}, {"name": "page_size", "in": "query", "schema": {"type": "integer", "minimum": 1, "maximum": 100}}],
+        "parameters": [
+          {
+            "name": "range",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "today",
+                "7d",
+                "30d"
+              ]
+            }
+          },
+          {
+            "name": "model",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "source",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "conversation",
+                "automation",
+                "routine",
+                "validation",
+                "api",
+                "event",
+                "delegation",
+                "system"
+              ]
+            }
+          },
+          {
+            "name": "agent",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "employee",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "department",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "name": "page_size",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            }
+          }
+        ],
         "responses": {
           "200": {
             "$ref": "#/components/responses/Ok"
@@ -1642,46 +2514,865 @@
         "summary": "平台管理员检查新登录账号格式及是否被独立账号或已同步 AI Hub 账号占用",
         "requestBody": {
           "required": true,
-          "content": { "application/json": { "schema": {
-            "type": "object", "additionalProperties": false, "required": ["username"],
-            "properties": { "username": { "type": "string", "maxLength": 254 } }
-          } } }
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "username"
+                ],
+                "properties": {
+                  "username": {
+                    "type": "string",
+                    "maxLength": 254
+                  }
+                }
+              }
+            }
+          }
         },
         "responses": {
-          "200": { "description": "返回规范化的 username 与 available；创建时仍重新检查", "content": { "application/json": { "schema": {
-            "type": "object", "required": ["data", "meta"], "properties": {
-              "data": { "type": "object", "required": ["username", "available"], "properties": {
-                "username": { "type": "string" }, "available": { "type": "boolean" }
-              } }, "meta": { "type": "object" }
+          "200": {
+            "description": "返回规范化的 username 与 available；创建时仍重新检查",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data",
+                    "meta"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "required": [
+                        "username",
+                        "available"
+                      ],
+                      "properties": {
+                        "username": {
+                          "type": "string"
+                        },
+                        "available": {
+                          "type": "boolean"
+                        }
+                      }
+                    },
+                    "meta": {
+                      "type": "object"
+                    }
+                  }
+                }
+              }
             }
-          } } } },
-          "403": { "description": "仅平台管理员可检查账号占用" },
-          "422": { "description": "账号不是有效的手机号或邮箱" }
+          },
+          "403": {
+            "description": "仅平台管理员可检查账号占用"
+          },
+          "422": {
+            "description": "账号不是有效的手机号或邮箱"
+          }
         }
       }
     },
-    "/organization": { "get": { "operationId": "getOrganization", "summary": "读取组织架构：有效部门（id、parentId、name、sortOrder）、成员关系（departmentId、userId、primary）、业务员工清单、部门授权（grants，含失效）、角色清单（assignable 表示可授给部门）与员工角色来源（roleAssignments：direct 或部门授权 grantId）。写操作均返回同一结构", "responses": { "200": { "$ref": "#/components/responses/Ok" } } } },
-    "/organization/departments": { "post": { "operationId": "createDepartment", "summary": "在上级部门下新建部门；同一上级下不能重名", "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "additionalProperties": false, "required": ["parentId", "name"], "properties": { "parentId": { "type": "string" }, "name": { "type": "string", "minLength": 1, "maxLength": 60 } } } } } }, "responses": { "200": { "$ref": "#/components/responses/Ok" }, "403": { "description": "仅平台管理员可修改组织架构" }, "404": { "description": "部门或成员关系不存在" }, "409": { "description": "违反部门约束（重名、移到自己下级之下、根部门、仍有成员或下级）" }, "422": { "description": "输入无效" } } } },
-    "/organization/departments/{departmentId}": {
-      "patch": { "operationId": "updateDepartment", "summary": "改名或移动部门（整棵子树随之移动）；不能移到自己或下级之下，根部门不能移动；改名同步更新以其为主部门的员工显示部门", "parameters": [{ "name": "departmentId", "in": "path", "required": true, "schema": { "type": "string" } }], "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "additionalProperties": false, "properties": { "name": { "type": "string", "minLength": 1, "maxLength": 60 }, "parentId": { "type": "string" } } } } } }, "responses": { "200": { "$ref": "#/components/responses/Ok" }, "403": { "description": "仅平台管理员可修改组织架构" }, "404": { "description": "部门或成员关系不存在" }, "409": { "description": "违反部门约束（重名、移到自己下级之下、根部门、仍有成员或下级）" }, "422": { "description": "输入无效" } } },
-      "delete": { "operationId": "removeDepartment", "summary": "删除部门；有下级部门或成员时拒绝，根部门不能删除", "parameters": [{ "name": "departmentId", "in": "path", "required": true, "schema": { "type": "string" } }], "responses": { "200": { "$ref": "#/components/responses/Ok" }, "403": { "description": "仅平台管理员可修改组织架构" }, "404": { "description": "部门或成员关系不存在" }, "409": { "description": "违反部门约束（重名、移到自己下级之下、根部门、仍有成员或下级）" }, "422": { "description": "输入无效" } } }
+    "/organization": {
+      "get": {
+        "operationId": "getOrganization",
+        "summary": "读取组织架构：有效部门（id、parentId、name、sortOrder）、成员关系（departmentId、userId、primary）、业务员工清单、部门授权（grants，含失效）、角色清单（assignable 表示可授给部门）与员工角色来源（roleAssignments：direct 或部门授权 grantId）。写操作均返回同一结构",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          }
+        }
+      }
     },
-    "/organization/departments/{departmentId}/reorder": { "post": { "operationId": "reorderDepartment", "summary": "与相邻的同级部门交换顺序", "parameters": [{ "name": "departmentId", "in": "path", "required": true, "schema": { "type": "string" } }], "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "additionalProperties": false, "required": ["direction"], "properties": { "direction": { "type": "string", "enum": ["up", "down"] } } } } } }, "responses": { "200": { "$ref": "#/components/responses/Ok" }, "403": { "description": "仅平台管理员可修改组织架构" }, "404": { "description": "部门或成员关系不存在" }, "409": { "description": "违反部门约束（重名、移到自己下级之下、根部门、仍有成员或下级）" }, "422": { "description": "输入无效" } } } },
-    "/organization/departments/{departmentId}/grants": { "post": { "operationId": "grantDepartmentRole", "summary": "把一个角色授给部门（默认包含所有下级部门），覆盖到的员工自动获得该角色；成员或部门变化时自动重算。管理类角色不能授给部门", "parameters": [{ "name": "departmentId", "in": "path", "required": true, "schema": { "type": "string" } }], "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "additionalProperties": false, "required": ["roleId"], "properties": { "roleId": { "type": "string" }, "includeDescendants": { "type": "boolean", "default": true } } } } } }, "responses": { "200": { "$ref": "#/components/responses/Ok" }, "403": { "description": "仅平台管理员可修改组织架构" }, "404": { "description": "部门、角色或部门授权不存在" }, "409": { "description": "角色已停用、含管理类权限（admin:*、admin:write、admin:read、audit:read），或本部门已授予该角色" }, "422": { "description": "输入无效" } } } },
-    "/organization/grants/{grantId}": { "delete": { "operationId": "revokeDepartmentGrant", "summary": "删除部门授权（含部门删除后失效的授权），覆盖员工随之失去这项来自部门的角色", "parameters": [{ "name": "grantId", "in": "path", "required": true, "schema": { "type": "string" } }], "responses": { "200": { "$ref": "#/components/responses/Ok" }, "403": { "description": "仅平台管理员可修改组织架构" }, "404": { "description": "部门、角色或部门授权不存在" }, "409": { "description": "状态冲突" }, "422": { "description": "输入无效" } } } },
-    "/organization/departments/{departmentId}/members": { "post": { "operationId": "addDepartmentMembers", "summary": "把有效业务员工加入部门（可多选、幂等）；还没有主部门的员工以该部门为主部门", "parameters": [{ "name": "departmentId", "in": "path", "required": true, "schema": { "type": "string" } }], "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "additionalProperties": false, "required": ["userIds"], "properties": { "userIds": { "type": "array", "minItems": 1, "maxItems": 200, "items": { "type": "string" } } } } } } }, "responses": { "200": { "$ref": "#/components/responses/Ok" }, "403": { "description": "仅平台管理员可修改组织架构" }, "404": { "description": "部门或成员关系不存在" }, "409": { "description": "违反部门约束（重名、移到自己下级之下、根部门、仍有成员或下级）" }, "422": { "description": "输入无效" } } } },
-    "/organization/departments/{departmentId}/members/{userId}": { "delete": { "operationId": "removeDepartmentMember", "summary": "把员工移出部门；移出主部门且员工仍属于其他部门时必须指定新的主部门", "parameters": [{ "name": "departmentId", "in": "path", "required": true, "schema": { "type": "string" } }, { "name": "userId", "in": "path", "required": true, "schema": { "type": "string" } }, { "name": "new_primary_department_id", "in": "query", "schema": { "type": "string" }, "description": "移出主部门时，从员工所属的其他部门中指定新的主部门" }], "responses": { "200": { "$ref": "#/components/responses/Ok" }, "403": { "description": "仅平台管理员可修改组织架构" }, "404": { "description": "部门或成员关系不存在" }, "409": { "description": "违反部门约束（重名、移到自己下级之下、根部门、仍有成员或下级）" }, "422": { "description": "输入无效" } } } },
-    "/organization/departments/{departmentId}/members/{userId}/primary": { "put": { "operationId": "setPrimaryDepartment", "summary": "把员工所属的这个部门设为主部门（只影响显示，不影响授权）", "parameters": [{ "name": "departmentId", "in": "path", "required": true, "schema": { "type": "string" } }, { "name": "userId", "in": "path", "required": true, "schema": { "type": "string" } }], "responses": { "200": { "$ref": "#/components/responses/Ok" }, "403": { "description": "仅平台管理员可修改组织架构" }, "404": { "description": "部门或成员关系不存在" }, "409": { "description": "违反部门约束（重名、移到自己下级之下、根部门、仍有成员或下级）" }, "422": { "description": "输入无效" } } } },
-    "/identity/users/{userId}/dingtalk-binding": {"parameters": [{"name": "userId", "in": "path", "required": true, "schema": {"type": "string"}}], "get": {"operationId": "getUserDingTalkBinding", "summary": "员工详情 › 钉钉：绑定状态（已绑定 / 未绑定 / 已失效）、钉钉姓名与部门、绑定方式与代绑管理员、失效原因、是否锁定自行绑定。仅平台管理员", "responses": {"200": {"$ref": "#/components/responses/Ok"}}}, "delete": {"operationId": "unbindUserDingTalk", "summary": "管理员解绑：绑定置为失效、按 binding_id 撤销其钉钉会话、通知员工本人、写审计（同一事务）。lock_self_rebind=true 时锁定自行绑定，锁定期间员工在钉钉内登录不会重新绑定；员工未绑定时只锁定最近一条记录", "parameters": [{"name": "lock_self_rebind", "in": "query", "schema": {"type": "boolean"}}], "responses": {"200": {"$ref": "#/components/responses/Ok"}}}},
-    "/identity/users/{userId}/dingtalk-binding/preview": {"parameters": [{"name": "userId", "in": "path", "required": true, "schema": {"type": "string"}}], "post": {"operationId": "previewUserDingTalkBinding", "summary": "代绑预览：按员工在钉钉中使用的手机号查成员，返回钉钉姓名、部门（最多 2 个；读取失败为 null）、脱敏号码、与平台姓名是否一致、冲突员工，以及服务端保存、单次有效、5 分钟过期的确认凭证。手机号不保存，审计只记后 4 位与哈希。拒绝：管理类账号（admin:*、admin:write、admin:read、audit:read）、已绑定、停用账号、24 小时内代绑达到上限（钉钉集成 › 应用配置的“每日代绑上限”，默认 50）", "requestBody": {"required": true, "content": {"application/json": {"schema": {"type": "object", "additionalProperties": false, "required": ["mobile"], "properties": {"mobile": {"type": "string", "description": "中国大陆 11 位手机号，可带 +86、空格或连字符"}}}}}}, "responses": {"200": {"$ref": "#/components/responses/Ok"}}}},
-    "/identity/users/{userId}/dingtalk-binding/confirm": {"parameters": [{"name": "userId", "in": "path", "required": true, "schema": {"type": "string"}}], "post": {"operationId": "confirmUserDingTalkBinding", "summary": "代绑确认：只接受确认凭证（固定目标员工、发起管理员、钉钉 userid 与所展示的姓名），不接受 userid。姓名不一致或部门无法读取时须 identityConfirmed=true；钉钉账号已绑定其他员工时须 rebind=true，原绑定失效、其钉钉会话撤销并通知原员工，与新绑定同一事务提交；绑定后通知员工本人并解除此前的锁定", "requestBody": {"required": true, "content": {"application/json": {"schema": {"type": "object", "additionalProperties": false, "required": ["confirmationToken"], "properties": {"confirmationToken": {"type": "string"}, "identityConfirmed": {"type": "boolean"}, "rebind": {"type": "boolean"}}}}}}, "responses": {"200": {"$ref": "#/components/responses/Ok"}}}},
-    "/identity/users/{userId}/dingtalk-binding/unlock": {"parameters": [{"name": "userId", "in": "path", "required": true, "schema": {"type": "string"}}], "post": {"operationId": "unlockUserDingTalkSelfBinding", "summary": "解除“锁定自行绑定”", "responses": {"200": {"$ref": "#/components/responses/Ok"}}}},
-    "/dingtalk/settings": {"get": {"operationId": "getDingTalkSettings", "summary": "钉钉集成 › 应用配置（DT30）：CorpId、AgentId、AppKey、AppSecret 后 4 位（不回显）、能否读取已保存的 AppSecret、钉钉会话有效期、待绑定凭证有效期、每日代绑上限、接口超时、配置来源（deployment-config / admin）、服务能否保存密钥（是否配置 DSH_CREDENTIAL_MASTER_KEY）。仅平台管理员", "responses": {"200": {"$ref": "#/components/responses/Ok"}}}, "put": {"operationId": "saveDingTalkSettings", "summary": "保存钉钉应用配置：先用这组凭据向钉钉换取 access_token，失败返回 422 dingtalk_credentials_rejected 或 503 dingtalk_unavailable 且不保存；AppSecret 留空沿用已保存的值，更换 CorpId 或 AppKey 时必须填写（422 dingtalk_secret_required）；服务未配置凭据主密钥时不能保存 AppSecret（409 credential_master_key_missing）。AppSecret 加密保存，立即生效，写审计（不含密钥）。仅平台管理员", "requestBody": {"required": true, "content": {"application/json": {"schema": {"type": "object", "additionalProperties": false, "required": ["corpId", "agentId", "appKey"], "properties": {"corpId": {"type": "string", "maxLength": 64}, "agentId": {"type": "string", "maxLength": 64}, "appKey": {"type": "string", "maxLength": 128}, "appSecret": {"type": "string", "maxLength": 512, "writeOnly": true}, "sessionTtlSeconds": {"type": "integer", "minimum": 300, "maximum": 2592000}, "bindingTicketTtlSeconds": {"type": "integer", "minimum": 60, "maximum": 3600}, "adminDailyBindLimit": {"type": "integer", "minimum": 1, "maximum": 10000}, "timeoutMs": {"type": "integer", "minimum": 1000, "maximum": 60000}}}}}}, "responses": {"200": {"$ref": "#/components/responses/Ok"}}}, "delete": {"operationId": "clearDingTalkSettings", "summary": "清除钉钉应用配置：删除已加密的 AppSecret，免登、代绑与离职检查立即停用；已有绑定记录保留；部署配置不会自动重新生效。仅平台管理员", "responses": {"200": {"$ref": "#/components/responses/Ok"}}}},
-    "/dingtalk/overview": {"get": {"operationId": "getDingTalkIntegration", "summary": "“钉钉集成”页概况：是否配置、AgentId、公网员工端入口（https 的 DSH_WORK_WORKBENCH_ORIGINS）、最近一次连接检查、绑定人数（已绑定 / 本人 / 代绑 / 未绑定 / 已失效）、离职检查（最近一次结果、被暂停待确认的批次、连续 3 次失败超过 5% 的常驻提醒）。凭据不返回", "responses": {"200": {"$ref": "#/components/responses/Ok"}}}},
-    "/dingtalk/connection-check": {"post": {"operationId": "checkDingTalkConnection", "summary": "重新检查连接：凭据换取 access_token，并以不存在的手机号、userid 与根部门探测按手机号查成员、成员信息读与部门信息读权限；权限不足或通讯录范围不全显示为配置异常。不读取真实员工信息", "responses": {"200": {"$ref": "#/components/responses/Ok"}}}},
-    "/dingtalk/unbound": {"get": {"operationId": "listDingTalkUnbound", "summary": "未绑定名单：有效独立账号中没有有效绑定的员工（含已失效及原因、是否锁定）", "parameters": [{"name": "page", "in": "query", "schema": {"type": "integer", "minimum": 1}}, {"name": "page_size", "in": "query", "schema": {"type": "integer", "minimum": 10, "maximum": 100}}], "responses": {"200": {"$ref": "#/components/responses/Ok"}}}},
-    "/dingtalk/reminders": {"post": {"operationId": "remindDingTalkBinding", "summary": "提醒员工：给未绑定且未被锁定的员工登记站内通知 dingtalk_bind_reminder（同一员工每天最多一条）", "requestBody": {"required": true, "content": {"application/json": {"schema": {"type": "object", "additionalProperties": false, "properties": {"userIds": {"type": "array", "items": {"type": "string"}, "maxItems": 500}, "all": {"type": "boolean"}}}}}}, "responses": {"200": {"$ref": "#/components/responses/Ok"}}}},
-    "/dingtalk/departure-checks/{runId}/decision": {"parameters": [{"name": "runId", "in": "path", "required": true, "schema": {"type": "string"}}], "post": {"operationId": "decideDingTalkDepartureCheck", "summary": "判为离职的超过有效绑定 10% 而暂停的离职检查：confirm 使这些仍有效的绑定失效并撤销钉钉会话，dismiss 忽略本批", "requestBody": {"required": true, "content": {"application/json": {"schema": {"type": "object", "additionalProperties": false, "required": ["decision"], "properties": {"decision": {"type": "string", "enum": ["confirm", "dismiss"]}}}}}}, "responses": {"200": {"$ref": "#/components/responses/Ok"}}}},
+    "/organization/departments": {
+      "post": {
+        "operationId": "createDepartment",
+        "summary": "在上级部门下新建部门；同一上级下不能重名",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "parentId",
+                  "name"
+                ],
+                "properties": {
+                  "parentId": {
+                    "type": "string"
+                  },
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 60
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "403": {
+            "description": "仅平台管理员可修改组织架构"
+          },
+          "404": {
+            "description": "部门或成员关系不存在"
+          },
+          "409": {
+            "description": "违反部门约束（重名、移到自己下级之下、根部门、仍有成员或下级）"
+          },
+          "422": {
+            "description": "输入无效"
+          }
+        }
+      }
+    },
+    "/organization/departments/{departmentId}": {
+      "patch": {
+        "operationId": "updateDepartment",
+        "summary": "改名或移动部门（整棵子树随之移动）；不能移到自己或下级之下，根部门不能移动；改名同步更新以其为主部门的员工显示部门",
+        "parameters": [
+          {
+            "name": "departmentId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 60
+                  },
+                  "parentId": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "403": {
+            "description": "仅平台管理员可修改组织架构"
+          },
+          "404": {
+            "description": "部门或成员关系不存在"
+          },
+          "409": {
+            "description": "违反部门约束（重名、移到自己下级之下、根部门、仍有成员或下级）"
+          },
+          "422": {
+            "description": "输入无效"
+          }
+        }
+      },
+      "delete": {
+        "operationId": "removeDepartment",
+        "summary": "删除部门；有下级部门或成员时拒绝，根部门不能删除",
+        "parameters": [
+          {
+            "name": "departmentId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "403": {
+            "description": "仅平台管理员可修改组织架构"
+          },
+          "404": {
+            "description": "部门或成员关系不存在"
+          },
+          "409": {
+            "description": "违反部门约束（重名、移到自己下级之下、根部门、仍有成员或下级）"
+          },
+          "422": {
+            "description": "输入无效"
+          }
+        }
+      }
+    },
+    "/organization/departments/{departmentId}/reorder": {
+      "post": {
+        "operationId": "reorderDepartment",
+        "summary": "与相邻的同级部门交换顺序",
+        "parameters": [
+          {
+            "name": "departmentId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "direction"
+                ],
+                "properties": {
+                  "direction": {
+                    "type": "string",
+                    "enum": [
+                      "up",
+                      "down"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "403": {
+            "description": "仅平台管理员可修改组织架构"
+          },
+          "404": {
+            "description": "部门或成员关系不存在"
+          },
+          "409": {
+            "description": "违反部门约束（重名、移到自己下级之下、根部门、仍有成员或下级）"
+          },
+          "422": {
+            "description": "输入无效"
+          }
+        }
+      }
+    },
+    "/organization/departments/{departmentId}/grants": {
+      "post": {
+        "operationId": "grantDepartmentRole",
+        "summary": "把一个角色授给部门（默认包含所有下级部门），覆盖到的员工自动获得该角色；成员或部门变化时自动重算。管理类角色不能授给部门",
+        "parameters": [
+          {
+            "name": "departmentId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "roleId"
+                ],
+                "properties": {
+                  "roleId": {
+                    "type": "string"
+                  },
+                  "includeDescendants": {
+                    "type": "boolean",
+                    "default": true
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "403": {
+            "description": "仅平台管理员可修改组织架构"
+          },
+          "404": {
+            "description": "部门、角色或部门授权不存在"
+          },
+          "409": {
+            "description": "角色已停用、含管理类权限（admin:*、admin:write、admin:read、audit:read），或本部门已授予该角色"
+          },
+          "422": {
+            "description": "输入无效"
+          }
+        }
+      }
+    },
+    "/organization/grants/{grantId}": {
+      "delete": {
+        "operationId": "revokeDepartmentGrant",
+        "summary": "删除部门授权（含部门删除后失效的授权），覆盖员工随之失去这项来自部门的角色",
+        "parameters": [
+          {
+            "name": "grantId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "403": {
+            "description": "仅平台管理员可修改组织架构"
+          },
+          "404": {
+            "description": "部门、角色或部门授权不存在"
+          },
+          "409": {
+            "description": "状态冲突"
+          },
+          "422": {
+            "description": "输入无效"
+          }
+        }
+      }
+    },
+    "/organization/departments/{departmentId}/members": {
+      "post": {
+        "operationId": "addDepartmentMembers",
+        "summary": "把有效业务员工加入部门（可多选、幂等）；还没有主部门的员工以该部门为主部门",
+        "parameters": [
+          {
+            "name": "departmentId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "userIds"
+                ],
+                "properties": {
+                  "userIds": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 200,
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "403": {
+            "description": "仅平台管理员可修改组织架构"
+          },
+          "404": {
+            "description": "部门或成员关系不存在"
+          },
+          "409": {
+            "description": "违反部门约束（重名、移到自己下级之下、根部门、仍有成员或下级）"
+          },
+          "422": {
+            "description": "输入无效"
+          }
+        }
+      }
+    },
+    "/organization/departments/{departmentId}/members/{userId}": {
+      "delete": {
+        "operationId": "removeDepartmentMember",
+        "summary": "把员工移出部门；移出主部门且员工仍属于其他部门时必须指定新的主部门",
+        "parameters": [
+          {
+            "name": "departmentId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "userId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "new_primary_department_id",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "移出主部门时，从员工所属的其他部门中指定新的主部门"
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "403": {
+            "description": "仅平台管理员可修改组织架构"
+          },
+          "404": {
+            "description": "部门或成员关系不存在"
+          },
+          "409": {
+            "description": "违反部门约束（重名、移到自己下级之下、根部门、仍有成员或下级）"
+          },
+          "422": {
+            "description": "输入无效"
+          }
+        }
+      }
+    },
+    "/organization/departments/{departmentId}/members/{userId}/primary": {
+      "put": {
+        "operationId": "setPrimaryDepartment",
+        "summary": "把员工所属的这个部门设为主部门（只影响显示，不影响授权）",
+        "parameters": [
+          {
+            "name": "departmentId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "userId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "403": {
+            "description": "仅平台管理员可修改组织架构"
+          },
+          "404": {
+            "description": "部门或成员关系不存在"
+          },
+          "409": {
+            "description": "违反部门约束（重名、移到自己下级之下、根部门、仍有成员或下级）"
+          },
+          "422": {
+            "description": "输入无效"
+          }
+        }
+      }
+    },
+    "/identity/users/{userId}/dingtalk-binding": {
+      "parameters": [
+        {
+          "name": "userId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "get": {
+        "operationId": "getUserDingTalkBinding",
+        "summary": "员工详情 › 钉钉：绑定状态（已绑定 / 未绑定 / 已失效）、钉钉姓名与部门、绑定方式与代绑管理员、失效原因、是否锁定自行绑定。仅平台管理员",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          }
+        }
+      },
+      "delete": {
+        "operationId": "unbindUserDingTalk",
+        "summary": "管理员解绑：绑定置为失效、按 binding_id 撤销其钉钉会话、通知员工本人、写审计（同一事务）。lock_self_rebind=true 时锁定自行绑定，锁定期间员工在钉钉内登录不会重新绑定；员工未绑定时只锁定最近一条记录",
+        "parameters": [
+          {
+            "name": "lock_self_rebind",
+            "in": "query",
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          }
+        }
+      }
+    },
+    "/identity/users/{userId}/dingtalk-binding/preview": {
+      "parameters": [
+        {
+          "name": "userId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "post": {
+        "operationId": "previewUserDingTalkBinding",
+        "summary": "代绑预览：按员工在钉钉中使用的手机号查成员，返回钉钉姓名、部门（最多 2 个；读取失败为 null）、脱敏号码、与平台姓名是否一致、冲突员工，以及服务端保存、单次有效、5 分钟过期的确认凭证。手机号不保存，审计只记后 4 位与哈希。拒绝：管理类账号（admin:*、admin:write、admin:read、audit:read）、已绑定、停用账号、24 小时内代绑达到上限（钉钉集成 › 应用配置的“每日代绑上限”，默认 50）",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "mobile"
+                ],
+                "properties": {
+                  "mobile": {
+                    "type": "string",
+                    "description": "中国大陆 11 位手机号，可带 +86、空格或连字符"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          }
+        }
+      }
+    },
+    "/identity/users/{userId}/dingtalk-binding/confirm": {
+      "parameters": [
+        {
+          "name": "userId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "post": {
+        "operationId": "confirmUserDingTalkBinding",
+        "summary": "代绑确认：只接受确认凭证（固定目标员工、发起管理员、钉钉 userid 与所展示的姓名），不接受 userid。姓名不一致或部门无法读取时须 identityConfirmed=true；钉钉账号已绑定其他员工时须 rebind=true，原绑定失效、其钉钉会话撤销并通知原员工，与新绑定同一事务提交；绑定后通知员工本人并解除此前的锁定",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "confirmationToken"
+                ],
+                "properties": {
+                  "confirmationToken": {
+                    "type": "string"
+                  },
+                  "identityConfirmed": {
+                    "type": "boolean"
+                  },
+                  "rebind": {
+                    "type": "boolean"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          }
+        }
+      }
+    },
+    "/identity/users/{userId}/dingtalk-binding/unlock": {
+      "parameters": [
+        {
+          "name": "userId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "post": {
+        "operationId": "unlockUserDingTalkSelfBinding",
+        "summary": "解除“锁定自行绑定”",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          }
+        }
+      }
+    },
+    "/dingtalk/settings": {
+      "get": {
+        "operationId": "getDingTalkSettings",
+        "summary": "钉钉集成 › 应用配置（DT30）：CorpId、AgentId、AppKey、AppSecret 后 4 位（不回显）、能否读取已保存的 AppSecret、钉钉会话有效期、待绑定凭证有效期、每日代绑上限、接口超时、配置来源（deployment-config / admin）、服务能否保存密钥（是否配置 DSH_CREDENTIAL_MASTER_KEY）。仅平台管理员",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          }
+        }
+      },
+      "put": {
+        "operationId": "saveDingTalkSettings",
+        "summary": "保存钉钉应用配置：先用这组凭据向钉钉换取 access_token，失败返回 422 dingtalk_credentials_rejected 或 503 dingtalk_unavailable 且不保存；AppSecret 留空沿用已保存的值，更换 CorpId 或 AppKey 时必须填写（422 dingtalk_secret_required）；服务未配置凭据主密钥时不能保存 AppSecret（409 credential_master_key_missing）。AppSecret 加密保存，立即生效，写审计（不含密钥）。仅平台管理员",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "corpId",
+                  "agentId",
+                  "appKey"
+                ],
+                "properties": {
+                  "corpId": {
+                    "type": "string",
+                    "maxLength": 64
+                  },
+                  "agentId": {
+                    "type": "string",
+                    "maxLength": 64
+                  },
+                  "appKey": {
+                    "type": "string",
+                    "maxLength": 128
+                  },
+                  "appSecret": {
+                    "type": "string",
+                    "maxLength": 512,
+                    "writeOnly": true
+                  },
+                  "sessionTtlSeconds": {
+                    "type": "integer",
+                    "minimum": 300,
+                    "maximum": 2592000
+                  },
+                  "bindingTicketTtlSeconds": {
+                    "type": "integer",
+                    "minimum": 60,
+                    "maximum": 3600
+                  },
+                  "adminDailyBindLimit": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 10000
+                  },
+                  "timeoutMs": {
+                    "type": "integer",
+                    "minimum": 1000,
+                    "maximum": 60000
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          }
+        }
+      },
+      "delete": {
+        "operationId": "clearDingTalkSettings",
+        "summary": "清除钉钉应用配置：删除已加密的 AppSecret，免登、代绑与离职检查立即停用；已有绑定记录保留；部署配置不会自动重新生效。仅平台管理员",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          }
+        }
+      }
+    },
+    "/dingtalk/overview": {
+      "get": {
+        "operationId": "getDingTalkIntegration",
+        "summary": "“钉钉集成”页概况：是否配置、AgentId、公网员工端入口（https 的 DSH_WORK_WORKBENCH_ORIGINS）、最近一次连接检查、绑定人数（已绑定 / 本人 / 代绑 / 未绑定 / 已失效）、离职检查（最近一次结果、被暂停待确认的批次、连续 3 次失败超过 5% 的常驻提醒）。凭据不返回",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          }
+        }
+      }
+    },
+    "/dingtalk/connection-check": {
+      "post": {
+        "operationId": "checkDingTalkConnection",
+        "summary": "重新检查连接：凭据换取 access_token，并以不存在的手机号、userid 与根部门探测按手机号查成员、成员信息读与部门信息读权限；权限不足或通讯录范围不全显示为配置异常。不读取真实员工信息",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          }
+        }
+      }
+    },
+    "/dingtalk/unbound": {
+      "get": {
+        "operationId": "listDingTalkUnbound",
+        "summary": "未绑定名单：有效独立账号中没有有效绑定的员工（含已失效及原因、是否锁定）",
+        "parameters": [
+          {
+            "name": "page",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "name": "page_size",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 10,
+              "maximum": 100
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          }
+        }
+      }
+    },
+    "/dingtalk/reminders": {
+      "post": {
+        "operationId": "remindDingTalkBinding",
+        "summary": "提醒员工：给未绑定且未被锁定的员工登记站内通知 dingtalk_bind_reminder（同一员工每天最多一条）",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "userIds": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "maxItems": 500
+                  },
+                  "all": {
+                    "type": "boolean"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          }
+        }
+      }
+    },
+    "/dingtalk/departure-checks/{runId}/decision": {
+      "parameters": [
+        {
+          "name": "runId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "post": {
+        "operationId": "decideDingTalkDepartureCheck",
+        "summary": "判为离职的超过有效绑定 10% 而暂停的离职检查：confirm 使这些仍有效的绑定失效并撤销钉钉会话，dismiss 忽略本批",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "decision"
+                ],
+                "properties": {
+                  "decision": {
+                    "type": "string",
+                    "enum": [
+                      "confirm",
+                      "dismiss"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          }
+        }
+      }
+    },
     "/identity/users": {
       "get": {
         "operationId": "listIdentityUsers",
@@ -1691,7 +3382,14 @@
             "name": "dingtalk",
             "in": "query",
             "description": "按钉钉绑定状态筛选（钉钉接入方案 DT-S1）",
-            "schema": { "type": "string", "enum": ["bound", "unbound", "invalid"] }
+            "schema": {
+              "type": "string",
+              "enum": [
+                "bound",
+                "unbound",
+                "invalid"
+              ]
+            }
           },
           {
             "name": "query",
@@ -2634,17 +4332,38 @@
         "operationId": "confirmAdminAssistantTaskProposal",
         "summary": "确认调用提案中锁定的 DSH 专用助手；此步骤不直接执行平台写入",
         "responses": {
-          "200": { "$ref": "#/components/responses/Ok" },
-          "403": { "description": "没有管理写权限或不拥有此对话" },
-          "409": { "description": "提案状态已变化" },
-          "503": { "description": "未配置数据库或 DSH 管理助手不可用" }
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "403": {
+            "description": "没有管理写权限或不拥有此对话"
+          },
+          "409": {
+            "description": "提案状态已变化"
+          },
+          "503": {
+            "description": "未配置数据库或 DSH 管理助手不可用"
+          }
         },
         "parameters": [
-          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
         ],
         "requestBody": {
           "required": true,
-          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AdminTaskProposalConfirmation" } } }
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdminTaskProposalConfirmation"
+              }
+            }
+          }
         }
       }
     },
@@ -2653,11 +4372,22 @@
         "operationId": "cancelAdminAssistantTaskProposal",
         "summary": "取消尚未确认的专用助手调用提案",
         "responses": {
-          "200": { "$ref": "#/components/responses/Ok" },
-          "403": { "description": "没有管理写权限或不拥有此对话" }
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "403": {
+            "description": "没有管理写权限或不拥有此对话"
+          }
         },
         "parameters": [
-          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
         ]
       }
     },
@@ -2667,16 +4397,35 @@
         "operationId": "confirmAdminAssistantActionPlan",
         "summary": "确认并执行专用助手生成的精确 Agent 或 Runtime 操作计划",
         "responses": {
-          "200": { "$ref": "#/components/responses/Ok" },
-          "403": { "description": "没有管理写权限或不拥有此对话" },
-          "409": { "description": "目标状态或计划状态已变化" }
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "403": {
+            "description": "没有管理写权限或不拥有此对话"
+          },
+          "409": {
+            "description": "目标状态或计划状态已变化"
+          }
         },
         "parameters": [
-          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
         ],
         "requestBody": {
           "required": true,
-          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AdminActionPlanConfirmation" } } }
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdminActionPlanConfirmation"
+              }
+            }
+          }
         }
       }
     },
@@ -2685,11 +4434,22 @@
         "operationId": "cancelAdminAssistantActionPlan",
         "summary": "取消尚未执行的专用助手操作计划",
         "responses": {
-          "200": { "$ref": "#/components/responses/Ok" },
-          "403": { "description": "没有管理写权限或不拥有此对话" }
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "403": {
+            "description": "没有管理写权限或不拥有此对话"
+          }
         },
         "parameters": [
-          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
         ]
       }
     },
@@ -2790,19 +4550,39 @@
         "summary": "核对外部系统后收敛 Task Operation 状态",
         "description": "仅平台管理员可用。用于把 accepted 或 unknown 操作收敛为 completed/failed；receipt 必须来自权威外部系统核对结果。",
         "parameters": [
-          { "$ref": "#/components/parameters/TaskId" },
-          { "$ref": "#/components/parameters/OperationId" }
+          {
+            "$ref": "#/components/parameters/TaskId"
+          },
+          {
+            "$ref": "#/components/parameters/OperationId"
+          }
         ],
         "requestBody": {
           "required": true,
-          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ResolveTaskOperationInput" } } }
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResolveTaskOperationInput"
+              }
+            }
+          }
         },
         "responses": {
-          "200": { "$ref": "#/components/responses/Ok" },
-          "401": { "$ref": "#/components/responses/Error" },
-          "403": { "$ref": "#/components/responses/Error" },
-          "409": { "$ref": "#/components/responses/Error" },
-          "422": { "$ref": "#/components/responses/Error" }
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          }
         }
       }
     },
@@ -3574,11 +5354,233 @@
           }
         ]
       }
+    },
+    "/data-protection/overview": {
+      "get": {
+        "operationId": "getDataProtectionOverview",
+        "summary": "数据防护命中概况：只有类别与次数，不含原值",
+        "parameters": [
+          {
+            "name": "range",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "today",
+                "7d",
+                "30d"
+              ]
+            }
+          },
+          {
+            "name": "category",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "secret",
+                "personal",
+                "term"
+              ]
+            }
+          },
+          {
+            "name": "action",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "masked",
+                "blocked"
+              ]
+            }
+          },
+          {
+            "name": "employee",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功"
+          }
+        }
+      }
+    },
+    "/data-protection/records": {
+      "get": {
+        "operationId": "listDataProtectionRecords",
+        "summary": "数据防护命中明细（被遮盖的请求与被拦截的消息），不含原值",
+        "parameters": [
+          {
+            "name": "range",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "today",
+                "7d",
+                "30d"
+              ]
+            }
+          },
+          {
+            "name": "category",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "secret",
+                "personal",
+                "term"
+              ]
+            }
+          },
+          {
+            "name": "action",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "masked",
+                "blocked"
+              ]
+            }
+          },
+          {
+            "name": "employee",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "page_size",
+            "in": "query",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功"
+          }
+        }
+      }
+    },
+    "/data-protection/preview": {
+      "post": {
+        "operationId": "previewDataProtection",
+        "summary": "用真实规则和当前词表检测一段文本，只返回给页面，不写审计",
+        "responses": {
+          "200": {
+            "description": "成功"
+          }
+        }
+      }
+    },
+    "/data-protection/terms": {
+      "get": {
+        "operationId": "listDataProtectionTerms",
+        "summary": "保密词表（需要 data-protection:terms 权限）",
+        "responses": {
+          "200": {
+            "description": "成功"
+          }
+        }
+      },
+      "post": {
+        "operationId": "addDataProtectionTerms",
+        "summary": "添加或导入保密词条，重复项跳过",
+        "responses": {
+          "200": {
+            "description": "成功"
+          }
+        }
+      }
+    },
+    "/data-protection/terms/{id}": {
+      "delete": {
+        "operationId": "removeDataProtectionTerm",
+        "summary": "删除保密词条",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功"
+          }
+        }
+      }
+    },
+    "/data-protection/allowlist": {
+      "get": {
+        "operationId": "listDataProtectionAllowlist",
+        "summary": "白名单（需要 data-protection:terms 权限）",
+        "responses": {
+          "200": {
+            "description": "成功"
+          }
+        }
+      },
+      "post": {
+        "operationId": "addDataProtectionAllow",
+        "summary": "添加白名单",
+        "responses": {
+          "200": {
+            "description": "成功"
+          }
+        }
+      }
+    },
+    "/data-protection/allowlist/{id}": {
+      "delete": {
+        "operationId": "removeDataProtectionAllow",
+        "summary": "删除白名单",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功"
+          }
+        }
+      }
     }
   },
   "components": {
     "securitySchemes": {
-      "localAdminSession": {"type": "apiKey", "in": "cookie", "name": "dsh_work_local_admin_session", "description": "独立账号登录签发；生产使用 __Host- 前缀，与 OIDC Session 分离。"},
+      "localAdminSession": {
+        "type": "apiKey",
+        "in": "cookie",
+        "name": "dsh_work_local_admin_session",
+        "description": "独立账号登录签发；生产使用 __Host- 前缀，与 OIDC Session 分离。"
+      },
       "adminSession": {
         "type": "apiKey",
         "in": "cookie",
@@ -3619,8 +5621,22 @@
           "type": "string"
         }
       },
-      "TaskId": { "name": "taskId", "in": "path", "required": true, "schema": { "type": "string" } },
-      "OperationId": { "name": "operationId", "in": "path", "required": true, "schema": { "type": "string" } }
+      "TaskId": {
+        "name": "taskId",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "string"
+        }
+      },
+      "OperationId": {
+        "name": "operationId",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "string"
+        }
+      }
     },
     "requestBodies": {
       "Agent": {
@@ -3677,8 +5693,8 @@
               "lastSuccessAt",
               "lastFailureAt",
               "lastFailureReason",
-                "credentialReadable"
-              ],
+              "credentialReadable"
+            ],
             "properties": {
               "configured": {
                 "type": "boolean"
@@ -3735,10 +5751,10 @@
                   "null"
                 ]
               },
-                "credentialReadable": {
-                  "type": "boolean",
-                  "description": "启用且能读出 API Key 时为 true；为 false 时检索与员工端实际不可用。"
-                }
+              "credentialReadable": {
+                "type": "boolean",
+                "description": "启用且能读出 API Key 时为 true；为 false 时检索与员工端实际不可用。"
+              }
             }
           },
           "health": {
@@ -3884,23 +5900,174 @@
       },
       "ToolDefinition": {
         "type": "object",
-        "required": ["id", "allowedRoleIds", "allowedRoles", "dataScopes"],
+        "required": [
+          "id",
+          "allowedRoleIds",
+          "allowedRoles",
+          "dataScopes"
+        ],
         "properties": {
-          "id": { "type": "string" },
-          "version": { "type": "string" },
-          "allowedRoleIds": { "type": "array", "items": { "type": "string" }, "description": "稳定角色 ID，用于与执行身份的 roleIds 比较" },
-          "allowedRoles": { "type": "array", "items": { "type": "string" }, "description": "角色展示名称，不用于授权判断" },
-          "dataScopes": { "type": "array", "items": { "type": "string" } },
-          "agentRunLocalDefault": { "type": "boolean", "description": "是否为当前 Run 隔离范围内且保持默认策略的基础工具" }
+          "id": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          },
+          "allowedRoleIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "稳定角色 ID，用于与执行身份的 roleIds 比较"
+          },
+          "allowedRoles": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "角色展示名称，不用于授权判断"
+          },
+          "dataScopes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "agentRunLocalDefault": {
+            "type": "boolean",
+            "description": "是否为当前 Run 隔离范围内且保持默认策略的基础工具"
+          }
         }
       },
-      "AgentRoutineSchedule": { "oneOf": [
-        { "type": "object", "required": ["kind", "timezone"], "properties": { "kind": { "const": "manual" }, "timezone": { "type": "string" } } },
-        { "type": "object", "required": ["kind", "timezone", "timeOfDay"], "properties": { "kind": { "enum": ["daily", "weekly"] }, "timezone": { "type": "string" }, "timeOfDay": { "type": "string" }, "weekdays": { "type": "array", "items": { "type": "integer", "minimum": 0, "maximum": 6 } } } },
-        { "type": "object", "required": ["kind", "timezone", "eventType"], "properties": { "kind": { "const": "event" }, "timezone": { "type": "string" }, "eventType": { "type": "string" } } }
-      ] },
-      "AgentRoutineInput": { "type": "object", "required": ["prompt"], "properties": { "prompt": { "type": "string", "minLength": 1, "maxLength": 20000 }, "budget": { "type": "object", "properties": { "timeoutSeconds": { "type": "integer", "minimum": 1 }, "maxToolCalls": { "type": "integer", "minimum": 1 }, "maxOutputBytes": { "type": "integer", "minimum": 1 } } } } },
-      "AgentRoutineDraft": { "type": "object", "required": ["name", "agentVersionId", "workspaceId", "recipientUserId", "schedule", "inputTemplate"], "properties": { "name": { "type": "string" }, "agentVersionId": { "type": "string" }, "workspaceId": { "type": "string" }, "recipientUserId": { "type": "string" }, "schedule": { "$ref": "#/components/schemas/AgentRoutineSchedule" }, "inputTemplate": { "$ref": "#/components/schemas/AgentRoutineInput" } } },
+      "AgentRoutineSchedule": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "kind",
+              "timezone"
+            ],
+            "properties": {
+              "kind": {
+                "const": "manual"
+              },
+              "timezone": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "kind",
+              "timezone",
+              "timeOfDay"
+            ],
+            "properties": {
+              "kind": {
+                "enum": [
+                  "daily",
+                  "weekly"
+                ]
+              },
+              "timezone": {
+                "type": "string"
+              },
+              "timeOfDay": {
+                "type": "string"
+              },
+              "weekdays": {
+                "type": "array",
+                "items": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 6
+                }
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "kind",
+              "timezone",
+              "eventType"
+            ],
+            "properties": {
+              "kind": {
+                "const": "event"
+              },
+              "timezone": {
+                "type": "string"
+              },
+              "eventType": {
+                "type": "string"
+              }
+            }
+          }
+        ]
+      },
+      "AgentRoutineInput": {
+        "type": "object",
+        "required": [
+          "prompt"
+        ],
+        "properties": {
+          "prompt": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 20000
+          },
+          "budget": {
+            "type": "object",
+            "properties": {
+              "timeoutSeconds": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "maxToolCalls": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "maxOutputBytes": {
+                "type": "integer",
+                "minimum": 1
+              }
+            }
+          }
+        }
+      },
+      "AgentRoutineDraft": {
+        "type": "object",
+        "required": [
+          "name",
+          "agentVersionId",
+          "workspaceId",
+          "recipientUserId",
+          "schedule",
+          "inputTemplate"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "agentVersionId": {
+            "type": "string"
+          },
+          "workspaceId": {
+            "type": "string"
+          },
+          "recipientUserId": {
+            "type": "string"
+          },
+          "schedule": {
+            "$ref": "#/components/schemas/AgentRoutineSchedule"
+          },
+          "inputTemplate": {
+            "$ref": "#/components/schemas/AgentRoutineInput"
+          }
+        }
+      },
       "SkillTestScenario": {
         "type": "object",
         "additionalProperties": false,
@@ -4052,18 +6219,37 @@
             "maxLength": 20000
           },
           "workInstructions": {
-            "type": ["string", "null"],
+            "type": [
+              "string",
+              "null"
+            ],
             "description": "可选 AGENTS.md 工作规程正文；空值表示不启用",
             "maxLength": 20000
           },
           "mcpScope": {
             "type": "object",
             "description": "Agent Version 的 MCP 使用范围；端点与凭据由 Connector 管理。省略时默认为 none。",
-            "required": ["mode", "connectorIds"],
+            "required": [
+              "mode",
+              "connectorIds"
+            ],
             "additionalProperties": false,
             "properties": {
-              "mode": { "type": "string", "enum": ["selected", "none"] },
-              "connectorIds": { "type": "array", "maxItems": 20, "uniqueItems": true, "items": { "type": "string" } }
+              "mode": {
+                "type": "string",
+                "enum": [
+                  "selected",
+                  "none"
+                ]
+              },
+              "connectorIds": {
+                "type": "array",
+                "maxItems": 20,
+                "uniqueItems": true,
+                "items": {
+                  "type": "string"
+                }
+              }
             }
           },
           "skills": {
@@ -4125,9 +6311,30 @@
                 "type": "string",
                 "pattern": "^[a-z][a-z0-9-]{2,47}$"
               },
-              "visibleRoleIds": { "type": "array", "uniqueItems": true, "items": { "type": "string" }, "description": "初始可见角色（选填）；之后经 /agents/{agentId}/access 调整" },
-              "executionRoleIds": { "type": "array", "uniqueItems": true, "items": { "type": "string" }, "description": "初始岗位角色（选填）" },
-              "executionDataScopes": { "type": "array", "uniqueItems": true, "items": { "type": "string" }, "description": "初始数据范围授权（选填）" }
+              "visibleRoleIds": {
+                "type": "array",
+                "uniqueItems": true,
+                "items": {
+                  "type": "string"
+                },
+                "description": "初始可见角色（选填）；之后经 /agents/{agentId}/access 调整"
+              },
+              "executionRoleIds": {
+                "type": "array",
+                "uniqueItems": true,
+                "items": {
+                  "type": "string"
+                },
+                "description": "初始岗位角色（选填）"
+              },
+              "executionDataScopes": {
+                "type": "array",
+                "uniqueItems": true,
+                "items": {
+                  "type": "string"
+                },
+                "description": "初始数据范围授权（选填）"
+              }
             }
           }
         ]
@@ -4356,7 +6563,9 @@
       },
       "AdminTaskProposalConfirmation": {
         "type": "object",
-        "required": ["proposalSha256"],
+        "required": [
+          "proposalSha256"
+        ],
         "additionalProperties": false,
         "properties": {
           "proposalSha256": {
@@ -4366,10 +6575,20 @@
           }
         }
       },
-      "AdminActionConfirmationMode": {"type": "string", "enum": ["single", "delegated"], "description": "响应 actions[].confirmationMode 的只读增量字段；缺失表示旧 delegated 计划。不可用作请求中的风险声明。", "readOnly": true},
+      "AdminActionConfirmationMode": {
+        "type": "string",
+        "enum": [
+          "single",
+          "delegated"
+        ],
+        "description": "响应 actions[].confirmationMode 的只读增量字段；缺失表示旧 delegated 计划。不可用作请求中的风险声明。",
+        "readOnly": true
+      },
       "AdminActionPlanConfirmation": {
         "type": "object",
-        "required": ["planSha256"],
+        "required": [
+          "planSha256"
+        ],
         "additionalProperties": false,
         "properties": {
           "planSha256": {
@@ -4588,18 +6807,64 @@
             "type": "array",
             "items": {
               "type": "object",
-              "required": ["id", "runId", "kind", "assistantName", "purpose", "request", "impact", "proposalSha256", "status"],
+              "required": [
+                "id",
+                "runId",
+                "kind",
+                "assistantName",
+                "purpose",
+                "request",
+                "impact",
+                "proposalSha256",
+                "status"
+              ],
               "properties": {
-                "id": { "type": "string" },
-                "runId": { "type": "string" },
-                "kind": { "enum": ["skill-install", "agent-management", "platform-operations"] },
-                "assistantName": { "type": "string" },
-                "purpose": { "enum": ["admin-skill-install", "admin-agent-manage", "admin-platform-operations"] },
-                "request": { "type": "string" },
-                "impact": { "type": "string" },
-                "proposalSha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
-                "status": { "enum": ["pending", "confirmed", "cancelled"] },
-                "delegatedRunId": { "type": ["string", "null"] }
+                "id": {
+                  "type": "string"
+                },
+                "runId": {
+                  "type": "string"
+                },
+                "kind": {
+                  "enum": [
+                    "skill-install",
+                    "agent-management",
+                    "platform-operations"
+                  ]
+                },
+                "assistantName": {
+                  "type": "string"
+                },
+                "purpose": {
+                  "enum": [
+                    "admin-skill-install",
+                    "admin-agent-manage",
+                    "admin-platform-operations"
+                  ]
+                },
+                "request": {
+                  "type": "string"
+                },
+                "impact": {
+                  "type": "string"
+                },
+                "proposalSha256": {
+                  "type": "string",
+                  "pattern": "^[a-f0-9]{64}$"
+                },
+                "status": {
+                  "enum": [
+                    "pending",
+                    "confirmed",
+                    "cancelled"
+                  ]
+                },
+                "delegatedRunId": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
               }
             }
           },
@@ -4607,17 +6872,58 @@
             "type": "array",
             "items": {
               "type": "object",
-              "required": ["id", "runId", "actionType", "summary", "before", "after", "planSha256", "status"],
+              "required": [
+                "id",
+                "runId",
+                "actionType",
+                "summary",
+                "before",
+                "after",
+                "planSha256",
+                "status"
+              ],
               "properties": {
-                "id": { "type": "string" },
-                "runId": { "type": "string" },
-                "actionType": { "enum": ["agent-update-draft", "agent-set-status", "runtime-update-configuration"] },
-                "summary": { "type": "string" },
-                "before": { "type": "object" },
-                "after": { "type": "object" },
-                "planSha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
-                "status": { "enum": ["pending", "executing", "executed", "cancelled", "failed"] },
-                "resultSummary": { "type": ["string", "null"] }
+                "id": {
+                  "type": "string"
+                },
+                "runId": {
+                  "type": "string"
+                },
+                "actionType": {
+                  "enum": [
+                    "agent-update-draft",
+                    "agent-set-status",
+                    "runtime-update-configuration"
+                  ]
+                },
+                "summary": {
+                  "type": "string"
+                },
+                "before": {
+                  "type": "object"
+                },
+                "after": {
+                  "type": "object"
+                },
+                "planSha256": {
+                  "type": "string",
+                  "pattern": "^[a-f0-9]{64}$"
+                },
+                "status": {
+                  "enum": [
+                    "pending",
+                    "executing",
+                    "executed",
+                    "cancelled",
+                    "failed"
+                  ]
+                },
+                "resultSummary": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
               }
             }
           }
@@ -4626,17 +6932,54 @@
       "ResolveTaskOperationInput": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["status", "receipt"],
+        "required": [
+          "status",
+          "receipt"
+        ],
         "properties": {
-          "status": { "type": "string", "enum": ["completed", "failed"] },
-          "receipt": { "type": "object", "additionalProperties": true },
-          "errorCode": { "type": "string", "minLength": 1, "description": "status=failed 时必填；completed 时禁止。" }
+          "status": {
+            "type": "string",
+            "enum": [
+              "completed",
+              "failed"
+            ]
+          },
+          "receipt": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "errorCode": {
+            "type": "string",
+            "minLength": 1,
+            "description": "status=failed 时必填；completed 时禁止。"
+          }
         },
-        "allOf": [{
-          "if": { "properties": { "status": { "const": "failed" } }, "required": ["status"] },
-          "then": { "required": ["errorCode"] },
-          "else": { "not": { "required": ["errorCode"] } }
-        }]
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "status": {
+                  "const": "failed"
+                }
+              },
+              "required": [
+                "status"
+              ]
+            },
+            "then": {
+              "required": [
+                "errorCode"
+              ]
+            },
+            "else": {
+              "not": {
+                "required": [
+                  "errorCode"
+                ]
+              }
+            }
+          }
+        ]
       }
     }
   },

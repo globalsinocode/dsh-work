@@ -8,7 +8,7 @@ export interface DataProtectionTerm {
   wholeWord: boolean
 }
 
-/** 策略中唯一可变的部分（D11）：企业词表与白名单，网关按请求时的当前值处理。 */
+/** 策略中唯一可变的部分（D11）：保密词表与白名单，网关按请求时的当前值处理。 */
 export interface DataProtectionPolicy {
   terms: readonly DataProtectionTerm[]
   /** 整值匹配，不区分大小写。 */

@@ -9,7 +9,7 @@ const maxNameLength = 60
 const maxMembersPerRequest = 200
 
 /** 管理类权限：带任一权限的角色不能授给部门（方案 OD8），只能单独授给个人。 */
-export const DEPARTMENT_FORBIDDEN_PERMISSIONS = ['admin:*', 'admin:write', 'admin:read', 'audit:read'] as const
+export const DEPARTMENT_FORBIDDEN_PERMISSIONS = ['admin:*', 'admin:write', 'admin:read', 'audit:read', 'data-protection:terms'] as const
 
 export interface OrganizationDepartment {
   id: string

@@ -368,6 +368,7 @@ test('admin API read permissions are enforced per route', () => {
 test('business permissions remain local and are not AI Hub application permissions', () => {
   assert.deepEqual(Object.values(LOCAL_PERMISSIONS), [
     'workbench:use', 'workbench:manage', 'admin:*', 'admin:read', 'admin:write', 'audit:read',
+    'data-protection:terms',
     'knowledge:view', 'knowledge:docs', 'knowledge:bases',
   ])
   assert.equal(Object.values(LOCAL_PERMISSIONS).some(permission => permission.startsWith('dsh_work.')), false)

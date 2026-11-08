@@ -129,6 +129,12 @@ const router = createRouter({
       meta: { title: '模型用量', requiresAdmin: true, requiredPermission: 'adminRead' },
     },
     {
+      path: '/data-protection',
+      name: 'data-protection',
+      component: () => import('@/views/DataProtectionView.vue'),
+      meta: { title: '数据防护', subtitle: '发往外部厂商的内容按规则遮盖，员工消息含密钥时不发送', requiresAdmin: true, requiredPermission: 'adminRead' },
+    },
+    {
       path: '/runtimes',
       name: 'runtimes',
       component: () => import('@/views/RuntimeManagementView.vue'),

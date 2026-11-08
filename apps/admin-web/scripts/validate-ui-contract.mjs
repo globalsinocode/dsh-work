@@ -208,6 +208,13 @@ requireFragments('src/views/ModelUsageView.vue', [
   'data-action="view-model-usage"',
   '执行用量详情',
 ])
+requireFragments('src/views/DataProtectionView.vue', [
+  'ops-page',
+  'el-alert v-if="error"',
+  'aria-label="时间范围"',
+  '命中明细',
+  '没有查看权限',
+])
 requireFragments('src/views/ModelGovernanceView.vue', [
   'ops-page',
   'class="data-table"',

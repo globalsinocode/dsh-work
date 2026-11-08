@@ -23,6 +23,7 @@ import {
   SwitchButton,
   Tickets,
   UserFilled,
+  Lock,
 } from '@element-plus/icons-vue'
 
 import { AppLogo } from '@dsh-work/ui-core'
@@ -111,6 +112,7 @@ const navigationGroups: Array<{ label: string; items: NavigationItem[] }> = [
     items: [
       { label: 'Runtimes', path: '/runtimes', icon: Cpu, permission: 'admin' },
       { label: '动作审批', path: '/approvals', icon: CircleCheck, permission: 'admin' },
+      { label: '数据防护', path: '/data-protection', icon: Lock, permission: 'admin' },
       { label: '审计记录', path: '/audit', icon: Tickets, permission: 'audit' },
       { label: '系统健康', path: '/health', icon: Monitor, permission: 'admin' },
     ],

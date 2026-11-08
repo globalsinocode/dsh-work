@@ -29,6 +29,8 @@ import { MemoryKnowledgeAdminStore } from './memory-knowledge-admin.ts'
 import { MemoryWorkspaceTimeline } from './memory-workspace-timeline.ts'
 import { registerAdminRoutes } from './admin-routes.ts'
 import { registerModelUsageRoutes } from '../../http/admin/model-usage-routes.ts'
+import { registerDataProtectionRoutes } from '../../http/admin/data-protection-routes.ts'
+import { SmokeDataProtectionService } from './data-protection-service.ts'
 import { SmokeModelUsageService } from './model-usage-service.ts'
 import { registerSmokeProjectRoutes } from './project-routes.ts'
 import { SmokeRepository } from './smoke-repository.ts'
@@ -69,6 +71,7 @@ export function createSmokeRouter() {
   const modelUsage = new SmokeModelUsageService()
   registerAdminRoutes(router, new AdminQueryService(repository, modelUsage))
   registerModelUsageRoutes(router, modelUsage, 'prototype-memory')
+  registerDataProtectionRoutes(router, new SmokeDataProtectionService(), 'prototype-memory')
   registerModelGovernanceRoutes(router, new ModelGovernanceService(new MemoryModelGovernanceRepository()))
   registerOrganizationRoutes(router, new MemoryOrganizationStore(), 'prototype-memory')
   registerKnowledgeAdminRoutes(router, new MemoryKnowledgeAdminStore(), 'prototype-memory')

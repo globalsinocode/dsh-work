@@ -44,6 +44,12 @@ import type {
   ListPage,
   LocalPermissionDefinition,
   OrganizationSnapshot,
+  DataProtectionAllowRecord,
+  DataProtectionFilter,
+  DataProtectionOverview,
+  DataProtectionPreview,
+  DataProtectionRecordPage,
+  DataProtectionTermRecord,
   ModelUsageBreakdownRow,
   ModelUsageDimension,
   ModelUsageExecution,
@@ -385,6 +391,22 @@ export const adminApi = {
   getRunOperations: (runId: string) => request<AuditEvent[]>(`/operations/runs/${encodeURIComponent(runId)}`),
   getHealth: () => request<HealthComponent[]>('/health'),
   getUsage: () => request<UsagePoint[]>('/usage'),
+  getDataProtectionOverview: (filter: DataProtectionFilter) =>
+    request<DataProtectionOverview>(`/data-protection/overview${listQuery({ ...filter })}`),
+  getDataProtectionRecords: (filter: DataProtectionFilter, page: number, pageSize: number) =>
+    request<DataProtectionRecordPage>(`/data-protection/records${listQuery({ ...filter, page, pageSize })}`),
+  previewDataProtection: (text: string) =>
+    request<DataProtectionPreview>('/data-protection/preview', { method: 'POST', body: JSON.stringify({ text }) }),
+  getDataProtectionTerms: () => request<DataProtectionTermRecord[]>('/data-protection/terms'),
+  addDataProtectionTerms: (terms: { value: string; caseSensitive: boolean; wholeWord: boolean }[]) =>
+    request<{ added: number; skipped: number }>('/data-protection/terms', { method: 'POST', body: JSON.stringify({ terms }) }),
+  removeDataProtectionTerm: (id: string) =>
+    request<{ removed: true }>(`/data-protection/terms/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  getDataProtectionAllowlist: () => request<DataProtectionAllowRecord[]>('/data-protection/allowlist'),
+  addDataProtectionAllow: (value: string) =>
+    request<{ added: boolean }>('/data-protection/allowlist', { method: 'POST', body: JSON.stringify({ value }) }),
+  removeDataProtectionAllow: (id: string) =>
+    request<{ removed: true }>(`/data-protection/allowlist/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   getModelUsageOverview: (filter: ModelUsageFilter) =>
     request<ModelUsageOverview>(`/model-usage/overview${listQuery({ ...filter })}`),
   getModelUsageBreakdown: (filter: ModelUsageFilter, dimension: ModelUsageDimension) =>

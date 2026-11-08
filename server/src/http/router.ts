@@ -302,7 +302,7 @@ export function assertApiRouteAccess(
   }
 }
 
-export async function readJsonBody<T>(request: IncomingMessage): Promise<T> {
+export async function readJsonBody<T>(request: IncomingMessage, limitBytes = 1024 * 1024): Promise<T> {
   // Collect bytes and decode once: decoding each chunk separately corrupts a
   // multi-byte UTF-8 character (for example Chinese text) split across chunks.
   const chunks: Buffer[] = []
@@ -310,7 +310,7 @@ export async function readJsonBody<T>(request: IncomingMessage): Promise<T> {
   for await (const chunk of request) {
     const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk))
     size += bytes.length
-    if (size > 1024 * 1024) throw invalidRequest('请求体超过 1 MB 限制')
+    if (size > limitBytes) throw invalidRequest(`请求体超过 ${Math.floor(limitBytes / (1024 * 1024))} MB 限制`)
     chunks.push(bytes)
   }
   const body = Buffer.concat(chunks, size).toString('utf8')

@@ -43,6 +43,7 @@ export const useAuthStore = defineStore('admin-auth', () => {
     'admin:write',
   ))
   const canManageIdentity = computed(() => permissions.value.includes('admin:*'))
+  const canAccessDataProtectionTerms = computed(() => hasPermission(permissions.value, 'data-protection:terms'))
   const identityAdministrationAvailable = computed(() => (
     identityProvider.value === 'ai-hub-oidc' || identityProvider.value === 'local-password'
   ))
@@ -111,6 +112,7 @@ export const useAuthStore = defineStore('admin-auth', () => {
     canReadAudit,
     canManage,
     canManageIdentity,
+    canAccessDataProtectionTerms,
     identityAdministrationAvailable,
     isAuditor,
     initialized,

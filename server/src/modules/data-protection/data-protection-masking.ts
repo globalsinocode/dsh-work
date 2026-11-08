@@ -111,11 +111,12 @@ export function maskTexts(input: readonly string[], options: MaskOptions & { con
 
 /**
  * 输入预检（方案 5.6.1、D10）：只查员工本条消息正文中的密钥。识别异常抛出
- * DataProtectionUnavailableError，调用方不创建 Run。返回命中的不同取值个数，不返回取值本身。
+ * DataProtectionUnavailableError，调用方不创建 Run。返回命中的出现次数，不返回取值本身。
  */
 export function inspectMessageForSecrets(text: string, policy: DataProtectionPolicy): { secretCount: number } {
   try {
-    return { secretCount: detectSecrets(text, policy).length }
+    // 按出现次数计，与网关审计的口径一致。
+    return { secretCount: detectSecrets(text, policy).reduce((total, { value }) => total + text.split(value).length - 1, 0) }
   } catch (error) {
     throw new DataProtectionUnavailableError(`数据防护识别失败：${error instanceof Error ? error.name : 'unknown'}`)
   }
