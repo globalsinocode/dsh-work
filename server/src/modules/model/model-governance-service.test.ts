@@ -134,3 +134,30 @@ test('model keys follow the vendor model id: dots, underscores, slashes and uppe
     )
   }
 })
+
+test('厂商模型目录：只对已录入平台密钥的 Provider 开放，并过滤不合规的 id', async () => {
+  const calls: Array<{ credentialRefId: string; baseUrl: string }> = []
+  const catalog = { list: async (input: { tenantId: string; credentialRefId: string; baseUrl: string }) => {
+    calls.push(input)
+    return ['qwen3.8-flash', 'bad id with space', 'qwen-max']
+  } }
+  const service = new ModelGovernanceService(new MemoryModelGovernanceRepository(), undefined, catalog)
+  const legacy = (await service.listProviders())[0]!
+  await assert.rejects(service.listProviderModelCatalog({ providerId: legacy.id }), /尚未录入 API Key/)
+  await assert.rejects(service.listProviderModelCatalog({ providerId: 'provider-missing' }), /Provider 不存在/)
+
+  const created = await service.createProvider({ key: 'vendor-catalog', name: '目录厂商', providerType: 'openai-completions', trustLevel: 'external', baseUrl: 'https://vendor.example.com/v1', apiKey: 'fake-model-key-0123456789abcd', actor })
+  assert.deepEqual(await service.listProviderModelCatalog({ providerId: created.id }), { modelKeys: ['qwen3.8-flash', 'qwen-max'] })
+  assert.deepEqual(calls, [{ tenantId: 'tenant-dsh-work', credentialRefId: created.credential!.id, baseUrl: 'https://vendor.example.com/v1' }])
+
+  const withoutCatalog = new ModelGovernanceService(new MemoryModelGovernanceRepository())
+  const other = await withoutCatalog.createProvider({ key: 'vendor-catalog', name: '目录厂商', providerType: 'openai-completions', trustLevel: 'external', baseUrl: 'https://vendor.example.com/v1', apiKey: 'fake-model-key-0123456789abcd', actor })
+  await assert.rejects(withoutCatalog.listProviderModelCatalog({ providerId: other.id }), /DSH_CREDENTIAL_MASTER_KEY/)
+})
+
+test('缺少模型标识或名称时返回校验错误而不是 500', async () => {
+  const service = new ModelGovernanceService(new MemoryModelGovernanceRepository())
+  const provider = (await service.listProviders())[0]!
+  assert.throws(() => service.createProviderModel({ providerId: provider.id, modelKey: undefined as unknown as string, displayName: '名称', capabilities: [], actor }), { status: 422 })
+  assert.throws(() => service.createProviderModel({ providerId: provider.id, modelKey: 'qwen-max', displayName: undefined as unknown as string, capabilities: [], actor }), { status: 422 })
+})

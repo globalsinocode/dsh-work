@@ -31,6 +31,13 @@ const providerTypeOptions: { value: ProviderType; label: string; disabled: boole
 const providerForm = reactive({ key: '', name: '', providerType: 'openai-completions' as ProviderType, trustLevel: '' as ProviderTrustLevel | '', baseUrl: '', apiKey: '' })
 const providerEditForm = reactive({ name: '', baseUrl: '', trustLevel: 'external' as ProviderTrustLevel })
 const modelForm = reactive({ modelKey: '', displayName: '', capabilities: ['text'] as string[] })
+// 厂商模型目录：只是输入建议；拉取失败或厂商不支持时仍可手动输入。
+const catalogKeys = ref<string[]>([])
+const catalogLoading = ref(false)
+const catalogMessage = ref('')
+let catalogRequest = 0
+let autoDisplayName = ''
+const existingModelKeys = computed(() => new Set(selectedProvider.value?.models.map((model) => model.modelKey) ?? []))
 const apiKeyInput = ref('')
 const routeForm = reactive({ key: '', name: '', providerModelId: '', enabled: true })
 
@@ -76,7 +83,58 @@ function openProviderEditDialog(provider: ModelProvider) {
 function openModelDialog(provider: ModelProvider) {
   selectedProvider.value = provider
   Object.assign(modelForm, { modelKey: '', displayName: '', capabilities: ['text'] })
+  autoDisplayName = ''
   modelDialogOpen.value = true
+  void loadModelCatalog()
+}
+
+function providerHasPlatformKey(provider: ModelProvider | null) {
+  return provider?.credential?.backend === 'postgres-encrypted' && provider.credential.status === 'configured'
+}
+
+async function loadModelCatalog() {
+  const provider = selectedProvider.value
+  const request = ++catalogRequest
+  catalogKeys.value = []
+  if (!provider || !providerHasPlatformKey(provider)) {
+    catalogLoading.value = false
+    catalogMessage.value = '该 Provider 尚未录入 API Key，无法获取模型列表，请手动填写模型标识'
+    return
+  }
+  catalogLoading.value = true
+  catalogMessage.value = ''
+  try {
+    const result = await adminApi.listProviderModelCatalog({ providerId: provider.id })
+    if (request !== catalogRequest) return
+    catalogKeys.value = result.modelKeys
+    const addable = result.modelKeys.filter((key) => !existingModelKeys.value.has(key)).length
+    catalogMessage.value = result.modelKeys.length
+      ? `已从厂商获取 ${result.modelKeys.length} 个模型（${addable} 个未添加），点击输入框可搜索选择，也可直接输入`
+      : '厂商没有返回可用模型，请手动填写模型标识'
+  } catch (cause) {
+    if (request !== catalogRequest) return
+    catalogMessage.value = `未能获取模型列表：${cause instanceof Error ? cause.message : '请求失败'}`
+  } finally {
+    if (request === catalogRequest) catalogLoading.value = false
+  }
+}
+
+/** 输入框建议：厂商返回且尚未添加的模型，按输入内容过滤（不区分大小写），最多 200 条。 */
+function suggestModelKeys(query: string, callback: (items: Array<{ value: string }>) => void) {
+  const keyword = (query ?? '').trim().toLowerCase()
+  callback(catalogKeys.value
+    .filter((key) => !existingModelKeys.value.has(key) && (!keyword || key.toLowerCase().includes(keyword)))
+    .slice(0, 200)
+    .map((value) => ({ value })))
+}
+
+function onModelKeySelect(item: Record<string, unknown>) {
+  const value = typeof item['value'] === 'string' ? item['value'] : ''
+  // 名称为空或仍是上次自动填的值时，跟随所选模型标识。
+  if (!modelForm.displayName.trim() || modelForm.displayName === autoDisplayName) {
+    modelForm.displayName = value
+    autoDisplayName = value
+  }
 }
 
 function openCredentialDialog(provider: ModelProvider) {
@@ -128,6 +186,8 @@ async function createModel() {
     await adminApi.createProviderModel({
       providerId: selectedProvider.value.id,
       ...modelForm,
+      modelKey: (modelForm.modelKey ?? '').trim(),
+      displayName: (modelForm.displayName ?? '').trim(),
     })
     modelDialogOpen.value = false
     ElMessage.success('模型已添加')
@@ -319,7 +379,13 @@ onMounted(() => void load())
     </el-dialog>
 
     <el-dialog v-model="modelDialogOpen" :title="`为 ${selectedProvider?.name ?? ''} 添加模型`" width="600px" destroy-on-close>
-      <el-form label-position="top" :model="modelForm"><div class="form-grid"><el-form-item label="模型名称" required><el-input v-model="modelForm.displayName" placeholder="例如：DeepSeek V4 Pro" /></el-form-item><el-form-item label="模型标识" required><el-input v-model="modelForm.modelKey" placeholder="例如：deepseek-v4-pro" /></el-form-item></div><el-form-item label="能力"><el-select v-model="modelForm.capabilities" multiple allow-create filterable><el-option label="文本" value="text" /><el-option label="深度思考" value="thinking" /><el-option label="工具调用" value="tool-calling" /></el-select></el-form-item></el-form>
+      <el-form label-position="top" :model="modelForm"><div class="form-grid"><el-form-item label="模型标识" required>
+        <div class="catalog-field">
+          <el-autocomplete v-model="modelForm.modelKey" class="catalog-select" :fetch-suggestions="suggestModelKeys" clearable placeholder="选择或输入，例如：deepseek-v4-pro" aria-label="模型标识" @select="onModelKeySelect" />
+          <el-button :icon="Refresh" :loading="catalogLoading" :disabled="!providerHasPlatformKey(selectedProvider)" aria-label="重新获取模型列表" @click="loadModelCatalog" />
+        </div>
+        <div class="catalog-hint" role="status">{{ catalogLoading ? '正在从厂商获取模型列表…' : catalogMessage }}</div>
+      </el-form-item><el-form-item label="模型名称" required><el-input v-model="modelForm.displayName" placeholder="例如：DeepSeek V4 Pro" /></el-form-item></div><el-form-item label="能力"><el-select v-model="modelForm.capabilities" multiple allow-create filterable><el-option label="文本" value="text" /><el-option label="深度思考" value="thinking" /><el-option label="工具调用" value="tool-calling" /></el-select></el-form-item></el-form>
       <template #footer><el-button @click="modelDialogOpen = false">取消</el-button><el-button type="primary" @click="createModel">添加模型</el-button></template>
     </el-dialog>
 
@@ -360,6 +426,9 @@ onMounted(() => void load())
 .model-card__action { grid-column: 1 / -1; justify-self: start; }
 .credential-legacy { margin-top: 10px; }
 .field-hint { margin: 6px 0 0; color: var(--color-text-secondary); font-size: var(--font-size-caption); line-height: 1.5; }
+.catalog-field { display: flex; gap: 8px; width: 100%; }
+.catalog-field .catalog-select { flex: 1; min-width: 0; }
+.catalog-hint { margin-top: 4px; font-size: 12px; line-height: 1.5; color: var(--color-text-secondary); }
 .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
 .dialog-form { margin-top: 18px; }
 .form-grid :deep(.el-select), .form-grid :deep(.el-input-number), .dialog-form :deep(.el-select), :deep(.el-form-item .el-select) { width: 100%; }

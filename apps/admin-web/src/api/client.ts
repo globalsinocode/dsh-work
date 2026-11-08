@@ -405,6 +405,8 @@ export const adminApi = {
   }) => request<ModelProvider>('/model-providers', { method: 'PATCH', body: JSON.stringify(input) }),
   setModelProviderStatus: (input: { providerId: string; status: 'active' | 'disabled' }) =>
     request<ModelProvider>('/model-providers/status', { method: 'PATCH', body: JSON.stringify(input) }),
+  listProviderModelCatalog: (input: { providerId: string }) =>
+    request<{ modelKeys: string[] }>('/model-providers/catalog', { method: 'POST', body: JSON.stringify(input) }),
   createProviderModel: (input: {
     providerId: string
     modelKey: string

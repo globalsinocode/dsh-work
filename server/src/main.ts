@@ -9,6 +9,7 @@ import { PostgresAgentAccessService } from './modules/agent/agent-access-service
 import { registerSkillRoutes } from './http/admin/skill-routes.ts'
 import { registerToolRoutes } from './http/admin/tool-routes.ts'
 import { registerModelGovernanceRoutes } from './http/admin/model-routes.ts'
+import { HttpProviderModelCatalog } from './modules/model/provider-model-catalog.ts'
 import { registerOperationsRoutes } from './http/admin/operations-routes.ts'
 import { registerOrganizationRoutes } from './http/admin/organization-routes.ts'
 import { PostgresOrganizationService } from './modules/organization/postgres-organization-service.ts'
@@ -692,7 +693,11 @@ async function start() {
   registerSkillRoutes(router, skills, async () => builtinSkills.status((await operations.getRuntimePolicy('runtime-local-01')).disabledBuiltinSkills))
   registerToolRoutes(router, mcpService, builtinToolStatus)
   registerWorkbenchAgentRoutes(router, agents, authorization)
-  registerModelGovernanceRoutes(router, new ModelGovernanceService(modelRepository))
+  // 添加模型时的厂商模型下拉：用平台加密保存的密钥请求厂商 /models，密钥不出后端；未配置主密钥时接口明确拒绝。
+  const providerModelCatalog = credentialSecrets
+    ? new HttpProviderModelCatalog({ readSecret: (tenantId, credentialRefId) => credentialSecrets.readBearerToken(tenantId, credentialRefId) })
+    : undefined
+  registerModelGovernanceRoutes(router, new ModelGovernanceService(modelRepository, undefined, providerModelCatalog))
 
   router.get('/health/live', () => ({
     status: 'ok',

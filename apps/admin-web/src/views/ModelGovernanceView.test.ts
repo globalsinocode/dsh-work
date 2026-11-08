@@ -170,4 +170,80 @@ describe('ModelGovernanceView', () => {
     await flushPromises()
     expect(setKey).toHaveBeenCalledWith({ providerId: legacy.id, apiKey: 'sk-new-key' })
   })
+
+  describe('添加模型时的厂商模型下拉', () => {
+    const keyed: ModelProvider = { ...provider, credential: { id: 'c1', backend: 'postgres-encrypted', externalRef: 'model-provider:deepseek-official:api-key', status: 'configured', hint: 'wxyz', lastVerifiedAt: null, updatedAt: '2026-11-06T00:00:00.000Z' } }
+    const AutocompleteStub = {
+      name: 'ElAutocomplete',
+      props: ['modelValue', 'fetchSuggestions'],
+      emits: ['update:modelValue', 'select'],
+      template: '<input class="model-key-input" :value="modelValue" @input="$emit(\'update:modelValue\', $event.target.value)" />',
+    }
+
+    async function renderWith(providers: ModelProvider[]) {
+      const pinia = createPinia()
+      setActivePinia(pinia)
+      useAuthStore().$patch({ permissions: ['admin:write'] })
+      vi.spyOn(adminApi, 'getModelProviders').mockResolvedValue(providers)
+      vi.spyOn(adminApi, 'getModelRoutes').mockResolvedValue([route])
+      const wrapper = mount(ModelGovernanceView, { attachTo: document.body, global: { plugins: [pinia, ElementPlus], stubs: { teleport: true, ElSelect: { template: '<div><slot /></div>' }, ElOption: true, ElAutocomplete: AutocompleteStub } } })
+      wrappers.push(wrapper)
+      await flushPromises()
+      return wrapper
+    }
+
+    function suggestions(wrapper: VueWrapper, query: string) {
+      const fetch = wrapper.findComponent(AutocompleteStub).props('fetchSuggestions') as (q: string, cb: (items: Array<{ value: string }>) => void) => void
+      let result: string[] = []
+      fetch(query, items => { result = items.map(item => item.value) })
+      return result
+    }
+
+    it('已录入密钥时打开弹窗即拉取厂商模型，建议中排除已添加的模型并按输入过滤', async () => {
+      const catalog = vi.spyOn(adminApi, 'listProviderModelCatalog').mockResolvedValue({ modelKeys: ['deepseek-v4-flash', 'deepseek-v4-pro', 'qwen-max'] })
+      const wrapper = await renderWith([keyed])
+      await buttonByText(wrapper, '添加模型').trigger('click')
+      await flushPromises()
+      expect(catalog).toHaveBeenCalledWith({ providerId: 'provider-1' })
+      expect(wrapper.text()).toContain('已从厂商获取 3 个模型（2 个未添加）')
+      expect(suggestions(wrapper, '')).toEqual(['deepseek-v4-flash', 'qwen-max'])
+      expect(suggestions(wrapper, 'QWEN')).toEqual(['qwen-max'])
+    })
+
+    it('选中建议时自动填写模型名称；手动输入的标识原样提交', async () => {
+      vi.spyOn(adminApi, 'listProviderModelCatalog').mockResolvedValue({ modelKeys: ['qwen-max'] })
+      const create = vi.spyOn(adminApi, 'createProviderModel').mockResolvedValue(keyed)
+      const wrapper = await renderWith([keyed])
+      await buttonByText(wrapper, '添加模型').trigger('click')
+      await flushPromises()
+      const input = wrapper.findComponent(AutocompleteStub)
+      input.vm.$emit('update:modelValue', 'qwen-max')
+      input.vm.$emit('select', { value: 'qwen-max' })
+      await flushPromises()
+      // 用户随后改成手动输入的标识（不经过建议列表），失焦也不会丢。
+      await wrapper.find('.model-key-input').setValue('  qwen3.8-flash ')
+      const footerButtons = wrapper.findAll('button').filter(item => item.text() === '添加模型')
+      await footerButtons.at(-1)!.trigger('click')
+      await flushPromises()
+      expect(create).toHaveBeenCalledWith(expect.objectContaining({ providerId: 'provider-1', modelKey: 'qwen3.8-flash', displayName: 'qwen-max' }))
+    })
+
+    it('拉取失败时提示原因，仍可手动填写', async () => {
+      vi.spyOn(adminApi, 'listProviderModelCatalog').mockRejectedValue(new Error('厂商未提供模型列表（HTTP 404）'))
+      const wrapper = await renderWith([keyed])
+      await buttonByText(wrapper, '添加模型').trigger('click')
+      await flushPromises()
+      expect(wrapper.text()).toContain('未能获取模型列表：厂商未提供模型列表（HTTP 404）')
+      expect(suggestions(wrapper, '')).toEqual([])
+    })
+
+    it('未录入密钥时不请求厂商，提示手动填写', async () => {
+      const catalog = vi.spyOn(adminApi, 'listProviderModelCatalog')
+      const wrapper = await renderWith([provider])
+      await buttonByText(wrapper, '添加模型').trigger('click')
+      await flushPromises()
+      expect(catalog).not.toHaveBeenCalled()
+      expect(wrapper.text()).toContain('尚未录入 API Key，无法获取模型列表')
+    })
+  })
 })

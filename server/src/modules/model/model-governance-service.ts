@@ -12,17 +12,20 @@ import {
   type UpdateModelRouteInput,
   type UpdateProviderInput,
 } from './model-types.ts'
-import { invalidRequest, stateConflict } from '../../domain/request-errors.ts'
+import { dependencyUnavailable, invalidRequest, notFound, stateConflict } from '../../domain/request-errors.ts'
+import type { ProviderModelCatalogPort } from './provider-model-catalog.ts'
 
 const keyPattern = /^[a-z][a-z0-9-]{2,47}$/
 
 export class ModelGovernanceService {
   private readonly repository: ModelGovernanceRepository
   private readonly tenantId: string
+  private readonly catalog: ProviderModelCatalogPort | undefined
 
-  constructor(repository: ModelGovernanceRepository, tenantId = 'tenant-dsh-work') {
+  constructor(repository: ModelGovernanceRepository, tenantId = 'tenant-dsh-work', catalog?: ProviderModelCatalogPort) {
     this.repository = repository
     this.tenantId = tenantId
+    this.catalog = catalog
   }
 
   listProviders() {
@@ -73,15 +76,29 @@ export class ModelGovernanceService {
 
   createProviderModel(input: CreateProviderModelInput) {
     assertActor(input.actor)
-    if (!isValidModelKey(input.modelKey.trim())) {
+    if (typeof input.modelKey !== 'string' || !isValidModelKey(input.modelKey.trim())) {
       throw invalidRequest('模型标识须与厂商的模型 id 一致：以字母或数字开头，可包含字母、数字和 . _ - : / @ +，最长 200 位')
     }
-    if (input.displayName.trim().length < 2) throw invalidRequest('模型名称至少需要 2 个字符')
+    if (typeof input.displayName !== 'string' || input.displayName.trim().length < 2) throw invalidRequest('模型名称至少需要 2 个字符')
     return this.repository.createProviderModel(this.tenantId, {
       ...input,
       modelKey: input.modelKey.trim(),
       displayName: input.displayName.trim(),
     })
+  }
+
+  /** 列出厂商可用的模型 id，供添加模型时下拉选择；只是输入建议，保存时仍按模型标识规则校验。 */
+  async listProviderModelCatalog(input: { providerId: string }) {
+    assertId(input.providerId, 'Provider')
+    const provider = (await this.repository.listProviders(this.tenantId)).find(item => item.id === input.providerId)
+    if (!provider) throw notFound('Provider 不存在')
+    const credential = provider.credential
+    if (!credential || credential.backend !== 'postgres-encrypted' || credential.status !== 'configured') {
+      throw stateConflict('该 Provider 尚未录入 API Key，无法获取模型列表，请先录入密钥或手动填写模型标识')
+    }
+    if (!this.catalog) throw dependencyUnavailable('服务未配置 DSH_CREDENTIAL_MASTER_KEY，无法获取模型列表，请手动填写模型标识')
+    const modelKeys = await this.catalog.list({ tenantId: this.tenantId, credentialRefId: credential.id, baseUrl: provider.baseUrl })
+    return { modelKeys: modelKeys.filter(isValidModelKey) }
   }
 
   setProviderModelStatus(input: SetProviderModelStatusInput) {

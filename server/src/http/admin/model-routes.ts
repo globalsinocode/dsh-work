@@ -19,6 +19,10 @@ export function registerModelGovernanceRoutes(router: Router, service: ModelGove
     const input = await readJsonBody<WithoutActor<ModelGovernanceService['setProviderStatus']>>(request)
     return envelope('admin', await service.setProviderStatus({ ...input, actor: requireRequestIdentity(context, 'admin').userId }))
   })
+  router.post(`${basePath}/model-providers/catalog`, async (request) => {
+    const input = await readJsonBody<Parameters<ModelGovernanceService['listProviderModelCatalog']>[0]>(request)
+    return envelope('admin', await service.listProviderModelCatalog(input))
+  })
   router.post(`${basePath}/provider-models`, async (request, context) => {
     const input = await readJsonBody<WithoutActor<ModelGovernanceService['createProviderModel']>>(request)
     return envelope('admin', await service.createProviderModel({ ...input, actor: requireRequestIdentity(context, 'admin').userId }))

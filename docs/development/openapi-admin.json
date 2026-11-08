@@ -1465,6 +1465,17 @@
         }
       }
     },
+    "/model-providers/catalog": {
+      "post": {
+        "operationId": "listProviderModelCatalog",
+        "summary": "用已录入的厂商密钥请求厂商 /models，列出可选模型 id（只作添加模型的输入建议，密钥不返回）",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          }
+        }
+      }
+    },
     "/provider-models": {
       "post": {
         "operationId": "createProviderModel",
