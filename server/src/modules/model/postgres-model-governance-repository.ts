@@ -23,7 +23,8 @@ import type {
   UpdateModelRouteInput,
   UpdateProviderInput,
 } from './model-types.ts'
-import { dependencyUnavailable, invalidRequest, notFound, stateConflict } from '../../domain/request-errors.ts'
+import { invalidRequest, notFound, stateConflict } from '../../domain/request-errors.ts'
+import { noEnabledRoute, routeCredentialMissing, routeTargetDisabled } from './model-route-errors.ts'
 import type { PostgresEncryptedCredentialStore } from '../tool/postgres-encrypted-credential-store.ts'
 
 interface ProviderRow {
@@ -261,14 +262,17 @@ export class PostgresModelGovernanceRepository implements ModelGovernanceReposit
     const [row] = await this.database<{
       routeId: string
       routeKey: string
+      routeName: string
       providerId: string
       providerKey: string
+      providerName: string
       providerType: ProviderType
       trustLevel: ProviderTrustLevel
       baseUrl: string
       providerStatus: ProviderStatus
       modelId: string
       modelKey: string
+      modelName: string
       modelStatus: ModelStatus
       modelCapabilities: string[]
       credentialRefId: string | null
@@ -276,10 +280,10 @@ export class PostgresModelGovernanceRepository implements ModelGovernanceReposit
       credentialExternalRef: string | null
       credentialStatus: CredentialStatus | null
     }[]>`
-      select r.id as "routeId", r.key as "routeKey",
-             p.id as "providerId", p.key as "providerKey", p.provider_type as "providerType",
+      select r.id as "routeId", r.key as "routeKey", r.name as "routeName",
+             p.id as "providerId", p.key as "providerKey", p.name as "providerName", p.provider_type as "providerType",
              p.trust_level as "trustLevel", p.base_url as "baseUrl", p.status as "providerStatus",
-             m.id as "modelId", m.model_key as "modelKey", m.status as "modelStatus",
+             m.id as "modelId", m.model_key as "modelKey", m.display_name as "modelName", m.status as "modelStatus",
              m.capabilities as "modelCapabilities",
              c.id as "credentialRefId", c.backend as "credentialBackend",
              c.external_ref as "credentialExternalRef", c.status as "credentialStatus"
@@ -290,10 +294,12 @@ export class PostgresModelGovernanceRepository implements ModelGovernanceReposit
        where r.tenant_id = ${tenantId} and r.purpose = 'default' and r.enabled
        limit 1
     `
-    if (!row) throw dependencyUnavailable('没有可用的默认模型路由')
-    if (row.providerStatus !== 'active' || row.modelStatus !== 'active') throw dependencyUnavailable('模型路由目标已停用')
+    if (!row) throw noEnabledRoute()
+    if (row.providerStatus !== 'active' || row.modelStatus !== 'active') {
+      throw routeTargetDisabled({ routeName: row.routeName, providerName: row.providerName, providerActive: row.providerStatus === 'active', modelName: row.modelName, modelKey: row.modelKey })
+    }
     if (!row.credentialRefId || !row.credentialBackend || !row.credentialExternalRef || row.credentialStatus !== 'configured') {
-      throw dependencyUnavailable('Provider 凭据未配置')
+      throw routeCredentialMissing(row.providerName)
     }
     return {
       routeId: row.routeId,

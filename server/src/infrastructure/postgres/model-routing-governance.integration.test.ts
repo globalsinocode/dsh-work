@@ -121,7 +121,13 @@ test('migration keeps the route a tenant was actually using when it had no defau
   `
   assert.deepEqual(live, { purpose: 'default', enabled: true })
   const legacyService = new ModelGovernanceService(new PostgresModelGovernanceRepository(database), legacyTenantId)
-  await assert.rejects(legacyService.resolveDefaultRoute(), /Provider 凭据未配置/, 'the route resolves; only its credential is missing')
+  await assert.rejects(legacyService.resolveDefaultRoute(), (error: { status?: number; code?: string; message: string; suggestion?: string }) => {
+    assert.equal(error.status, 503)
+    assert.equal(error.code, 'MODEL_ROUTE_NOT_READY')
+    assert.match(error.message, /Provider 凭据未配置：默认路由所用的 Provider“.+”尚未录入 API Key/, 'the route resolves; only its credential is missing')
+    assert.match(error.suggestion ?? '', /模型配置 → Provider/)
+    return true
+  })
 })
 
 test('the enabled default route is resolved by purpose, edited in place and switched atomically', async () => {
@@ -159,8 +165,22 @@ test('disabling a model makes its route unavailable and provider edits keep the 
   const model = provider.models[0]!
   const disabled = await service.setProviderModelStatus({ modelId: model.id, status: 'disabled', actor })
   assert.equal(disabled.models.find(item => item.id === model.id)?.status, 'disabled')
-  await assert.rejects(service.resolveDefaultRoute(), /模型路由目标已停用/)
+  await assert.rejects(service.resolveDefaultRoute(), (error: { code?: string; message: string; suggestion?: string }) => {
+    assert.equal(error.code, 'MODEL_ROUTE_NOT_READY')
+    assert.match(error.message, new RegExp(`模型路由目标已停用：默认路由“平台默认模型路由”指向的模型“.+”（${model.modelKey}）已停用`))
+    assert.match(error.suggestion ?? '', /模型配置 → 模型路由/)
+    return true
+  })
   await service.setProviderModelStatus({ modelId: model.id, status: 'active', actor })
+
+  await service.setProviderStatus({ providerId: provider.id, status: 'disabled', actor })
+  await assert.rejects(service.resolveDefaultRoute(), (error: { code?: string; message: string; suggestion?: string }) => {
+    assert.equal(error.code, 'MODEL_ROUTE_NOT_READY')
+    assert.match(error.message, /默认路由“平台默认模型路由”所属的 Provider“.+”已停用/)
+    assert.match(error.suggestion ?? '', /重新启用该 Provider/)
+    return true
+  })
+  await service.setProviderStatus({ providerId: provider.id, status: 'active', actor })
 
   const updated = await service.updateProvider({ providerId: provider.id, name: 'DeepSeek 官方', baseUrl: 'https://api.deepseek.com/', trustLevel: 'internal', actor })
   assert.equal(updated.trustLevel, 'internal')

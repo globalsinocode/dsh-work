@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import { MemoryModelGovernanceRepository } from './memory-model-governance-repository.ts'
+import type { RequestError } from '../../domain/request-errors.ts'
 import { ModelGovernanceService } from './model-governance-service.ts'
 
 const actor = 'test-admin'
@@ -46,7 +47,7 @@ test('the enabled default route is resolved by purpose, not by its key', async (
   assert.equal((await service.resolveDefaultRoute()).routeKey, 'primary-chat')
 
   await service.updateRoute({ routeId: created.id, name: '主力模型', providerModelId: provider.models[0]!.id, enabled: false, actor })
-  await assert.rejects(service.resolveDefaultRoute(), /没有可用的默认模型路由/)
+  await assert.rejects(service.resolveDefaultRoute(), { code: 'MODEL_ROUTE_NOT_READY', message: '没有可用的默认模型路由' })
 
   const seed = routes.find(item => item.key === 'default')!
   await service.updateRoute({ routeId: seed.id, name: '平台默认模型路由', providerModelId: seed.providerModelId, enabled: true, actor })
@@ -59,9 +60,20 @@ test('a disabled model makes its route unavailable instead of falling back', asy
   const model = provider.models[0]!
   const updated = await service.setProviderModelStatus({ modelId: model.id, status: 'disabled', actor })
   assert.equal(updated.models[0]?.status, 'disabled')
-  await assert.rejects(service.resolveDefaultRoute(), /模型路由目标已停用/)
+  await assert.rejects(service.resolveDefaultRoute(), (error: RequestError) => {
+    assert.equal(error.code, 'MODEL_ROUTE_NOT_READY')
+    assert.equal(error.status, 503)
+    assert.match(error.message, /模型路由目标已停用：默认路由“平台默认模型路由”指向的模型.*（deepseek-v4-pro）已停用/)
+    assert.match(error.suggestion ?? '', /模型配置 → 模型路由/)
+    assert.doesNotMatch(error.suggestion ?? '', /运行时或连接器/)
+    return true
+  })
   await service.setProviderModelStatus({ modelId: model.id, status: 'active', actor })
   assert.equal((await service.resolveDefaultRoute()).modelKey, model.modelKey)
+
+  await service.setProviderStatus({ providerId: provider.id, status: 'disabled', actor })
+  await assert.rejects(service.resolveDefaultRoute(), /所属的 Provider“.+”已停用/)
+  await service.setProviderStatus({ providerId: provider.id, status: 'active', actor })
 })
 
 test('provider type, trust level and keys are validated before persistence', async () => {

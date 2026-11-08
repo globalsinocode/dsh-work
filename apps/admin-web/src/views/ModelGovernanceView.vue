@@ -51,6 +51,27 @@ const modelOptions = computed(() => providers.value.flatMap((provider) => provid
   label: `${provider.name} / ${model.displayName}`,
   disabled: provider.status !== 'active' || model.status !== 'active',
 }))))
+const loaded = ref(false)
+/**
+ * 路由目标当前能否被运行使用。比后端 resolveDefaultRoute 略严：旧的 DSH 受管引用后端会放行，
+ * 但模型网关只能用平台加密保存的密钥，运行必然失败，所以页面按实际可用性一并告警。
+ */
+function routeTargetIssue(route: ModelRoute): string | null {
+  const provider = providers.value.find((item) => item.id === route.providerId)
+  const model = provider?.models.find((item) => item.id === route.providerModelId)
+  if (!provider || !model) return '目标模型不存在'
+  if (provider.status !== 'active') return `Provider“${provider.name}”已停用`
+  if (model.status !== 'active') return `目标模型“${model.displayName}”（${model.modelKey}）已停用`
+  if (!usableCredential(provider)) return `Provider“${provider.name}”尚未录入 API Key`
+  return null
+}
+const routeIssues = computed(() => new Map(routes.value.map((route) => [route.id, routeTargetIssue(route)])))
+const defaultRouteIssue = computed(() => {
+  if (!loaded.value) return null
+  if (!enabledRoute.value) return '没有启用的默认路由'
+  const issue = routeIssues.value.get(enabledRoute.value.id)
+  return issue ? `默认路由“${enabledRoute.value.name}”：${issue}` : null
+})
 const { currentPage: providerPage, pagedItems: pagedProviders } = useListPagination(providers)
 const { currentPage: routePage, pagedItems: pagedRoutes } = useListPagination(routes)
 
@@ -62,7 +83,9 @@ async function load() {
       adminApi.getModelProviders(),
       adminApi.getModelRoutes(),
     ])
+    loaded.value = true
   } catch (cause) {
+    loaded.value = false
     error.value = cause instanceof Error ? cause.message : '模型治理数据加载失败'
   } finally {
     loading.value = false
@@ -88,15 +111,12 @@ function openModelDialog(provider: ModelProvider) {
   void loadModelCatalog()
 }
 
-function providerHasPlatformKey(provider: ModelProvider | null) {
-  return provider?.credential?.backend === 'postgres-encrypted' && provider.credential.status === 'configured'
-}
 
 async function loadModelCatalog() {
   const provider = selectedProvider.value
   const request = ++catalogRequest
   catalogKeys.value = []
-  if (!provider || !providerHasPlatformKey(provider)) {
+  if (!provider || !usableCredential(provider)) {
     catalogLoading.value = false
     catalogMessage.value = '该 Provider 尚未录入 API Key，无法获取模型列表，请手动填写模型标识'
     return
@@ -333,6 +353,11 @@ onMounted(() => void load())
     <el-alert v-if="error" type="error" :closable="false" show-icon :title="error" />
     <el-alert class="route-effect-notice" type="info" :closable="false" show-icon title="默认路由决定新运行使用的模型，经平台模型网关调用" description="每次运行开始时固定当时启用的默认路由；更换默认路由只影响之后新建的运行，员工重新执行即使用新路由。模型请求经平台模型网关、用这里录入的厂商密钥转发，执行环境不持有厂商密钥；密钥缺失或无效（包括显示“需录入 API Key”的旧引用）时运行会失败并提示管理员处理。没有可用的默认路由（未启用、Provider 或模型已停用）时，新运行会被拒绝。厂商密钥以平台主密钥加密保存，不能读取、回显或导出。联网搜索只在默认路由为 DeepSeek 官方时可用。" />
 
+    <el-alert v-if="defaultRouteIssue" class="route-issue-alert" type="error" :closable="false" show-icon title="默认路由当前不可用，员工发送消息和新运行都会失败">
+      <p>{{ defaultRouteIssue }}。请在“模型路由”中编辑默认路由，改为指向已启用且已录入 API Key 的模型，或把另一条可用路由设为默认。</p>
+      <el-button v-if="authStore.canManage" size="small" type="danger" plain @click="activeTab = 'routes'">查看模型路由</el-button>
+    </el-alert>
+
     <section class="content-panel overview-strip" aria-label="模型治理概况">
       <dl class="overview-strip__stats">
         <div class="overview-stat"><dt>启用 Provider</dt><dd><strong class="overview-stat__value">{{ activeProviderCount }}</strong><small>共 {{ providers.length }} 个</small></dd></div>
@@ -361,7 +386,7 @@ onMounted(() => void load())
       <el-table v-else v-loading="loading" class="data-table" :data="pagedRoutes" empty-text="暂无模型路由">
         <el-table-column label="路由" min-width="230"><template #default="scope"><div class="stack-cell"><strong>{{ scope.row.name }}</strong><span>{{ scope.row.key }}</span></div></template></el-table-column>
         <el-table-column label="路由目标" min-width="280"><template #default="scope"><div class="stack-cell"><strong>{{ scope.row.modelName }}</strong><span>{{ scope.row.providerName }} / {{ scope.row.modelKey }}</span></div></template></el-table-column>
-        <el-table-column label="状态" width="120"><template #default="scope"><el-tag :type="scope.row.enabled ? 'success' : 'info'" effect="plain">{{ scope.row.enabled ? '当前默认' : '停用' }}</el-tag></template></el-table-column>
+        <el-table-column label="状态" min-width="200"><template #default="scope"><div class="stack-cell"><el-tag :type="scope.row.enabled ? (routeIssues.get(scope.row.id) ? 'danger' : 'success') : 'info'" effect="plain">{{ scope.row.enabled ? (routeIssues.get(scope.row.id) ? '当前默认 · 不可用' : '当前默认') : '停用' }}</el-tag><span v-if="routeIssues.get(scope.row.id)" :class="scope.row.enabled ? 'route-issue-text' : 'route-issue-text route-issue-text--muted'">{{ scope.row.enabled ? routeIssues.get(scope.row.id) : `设为默认前需处理：${routeIssues.get(scope.row.id)}` }}</span></div></template></el-table-column>
         <el-table-column label="更新于" min-width="180"><template #default="scope">{{ new Date(scope.row.updatedAt).toLocaleString('zh-CN') }}</template></el-table-column>
         <el-table-column v-if="authStore.canManage" label="操作" width="180" fixed="right"><template #default="scope"><el-button link type="primary" @click="openRouteDialog(scope.row)">编辑</el-button><el-button link :type="scope.row.enabled ? 'danger' : 'primary'" @click="toggleRoute(scope.row)">{{ scope.row.enabled ? '停用' : '设为默认' }}</el-button></template></el-table-column>
       </el-table>
@@ -382,7 +407,7 @@ onMounted(() => void load())
       <el-form label-position="top" :model="modelForm"><div class="form-grid"><el-form-item label="模型标识" required>
         <div class="catalog-field">
           <el-autocomplete v-model="modelForm.modelKey" class="catalog-select" :fetch-suggestions="suggestModelKeys" clearable placeholder="选择或输入，例如：deepseek-v4-pro" aria-label="模型标识" @select="onModelKeySelect" />
-          <el-button :icon="Refresh" :loading="catalogLoading" :disabled="!providerHasPlatformKey(selectedProvider)" aria-label="重新获取模型列表" @click="loadModelCatalog" />
+          <el-button :icon="Refresh" :loading="catalogLoading" :disabled="!selectedProvider || !usableCredential(selectedProvider)" aria-label="重新获取模型列表" @click="loadModelCatalog" />
         </div>
         <div class="catalog-hint" role="status">{{ catalogLoading ? '正在从厂商获取模型列表…' : catalogMessage }}</div>
       </el-form-item><el-form-item label="模型名称" required><el-input v-model="modelForm.displayName" placeholder="例如：DeepSeek V4 Pro" /></el-form-item></div><el-form-item label="能力"><el-select v-model="modelForm.capabilities" multiple allow-create filterable><el-option label="文本" value="text" /><el-option label="深度思考" value="thinking" /><el-option label="工具调用" value="tool-calling" /></el-select></el-form-item></el-form>
@@ -426,6 +451,10 @@ onMounted(() => void load())
 .model-card__action { grid-column: 1 / -1; justify-self: start; }
 .credential-legacy { margin-top: 10px; }
 .field-hint { margin: 6px 0 0; color: var(--color-text-secondary); font-size: var(--font-size-caption); line-height: 1.5; }
+.route-issue-alert { margin-bottom: 16px; }
+.route-issue-alert p { margin: 0 0 8px; }
+.route-issue-text { color: var(--el-color-danger); }
+.route-issue-text--muted { color: var(--color-text-secondary); }
 .catalog-field { display: flex; gap: 8px; width: 100%; }
 .catalog-field .catalog-select { flex: 1; min-width: 0; }
 .catalog-hint { margin-top: 4px; font-size: 12px; line-height: 1.5; color: var(--color-text-secondary); }

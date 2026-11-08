@@ -14,7 +14,8 @@ import type {
   UpdateModelRouteInput,
   UpdateProviderInput,
 } from './model-types.ts'
-import { dependencyUnavailable, invalidRequest, notFound, stateConflict } from '../../domain/request-errors.ts'
+import { invalidRequest, notFound, stateConflict } from '../../domain/request-errors.ts'
+import { noEnabledRoute, routeCredentialMissing, routeTargetDisabled } from './model-route-errors.ts'
 
 const clone = <T>(value: T): T => structuredClone(value)
 
@@ -146,10 +147,12 @@ export class MemoryModelGovernanceRepository implements ModelGovernanceRepositor
 
   async resolveDefaultRoute(): Promise<ModelRouteSnapshot> {
     const route = this.routes.find((item) => item.purpose === 'default' && item.enabled)
-    if (!route) throw dependencyUnavailable('没有可用的默认模型路由')
+    if (!route) throw noEnabledRoute()
     const { provider, model } = this.requireModel(route.providerModelId)
-    if (provider.status !== 'active' || model.status !== 'active') throw dependencyUnavailable('模型路由目标已停用')
-    if (!provider.credential || provider.credential.status !== 'configured') throw dependencyUnavailable('Provider 凭据未配置')
+    if (provider.status !== 'active' || model.status !== 'active') {
+      throw routeTargetDisabled({ routeName: route.name, providerName: provider.name, providerActive: provider.status === 'active', modelName: model.displayName, modelKey: model.modelKey })
+    }
+    if (!provider.credential || provider.credential.status !== 'configured') throw routeCredentialMissing(provider.name)
     return {
       routeId: route.id,
       routeKey: route.key,

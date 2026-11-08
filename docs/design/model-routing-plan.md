@@ -153,7 +153,7 @@ Adapter 目前有三条启动 DSH 的路径，只有正式执行使用路由：
 
 | 情形 | 结果 |
 | --- | --- |
-| 无可用默认路由 | 维持现状：Dispatcher 报依赖不可用，不创建 Attempt |
+| 无可用默认路由（未启用、目标模型或 Provider 已停用、凭据未配置） | 发起时拒绝，不创建 Attempt：HTTP 503，`MODEL_ROUTE_NOT_READY`，消息写明路由、模型或 Provider，建议指向管理端“模型配置”；重新执行不能解决，须管理员调整配置。与 Attempt 执行中的 `MODEL_ROUTE_UNAVAILABLE`（可重试）区分 |
 | 模型未在路由中声明 / 令牌或请求模型与路由不符 | Attempt 失败，`MODEL_ROUTE_UNAVAILABLE` |
 | 厂商密钥缺失、无效或被吊销（网关检查或厂商 401/403） | Attempt 失败，`MODEL_CREDENTIAL_INVALID` |
 | 配额或余额耗尽（厂商明确返回额度类错误） | Attempt 失败，`MODEL_QUOTA_EXHAUSTED` |
