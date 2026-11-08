@@ -7,11 +7,13 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterEach, describe, it } from 'node:test'
 import { DataProtectionService, MemoryDataProtectionStore } from '../data-protection/data-protection-service.ts'
+import { PlaceholderRestorer, maskTexts } from '../data-protection/data-protection-masking.ts'
 import { AcpJsonRpcClient, buildAcpChildEnvironment } from './acp-json-rpc-client.ts'
 import {
   diagnoseMcpAuthenticationFailure,
   DshAcpRuntimeAdapter,
   renderMemoryProjection,
+  PLACEHOLDER_INSTRUCTION,
   renderSystemPrompt,
   renderUserPrompt,
   parsePsTime,
@@ -230,6 +232,30 @@ describe('Runtime Manifest compiler', () => {
     const invalid = manifest('run-checksum', 'attempt-1')
     invalid.input.file_mounts = [{ ...fileMount('/workspace/input/inventory.csv.txt', '库存：120'), content_sha256: '0'.repeat(64) }]
     assert.throws(() => compileRuntimeManifest(invalid), /checksum mismatch/)
+  })
+
+  it('tells the model about placeholders only on external routes (data protection D7)', () => {
+    const route = { route_id: 'route-default', route_key: 'default', provider_key: 'deepseek-official', provider_type: 'openai-completions', model_key: 'deepseek-v4-pro', base_url: 'https://api.deepseek.com', credential_ref_id: 'credential-1' } as const
+    const render = (trust_level: 'internal' | 'external') => renderSystemPrompt(compileRuntimeManifest({
+      ...manifest(`run-placeholder-${trust_level}`, 'attempt-1'), model_route_id: 'route-default', model_route: { ...route, trust_level },
+    }).manifest)
+    assert.match(render('external'), /受保护内容的占位符/)
+    assert.doesNotMatch(render('internal'), /受保护内容的占位符/)
+  })
+
+  it('the placeholder instruction survives masking unchanged', () => {
+    const result = maskTexts([PLACEHOLDER_INSTRUCTION], { tenantKey: Buffer.alloc(32, 1), policy: { terms: [], allowlist: [] } })
+    assert.equal(result.texts[0], PLACEHOLDER_INSTRUCTION)
+    assert.equal(result.placeholders.size, 0)
+  })
+
+  it('a confidential term that happens to appear in the instruction is masked and still restores', () => {
+    const term = { value: '真实值', caseSensitive: false, wholeWord: false }
+    const result = maskTexts([PLACEHOLDER_INSTRUCTION], { tenantKey: Buffer.alloc(32, 1), policy: { terms: [term], allowlist: [] } })
+    assert.notEqual(result.texts[0], PLACEHOLDER_INSTRUCTION)
+    assert.equal(result.texts[0]!.includes('真实值'), false)
+    const restorer = new PlaceholderRestorer(result.placeholders)
+    assert.equal(restorer.push(result.texts[0]!) + restorer.flush(), PLACEHOLDER_INSTRUCTION)
   })
 
   it('renders the retrieved enterprise knowledge as reference material, not authorization (weknora 4.5)', () => {
