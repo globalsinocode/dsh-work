@@ -879,3 +879,9 @@
     max-width: calc(100cqw - (100cqw - min(100cqw, var(--conversation-column-max, 1040px))) / 2 - 42px);
   }
 }
+
+.message-not-sent {
+  margin-top: 8px;
+  font-size: var(--dsh-font-size-caption);
+  color: var(--dsh-color-danger);
+}

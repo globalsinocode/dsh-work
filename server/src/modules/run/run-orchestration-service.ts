@@ -100,6 +100,7 @@ export class RunOrchestrationService {
       builtinSkills?: OrchestrationDependencies['builtinSkills']
       /** 模型网关计量（MR-S3）；未接线时用量沿用会话日志或估算。 */
       modelUsage?: OrchestrationDependencies['modelUsage']
+      inputPolicy?: OrchestrationDependencies['inputPolicy']
     },
   ) {
     this.deps = {
@@ -115,6 +116,7 @@ export class RunOrchestrationService {
       projectArchive: options?.projectArchive,
       builtinSkills: options?.builtinSkills,
       modelUsage: options?.modelUsage,
+      inputPolicy: options?.inputPolicy,
     }
     const budget = new AttemptBudget(this.deps)
     const events = new RunEventRecorder(this.deps, budget)
@@ -369,6 +371,24 @@ export class RunOrchestrationService {
       ).agentVersionId
     }
     if (!agentVersionId) throw requestInvalid('Session 未绑定 Agent，无法发起执行')
+    // 已受理的请求重放时交给 createRun 返回原 Run：原文当时已通过预检，词表或路由后来变了也不改判。
+    if (!input.scheduled && !(await this.deps.runs.hasRunForIdempotencyKey(tenantId, session.id, input.userId, input.idempotencyKey))) {
+      const policy = await this.deps.inputPolicy?.check({ userId: input.userId, entry: 'conversation', sessionId: session.id, text: prompt, dedupeKey: input.idempotencyKey })
+      if (policy?.blocked) {
+        // 还没有 Run 的会话打不开，消息无处展示，不落库；标题里的正文也要清掉。
+        // 团队会话其他成员都能看到消息，含密钥的正文同样不落库。个人会话已有 Run 时保留消息供本人查看。
+        const hasRuns = await this.deps.runs.sessionHasRuns(tenantId, session.id)
+        if (!hasRuns) await this.deps.conversations.scrubTitleDerivedFromPrompt(session.id, prompt)
+        if (session.workspaceType !== 'team' && hasRuns) {
+          const keyHash = createHash('sha256').update(JSON.stringify([tenantId, session.id, input.userId, input.idempotencyKey])).digest('hex').slice(0, 32)
+          await this.deps.conversations.appendMessage({
+            sessionId: session.id, role: 'user', content: prompt, senderUserId: input.userId,
+            messageId: `message-blocked-${session.id}-${keyHash}`, notSentToModel: true,
+          })
+        }
+        throw this.deps.inputPolicy!.blockedError()
+      }
+    }
     const additionalSkillReferences = session.selectedSkillReference
       ? [session.selectedSkillReference]
       : []
@@ -477,6 +497,8 @@ export class RunOrchestrationService {
           ...input.authorizationContext,
         })
     await this.deps.runtime.assertAvailable?.()
+    const policy = await this.deps.inputPolicy?.check({ userId: input.userId, entry: 'task-execution', sessionId: null, text: prompt, dedupeKey: correlationKey })
+    if (policy?.blocked) throw this.deps.inputPolicy!.blockedError()
     const run = await this.deps.runs.createRun({
       tenantId,
       sessionId: null,

@@ -92,6 +92,8 @@ export interface ArtifactOrigin {
 }
 
 export interface ChatMessage {
+  /** 输入预检拦截：消息未发送给模型（数据防护 D7）。 */
+  notSentToModel?: boolean
   id: string
   role: 'user' | 'assistant'
   content: string

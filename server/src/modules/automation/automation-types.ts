@@ -127,6 +127,7 @@ export interface AutomationExecutionRecord {
 export const AutomationReasonCodes = {
   overlap: 'overlap',
   subjectInvalid: 'subject_invalid',
+  dataPolicyBlocked: 'data_policy_blocked',
   authorizationDenied: 'authorization_denied',
   userPendingLimit: 'user_pending_limit',
   globalPendingLimit: 'global_pending_limit',

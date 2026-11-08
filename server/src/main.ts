@@ -111,6 +111,7 @@ import { builtinTools, missingDshBuiltinTools, type BuiltinToolStatus } from './
 import { PostgresMcpConnectorService } from './modules/tool/postgres-mcp-connector-service.ts'
 import { PostgresEncryptedCredentialStore } from './modules/tool/postgres-encrypted-credential-store.ts'
 import { ModelGateway } from './modules/model-gateway/model-gateway.ts'
+import { DataProtectionInputPreflight } from './modules/data-protection/data-protection-input-preflight.ts'
 import { DataProtectionService, PostgresDataProtectionStore } from './modules/data-protection/data-protection-service.ts'
 import { ModelGatewayUsageMeter } from './modules/model-gateway/model-gateway-usage-meter.ts'
 import { PostgresModelGatewayRequestLog } from './modules/model-gateway/model-gateway-request-log.ts'
@@ -312,11 +313,19 @@ async function start() {
   const skillSubmissionsRef: { current?: SkillSubmissionService } = {}
   // 平台模型网关（模型路由方案第 7 节、数据防护方案 DLP-S1）：正式执行的全部模型请求与联网搜索经网关，
   // 用 DSH_CREDENTIAL_MASTER_KEY 加密保存的厂商密钥转发；DSH 只持有 Attempt 短期令牌。只监听本机。
+  const dataProtectionStore = new PostgresDataProtectionStore(database)
+  const modelGovernanceForPolicy = new ModelGovernanceService(modelRepository)
+  const inputPolicy = new DataProtectionInputPreflight({
+    store: dataProtectionStore,
+    tenantId: 'tenant-dsh-work',
+    routeTrustLevel: async () => (await modelGovernanceForPolicy.resolveDefaultRoute()).trustLevel,
+    onError: message => { console.warn(message) },
+  })
   const modelGateway = dshInstallation ? new ModelGateway({
     log: new PostgresModelGatewayRequestLog(database),
     // 未配置主密钥时外部厂商的请求失败即关闭（数据防护方案 5.6.2）。
     dataProtection: new DataProtectionService(
-      new PostgresDataProtectionStore(database),
+      dataProtectionStore,
       process.env.DSH_CREDENTIAL_MASTER_KEY ? Buffer.from(process.env.DSH_CREDENTIAL_MASTER_KEY, 'base64') : undefined,
     ),
     credentials: {
@@ -553,6 +562,7 @@ async function start() {
       timezone: resolvePlatformTimezone(process.env.DSH_WORK_TIMEZONE),
       builtinSkills,
       // MR-S3：运行结束时按模型网关的逐次请求记录写入用量（实际模型、请求次数、缓存读写）。
+      inputPolicy,
       ...(modelGateway ? { modelUsage: new ModelGatewayUsageMeter(new PostgresModelGatewayRequestLog(database)) } : {}),
     },
   )
@@ -642,6 +652,7 @@ async function start() {
     content,
     operations,
     defaultAutomationConfig,
+    inputPolicy,
   )
   const agentRoutineService = new AgentRoutineService(
     database, authorization, runs, orchestration, conversations, operations,

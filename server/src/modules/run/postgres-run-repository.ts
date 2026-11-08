@@ -98,6 +98,20 @@ export class PostgresRunRepository implements RunRepository {
     this.database = database
   }
 
+  async hasRunForIdempotencyKey(tenantId: string, sessionId: string, requestedBy: string, idempotencyKey: string): Promise<boolean> {
+    const [row] = await this.database<{ id: string }[]>`
+      select id from runs
+       where tenant_id = ${tenantId} and session_id = ${sessionId} and requested_by = ${requestedBy} and idempotency_key = ${idempotencyKey}
+       limit 1
+    `
+    return Boolean(row)
+  }
+
+  async sessionHasRuns(tenantId: string, sessionId: string): Promise<boolean> {
+    const [row] = await this.database<{ id: string }[]>`select id from runs where tenant_id = ${tenantId} and session_id = ${sessionId} limit 1`
+    return Boolean(row)
+  }
+
   async createRun(input: CreateRunInput, tx?: DatabaseTransaction): Promise<RunRecord> {
     const runId = `run-${randomUUID()}`
     const body = async (transaction: DatabaseTransaction) => {

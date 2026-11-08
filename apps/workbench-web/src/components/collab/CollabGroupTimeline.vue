@@ -293,10 +293,11 @@ async function submit(payload: { prompt: string; files: File[]; workspaceId: str
     ElMessage.warning('带附件或引用文件的消息需要 @Agent 发起执行；纯讨论消息不支持附件。')
     return
   }
+  let createdSessionId: string | undefined
   try {
     // 续写最近一段讨论；群组还没有讨论时开启第一段（与 A 的空间内新对话同一入口）。
     let sessionId = latestSessionId.value
-    if (!sessionId) sessionId = (await workbenchApi.createSession({ title: payload.prompt, workspaceId: props.workspaceId })).id
+    if (!sessionId) createdSessionId = sessionId = (await workbenchApi.createSession({ title: payload.prompt, workspaceId: props.workspaceId })).id
     if (memberId) {
       const run = await taskStore.startRunWithSessionFiles(sessionId, {
         prompt: payload.prompt,
@@ -315,6 +316,8 @@ async function submit(payload: { prompt: string; files: File[]; workspaceId: str
     await scrollToBottom()
     void conversations.refresh()
   } catch (cause) {
+    // 第一段讨论的首条消息被拦截：不留下没有内容的空讨论。
+    if (createdSessionId && (cause as { code?: string }).code === 'DATA_POLICY_BLOCKED') await workbenchApi.deleteSession(createdSessionId).catch(() => undefined)
     notifyActionFailure('发送消息', '群聊', cause, '检查输入、附件与所 @ 的 Agent 后重试；已有讨论内容不会丢失。')
   }
 }

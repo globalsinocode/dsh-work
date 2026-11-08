@@ -220,6 +220,8 @@ export interface ChatMessage {
   role: 'user' | 'assistant'
   content: string
   createdAt: string
+  /** 输入预检拦截：消息未发送给模型（数据防护 D7）。 */
+  notSentToModel?: boolean
   /** 该消息所属的 Run；共享讨论消息为 null。 */
   runId?: string | null
   /** TW-10 共享讨论归因：用户消息作者；assistant 消息记录触发人与 Agent。 */

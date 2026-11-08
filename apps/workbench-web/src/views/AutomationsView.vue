@@ -89,6 +89,7 @@ const outcomeMeta: Record<TaskResultOutcome, { label: string; type: TagType }> =
 const reasonLabels: Record<string, string> = {
   overlap: '上一次执行未结束，本次跳过',
   subject_invalid: '账号状态不可用',
+  data_policy_blocked: '任务输入包含密钥，未发送给模型',
   authorization_denied: '当前权限已不满足执行条件',
   user_pending_limit: '你的排队定时任务过多',
   global_pending_limit: '平台定时任务容量已满',

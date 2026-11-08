@@ -33,6 +33,9 @@ export interface AppendSystemEventInput {
 
 export interface RunRepository {
   createRun(input: CreateRunInput, tx?: DatabaseTransaction): Promise<RunRecord>
+  /** 同一 Session、发起人和幂等键的 Run 是否已经受理。 */
+  hasRunForIdempotencyKey(tenantId: string, sessionId: string, requestedBy: string, idempotencyKey: string): Promise<boolean>
+  sessionHasRuns(tenantId: string, sessionId: string): Promise<boolean>
   getRun(tenantId: string, runId: string): Promise<RunRecord | null>
   getRunForTask(tenantId: string, taskId: string): Promise<RunRecord | null>
   getAttempt(tenantId: string, attemptId: string): Promise<RunAttemptRecord | null>

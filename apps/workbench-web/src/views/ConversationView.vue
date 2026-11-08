@@ -760,6 +760,8 @@ async function submitFollowUp(payload: { prompt: string; files: File[]; workspac
     }
     await nextTick(() => scrollToBottom())
   } catch (error) {
+    // 被拦截的消息要刷新才看得到；输入框和附件不清空，员工删掉密钥后可直接重发。
+    if ((error as { code?: string }).code === 'DATA_POLICY_BLOCKED') await taskStore.loadTask(task.value.id).catch(() => undefined)
     notifyActionFailure('发送消息', `对话“${task.value.title}”`, error, '检查输入和附件后重试；已有对话内容不会丢失。')
   }
 }

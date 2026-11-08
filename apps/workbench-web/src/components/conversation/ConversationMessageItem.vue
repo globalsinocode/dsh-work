@@ -15,6 +15,8 @@ export interface ConversationMessageView {
   runRequesterName?: string | null
   /** 用户消息随发送附带的文件名。 */
   attachments?: string[] | null
+  /** 输入预检拦截，未发送给模型（数据防护 D7）。 */
+  notSentToModel?: boolean
 }
 
 /**
@@ -73,6 +75,9 @@ const compact = computed(() => props.compactOwn && props.own && isUser.value)
           <span>{{ fileName }}</span>
         </li>
       </ul>
+      <p v-if="message.notSentToModel" class="message-not-sent" role="note" data-testid="message-not-sent">
+        <strong>未发送给模型</strong>：这条消息包含 <strong>密钥</strong>，按公司数据防护策略未发送给模型。请删除后重新发送。
+      </p>
     </div>
     <span v-if="compact" class="message-time">{{ message.createdAt }}</span>
     <div v-else-if="!isUser" class="assistant-answer assistant-reply">

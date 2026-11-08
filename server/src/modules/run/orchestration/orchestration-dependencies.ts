@@ -30,6 +30,12 @@ export type { ExecutionToolCheckPort }
  * construction (they depend on orchestration themselves), so components read them at
  * call time rather than copying them.
  */
+export interface RunInputPolicyPort {
+  check(input: { userId: string; entry: 'conversation' | 'task-execution'; sessionId: string | null; text: string; dedupeKey?: string }): Promise<{ blocked: boolean }>
+  /** 拦截时返回给接口的错误（D7 固定说明）。 */
+  blockedError(): Error
+}
+
 export interface OrchestrationDependencies {
   readonly runs: RunRepository
   readonly conversations: PostgresConversationRepository
@@ -39,6 +45,8 @@ export interface OrchestrationDependencies {
   readonly operations?: RunOperationsPort
   /** 模型网关计量（MR-S3）：运行结束时按网关记录汇总用量；未接线时沿用会话日志或估算。 */
   readonly modelUsage?: ModelUsageMeterPort
+  /** 输入预检（数据防护方案 5.6.1）。blocked 为 true 时不创建 Run；不可用时抛错。 */
+  readonly inputPolicy?: RunInputPolicyPort
   readonly agents?: PostgresAgentService
   /** 企业知识库（WeKnora）；未配置时不检索企业知识。 */
   readonly knowledge?: KnowledgeProvider

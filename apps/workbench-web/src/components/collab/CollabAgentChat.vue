@@ -288,6 +288,7 @@ async function submit(payload: { prompt: string; files: File[]; workspaceId: str
     await scrollToBottom()
     void conversations.refresh()
   } catch (cause) {
+    if ((cause as { code?: string }).code === 'DATA_POLICY_BLOCKED') await reloadNewest().catch(() => undefined)
     notifyActionFailure('发送消息', `与“${agent.value?.name ?? 'AI 同事'}”的对话`, cause, '检查输入和附件后重试；已有对话内容不会丢失。')
   }
 }

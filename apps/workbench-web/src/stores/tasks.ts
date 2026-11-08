@@ -146,6 +146,10 @@ export const useTaskStore = defineStore('tasks', () => {
       referencedFileIds,
       workspaceAgentMemberId,
       mentionedUserIds,
+    }).catch(async (cause: unknown) => {
+      // 首条消息被数据防护拦截时还没有 Run，服务端不保存正文并已清掉标题；这里移走打不开的空对话，正文仍在输入框。
+      if ((cause as { code?: string }).code === 'DATA_POLICY_BLOCKED') await workbenchApi.deleteSession(session.id).catch(() => undefined)
+      throw cause
     })
     requireGeneration(current)
     subscribe(task.id)

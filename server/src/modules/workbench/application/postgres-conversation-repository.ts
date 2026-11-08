@@ -115,6 +115,7 @@ export interface UserSessionQuery {
 }
 
 interface MessageRow {
+  notSentToModel?: boolean
   id: string
   role: 'user' | 'assistant'
   content: string
@@ -440,13 +441,15 @@ export class PostgresConversationRepository {
     messageId?: string
     /** D38：@ 的同事；只为现任成员登记提醒，与消息同一事务写入。 */
     mentionedUserIds?: string[]
+    /** 输入预检拦截的消息：不进入会话历史（数据防护 D10）。 */
+    notSentToModel?: boolean
   }) {
     const id = input.messageId ?? `message-${randomUUID()}`
     await this.database.begin(async (transaction) => {
       await transaction`
-        insert into messages (id, tenant_id, session_id, run_id, role, content, sender_user_id)
+        insert into messages (id, tenant_id, session_id, run_id, role, content, sender_user_id, not_sent_to_model)
         values (${id}, ${tenantId}, ${input.sessionId}, ${input.runId ?? null}, ${input.role}, ${input.content},
-                ${input.senderUserId ?? null})
+                ${input.senderUserId ?? null}, ${input.notSentToModel ?? false})
         on conflict (id) do nothing
       `
       await transaction`
@@ -544,6 +547,17 @@ export class PostgresConversationRepository {
     })
   }
 
+  /**
+   * 会话标题默认取首条消息前 40 字。首条消息被数据防护拦截时换掉标题，
+   * 否则密钥会留在会话列表里（团队会话对全组可见）。用户自己改过的标题不动。
+   */
+  async scrubTitleDerivedFromPrompt(sessionId: string, prompt: string): Promise<void> {
+    await this.database`
+      update sessions set title = '未发送的对话'
+       where tenant_id = ${tenantId} and id = ${sessionId} and title = ${truncateTitle(prompt)}
+    `
+  }
+
   async getRunPrompt(runId: string) {
     const [row] = await this.database<{ content: string }[]>`
       select content from messages
@@ -597,6 +611,7 @@ export class PostgresConversationRepository {
          and m.run_id is distinct from current_run.id
          and m.created_at < current_run.created_at
          and m.role in ('user', 'assistant')
+         and not m.not_sent_to_model
        order by m.created_at desc, m.id desc
        limit ${conversationHistoryMessageLimit}
     `
@@ -640,6 +655,7 @@ export class PostgresConversationRepository {
            and m.session_id = ${sessionId}
            and s.audience = 'workbench'
            and m.role in ('user', 'assistant')
+           and not m.not_sent_to_model
            and (${beforeRunId}::text is null or (
              current_run.session_id = ${sessionId}
              and m.run_id is distinct from current_run.id
@@ -1163,6 +1179,7 @@ export class PostgresConversationRepository {
     }
     const rows = await this.database<MessageRow[]>`
       select m.id, m.role, m.content, m.created_at as "createdAt", m.run_id as "runId",
+             m.not_sent_to_model as "notSentToModel",
              coalesce(m.sender_user_id, r.requested_by) as "senderId",
              su.display_name as "senderName",
              r.requested_by as "runRequesterId", ru.display_name as "runRequesterName",
@@ -1792,6 +1809,7 @@ function mapMessage(row: MessageRow): ChatMessage {
     runRequesterName: row.runRequesterName ?? undefined,
     agentName: row.agentName ?? undefined,
     ...(row.mentionedUserIds?.length ? { mentionedUserIds: row.mentionedUserIds } : {}),
+    ...(row.notSentToModel ? { notSentToModel: true } : {}),
   }
 }
 

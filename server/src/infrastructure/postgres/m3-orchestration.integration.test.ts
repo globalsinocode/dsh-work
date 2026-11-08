@@ -4,6 +4,9 @@ import { mkdir, mkdtemp, readFile, symlink, writeFile } from 'node:fs/promises'
 import { spawnSync } from 'node:child_process'
 import { createServer, type Server } from 'node:http'
 import { tmpdir } from 'node:os'
+
+import { DataProtectionInputPreflight } from '../../modules/data-protection/data-protection-input-preflight.ts'
+import { PostgresDataProtectionStore } from '../../modules/data-protection/data-protection-service.ts'
 import { join } from 'node:path'
 import { after, before, test } from 'node:test'
 
@@ -78,7 +81,11 @@ before(async () => {
     undefined,
     undefined,
     authorization,
-    { tasks, modelUsage: { summarizeAttempt: async () => meteredLines } },
+    {
+      tasks,
+      modelUsage: { summarizeAttempt: async () => meteredLines },
+      inputPolicy: new DataProtectionInputPreflight({ store: new PostgresDataProtectionStore(database), tenantId: 'tenant-dsh-work', routeTrustLevel: async () => routeTrustLevel }),
+    },
   )
   const router = new Router({ authenticateApi: async (request, audience) => {
     const identity = await testApiAuthenticator(request, audience)
@@ -99,6 +106,8 @@ before(async () => {
   if (!address || typeof address === 'string') throw new Error('PF-01 测试 HTTP Server 未获得端口')
   apiBaseUrl = `http://127.0.0.1:${address.port}`
 })
+
+let routeTrustLevel: 'internal' | 'external' = 'external'
 
 after(async () => {
   if (apiServer?.listening) await new Promise<void>((resolve, reject) => apiServer.close(error => error ? reject(error) : resolve()))
@@ -1822,4 +1831,80 @@ test('2b-3: binary artifacts get container-extracted text, failures are recorded
   // Nothing readable is left: another backfill records nothing new.
   const again = await extracting.backfillBinaryArtifactExtractions()
   assert.equal(again.extracted + again.failed, 0)
+})
+
+test('DLP-S2 输入预检：本条消息含密钥时不创建 Run，消息带标记且不进入后续历史', async () => {
+  const secret = 's' + 'k-abcdefghijklmnopqrstuvwx1234'
+  const session = await orchestration.createSession({ userId: 'U00001', title: '数据防护预检' })
+  const first = await orchestration.startRun({ userId: 'U00001', sessionId: session.id, prompt: '第一条普通消息', idempotencyKey: randomUUID() })
+  await waitForTask(first!.id, 'succeeded')
+
+  await assert.rejects(
+    orchestration.startRun({ userId: 'U00001', sessionId: session.id, prompt: `帮我看 ${secret}`, idempotencyKey: randomUUID() }),
+    (error: { status?: number; code?: string; message?: string }) => error.status === 422 && error.code === 'DATA_POLICY_BLOCKED' && !error.message!.includes(secret),
+  )
+  const runCount = await database<{ count: number }[]>`select count(*)::int as count from runs where session_id = ${session.id}`
+  assert.equal(runCount[0]!.count, 1, '没有创建新 Run')
+  const blocks = await database`select * from data_protection_input_blocks where session_id = ${session.id}`
+  assert.equal(blocks.length, 1)
+  assert.equal(blocks[0]!['secret_count'], 1)
+  assert.equal(JSON.stringify(blocks).includes(secret), false, '审计不含原值')
+
+  const shown = await conversations.getTask(first!.id, 'U00001')
+  const blockedMessage = shown!.messages.find(message => message.content.includes(secret))
+  assert.equal(blockedMessage?.notSentToModel, true, '消息保留并带标记')
+
+  const next = await orchestration.startRun({ userId: 'U00001', sessionId: session.id, prompt: '第三条普通消息', idempotencyKey: randomUUID() })
+  await waitForTask(next!.id, 'succeeded')
+  const history = await conversations.getConversationHistory(session.id, next!.id)
+  assert.equal(history.some(message => message.content.includes(secret)), false, '下一轮历史不含被拦截的消息')
+  assert.equal(history.some(message => message.content === '第一条普通消息'), true)
+
+  routeTrustLevel = 'internal'
+  try {
+    const internal = await orchestration.startRun({ userId: 'U00001', sessionId: session.id, prompt: `内部模型 ${secret}`, idempotencyKey: randomUUID() })
+    await waitForTask(internal!.id, 'succeeded')
+  } finally {
+    routeTrustLevel = 'external'
+  }
+})
+
+test('DLP-S2 输入预检：首条被拦截不保存正文并清掉标题，已受理的请求重放不改判', async () => {
+  const secret = 's' + 'k-abcdefghijklmnopqrstuvwx9876'
+  const prompt = `帮我看 ${secret}`
+  const session = await orchestration.createSession({ userId: 'U00001', title: prompt })
+  const key = randomUUID()
+  await assert.rejects(orchestration.startRun({ userId: 'U00001', sessionId: session.id, prompt, idempotencyKey: key }), { code: 'DATA_POLICY_BLOCKED' })
+  await assert.rejects(orchestration.startRun({ userId: 'U00001', sessionId: session.id, prompt, idempotencyKey: key }), { code: 'DATA_POLICY_BLOCKED' })
+  const stored = await database`select content from messages where session_id = ${session.id}`
+  assert.equal(stored.length, 0, '没有 Run 的会话不保存被拦截的正文')
+  const [row] = await database<{ title: string }[]>`select title from sessions where id = ${session.id}`
+  assert.equal(row!.title, '未发送的对话')
+  const blocks = await database`select id from data_protection_input_blocks where session_id = ${session.id}`
+  assert.equal(blocks.length, 1, '重放只记一条审计')
+
+  // 内部路由时受理，改成外部后同一幂等键重放返回原 Run。
+  const replaySession = await orchestration.createSession({ userId: 'U00001', title: '重放' })
+  const replayKey = randomUUID()
+  routeTrustLevel = 'internal'
+  let accepted
+  try {
+    accepted = await orchestration.startRun({ userId: 'U00001', sessionId: replaySession.id, prompt, idempotencyKey: replayKey })
+  } finally {
+    routeTrustLevel = 'external'
+  }
+  await waitForTask(accepted!.id, 'succeeded')
+  const replayed = await orchestration.startRun({ userId: 'U00001', sessionId: replaySession.id, prompt, idempotencyKey: replayKey })
+  assert.equal(replayed!.id, accepted!.id)
+})
+
+test('DLP-S2 输入预检：task-executions 接口命中密钥时不创建 Run', async () => {
+  await assert.rejects(orchestration.startTaskExecution({
+    userId: 'U00001',
+    workspaceId: 'ws-personal-U00001',
+    agentVersionId: 'agent-version-dsh-work-assistant-1',
+    prompt: 's' + 'k-abcdefghijklmnopqrstuvwx5555',
+    correlationKey: randomUUID(),
+    sourceType: 'api',
+  }), { code: 'DATA_POLICY_BLOCKED' })
 })
