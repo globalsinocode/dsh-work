@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterEach, describe, it } from 'node:test'
+import { DataProtectionService, MemoryDataProtectionStore } from '../data-protection/data-protection-service.ts'
 import { AcpJsonRpcClient, buildAcpChildEnvironment } from './acp-json-rpc-client.ts'
 import {
   diagnoseMcpAuthenticationFailure,
@@ -2131,6 +2132,7 @@ describe('模型路由生效与模型网关（MR-S2 / DLP-S1）', () => {
     const log = new MemoryModelGatewayRequestLog()
     const upstream: Array<{ url: string; authorization: string; model: string }> = []
     const gateway = new ModelGateway({
+      dataProtection: new DataProtectionService(new MemoryDataProtectionStore(), Buffer.alloc(32, 1)),
       log,
       credentials: { readSecret: async () => 'sk-vendor' },
       fetch: async (url, init) => {

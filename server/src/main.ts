@@ -111,6 +111,7 @@ import { builtinTools, missingDshBuiltinTools, type BuiltinToolStatus } from './
 import { PostgresMcpConnectorService } from './modules/tool/postgres-mcp-connector-service.ts'
 import { PostgresEncryptedCredentialStore } from './modules/tool/postgres-encrypted-credential-store.ts'
 import { ModelGateway } from './modules/model-gateway/model-gateway.ts'
+import { DataProtectionService, PostgresDataProtectionStore } from './modules/data-protection/data-protection-service.ts'
 import { ModelGatewayUsageMeter } from './modules/model-gateway/model-gateway-usage-meter.ts'
 import { PostgresModelGatewayRequestLog } from './modules/model-gateway/model-gateway-request-log.ts'
 import { WeKnoraKnowledgeProvider } from './modules/knowledge/weknora-knowledge-provider.ts'
@@ -313,6 +314,11 @@ async function start() {
   // 用 DSH_CREDENTIAL_MASTER_KEY 加密保存的厂商密钥转发；DSH 只持有 Attempt 短期令牌。只监听本机。
   const modelGateway = dshInstallation ? new ModelGateway({
     log: new PostgresModelGatewayRequestLog(database),
+    // 未配置主密钥时外部厂商的请求失败即关闭（数据防护方案 5.6.2）。
+    dataProtection: new DataProtectionService(
+      new PostgresDataProtectionStore(database),
+      process.env.DSH_CREDENTIAL_MASTER_KEY ? Buffer.from(process.env.DSH_CREDENTIAL_MASTER_KEY, 'base64') : undefined,
+    ),
     credentials: {
       readSecret: async (tenantId, credentialRefId) => {
         if (!credentialSecrets) throw new Error('服务未配置 DSH_CREDENTIAL_MASTER_KEY，无法解析模型厂商密钥')

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { afterEach, beforeEach, describe, it } from 'node:test'
 
+import { DataProtectionService, MemoryDataProtectionStore } from '../data-protection/data-protection-service.ts'
 import { GATEWAY_ORIGIN_HEADER, ModelGateway } from './model-gateway.ts'
 import { classifyAttemptModelFailure } from './model-gateway-failure.ts'
 import { MemoryModelGatewayRequestLog } from './model-gateway-request-log.ts'
@@ -55,6 +56,7 @@ describe('模型网关（DLP-S1 最小链路）', () => {
     secrets = new Map([['credential-deepseek', 'sk-vendor-secret']])
     respond = () => streamResponse(sse(['[DONE]']))
     gateway = new ModelGateway({
+      dataProtection: new DataProtectionService(new MemoryDataProtectionStore(), Buffer.alloc(32, 1)),
       log,
       credentials: {
         readSecret: async (_tenantId, credentialRefId) => {
@@ -276,6 +278,7 @@ describe('模型网关（DLP-S1 最小链路）', () => {
 
   it('写请求记录失败不改变返回给 DSH 的状态码', async () => {
     const failing = new ModelGateway({
+      dataProtection: new DataProtectionService(new MemoryDataProtectionStore(), Buffer.alloc(32, 1)),
       log: { record: async () => { throw new Error('database down') }, listForAttempt: async () => [] },
       credentials: { readSecret: async () => 'sk' },
       fetch: async () => new Response(JSON.stringify({ error: { code: 'rate_limit_exceeded' } }), { status: 429, headers: { 'content-type': 'application/json' } }),
@@ -297,7 +300,7 @@ describe('模型网关（DLP-S1 最小链路）', () => {
   })
 
   it('请求体过大或不是 JSON 用 MODEL_REQUEST_INVALID，不提示路由问题', async () => {
-    const small = new ModelGateway({ log, credentials: { readSecret: async () => 'sk' }, maxRequestBytes: 16, fetch: async () => new Response('') })
+    const small = new ModelGateway({ dataProtection: new DataProtectionService(new MemoryDataProtectionStore(), Buffer.alloc(32, 1)), log, credentials: { readSecret: async () => 'sk' }, maxRequestBytes: 16, fetch: async () => new Response('') })
     const smallBase = await small.start()
     try {
       const token = small.issueToken(deepSeekBinding({ attemptId: 'attempt-large' }))
@@ -337,6 +340,7 @@ describe('模型网关（DLP-S1 最小链路）', () => {
 
   it('厂商发完错误响应头后卡住时，读取错误正文也受时限约束', async () => {
     const slow = new ModelGateway({
+      dataProtection: new DataProtectionService(new MemoryDataProtectionStore(), Buffer.alloc(32, 1)),
       log, credentials: { readSecret: async () => 'sk' }, upstreamHeadersTimeoutMs: 50,
       fetch: async (_url, init) => new Response(new ReadableStream({
         start(controller) {
@@ -361,7 +365,7 @@ describe('模型网关（DLP-S1 最小链路）', () => {
 
   it('签发新令牌时清理已过期的令牌', async () => {
     let now = Date.now()
-    const clocked = new ModelGateway({ log, credentials: { readSecret: async () => 'sk' }, now: () => now })
+    const clocked = new ModelGateway({ dataProtection: new DataProtectionService(new MemoryDataProtectionStore(), Buffer.alloc(32, 1)), log, credentials: { readSecret: async () => 'sk' }, now: () => now })
     clocked.issueToken(deepSeekBinding({ attemptId: 'attempt-old', expiresAt: now + 10 }))
     now += 100
     clocked.issueToken(deepSeekBinding({ attemptId: 'attempt-new', expiresAt: now + 10_000 }))

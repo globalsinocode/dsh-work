@@ -155,6 +155,8 @@ flowchart LR
 | --- | --- | --- |
 | `model_providers`、`provider_models`、`model_routes` | Provider、模型与平台路由 | 只存凭据引用（厂商密钥在 `credential_secrets` 加密保存）；启用的默认路由写入 Attempt 快照与 Manifest 的 `model_route`，决定新运行经模型网关调用的模型（MR-S2）；没有可用路由时新运行被拒绝 |
 | `model_gateway_requests` | 模型网关请求记录（迁移 0121，DLP-S1） | 每个经网关的模型请求一条：Attempt、路由、请求模型、接口（对话 / 联网搜索）、来源（网关拒绝 / 厂商 / 连接）、结果、状态码、厂商错误码与输入、输出、缓存读写 token；厂商未返回的用量为空，不记为 0。用于计量与 Attempt 失败分类；不保存请求或回复正文、错误消息、令牌与密钥 |
+| `data_protection_terms`、`data_protection_allowlist` | 企业词表与白名单（迁移 0123，DLP-S2），保存即生效 |
+| `data_protection_gateway_events` | 网关每个请求的数据防护审计：类别次数、处理方式、是否含图片；不保存原值、哈希或上下文（D8） |
 | `runtimes`、`runtime_configurations` | Runtime 与其配置 | 健康与调度状态分离；配置追加版本，包含内置工具紧急停用清单 `disabled_tools`（只接受 DSH 工具）与内置 Skill 紧急停用清单 `disabled_builtin_skills`；Runtime 不等于每次执行的 Worker |
 
 ## 9. 文件与成果

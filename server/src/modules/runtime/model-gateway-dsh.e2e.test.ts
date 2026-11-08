@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { after, before, describe, it } from 'node:test'
 
+import { DataProtectionService, MemoryDataProtectionStore } from '../data-protection/data-protection-service.ts'
 import { DshAcpRuntimeAdapter } from './dsh-acp-runtime-adapter.ts'
 import { preflightDshRuntime, resolveDshRuntimeInstallation } from './dsh-runtime-installation.ts'
 import type { RuntimeManifest, RuntimeModelRoute } from './runtime-types.ts'
@@ -25,7 +26,7 @@ const skip = process.env.DSH_WORK_MODEL_GATEWAY_E2E !== '1' ? 'DSH_WORK_MODEL_GA
 const projectRoot = resolve(import.meta.dirname, '../../../..')
 const VENDOR_SECRET = 'sk-p1-vendor-secret'
 
-type Behaviour = { status: number; body?: unknown } | 'answer' | 'search-then-answer'
+type Behaviour = { status: number; body?: unknown } | 'answer' | 'search-then-answer' | 'echo-placeholder'
 
 interface UpstreamRequest { path: string; authorization: string | undefined; apiKey: string | undefined; model: string }
 
@@ -35,6 +36,7 @@ describe('受控 DSH 经平台模型网关执行（MR-S2 P1）', { skip, timeout
   let upstreamBase: string
   let behaviour: Behaviour = 'answer'
   const requests: UpstreamRequest[] = []
+  const upstreamBodies: string[] = []
   let gateway: ModelGateway
   let log: MemoryModelGatewayRequestLog
   let adapter: DshAcpRuntimeAdapter
@@ -47,6 +49,7 @@ describe('受控 DSH 经平台模型网关执行（MR-S2 P1）', { skip, timeout
 
     log = new MemoryModelGatewayRequestLog()
     gateway = new ModelGateway({
+      dataProtection: new DataProtectionService(new MemoryDataProtectionStore(), Buffer.alloc(32, 1)),
       log,
       credentials: { readSecret: async () => VENDOR_SECRET },
       // 路由的 base_url 用 DeepSeek 官方地址（启用联网搜索与思考格式），转发时改写到本地假上游。
@@ -89,6 +92,7 @@ describe('受控 DSH 经平台模型网关执行（MR-S2 P1）', { skip, timeout
     let body = ''
     for await (const chunk of request) body += chunk
     const parsed = JSON.parse(body) as { model: string; messages?: Array<{ role: string }> }
+    upstreamBodies.push(body)
     requests.push({
       path: request.url ?? '',
       authorization: request.headers['authorization'],
@@ -113,7 +117,7 @@ describe('受控 DSH 经平台模型网关执行（MR-S2 P1）', { skip, timeout
     const searching = behaviour === 'search-then-answer' && toolResults === 0
     const delta = searching
       ? { role: 'assistant', content: null, tool_calls: [{ index: 0, id: 'call_search', type: 'function', function: { name: 'web_search', arguments: JSON.stringify({ queries: ['dsh-work 模型网关'] }) } }] }
-      : { role: 'assistant', content: 'P1 回答完成' }
+      : { role: 'assistant', content: behaviour === 'echo-placeholder' ? `号码是 ${body.match(/\{\{PERSONAL_[a-z2-7]{10}\}\}/)?.[0] ?? '未遮盖'}` : 'P1 回答完成' }
     response.writeHead(200, { 'content-type': 'text/event-stream' })
     const chunk = (choices: unknown[], extra: object = {}) => response.write(`data: ${JSON.stringify({ id: 'x', object: 'chat.completion.chunk', created: 0, model: parsed.model, choices, ...extra })}\n\n`)
     chunk([{ index: 0, delta, finish_reason: null }])
@@ -127,7 +131,7 @@ describe('受控 DSH 经平台模型网关执行（MR-S2 P1）', { skip, timeout
     model_key: 'deepseek-v4-pro', base_url: 'https://api.deepseek.com', credential_ref_id: 'credential-p1', trust_level: 'external',
   }
 
-  function manifest(runId: string, tools: string[] = []): RuntimeManifest {
+  function manifest(runId: string, tools: string[] = [], message = '你好'): RuntimeManifest {
     return {
       manifest_version: '1.0',
       run_id: runId,
@@ -145,7 +149,7 @@ describe('受控 DSH 经平台模型网关执行（MR-S2 P1）', { skip, timeout
       knowledge_context: [],
       model_route_id: route.route_id,
       model_route: route,
-      input: { message: '你好', file_mounts: [] },
+      input: { message, file_mounts: [] },
       budget: { scope_task_id: `task-${runId}`, cumulative_limits: { max_duration_ms: null, max_tool_calls: null, max_output_bytes: null }, reservation: { duration_ms: 120_000, tool_calls: 5, output_bytes: 64 * 1024 }, enforcement: { duration: 'hard', tool_calls: 'hard', output_bytes: 'hard', tokens: 'unsupported', cost: 'unsupported' } },
       limits: { timeout_seconds: 120, max_output_bytes: 64 * 1024, max_tool_calls: 5 },
       created_at: new Date().toISOString(),
@@ -153,10 +157,10 @@ describe('受控 DSH 经平台模型网关执行（MR-S2 P1）', { skip, timeout
     }
   }
 
-  async function run(runId: string, next: Behaviour, tools: string[] = []) {
+  async function run(runId: string, next: Behaviour, tools: string[] = [], message = '你好') {
     behaviour = next
     requests.length = 0
-    const result = await (await adapter.execute(manifest(runId, tools))).done
+    const result = await (await adapter.execute(manifest(runId, tools, message))).done
     return { result, requests: [...requests], records: await log.listForAttempt('tenant-p1', `${runId}-attempt`) }
   }
 
@@ -169,6 +173,20 @@ describe('受控 DSH 经平台模型网关执行（MR-S2 P1）', { skip, timeout
     assert.equal(records.at(-1)?.outcome, 'succeeded')
     assert.equal(records.at(-1)?.inputTokens, 120)
     assert.equal(records.at(-1)?.cacheReadTokens, 64)
+  })
+
+  it('外部厂商：上游收不到原值，回答中的占位符已还原（DLP-S2）', async () => {
+    upstreamBodies.length = 0
+    behaviour = 'echo-placeholder'
+    const execution = await adapter.execute(manifest('run-p1-mask', [], '记一下电话 13812345678'))
+    const emitted: unknown[] = []
+    adapter.subscribe('run-p1-mask', event => emitted.push(event))
+    const result = await execution.done
+    assert.equal(result.status, 'completed', result.errorMessage ?? undefined)
+    assert.ok(upstreamBodies.length >= 1)
+    assert.ok(upstreamBodies.every(body => !body.includes('13812345678')), '上游请求不含原值')
+    assert.ok(upstreamBodies.some(body => /\{\{PERSONAL_[a-z2-7]{10}\}\}/.test(body)))
+    assert.match(JSON.stringify(emitted), /号码是 13812345678/, 'DSH 收到的回答已还原')
   })
 
   it('厂商 401 不被重试，以 MODEL_CREDENTIAL_INVALID 结束', async () => {

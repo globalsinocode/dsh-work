@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { randomBytes } from 'node:crypto'
 import { after, before, test } from 'node:test'
 
+import { DataProtectionService, MemoryDataProtectionStore, PostgresDataProtectionStore } from '../../modules/data-protection/data-protection-service.ts'
 import { createThrowawayDatabase, type ThrowawayDatabase } from './test-database.ts'
 import { ModelGateway } from '../../modules/model-gateway/model-gateway.ts'
 import { PostgresModelGatewayRequestLog } from '../../modules/model-gateway/model-gateway-request-log.ts'
@@ -35,6 +36,7 @@ test('网关用管理端录入的加密密钥转发，并把用量与失败写�
   const log = new PostgresModelGatewayRequestLog(database.client)
   let status = 200
   gateway = new ModelGateway({
+    dataProtection: new DataProtectionService(new MemoryDataProtectionStore(), Buffer.alloc(32, 1)),
     log,
     credentials: { readSecret: (tenant, credentialRefId) => credentials.readBearerToken(tenant, credentialRefId) },
     fetch: async (_url, init) => {
@@ -73,4 +75,25 @@ test('网关用管理端录入的加密密钥转发，并把用量与失败写�
   assert.equal((await gateway.inspectAttemptFailure(tenantId, 'attempt-gateway')).failure?.code, 'MODEL_RATE_LIMITED')
   const [stored] = await database.client<{ text: string }[]>`select row_to_json(r)::text as text from model_gateway_requests r limit 1`
   assert.doesNotMatch(stored?.text ?? '', /sk-gateway-test-secret|dshwg_/)
+})
+
+test('词表保存后下一次请求即生效，审计只记次数并取到发起人', async () => {
+  const store = new PostgresDataProtectionStore(database.client)
+  const service = new DataProtectionService(store, Buffer.alloc(32, 2))
+  assert.equal((await service.mask(tenantId, ['华星科技'])).counts.term, 0)
+  await database.client`insert into data_protection_terms (id, tenant_id, value) values ('term-1', ${tenantId}, '华星科技')`
+  await database.client`insert into data_protection_allowlist (id, tenant_id, value) values ('allow-1', ${tenantId}, 'a@example.com')`
+  const result = await service.mask(tenantId, ['华星科技 a@example.com'])
+  assert.deepEqual(result.counts, { secret: 0, personal: 0, term: 1 })
+  assert.equal(result.texts[0]!.includes('华星科技'), false)
+
+  await store.recordGatewayEvent({
+    tenantId, runId: 'run-without-row', attemptId: 'attempt-1', providerKey: 'p', modelKey: 'm', endpoint: 'chat', trustLevel: 'external',
+    counts: result.counts, action: 'masked', hasImage: false,
+  })
+  const rows = await database.client`select * from data_protection_gateway_events where run_id = 'run-without-row'`
+  assert.equal(rows.length, 1)
+  assert.equal(rows[0]!['term_count'], 1)
+  assert.equal(rows[0]!['user_id'], null)
+  assert.equal(JSON.stringify(rows[0]).includes('华星科技'), false)
 })
