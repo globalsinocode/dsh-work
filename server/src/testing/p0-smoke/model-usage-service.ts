@@ -106,6 +106,14 @@ export class SmokeModelUsageService implements ModelUsageQueryPort {
     return { items, total: matched.length, page, pageSize }
   }
 
+  /** 与生产运营概况同口径的滚动 24 小时，不受“今天”刚过零点影响。 */
+  tokensInLast24Hours(): number {
+    const since = this.now().getTime() - 86_400_000
+    return this.lines({ range: '7d' })
+      .filter(line => line.execution.occurredAt.getTime() >= since)
+      .reduce((total, line) => total + (line.inputTokens ?? 0) + (line.outputTokens ?? 0), 0)
+  }
+
   private lines(filter: ModelUsageFilter): UsageLine[] {
     const days = MODEL_USAGE_RANGE_DAYS[filter.range]
     const fromDate = localDate(new Date(this.now().getTime() - (days - 1) * 86_400_000))

@@ -65,7 +65,7 @@ function statusLabel(value: AgentRoutine['status']): string {
 function reasonLabel(reason: string | null): string {
   return ({ slot_expired: '错过执行窗口', overlap: '已有执行未结束', authorization_denied: '当前授权不足',
     agent_pending_limit: 'Agent 并发已满', global_pending_limit: '全局容量已满',
-    routine_inactive: '规则已停用', dispatch_interrupted: '派发中断' } as Record<string, string>)[reason ?? ''] ?? reason ?? '—'
+    routine_inactive: '规则已停用', data_policy_blocked: '任务输入包含密钥，未发送给模型', dispatch_interrupted: '派发中断' } as Record<string, string>)[reason ?? ''] ?? reason ?? '—'
 }
 
 async function load() {

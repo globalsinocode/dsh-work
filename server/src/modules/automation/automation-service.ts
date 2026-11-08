@@ -491,6 +491,15 @@ export class AutomationService {
    * 任何一步不通过都落一条带 reason 的终态执行记录（不创建 Run）。
    */
   private async admit(request: AdmissionRequest): Promise<AutomationExecutionRecord | null> {
+    // 触发时再查一次（方案 5.6.1）：词表可能变了。预检要用连接池的其他连接，必须在事务之前，
+    // 不能持有行锁等待；不可用时向上抛出，不写执行记录、游标不动，下个 tick 重试。
+    const before = this.inputPolicy ? await this.automations.getById(request.automationId) : null
+    const checked = before && (before.status === 'enabled' || (request.allowDraft === true && before.status !== 'disabled')) ? {
+      prompt: before.inputTemplate.prompt,
+      blocked: (await this.inputPolicy!.check({
+        userId: before.ownerUserId, entry: 'automation-trigger', sessionId: null, text: before.inputTemplate.prompt, dedupeKey: request.triggerId,
+      })).blocked,
+    } : null
     const accepted = await this.database.begin(async (transaction) => {
       const task = await this.automations.lockForUpdate(transaction, request.automationId)
       if (!task) throw notFound()
@@ -549,10 +558,9 @@ export class AutomationService {
       if (await this.automations.countUserPending(transaction, task.ownerUserId) >= this.config.userPendingLimit) {
         return skip(AutomationReasonCodes.userPendingLimit)
       }
-      // 触发时再查一次（方案 5.6.1）：词表可能变了；预检不可用时向上抛出，下个 tick 重试。
-      // 放在全局锁之前：预检要用连接池的其他连接，持锁等待会占满连接池。
-      const policy = await this.inputPolicy?.check({ userId: task.ownerUserId, entry: 'automation-trigger', sessionId: null, text: task.inputTemplate.prompt, dedupeKey: request.triggerId })
-      if (policy?.blocked) return skip(AutomationReasonCodes.dataPolicyBlocked)
+      // 预检之后提示词变了就不能放行未检查的内容，按状态冲突处理，下次触发重新预检。
+      if (this.inputPolicy && checked?.prompt !== task.inputTemplate.prompt) throw conflict('任务提示词已变化', 'state_conflict')
+      if (checked?.blocked) return skip(AutomationReasonCodes.dataPolicyBlocked)
       await transaction`select pg_advisory_xact_lock(hashtext('dsh-work-automation-global-admission'))`
       if (await this.automations.countGlobalPending(transaction) >= this.config.globalPendingLimit) {
         return skip(AutomationReasonCodes.globalPendingLimit)
@@ -692,7 +700,7 @@ function normalizeAutomationName(name: string): string {
 }
 
 export interface AutomationInputPolicy {
-  check(input: { userId: string; entry: 'automation-save' | 'automation-trigger'; sessionId: string | null; text: string; dedupeKey?: string }): Promise<{ blocked: boolean }>
+  check(input: { userId: string; entry: 'automation-save' | 'automation-trigger' | 'routine-save' | 'routine-trigger'; sessionId: string | null; text: string; dedupeKey?: string }): Promise<{ blocked: boolean }>
   blockedError(): Error
 }
 

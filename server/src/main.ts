@@ -657,7 +657,7 @@ async function start() {
     inputPolicy,
   )
   const agentRoutineService = new AgentRoutineService(
-    database, authorization, runs, orchestration, conversations, operations,
+    database, authorization, runs, orchestration, conversations, operations, inputPolicy,
   )
   automationSweep = new AutomationTriggerSweep(
     database, automationRepository, automationService, defaultAutomationConfig, agentRoutineService, projects,

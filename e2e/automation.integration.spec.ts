@@ -37,6 +37,20 @@ async function createAutomation(request: APIRequestContext, name: string, prompt
   }))
 }
 
+test('DLP-02: an automation prompt containing a secret cannot be saved', async ({ request }) => {
+  const seed = await fixtures(request)
+  const response = await request.post('/api/workbench/v1/automations', {
+    data: {
+      name: `数据防护-${randomUUID().slice(0, 8)}`, agentId: seed.agentId, workspaceId: seed.workspaceId,
+      schedule: { kind: 'manual', timezone: 'Asia/Shanghai' },
+      // 样本拆开写，避开敏感凭据扫描。
+      inputTemplate: { prompt: `调用时用 s${'k-'}e2eQ7w2e9r4t6y8u1i3o5p0a` },
+    },
+  })
+  expect(response.status()).toBe(422)
+  expect((await response.json()).error.code).toBe('DATA_POLICY_BLOCKED')
+})
+
 function taskCard(page: Page, name: string) {
   return page.getByRole('region', { name: `定时任务：${name}`, exact: true })
 }

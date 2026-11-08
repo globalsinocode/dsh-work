@@ -1,3 +1,4 @@
+import type { AutomationInputPolicy } from './automation-service.ts'
 import { createHash, randomUUID } from 'node:crypto'
 
 import type { DatabaseClient, DatabaseTransaction } from '../../infrastructure/postgres/database.ts'
@@ -126,6 +127,7 @@ export class AgentRoutineService {
   private readonly orchestration: RunOrchestrationService
   private readonly conversations: PostgresConversationRepository
   private readonly operations?: AuditTrail
+  private readonly inputPolicy?: AutomationInputPolicy
 
   constructor(
     database: DatabaseClient,
@@ -134,6 +136,7 @@ export class AgentRoutineService {
     orchestration: RunOrchestrationService,
     conversations: PostgresConversationRepository,
     operations?: AuditTrail,
+    inputPolicy?: AutomationInputPolicy,
   ) {
     this.database = database
     this.authorization = authorization
@@ -141,6 +144,13 @@ export class AgentRoutineService {
     this.orchestration = orchestration
     this.conversations = conversations
     this.operations = operations
+    this.inputPolicy = inputPolicy
+  }
+
+  /** 保存时预检（数据防护方案 5.6.1）：含密钥的提示词不允许保存。 */
+  private async assertPromptAllowed(actorUserId: string, prompt: string): Promise<void> {
+    const policy = await this.inputPolicy?.check({ userId: actorUserId, entry: 'routine-save', sessionId: null, text: prompt })
+    if (policy?.blocked) throw this.inputPolicy!.blockedError()
   }
 
   private async get(id: string, tx: DatabaseTransaction | DatabaseClient = this.database): Promise<AgentRoutine> {
@@ -176,6 +186,7 @@ export class AgentRoutineService {
     await this.authorization.requirePlatformAdmin(actorUserId)
     const schedule = normalizeRoutineSchedule(input.schedule)
     const template = normalizeInput(input.inputTemplate)
+    await this.assertPromptAllowed(actorUserId, template.prompt)
     const [version] = await this.database<{ id: string }[]>`
       select av.id from agent_versions av join agents a on a.tenant_id = av.tenant_id and a.id = av.agent_id
        where av.tenant_id = ${tenantId} and av.id = ${input.agentVersionId} and av.agent_id = ${input.agentId}
@@ -212,6 +223,7 @@ export class AgentRoutineService {
     if (!version) throw authorizationDenied('Agent Version 不存在或不可用')
     const schedule = patch.schedule ? normalizeRoutineSchedule(patch.schedule) : current.schedule
     const template = patch.inputTemplate ? normalizeInput(patch.inputTemplate) : current.inputTemplate
+    if (patch.inputTemplate) await this.assertPromptAllowed(actorUserId, template.prompt)
     const scheduleChanged = !sameRoutineSchedule(schedule, current.schedule)
     const [row] = await this.database<{ id: string }[]>`
       update agent_routines set name = ${patch.name === undefined ? current.name : normalizeName(patch.name)},
@@ -430,6 +442,15 @@ export class AgentRoutineService {
     cursor: { expectedCursor: string; nextCursor: string | null; scheduleRevision: number } | null,
     triggerEvidence: AgentRoutineExecution['triggerEvidence'] = {},
   ): Promise<AgentRoutineExecution> {
+    // 触发时再查一次：预检要用连接池的其他连接，必须在事务之前，不能持有行锁等待。
+    // 不可用时向上抛出，不写执行记录、游标不动，下个 tick 重试。
+    const before = this.inputPolicy ? await this.get(id) : null
+    const checked = before?.status === 'enabled' ? {
+      prompt: before.inputTemplate.prompt,
+      blocked: (await this.inputPolicy!.check({
+        userId: before.recipientUserId, entry: 'routine-trigger', sessionId: null, text: before.inputTemplate.prompt, dedupeKey: triggerId,
+      })).blocked,
+    } : null
     const result = await this.database.begin(async tx => {
       const [locked] = await tx<RoutineRow[]>`
         select ${tx.unsafe(routineColumns)} from agent_routines where tenant_id = ${tenantId} and id = ${id} for update
@@ -473,6 +494,9 @@ export class AgentRoutineService {
            and r.status in ('queued', 'running', 'waiting', 'cancel_requested') limit 1
       `
       if (overlap) return insert('overlap')
+      // 预检之后提示词变了就不能放行未检查的内容，按状态冲突处理，下次触发重新预检。
+      if (this.inputPolicy && checked?.prompt !== routine.inputTemplate.prompt) throw conflict('任务提示词已变化')
+      if (checked?.blocked) return insert('data_policy_blocked')
       // Share one admission lock with employee automations so the combined
       // global pending quota cannot be oversubscribed by concurrent triggers.
       await tx`select pg_advisory_xact_lock(hashtext('dsh-work-automation-global-admission'))`

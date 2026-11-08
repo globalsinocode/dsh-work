@@ -14,6 +14,8 @@ import { PostgresAgentService } from '../../modules/agent/postgres-agent-service
 import { PostgresConversationRepository } from '../../modules/workbench/application/postgres-conversation-repository.ts'
 import type { AgentRuntimePort, RuntimeExecutionHandle, RuntimeExecutionSnapshot, RuntimeHealth, RuntimeManifest } from '../../modules/runtime/runtime-types.ts'
 import { assertCurrentExecutionAuthorization } from '../../modules/run/current-execution-authorization.ts'
+import { DataProtectionInputPreflight } from '../../modules/data-protection/data-protection-input-preflight.ts'
+import { PostgresDataProtectionStore } from '../../modules/data-protection/data-protection-service.ts'
 
 const tenantId = 'tenant-dsh-work'
 const agentId = 'agent-dsh-work-assistant'
@@ -235,4 +237,71 @@ test('AE-05 old scheduled slots are recorded as missed and never backfilled', as
   const executions = await service.executions('U00008', agentId, draft.id)
   assert.equal(executions.some(item => item.kind === 'missed' && item.reasonCode === 'slot_expired'), true)
   assert.equal(executions.some(item => item.admissionStatus === 'accepted'), false)
+})
+
+test('数据防护预检：主动任务的提示词保存时拦截，触发时命中则跳过且不创建运行', async () => {
+  let blocked = true
+  const checks: string[] = []
+  const conversations = new PostgresConversationRepository(database)
+  const guarded = new AgentRoutineService(database, authorization, runs, orchestration, conversations, undefined, {
+    check: async input => { checks.push(input.entry); return { blocked } },
+    blockedError: () => new Error('blocked'),
+  })
+  const draft = {
+    agentId, agentVersionId: versionId, workspaceId: (await database<{ id: string }[]>`
+      select id from workspaces where tenant_id = ${tenantId} and workspace_type = 'personal' and created_by = 'U00001' limit 1
+    `)[0]!.id, recipientUserId: 'U00001',
+    name: '数据防护预检', schedule: { kind: 'manual', timezone: 'Asia/Shanghai' } as const, inputTemplate: { prompt: '含密钥的提示词' },
+  }
+  await assert.rejects(guarded.create('U00008', draft), /blocked/)
+  assert.deepEqual(checks, ['routine-save'])
+
+  blocked = false
+  const routine = await guarded.create('U00008', draft)
+  await guarded.enable('U00008', agentId, routine.id, { expectedRevision: routine.revision, roleIds: ['role-employee'], dataScopes: ['enterprise:authorized', 'workspace:authorized'] })
+  blocked = true
+  const execution = await guarded.runNow('U00008', agentId, routine.id, 'trigger-blocked')
+  assert.equal(execution.admissionStatus, 'skipped')
+  assert.equal(execution.reasonCode, 'data_policy_blocked')
+  assert.equal(execution.runId, null)
+  assert.equal(checks.at(-1), 'routine-trigger')
+})
+
+test('数据防护预检：真实预检写入主动任务的保存与触发审计，不可用时不留执行记录', async () => {
+  const conversations = new PostgresConversationRepository(database)
+  const real = new DataProtectionInputPreflight({ store: new PostgresDataProtectionStore(database), tenantId, routeTrustLevel: async () => 'external' })
+  const clean = '每天检查事项'
+  const secret = `检查这个 key：s${'k-'}routineQ7w2e9r4t6y8u1i3o5p0a`
+  let unavailable = false
+  const guarded = new AgentRoutineService(database, authorization, runs, orchestration, conversations, undefined, {
+    check: input => unavailable ? Promise.reject(new Error('policy unavailable')) : real.check(input),
+    blockedError: () => real.blockedError(),
+  })
+  const [workspace] = await database<{ id: string }[]>`
+    select id from workspaces where tenant_id = ${tenantId} and workspace_type = 'personal' and created_by = 'U00001' limit 1
+  `
+  const draft = { agentId, agentVersionId: versionId, workspaceId: workspace!.id, recipientUserId: 'U00001',
+    name: '真实预检', schedule: { kind: 'manual', timezone: 'Asia/Shanghai' } as const, inputTemplate: { prompt: secret } }
+  const blockCount = async (entry: string) => (await database<{ count: number }[]>`
+    select count(*)::integer as count from data_protection_input_blocks where tenant_id = ${tenantId} and entry = ${entry}
+  `)[0]!.count
+  const saveBlocks = await blockCount('routine-save')
+  await assert.rejects(guarded.create('U00008', draft), /密钥/)
+  assert.equal(await blockCount('routine-save'), saveBlocks + 1)
+
+  const routine = await guarded.create('U00008', { ...draft, inputTemplate: { prompt: clean } })
+  await guarded.enable('U00008', agentId, routine.id, { expectedRevision: routine.revision, roleIds: ['role-employee'], dataScopes: ['enterprise:authorized', 'workspace:authorized'] })
+
+  unavailable = true
+  await assert.rejects(guarded.runNow('U00008', agentId, routine.id, 'trigger-unavailable'), /policy unavailable/)
+  assert.deepEqual(await guarded.executions('U00008', agentId, routine.id), [])
+  unavailable = false
+
+  // 启用后的任务不能经接口改提示词，这里模拟保存时词表还未命中的历史内容。
+  await database`update agent_routines set input_template = ${database.json({ prompt: secret })} where id = ${routine.id}`
+  const triggerBlocks = await blockCount('routine-trigger')
+  const execution = await guarded.runNow('U00008', agentId, routine.id, 'trigger-real-blocked')
+  assert.equal(execution.reasonCode, 'data_policy_blocked')
+  assert.equal(execution.runId, null)
+  assert.equal(await blockCount('routine-trigger'), triggerBlocks + 1)
 })

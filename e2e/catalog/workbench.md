@@ -386,7 +386,7 @@ P1/P2 的执行结果须单独记录数据库、身份、Runtime/DSH 版本和�
 
 **优先级：** P1 · **角色：** 员工 · **运行层级：** PostgreSQL、受控 Runtime<br>
 **前置数据：** 默认路由的 Provider 为外部厂商；员工已有一个个人对话<br>
-**spec：** `server/src/infrastructure/postgres/m3-orchestration.integration.test.ts`（服务端）、`ConversationMessageItem.notSent.test.ts`（组件）；浏览器旅程待补
+**spec：** `server/src/infrastructure/postgres/m3-orchestration.integration.test.ts`（服务端）、`ConversationMessageItem.notSent.test.ts`（组件）、`e2e/personal-integration/data-protection.spec.ts`（浏览器，第 1、3 步）；第 4 步团队会话待补浏览器用例
 
 1. 在已有个人对话中发送一条含 API Key 的消息：没有产生新的执行；这条消息留在对话里，带“未发送给模型”标记和说明“这条消息包含 密钥，按公司数据防护策略未发送给模型。请删除后重新发送。”，不显示具体的值或位置。
 2. 再发一条普通消息：执行正常，模型收到的上下文里没有被拦截的那条消息。
@@ -396,11 +396,11 @@ P1/P2 的执行结果须单独记录数据库、身份、Runtime/DSH 版本和�
 
 **验收：** 拦截审计只有入口与次数，没有原值、原值哈希或上下文。
 
-### DLP-02 定时任务的提示词含密钥（DLP-S2）
+### DLP-02 定时任务和主动任务的提示词含密钥（DLP-S2）
 
 **优先级：** P1 · **角色：** 员工 · **运行层级：** PostgreSQL、受控 Runtime<br>
 **前置数据：** 默认路由的 Provider 为外部厂商<br>
-**spec：** 待补
+**spec：** `e2e/automation.integration.spec.ts`（第 1 步）、`server/src/infrastructure/postgres/agent-routines.integration.test.ts`（主动任务）
 
 1. 保存提示词含 API Key 的定时任务：保存失败，提示同样的说明。
 2. 词表或规则变化后，已保存的任务在触发时命中：本次跳过并显示“任务输入包含密钥，未发送给模型”，没有产生执行。

@@ -6,6 +6,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { createThrowawayDatabase } from './test-database.ts'
+import { DataProtectionInputPreflight } from '../../modules/data-protection/data-protection-input-preflight.ts'
+import { PostgresDataProtectionStore } from '../../modules/data-protection/data-protection-service.ts'
 import { PostgresContentService } from '../../modules/workbench/application/postgres-content-service.ts'
 import type { ArtifactTextExtractorPort } from '../../modules/workbench/application/container-artifact-text-extractor.ts'
 import { PostgresConversationRepository } from '../../modules/workbench/application/postgres-conversation-repository.ts'
@@ -93,6 +95,10 @@ export async function personalWorkbenchFixture(prefix: string, options: {
   const projects = projectArchive && workspaceAgentMembers
     ? new PostgresProjectService(db.client, workspaceAgentMembers, projectArchive)
     : undefined
+  // 输入预检用真实实现；默认路由固定按外部厂商处理（DLP-01、DLP-02）。
+  const inputPolicy = new DataProtectionInputPreflight({
+    store: new PostgresDataProtectionStore(db.client), tenantId: 'tenant-dsh-work', routeTrustLevel: async () => 'external',
+  })
   const orchestration = new RunOrchestrationService(runs, conversations,
     new ModelGovernanceService(new PostgresModelGovernanceRepository(db.client)), runtime,
     content, undefined, agents, undefined, auth, {
@@ -102,6 +108,7 @@ export async function personalWorkbenchFixture(prefix: string, options: {
       tasks: new PostgresTaskRepository(db.client),
       projectTasks: projects,
       projectArchive,
+      inputPolicy,
     })
   if (projects) projects.attachRunStarter(orchestration)
   const automationService = new AutomationService(
@@ -115,6 +122,7 @@ export async function personalWorkbenchFixture(prefix: string, options: {
     content,
     undefined,
     defaultAutomationConfig,
+    inputPolicy,
   )
   const router = new Router({ authenticateApi: async (request, audience) => {
     const identity = await testApiAuthenticator(request, audience)

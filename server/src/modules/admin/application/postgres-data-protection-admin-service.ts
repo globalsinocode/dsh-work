@@ -82,7 +82,7 @@ export class PostgresDataProtectionAdminService implements DataProtectionAdminPo
                coalesce(nullif(btrim(u.department_id), ''), ${UNASSIGNED_DEPARTMENT}) as department,
                coalesce(mp.name, h.provider_key) as provider_name,
                case when h.action = 'blocked' then
-                      case when h.entry like 'automation%' then 'automation' when h.entry = 'task-execution' then 'api' else 'conversation' end
+                      case when h.entry like 'automation%' then 'automation' when h.entry like 'routine%' then 'routine' when h.entry = 'task-execution' then 'api' else 'conversation' end
                     when ra.manifest->>'purpose' = ${RELEASE_TRIAL_PURPOSE} then 'validation'
                     else coalesce(${sql.json(RUN_SOURCE_BY_TASK_TYPE)}::jsonb ->> t.source_type, 'system') end as source
           from hits h

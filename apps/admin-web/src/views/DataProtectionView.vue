@@ -33,7 +33,7 @@ const sourceLabels: Record<RunSource, string> = {
   api: 'API 调用', event: '事件触发', delegation: '委派', system: '系统',
 }
 const entryLabels: Record<string, string> = {
-  conversation: '对话', 'task-execution': 'API 调用', 'automation-save': '定时任务（保存时）', 'automation-trigger': '定时任务（触发时）',
+  conversation: '对话', 'task-execution': 'API 调用', 'automation-save': '定时任务（保存时）', 'automation-trigger': '定时任务（触发时）', 'routine-save': '主动任务（保存时）', 'routine-trigger': '主动任务（触发时）',
 }
 
 const range = ref<ModelUsageRange>('7d')

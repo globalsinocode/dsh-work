@@ -4,7 +4,7 @@ import { RequestError } from '../../domain/request-errors.ts'
 import { inspectMessageForSecrets } from './data-protection-masking.ts'
 import type { DataProtectionStore } from './data-protection-service.ts'
 
-export type DataProtectionInputEntry = 'conversation' | 'task-execution' | 'automation-save' | 'automation-trigger'
+export type DataProtectionInputEntry = 'conversation' | 'task-execution' | 'automation-save' | 'automation-trigger' | 'routine-save' | 'routine-trigger'
 
 /** D7 固定说明：只说类别，不显示取值或位置。 */
 export const DATA_POLICY_BLOCKED_MESSAGE = '这条消息包含 密钥，按公司数据防护策略未发送给模型。请删除后重新发送。'
