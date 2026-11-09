@@ -1,0 +1,69 @@
+{
+  "schemaVersion": "agent-platform-capabilities/v2",
+  "baseline": "PF-01 through PF-05 implementation at 3217cbb (PF-06 Agent delegation removed 2026-10-16); P2 evidence is assessed separately",
+  "capabilities": [
+    {
+      "id": "session-neutral-task",
+      "package": "PF-01",
+      "p0": ["pnpm test:m1"],
+      "p1": ["pnpm test:m3:integration"],
+      "p2Scenarios": ["real-dsh-task-result", "revocation", "runtime-failure"],
+      "p2RejectedBeforeRun": ["revocation"]
+    },
+    {
+      "id": "external-action",
+      "package": "PF-01",
+      "p0": ["pnpm test:m1"],
+      "p1": ["pnpm test:m3:integration"],
+      "p2Scenarios": ["accepted-receipt", "unknown-reconciliation", "duplicate-delivery", "revocation"]
+    },
+    {
+      "id": "cumulative-budget",
+      "package": "PF-02",
+      "p0": ["pnpm test:m1"],
+      "p1": ["pnpm test:m2:integration"],
+      "p2Scenarios": ["concurrent-limit", "missing-metering", "cancel-and-resume", "runtime-failure"]
+    },
+    {
+      "id": "mcp-connector",
+      "package": "PF-03",
+      "p0": ["pnpm test:m1"],
+      "p1": ["pnpm test:mcp:integration", "pnpm test:e2e:mcp-admin"],
+      "p2Scenarios": ["real-discovery-and-call", "credential-failure", "catalog-change", "disable-and-delete", "secret-boundary"],
+      "p2RejectedBeforeRun": ["credential-failure"]
+    },
+    {
+      "id": "controlled-memory",
+      "package": "PF-05",
+      "p0": ["pnpm test:m1"],
+      "p1": ["pnpm test:pf05:integration"],
+      "p2Scenarios": ["real-recall", "identity-and-role-change", "version-isolation"]
+    }
+  ],
+  "removed": [
+    {
+      "capability": "session-neutral-task",
+      "scenario": "real-oidc-task",
+      "removedAt": "2026-11-09",
+      "reason": "AI Hub/OIDC 登录计划删除，不再作为发布门禁场景；未验证，不代表 OIDC 下通过"
+    }
+  ],
+  "deferred": [
+    {
+      "capability": "persistent-wait",
+      "package": "PF-04",
+      "scenarios": ["real-approval-and-resume", "revocation-while-waiting", "restart-and-replay", "unknown-action"],
+      "deferredAt": "2026-11-09",
+      "reason": "真实 Agent 的 approvalMode 固定为 never，真实 Run 不能进入持久化等待；当前没有需要人工审批的业务动作",
+      "reentry": "首个需要人工审批的动作准入时，恢复本能力并在该版本重跑 P0、P1、P2；在此之前不得开放给 Agent 发布"
+    },
+    {
+      "capability": "controlled-memory",
+      "package": "PF-05",
+      "scenarios": ["revocation-while-waiting"],
+      "deferredAt": "2026-11-09",
+      "reason": "依赖持久化等待，真实 Run 不可达",
+      "reentry": "随 persistent-wait 一起恢复"
+    }
+  ]
+}

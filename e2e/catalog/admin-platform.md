@@ -210,12 +210,12 @@
 
 **运行层级：** P2 真实验收
 
-**前置数据：** 目标 DSH Lock/Adapter、真实 OIDC、批准的 Streamable HTTP MCP 服务和受管凭据
+**前置数据：** 目标 DSH Lock/Adapter、目标环境的真实登录身份、批准的 Streamable HTTP MCP 服务和受管凭据
 
 **spec：** 受控发布环境验收记录（不纳入普通 CI）
 
 1. 留存服务身份和发现清单摘要，使用至少两个不同 Agent 的真实员工任务分别触发一次成功 MCP Tool 调用，并核对业务只读结果和审计。
-2. 分别演练错误凭据、MCP 超时/取消、服务新增 Tool、Connector 停用和删除；核对 Run/Attempt 终态及后续调用是否停止。
+2. 分别演练错误凭据、MCP 超时/取消、服务新增 Tool、Connector 停用和删除。创建 Run 前被拒绝时（如错误凭据），核对没有新建 Run 与工具调用，并留存 traceId；已经开始的运行核对 Run/Attempt 终态及后续调用是否停止。
 3. 检查 DSH Worker Patch 和环境边界，确认密钥正文未进入 PostgreSQL、Manifest、前端响应、Patch 文件或普通日志。
 
 **验收：** 真实 DSH 为所有 Agent 只加载健康且能力快照已同步的 Connector；调用、失败、停用和删除均可追溯。P1 合成 Runtime、一次性 PostgreSQL和管理页面绿灯不能替代本层证据。
@@ -249,7 +249,9 @@
 
 ### PF-WAIT-P2 真实 DSH 与撤权验收
 
-**优先级：** P0（发布门禁）
+> 已移出 PF-07 门禁：真实 Agent 审批固定为 `never`，暂不可执行。首个需要人工审批的动作准入时恢复，原因见[能力矩阵](../../docs/development/agent-platform-capabilities.v2.json)的 `deferred`。
+
+**优先级：** P0（恢复后的发布门禁）
 
 **角色：** 真实员工、平台管理员、安全管理员
 

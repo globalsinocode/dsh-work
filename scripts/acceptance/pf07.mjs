@@ -4,9 +4,9 @@ import { fileURLToPath } from 'node:url'
 
 const root = resolve(import.meta.dirname, '../..')
 const expectedIds = new Set([
-  'session-neutral-task', 'external-action', 'cumulative-budget', 'mcp-connector',
-  'persistent-wait', 'controlled-memory'
+  'session-neutral-task', 'external-action', 'cumulative-budget', 'mcp-connector', 'persistent-wait', 'controlled-memory'
 ])
+const filled = value => typeof value === 'string' && value.trim() !== ''
 const requiredEvidence = [
   'matrixVersion', 'codeRevision', 'deploymentVersion', 'environment', 'executedAt', 'actor',
   'dshVersion', 'adapterVersion', 'model', 'approvedCapabilities', 'reviewer', 'conclusion'
@@ -14,7 +14,7 @@ const requiredEvidence = [
 
 export function validateMatrix(matrix, scripts) {
   const errors = []
-  if (matrix?.schemaVersion !== 'agent-platform-capabilities/v1') errors.push('能力矩阵版本无效')
+  if (matrix?.schemaVersion !== 'agent-platform-capabilities/v2') errors.push('能力矩阵版本无效')
   if (!Array.isArray(matrix?.capabilities)) return [...errors, '能力列表缺失']
   const seen = new Set()
   for (const capability of matrix.capabilities) {
@@ -35,8 +35,31 @@ export function validateMatrix(matrix, scripts) {
         new Set(capability.p2Scenarios).size !== capability.p2Scenarios.length) {
       errors.push(`${capability.id}: P2 场景缺失或重复`)
     }
+    for (const id of capability.p2RejectedBeforeRun ?? []) {
+      if (!capability.p2Scenarios?.includes(id)) errors.push(`${capability.id}: 拒绝类场景 ${id} 不在 P2 场景中`)
+    }
   }
-  for (const id of expectedIds) if (!seen.has(id)) errors.push(`缺少能力: ${id}`)
+  if (matrix.deferred !== undefined && !Array.isArray(matrix.deferred)) return [...errors, 'deferred 必须是数组']
+  if (matrix.removed !== undefined && !Array.isArray(matrix.removed)) return [...errors, 'removed 必须是数组']
+  const deferredIds = new Set((matrix.deferred ?? []).map(item => item?.capability))
+  // 能力可以回到门禁；不在门禁内时必须有 deferred 记录说明原因。
+  for (const id of expectedIds) if (!seen.has(id) && !deferredIds.has(id)) errors.push(`缺少能力: ${id}`)
+  for (const item of matrix.removed ?? []) {
+    const label = `删除项 ${item?.capability}/${item?.scenario}`
+    if (!filled(item?.capability) || !filled(item?.scenario) || !filled(item?.reason)) errors.push(`${label}: 缺少能力、场景或原因`)
+    if (matrix.capabilities.find(capability => capability.id === item?.capability)?.p2Scenarios?.includes(item?.scenario)) {
+      errors.push(`${label}: 场景仍在门禁内`)
+    }
+  }
+  for (const item of matrix.deferred ?? []) {
+    const label = `移出项 ${item?.capability}`
+    if (!filled(item?.reason) || !filled(item?.reentry)) errors.push(`${label}: 缺少移出原因或恢复条件`)
+    if (!Array.isArray(item?.scenarios) || !item.scenarios.length) { errors.push(`${label}: 缺少场景`); continue }
+    const active = matrix.capabilities.find(capability => capability.id === item.capability)
+    for (const scenario of item.scenarios) {
+      if (active?.p2Scenarios?.includes(scenario)) errors.push(`${label}: 场景 ${scenario} 同时在门禁内`)
+    }
+  }
   return errors
 }
 
@@ -61,14 +84,18 @@ export function validateP2(record, matrix) {
     const scenarios = new Map()
     for (const scenario of capability.scenarios ?? []) {
       if (scenarios.has(scenario.id)) errors.push(`${expected.id}: 重复场景 ${scenario.id}`)
+      if (!expected.p2Scenarios.includes(scenario.id)) errors.push(`${expected.id}: 未定义场景 ${scenario.id}`)
       scenarios.set(scenario.id, scenario)
     }
     for (const id of expected.p2Scenarios) {
       const scenario = scenarios.get(id)
+      // 创建 Run 之前就拒绝的场景，“没有 Run”正是要验证的结果，仍须有 traceId 或 execution 等证据引用。
+      const rejectedBeforeRun = expected.p2RejectedBeforeRun?.includes(id)
       if (!scenario || scenario.result !== 'passed' || !Array.isArray(scenario.evidenceRefs) ||
           !scenario.evidenceRefs.length || scenario.evidenceRefs.some(ref => typeof ref !== 'string' || !ref.trim()) ||
-          !Array.isArray(scenario.runIds) || !scenario.runIds.length ||
-          !Array.isArray(scenario.attemptIds) || !scenario.attemptIds.length) {
+          !Array.isArray(scenario.runIds) || !Array.isArray(scenario.attemptIds) ||
+          (rejectedBeforeRun ? scenario.runIds.length > 0 || scenario.attemptIds.length > 0
+            : !scenario.runIds.length || !scenario.attemptIds.length)) {
         errors.push(`${expected.id}/${id}: 缺少通过结论、Run/Attempt 或可审计证据引用`)
       }
     }
@@ -93,7 +120,7 @@ export function createP2Template(matrix) {
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  const matrix = JSON.parse(readFileSync(resolve(root, 'docs/development/agent-platform-capabilities.v1.json'), 'utf8'))
+  const matrix = JSON.parse(readFileSync(resolve(root, 'docs/development/agent-platform-capabilities.v2.json'), 'utf8'))
   const scripts = JSON.parse(readFileSync(resolve(root, 'package.json'), 'utf8')).scripts
   const errors = validateMatrix(matrix, scripts)
   const evidencePath = process.argv[2] === '--template' ? undefined : process.argv[2]
