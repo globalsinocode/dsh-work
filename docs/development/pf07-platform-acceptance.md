@@ -36,6 +36,14 @@ PF-07 是**平台能力门禁**，在受控的参考环境中证明能力实现�
 
 **拒绝类场景：** `mcp-connector/credential-failure` 与 `session-neutral-task/revocation` 在创建 Run 之前拒绝，“没有 Run”正是要验证的结果。矩阵用 `p2RejectedBeforeRun` 显式列出这类场景，它们可以不填 Run/Attempt，但仍须有通过结论和 traceId、execution 等证据引用；其他场景仍必须有 Run/Attempt。
 
+**后续修复后的重跑：** `115888e` 之后合入了连接器健康说明修复（#104）、MCP 中断审计修复（#105）和结果未知的显示与对账（#106）。2026-11-09 在 `46951ba` 对应代码上补跑：P0（`pnpm test:pf07:matrix`、`pnpm test:m1`、`pnpm test:review:unit`）与 P1（`pnpm test:pf07:p1`、`pnpm test:e2e:mcp-admin`）全部通过，`test:m1` 无跳过；`mcp-connector` 的 5 个 P2 场景在 `40d9fdb`（与 `46951ba` 内容相同）的本机专用一次性库上重跑并经验收人确认通过，环境为真实 DSH `0.1.2-rc.1`、DeepSeek `deepseek-v4-pro`、本地独立账号（非 OIDC）。
+
+**记录与基准：** 重跑记录单独保存在 Git 工作区外，只含受影响能力，不修改 `115888e` 的 `verified` 记录，也不用 `pf07.mjs` 校验（该脚本校验完整矩阵）。PF-07 的全量结论仍绑定 `115888e`。目标环境比对时，以全量记录加上覆盖其后代码差异的重跑记录为基准。
+
+**其余 14 个场景的影响评估：** `115888e..46951ba` 的运行时改动都限定在 MCP 调用的审计判定、步骤状态和未知结果对账上；其余 14 个场景不依赖这些路径（预算的取消与恢复使用无 MCP 的 Agent，外部动作按平台写工具验收），无需重跑。这是基于代码差异的评估，不是这些场景的实测。
+
+**修复验证（不属于矩阵场景）：** 工程验证，未经验收人签署。均使用真实 DSH 和靶场：`5f6f431` 上覆盖了执行中取消、Run 超时和单次调用超时时审计记为未知，重试被拦；`40d9fdb` 上覆盖了取消后的步骤事件和管理员对账后放行。
+
 **外部动作口径：** `external-action` 按平台写工具的 Task Operation（`task_operations`）验收；MCP 调用不产生 Operation，其回执与 `mcp_invocation_audits` 归入 `mcp-connector`。
 
 ## 目标环境部署验收
