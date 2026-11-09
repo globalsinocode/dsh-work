@@ -812,6 +812,10 @@ export interface McpInvocationAudit {
   parameterDigest: string
   result: 'success' | 'failed' | 'unknown'
   occurredAt: string
+  resolvedResult?: 'success' | 'failed' | null
+  resolvedBy?: string | null
+  resolvedAt?: string | null
+  resolutionNote?: string | null
 }
 
 export interface AuditEvent {

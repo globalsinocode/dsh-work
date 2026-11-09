@@ -102,7 +102,7 @@ export function summarizeToolCalls(
  * outcome with the same call id; name-only matching is left to the end-of-run log.
  */
 export function liveToolCallSummary(
-  call: { callId: string; toolName: string; status: 'completed' | 'failed' },
+  call: { callId: string; toolName: string; status: 'completed' | 'failed' | 'unknown' },
   bridgeOutcomes: PlatformToolOutcome[],
 ): ToolCallSummary {
   const outcome = bridgeOutcomes.find(item => item.callId === call.callId)
@@ -112,7 +112,7 @@ export function liveToolCallSummary(
   return {
     call_id: call.callId,
     tool_name: call.toolName,
-    status: call.status === 'failed' ? 'failed' : 'succeeded',
+    status: call.status === 'completed' ? 'succeeded' : call.status,
     error_code: null,
   }
 }

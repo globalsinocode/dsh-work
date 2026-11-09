@@ -14,6 +14,14 @@ export function registerToolRoutes(router: Router, mcp: PostgresMcpConnectorServ
     await mcp.listMcpInvocationAudits(context.url.searchParams.get('connector_id') ?? ''),
     'postgres',
   ))
+  router.post(`${basePath}/connectors/mcp/invocations/:auditId/resolve`, async (request, context) => {
+    const input = await readJsonBody<{ result: 'success' | 'failed'; note: string }>(request)
+    await mcp.resolveMcpInvocationAudit({
+      auditId: context.params['auditId'] ?? '', result: input.result, note: input.note,
+      actor: requireRequestIdentity(context, 'admin').userId,
+    })
+    return envelope('admin', { resolved: true }, 'postgres')
+  })
   router.post(`${basePath}/connectors/mcp/test`, async (request, context) => {
     const input = await readJsonBody<Omit<TestMcpConnectionInput, 'actor'>>(request)
     return envelope('admin', await mcp.testMcpConnection({

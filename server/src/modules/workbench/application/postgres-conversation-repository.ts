@@ -1031,7 +1031,7 @@ export class PostgresConversationRepository {
         ) or exists (
           select 1 from mcp_invocation_audits
            where tenant_id = ${tenantId} and run_id = ${runId}
-             and attempt_id = ${attemptId} and result = 'unknown'
+             and attempt_id = ${attemptId} and result = 'unknown' and resolved_result is null
         )
       ) as pending
     `
@@ -1124,7 +1124,7 @@ export class PostgresConversationRepository {
           select id, attempt_id as "attemptId", run_id as "runId",
                  concat('MCP ', capability_name, ' (', connector_id, ')') as "actionRef"
             from mcp_invocation_audits
-           where tenant_id = ${tenantId} and attempt_id = any(${attemptIds}) and result = 'unknown'
+           where tenant_id = ${tenantId} and attempt_id = any(${attemptIds}) and result = 'unknown' and resolved_result is null
         `
       : []
     for (const row of rows) {
@@ -1470,7 +1470,7 @@ export class PostgresConversationRepository {
           select id, concat('MCP ', capability_name, ' (', connector_id, ')') as "actionRef"
             from mcp_invocation_audits
            where tenant_id = ${tenantId} and run_id = ${row.id}
-             and attempt_id = ${row.currentAttemptId} and result = 'unknown'
+             and attempt_id = ${row.currentAttemptId} and result = 'unknown' and resolved_result is null
         `
       : []
     return {

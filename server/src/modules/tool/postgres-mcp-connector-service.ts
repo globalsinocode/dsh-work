@@ -417,12 +417,41 @@ export class PostgresMcpConnectorService implements McpScopePort {
       select id, run_id as "runId", attempt_id as "attemptId", connector_id as "connectorId",
              actor_user_id as "actorUserId", executor_principal_id as "executorPrincipalId",
              capability_name as "capabilityName",
-             parameter_digest as "parameterDigest", result, occurred_at as "occurredAt"
+             parameter_digest as "parameterDigest", result, occurred_at as "occurredAt",
+             resolved_result as "resolvedResult", resolved_by as "resolvedBy",
+             resolved_at as "resolvedAt", resolution_note as "resolutionNote"
         from mcp_invocation_audits
        where tenant_id = ${tenantId} and connector_id = ${connectorId}
        order by occurred_at desc
        limit 50
     `
+  }
+
+  /** 管理员核对权威状态后登记结果未知的调用；原始 result 不变，登记后不再拦截重试。 */
+  async resolveMcpInvocationAudit(input: {
+    auditId: string
+    result: 'success' | 'failed'
+    note: string
+    actor: string
+  }): Promise<void> {
+    const actor = await requirePlatformAdminActor(this.database, input.actor)
+    if (input.result !== 'success' && input.result !== 'failed') throw invalidRequest('result 仅支持 success 或 failed')
+    const note = typeof input.note === 'string' ? input.note.trim() : ''
+    if (!note || note.length > 1000) throw invalidRequest('请填写 1～1000 字的核对依据')
+    const [resolved] = await this.database<{ id: string }[]>`
+      update mcp_invocation_audits
+         set resolved_result = ${input.result}, resolved_by = ${actor.id}, resolved_at = now(), resolution_note = ${note}
+       where tenant_id = ${tenantId} and id = ${input.auditId} and result = 'unknown' and resolved_result is null
+       returning id
+    `
+    if (!resolved) {
+      const [existing] = await this.database<{ id: string }[]>`
+        select id from mcp_invocation_audits where tenant_id = ${tenantId} and id = ${input.auditId}
+      `
+      if (!existing) throw notFound(`MCP 调用审计不存在：${input.auditId}`)
+      throw stateConflict('该调用不是待核对状态')
+    }
+    await this.audit(actor.id, 'connector.mcp.invocation.resolve', input.auditId, 'success', `登记 MCP 调用核对结果：${input.result}`)
   }
 
   /* ---------- Agent 与运行端口 ---------- */

@@ -1,3 +1,4 @@
+import { PostgresConversationRepository } from '../../modules/workbench/application/postgres-conversation-repository.ts'
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { after, before, test } from 'node:test'
@@ -508,7 +509,25 @@ test('PF-03 resolves only the Connectors an Agent Version selected and confirms 
      where tenant_id = 'tenant-dsh-work' and id = ${attemptId}
   `
   assert.equal(auditState?.finalized, true)
-  const projectedAudits = await service.listMcpInvocationAudits(connectorId)
+  await service.recordMcpInvocation(manifest, {
+    serverName, callId: 'call-unknown', capabilityName: 'customer_get', parameterDigest: 'c'.repeat(64), result: 'unknown',
+  })
+  const [unknownAudit] = await database<{ id: string }[]>`
+    select id from mcp_invocation_audits where tenant_id = 'tenant-dsh-work' and call_id = 'call-unknown'
+  `
+  const conversations = new PostgresConversationRepository(database)
+  const pendingUnknown = () => conversations.hasUnresolvedExternalEffects(runId, attemptId)
+  assert.equal(await pendingUnknown(), true)
+  await assert.rejects(service.resolveMcpInvocationAudit({ auditId: unknownAudit!.id, result: 'failed', note: '  ', actor: 'U00008' }), { status: 422 })
+  await assert.rejects(service.resolveMcpInvocationAudit({ auditId: 'mcp-audit-missing', result: 'failed', note: '已核对', actor: 'U00008' }), { status: 404 })
+  await service.resolveMcpInvocationAudit({ auditId: unknownAudit!.id, result: 'success', note: '外部系统已有回执', actor: 'U00008' })
+  assert.equal(await pendingUnknown(), false)
+  await assert.rejects(service.resolveMcpInvocationAudit({ auditId: unknownAudit!.id, result: 'failed', note: '再次登记', actor: 'U00008' }), { status: 409 })
+  const resolvedAudit = (await service.listMcpInvocationAudits(connectorId)).find(item => item.id === unknownAudit!.id)
+  assert.equal(resolvedAudit?.result, 'unknown', 'the original audit fact is preserved')
+  assert.equal(resolvedAudit?.resolvedResult, 'success')
+  assert.equal(resolvedAudit?.resolutionNote, '外部系统已有回执')
+  const projectedAudits = (await service.listMcpInvocationAudits(connectorId)).filter(item => item.id !== unknownAudit!.id)
   assert.equal(projectedAudits[0]?.attemptId, attemptId)
   assert.equal(projectedAudits[0]?.parameterDigest, 'b'.repeat(64))
 

@@ -19,6 +19,7 @@ import {
   parsePsTime,
   type DurablePermissionContext,
   readSessionEvidence,
+  isUnconfirmedMcpFailure,
 } from './dsh-acp-runtime-adapter.ts'
 import { createManagedDshAcpProcessConfiguration } from './dsh-acp-process-configuration.ts'
 import { prepareMcpProcess } from './dsh-attempt-patch.ts'
@@ -464,6 +465,17 @@ describe('Runtime Manifest compiler', () => {
 })
 
 describe('DSH ACP Runtime Adapter', () => {
+  it('shows interrupted MCP calls as unknown in live steps, but not skipped or ordinary failures', () => {
+    const noResponse = [{ type: 'content', content: { type: 'text', text: 'Error: MCP error -32001: Request timed out' } }]
+    const denied = [{ type: 'content', content: { type: 'text', text: 'Error: forbidden' } }]
+    const skipped = [{ type: 'content', content: { type: 'text', text: 'Error: tool call aborted before dispatch' } }]
+    assert.equal(isUnconfirmedMcpFailure('mcp__crm__put', noResponse, false), true, 'no response without an interruption')
+    assert.equal(isUnconfirmedMcpFailure('mcp__crm__put', denied, true), true, 'any failure during an interruption')
+    assert.equal(isUnconfirmedMcpFailure('mcp__crm__put', denied, false), false)
+    assert.equal(isUnconfirmedMcpFailure('mcp__crm__put', skipped, true), false, 'never dispatched')
+    assert.equal(isUnconfirmedMcpFailure('bash', noResponse, true), false, 'only MCP calls')
+  })
+
   it('audits MCP calls that may have taken effect as unknown, by each tool result', async () => {
     const root = await mkdtemp(join(tmpdir(), 'dsh-work-mcp-evidence-'))
     try {

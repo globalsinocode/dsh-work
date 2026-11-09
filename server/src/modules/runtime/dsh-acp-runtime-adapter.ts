@@ -1030,8 +1030,10 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
     if (updateType !== 'tool_call_update' || call.completed || (status !== 'completed' && status !== 'failed')) return
     if (record.toolEventsEmitted >= MAX_TOOL_CALL_EVENTS) return
     call.completed = true
+    const liveStatus = status === 'failed' && isUnconfirmedMcpFailure(call.toolName, update['content'], record.cancelCause !== undefined)
+      ? 'unknown' : status
     this.emitToolCompleted(record, liveToolCallSummary(
-      { callId, toolName: call.toolName, status }, record.bridge?.outcomes() ?? [],
+      { callId, toolName: call.toolName, status: liveStatus }, record.bridge?.outcomes() ?? [],
     ), true)
   }
 
@@ -2145,6 +2147,14 @@ function isAbortedTurnEnd(value: unknown): boolean {
 
 /** MCP SDK 的 RequestTimeout：请求已发出但响应没有回来，超时和取消都走这个错误。 */
 const MCP_NO_RESPONSE_ERROR = /MCP error -32001\b/
+
+/** 实时步骤与审计同一口径：中断或没等到响应的 MCP 调用，不能显示为“调用失败”。未派发的调用确定没有执行。 */
+export function isUnconfirmedMcpFailure(toolName: string, content: unknown, interrupted: boolean): boolean {
+  if (!toolName.startsWith('mcp__')) return false
+  const text = JSON.stringify(content ?? '')
+  if (text.includes('aborted before dispatch')) return false
+  return interrupted || MCP_NO_RESPONSE_ERROR.test(text)
+}
 
 function toolResultOutcome(result: { failed: boolean; notDispatched: boolean; text: string }): 'success' | 'failed' | 'unknown' {
   if (!result.failed) return 'success'

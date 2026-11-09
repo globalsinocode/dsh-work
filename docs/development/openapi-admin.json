@@ -5571,6 +5571,58 @@
           }
         }
       }
+    },
+    "/connectors/mcp/invocations/{auditId}/resolve": {
+      "post": {
+        "operationId": "resolveMcpInvocationAudit",
+        "summary": "管理员核对权威状态后，登记结果未知的 MCP 调用；只接受 result 为 unknown 且未登记的审计，否则返回 409",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "result",
+                  "note"
+                ],
+                "properties": {
+                  "result": {
+                    "type": "string",
+                    "enum": [
+                      "success",
+                      "failed"
+                    ]
+                  },
+                  "note": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1000
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "name": "auditId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
     }
   },
   "components": {
