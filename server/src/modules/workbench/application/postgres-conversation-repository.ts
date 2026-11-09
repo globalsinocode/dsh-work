@@ -1020,7 +1020,7 @@ export class PostgresConversationRepository {
     return row ? this.mapTask(row, userId) : null
   }
 
-  /** A retry must not repeat an external action whose outcome has not been reconciled. */
+  /** A retry must not repeat an external action that is unreconciled or reconciled as already applied. */
   async hasUnresolvedExternalEffects(runId: string, attemptId: string): Promise<boolean> {
     const [row] = await this.database<{ pending: boolean }[]>`
       select (
@@ -1031,7 +1031,7 @@ export class PostgresConversationRepository {
         ) or exists (
           select 1 from mcp_invocation_audits
            where tenant_id = ${tenantId} and run_id = ${runId}
-             and attempt_id = ${attemptId} and result = 'unknown' and resolved_result is null
+             and attempt_id = ${attemptId} and result = 'unknown' and resolved_result is distinct from 'failed'
         )
       ) as pending
     `
@@ -1473,6 +1473,14 @@ export class PostgresConversationRepository {
              and attempt_id = ${row.currentAttemptId} and result = 'unknown' and resolved_result is null
         `
       : []
+    const appliedOperations = row.currentAttemptId
+      ? await this.database<Array<{ id: string; actionRef: string }>>`
+          select id, concat('MCP ', capability_name, ' (', connector_id, ')') as "actionRef"
+            from mcp_invocation_audits
+           where tenant_id = ${tenantId} and run_id = ${row.id}
+             and attempt_id = ${row.currentAttemptId} and result = 'unknown' and resolved_result = 'success'
+        `
+      : []
     return {
       run: { id: row.id, status: row.status, updatedAt: row.updatedAt },
       attemptId: row.currentAttemptId,
@@ -1480,6 +1488,7 @@ export class PostgresConversationRepository {
       committedMessageIds,
       artifacts: artifacts.map(artifact => mapArtifactEvidenceRow(artifact, row.id)),
       unknownOperations,
+      appliedOperations,
       sources: sources.map(source => ({
         id: source.id,
         type: 'knowledge' as const,

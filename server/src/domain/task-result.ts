@@ -77,6 +77,7 @@ export type TaskResultPendingKind =
   | 'output_truncated'
   | 'output_interrupted'
   | 'external_effect_unknown'
+  | 'external_effect_applied'
 
 export interface TaskResultPendingItem {
   kind: TaskResultPendingKind
@@ -156,6 +157,8 @@ export interface TaskResultEvidence {
   }>
   /** Current Attempt's write operations whose effect is still unknown. */
   unknownOperations?: Array<{ id: string; actionRef: string }>
+  /** Current Attempt's writes an administrator confirmed as applied; retrying would repeat them. */
+  appliedOperations?: Array<{ id: string; actionRef: string }>
   sources: TaskSource[]
   /**
    * 当前 Attempt 的平台工具审计记录。`decision` 非空的行为授权决定记录
@@ -339,6 +342,14 @@ export function deriveTaskResult(evidence: TaskResultEvidence): TaskResult {
       message: `工具 ${operation.actionRef} 的实际效果未知；须查询权威系统回执后才能确认目标。` })
   }
 
+  // 只影响失败/取消后的重试入口；已确认生效的写入不应把已完成的任务降为待核验。
+  if (run.status === 'failed' || run.status === 'cancelled') {
+    for (const operation of evidence.appliedOperations ?? []) {
+      pendingItems.push({ kind: 'external_effect_applied',
+        message: `工具 ${operation.actionRef} 的写入已由管理员确认生效，不能重试本轮；如需继续请发起新任务。` })
+    }
+  }
+
   if (outputTruncated) {
     pendingItems.push({
       kind: 'output_truncated',
@@ -399,6 +410,7 @@ export function deriveTaskResult(evidence: TaskResultEvidence): TaskResult {
   }
 
   const unresolvedExternalEffect = pendingItems.some(item => item.kind === 'external_effect_unknown')
+  const appliedExternalEffect = pendingItems.some(item => item.kind === 'external_effect_applied')
   const error = run.status === 'failed' && evidence.runError
     ? unresolvedExternalEffect
       ? {
@@ -406,7 +418,9 @@ export function deriveTaskResult(evidence: TaskResultEvidence): TaskResult {
           suggestion: '外部操作效果待核对。请先查询权威系统回执，确认实际结果后再决定是否发起新任务；不要直接重试本轮。',
           retryable: false,
         }
-      : evidence.runError
+      : appliedExternalEffect
+        ? { ...evidence.runError, suggestion: '外部写入已确认生效，不要重试本轮；如需继续请发起新任务。', retryable: false }
+        : evidence.runError
     : null
 
   return {

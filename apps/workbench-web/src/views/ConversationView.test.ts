@@ -267,6 +267,16 @@ describe('ConversationView 归档只读态（design §2.7 / AC-23）', () => {
     expect(wrapper.findAll('button').filter(button => button.text().trim() === '重新执行本轮')).toHaveLength(0)
   })
 
+  it('hides retry after an administrator confirms the external write applied', async () => {
+    const item = task({ status: 'cancelled', result: result({
+      execution: 'cancelled', error: null,
+      pendingItems: [{ kind: 'external_effect_applied', message: '写入已确认生效，不能重试本轮。' }],
+    }) })
+    const { wrapper } = await mountView({ item })
+    expect(wrapper.text()).toContain('写入已确认生效，不能重试本轮。')
+    expect(wrapper.find('button[aria-label="重新执行本轮"]').exists()).toBe(false)
+  })
+
   it('moves the active-run stop action into the composer send control', async () => {
     const item = task({ status: 'running', result: result({ execution: 'running', outcome: 'pending', error: null, completedAt: null }) })
     const { wrapper, taskStore } = await mountView({ item })

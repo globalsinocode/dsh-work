@@ -214,6 +214,82 @@ test('platform administrator can inspect and resolve an action-bound approval', 
   expect(resolved).toBe(true)
 })
 
+test('platform administrator reconciles an unknown MCP call and sees the conflict case (PF-MCP-02)', async ({ page }) => {
+  const meta = { api: 'admin', adapter: 'prototype-memory', timestamp: new Date().toISOString() }
+  const call = (id: string, capabilityName: string) => ({
+    id, runId: `run-${id}`, attemptId: `attempt-${id}`, connectorId: 'mcp-orders', connectorName: '订单系统', connectorDeleted: false,
+    actorUserId: 'U00001', actorName: '发起员工', executorPrincipalId: 'principal-1', executorName: '订单助手',
+    capabilityName, parameterDigest: 'c'.repeat(64), result: 'unknown', occurredAt: '2026-11-09T06:00:00.000Z',
+    resolvedResult: null as string | null, resolvedBy: null as string | null, resolvedByName: null as string | null,
+    resolvedAt: null as string | null, resolutionNote: null as string | null,
+  })
+  const calls = [call('one', 'orders.update'), call('two', 'orders.cancel')]
+  const resolveCall = (item: ReturnType<typeof call>, result: string, resolvedByName: string, note: string) => Object.assign(item, {
+    resolvedResult: result, resolvedBy: 'U00008', resolvedByName, resolvedAt: '2026-11-09T07:00:00.000Z', resolutionNote: note,
+  })
+  await page.route('**/api/admin/v1/connectors/mcp/invocations/**', async (route) => {
+    const request = route.request()
+    if (request.method() === 'POST') {
+      const item = calls.find(entry => request.url().includes(`/${entry.id}/resolve`))!
+      if (item.id === 'two') {
+        resolveCall(item, 'failed', '另一位管理员', '回执系统中没有这次写入')
+        await route.fulfill({ status: 409, contentType: 'application/json', body: JSON.stringify({ error: { code: 'state_conflict', message: '该调用不是待核对状态' } }) })
+        return
+      }
+      const body = request.postDataJSON() as { result: string; note: string }
+      resolveCall(item, body.result, '当前管理员', body.note)
+      await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ data: { resolved: true }, meta }) })
+      return
+    }
+    const resolved = new URL(request.url()).searchParams.get('status') === 'resolved'
+    await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ data: {
+      items: calls.filter(item => Boolean(item.resolvedResult) === resolved),
+      limit: 200,
+      connectors: [{ id: 'mcp-orders', name: '订单系统', deleted: false, pendingCount: calls.filter(item => !item.resolvedResult).length, resolvedCount: calls.filter(item => item.resolvedResult).length }],
+    }, meta }) })
+  })
+
+  await page.goto(`${adminUrl}/connectors`)
+  await page.getByRole('button', { name: '调用对账', exact: true }).click()
+  await expect(page).toHaveURL(/\/mcp-reconciliation$/)
+  const row = page.getByRole('row').filter({ hasText: 'orders.update' })
+  await expect(row).toContainText('订单系统')
+  await expect(row).toContainText('发起员工')
+  await expect(row).toContainText('订单助手')
+  await expect(row).toContainText('结果未知')
+
+  await row.getByRole('button', { name: '登记结论' }).click()
+  const dialog = page.getByRole('dialog', { name: '登记核对结论' })
+  await expect(dialog.getByText(/不会查询外部系统，也不会自动重试/)).toBeVisible()
+  const confirm = dialog.getByRole('button', { name: '确认登记' })
+  await expect(confirm).toBeDisabled()
+  await dialog.getByRole('radio', { name: /^已生效/ }).check({ force: true })
+  await expect(dialog.getByText(/继续禁止重试/)).toBeVisible()
+  await dialog.getByLabel('核对依据').fill('   ')
+  await expect(confirm).toBeDisabled()
+  await dialog.getByLabel('核对依据').fill('回执号 R-1001 已查到')
+  await confirm.click()
+
+  await expect(page.getByRole('tab', { name: /已登记 1/ })).toHaveAttribute('aria-selected', 'true')
+  const resolvedRow = page.getByRole('row').filter({ hasText: 'orders.update' })
+  await expect(resolvedRow).toContainText('结果未知')
+  await expect(resolvedRow).toContainText('已生效')
+  await expect(resolvedRow).toContainText('当前管理员')
+  await expect(resolvedRow).toContainText('回执号 R-1001 已查到')
+
+  await page.getByRole('tab', { name: /待核对/ }).click()
+  await page.getByRole('row').filter({ hasText: 'orders.cancel' }).getByRole('button', { name: '登记结论' }).click()
+  const second = page.getByRole('dialog', { name: '登记核对结论' })
+  await second.getByRole('radio', { name: /^未生效/ }).check({ force: true })
+  await second.getByLabel('核对依据').fill('我的依据')
+  await second.getByRole('button', { name: '确认登记' }).click()
+  await expect(second.getByText('该调用不是待核对状态')).toBeVisible()
+  await expect(second).toContainText('另一位管理员')
+  await expect(second).toContainText('我的依据')
+  await second.getByRole('button', { name: '关闭' }).click()
+  await expect(page.getByText('没有待核对的调用')).toBeVisible()
+})
+
 test('platform administrator can review one Agent experience iteration application', async ({ page }) => {
   const application = {
     id: 'memory-proposal-e2e', agentId: 'agent-quality', agentName: '质量分析 Agent',

@@ -273,6 +273,23 @@ test('failed run with an unknown MCP effect does not present a safe retry', () =
   assert.equal(result.pendingItems.some(item => item.kind === 'external_effect_unknown'), true)
 })
 
+test('a write confirmed as applied blocks retry on failure without downgrading a completed task', () => {
+  const failed = deriveTaskResult(evidence({
+    run: { id: 'run-001', status: 'failed', updatedAt },
+    events: [event('failed', 'run.failed')],
+    appliedOperations: [{ id: 'mcp-audit-1', actionRef: 'MCP put_receipt (connector-1)' }],
+    runError: {
+      code: 'AUTHORIZATION_REVOKED', message: '本轮执行失败', object: '运行 run-001',
+      reason: '执行授权已撤销', suggestion: '可重新执行', retryable: true,
+    },
+  }))
+  assert.equal(failed.error?.retryable, false)
+  assert.equal(failed.pendingItems.some(item => item.kind === 'external_effect_applied'), true)
+  assert.equal(failed.pendingItems.some(item => item.kind === 'external_effect_unknown'), false)
+  const completed = deriveTaskResult(evidence({ appliedOperations: [{ id: 'mcp-audit-1', actionRef: 'MCP put_receipt (connector-1)' }] }))
+  assert.equal(completed.pendingItems.some(item => item.kind === 'external_effect_applied'), false)
+})
+
 test('a completed tool action is a verifiable deliverable for a tool-only task', () => {
   const result = deriveTaskResult(evidence({
     events: [event('e2', 'run.completed', { tool_call_count: 1, tool_result_count: 1 })],

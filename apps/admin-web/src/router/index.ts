@@ -117,6 +117,12 @@ const router = createRouter({
       meta: { title: 'MCP 连接器', requiresAdmin: true, requiredPermission: 'adminRead' },
     },
     {
+      path: '/mcp-reconciliation',
+      name: 'mcp-reconciliation',
+      component: () => import('@/views/McpReconciliationView.vue'),
+      meta: { title: '调用对账', requiresAdmin: true, requiredPermission: 'adminRead' },
+    },
+    {
       path: '/model-governance',
       name: 'model-governance',
       component: () => import('@/views/ModelGovernanceView.vue'),

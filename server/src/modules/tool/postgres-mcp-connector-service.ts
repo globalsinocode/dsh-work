@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto'
 
-import type { AgentMcpScope, ConnectorDefinition, McpConnectionTestResult, McpConnectorDeletionResult, McpInvocationAudit, RegisterMcpConnectorInput, TestMcpConnectionInput } from '../../domain/types.ts'
+import type { AgentMcpScope, ConnectorDefinition, McpConnectionTestResult, McpConnectorDeletionResult, McpInvocationAudit, McpReconciliationItem, McpReconciliationPage, RegisterMcpConnectorInput, TestMcpConnectionInput } from '../../domain/types.ts'
 import type { DatabaseClient, DatabaseTransaction } from '../../infrastructure/postgres/database.ts'
 import type { AuditTrail } from '../../domain/audit-trail.ts'
 import { authorizationDenied } from '../../domain/authorization-errors.ts'
@@ -427,7 +427,51 @@ export class PostgresMcpConnectorService implements McpScopePort {
     `
   }
 
-  /** 管理员核对权威状态后登记结果未知的调用；原始 result 不变，登记后不再拦截重试。 */
+  /** 跨连接器（含已删除连接器）的结果未知调用，不受单连接器最近 50 条的限制。 */
+  async listMcpInvocationReconciliation(input: {
+    status: 'pending' | 'resolved'
+    connectorId?: string
+  }): Promise<McpReconciliationPage> {
+    if (input.status !== 'pending' && input.status !== 'resolved') throw invalidRequest('status 仅支持 pending 或 resolved')
+    const limit = 200
+    const connectorId = input.connectorId || null
+    const items = await this.database<McpReconciliationItem[]>`
+      select a.id, a.run_id as "runId", a.attempt_id as "attemptId", a.connector_id as "connectorId",
+             c.name as "connectorName", c.deleted_at is not null as "connectorDeleted",
+             a.actor_user_id as "actorUserId", actor.display_name as "actorName",
+             a.executor_principal_id as "executorPrincipalId",
+             coalesce(agent.name, human.display_name, principal.system_key) as "executorName",
+             a.capability_name as "capabilityName", a.parameter_digest as "parameterDigest",
+             a.result, a.occurred_at as "occurredAt", a.resolved_result as "resolvedResult",
+             a.resolved_by as "resolvedBy", resolver.display_name as "resolvedByName",
+             a.resolved_at as "resolvedAt", a.resolution_note as "resolutionNote"
+        from mcp_invocation_audits a
+        join connectors c on c.tenant_id = a.tenant_id and c.id = a.connector_id
+        left join users actor on actor.tenant_id = a.tenant_id and actor.id = a.actor_user_id
+        left join users resolver on resolver.tenant_id = a.tenant_id and resolver.id = a.resolved_by
+        left join execution_principals principal on principal.tenant_id = a.tenant_id and principal.id = a.executor_principal_id
+        left join agents agent on agent.tenant_id = a.tenant_id and agent.id = principal.agent_id
+        left join users human on human.tenant_id = a.tenant_id and human.id = principal.human_user_id
+       where a.tenant_id = ${tenantId} and a.result = 'unknown'
+         and (a.resolved_result is not null) = ${input.status === 'resolved'}
+         and (${connectorId}::text is null or a.connector_id = ${connectorId})
+       order by coalesce(a.resolved_at, a.occurred_at) desc
+       limit ${limit}
+    `
+    const connectors = await this.database<McpReconciliationPage['connectors']>`
+      select c.id, c.name, c.deleted_at is not null as deleted,
+             (count(*) filter (where a.resolved_result is null))::int as "pendingCount",
+             (count(*) filter (where a.resolved_result is not null))::int as "resolvedCount"
+        from mcp_invocation_audits a
+        join connectors c on c.tenant_id = a.tenant_id and c.id = a.connector_id
+       where a.tenant_id = ${tenantId} and a.result = 'unknown'
+       group by c.id, c.name, c.deleted_at
+       order by c.name
+    `
+    return { items: [...items], limit, connectors: [...connectors] }
+  }
+
+  /** 管理员核对权威状态后登记结果未知的调用；原始 result 不变；登记未生效后解除重试拦截，登记已生效后继续拦截。 */
   async resolveMcpInvocationAudit(input: {
     auditId: string
     result: 'success' | 'failed'

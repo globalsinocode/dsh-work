@@ -122,6 +122,7 @@ export type TaskResultPendingKind =
   | 'output_truncated'
   | 'output_interrupted'
   | 'external_effect_unknown'
+  | 'external_effect_applied'
 
 export interface TaskResultPendingItem {
   kind: TaskResultPendingKind

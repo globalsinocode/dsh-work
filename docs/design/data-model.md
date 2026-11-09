@@ -206,7 +206,7 @@ flowchart LR
 | --- | --- | --- |
 | `audit_events` | 管理与执行审计 | 可按用户、空间、Session、Run、Attempt 追踪；不含提示词、业务正文或密钥 |
 | `tool_audit_logs` | 工具调用审计 | 只记录参数摘要 |
-| `mcp_invocation_audits` | MCP 调用审计 | 按 Attempt + 调用 ID 唯一；参数只存摘要；结果未知需核对 |
+| `mcp_invocation_audits` | MCP 调用审计 | 按 Attempt + 调用 ID 唯一；参数只存摘要；结果未知需管理员核对登记；登记未生效才解除重试拦截，登记已生效继续拦截 |
 | `model_usage_events` | 模型用量 | 每个 Attempt 对话一行、联网搜索另一行（迁移 0122，按 `(attempt, endpoint)` 唯一）。有网关记录时 `measurement = gateway`：实际模型取厂商成功返回的请求，记录请求次数（含重试）、失败次数与缓存读写 token（厂商未返回为空，不记为 0）；没有网关记录时为 `session-log`（DSH 会话日志）或 `estimated`（按文本长度估算），`estimated` 与之一致。取消的运行有网关记录时也记录。按执行计数的聚合用 `count(distinct attempt_id)` |
 | `operational_events`（视图） | 运营事件投影 | 只读投影，不含业务正文 |
 

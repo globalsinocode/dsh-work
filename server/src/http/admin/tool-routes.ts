@@ -14,6 +14,14 @@ export function registerToolRoutes(router: Router, mcp: PostgresMcpConnectorServ
     await mcp.listMcpInvocationAudits(context.url.searchParams.get('connector_id') ?? ''),
     'postgres',
   ))
+  router.get(`${basePath}/connectors/mcp/invocations/reconciliation`, async (_request, context) => envelope(
+    'admin',
+    await mcp.listMcpInvocationReconciliation({
+      status: (context.url.searchParams.get('status') ?? 'pending') as 'pending' | 'resolved',
+      connectorId: context.url.searchParams.get('connector_id') ?? undefined,
+    }),
+    'postgres',
+  ))
   router.post(`${basePath}/connectors/mcp/invocations/:auditId/resolve`, async (request, context) => {
     const input = await readJsonBody<{ result: 'success' | 'failed'; note: string }>(request)
     await mcp.resolveMcpInvocationAudit({

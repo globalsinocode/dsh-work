@@ -520,8 +520,23 @@ test('PF-03 resolves only the Connectors an Agent Version selected and confirms 
   assert.equal(await pendingUnknown(), true)
   await assert.rejects(service.resolveMcpInvocationAudit({ auditId: unknownAudit!.id, result: 'failed', note: '  ', actor: 'U00008' }), { status: 422 })
   await assert.rejects(service.resolveMcpInvocationAudit({ auditId: 'mcp-audit-missing', result: 'failed', note: '已核对', actor: 'U00008' }), { status: 404 })
+  const pendingPage = await service.listMcpInvocationReconciliation({ status: 'pending', connectorId })
+  assert.equal(pendingPage.items.some(item => item.id === unknownAudit!.id), true)
+  assert.equal(pendingPage.items.every(item => item.result === 'unknown' && item.resolvedResult === null), true, 'only unresolved unknown calls are pending')
+  assert.equal(pendingPage.items[0]?.connectorDeleted, false)
+  assert.ok(pendingPage.items[0]?.connectorName)
+  await assert.rejects(service.listMcpInvocationReconciliation({ status: 'bogus' as 'pending' }), { status: 422 })
   await service.resolveMcpInvocationAudit({ auditId: unknownAudit!.id, result: 'success', note: '外部系统已有回执', actor: 'U00008' })
-  assert.equal(await pendingUnknown(), false)
+  assert.equal(await pendingUnknown(), true, 'a write confirmed as applied must not be retried')
+  await database`update mcp_invocation_audits set resolved_result = 'failed' where id = ${unknownAudit!.id}`
+  assert.equal(await pendingUnknown(), false, 'a write confirmed as not applied may be retried')
+  await database`update mcp_invocation_audits set resolved_result = 'success' where id = ${unknownAudit!.id}`
+  const resolvedPage = await service.listMcpInvocationReconciliation({ status: 'resolved', connectorId })
+  const resolvedItem = resolvedPage.items.find(item => item.id === unknownAudit!.id)
+  assert.equal(resolvedItem?.result, 'unknown')
+  assert.equal(resolvedItem?.resolvedResult, 'success')
+  assert.ok(resolvedItem?.resolvedByName)
+  assert.equal(resolvedPage.connectors.find(item => item.id === connectorId)?.resolvedCount, 1)
   await assert.rejects(service.resolveMcpInvocationAudit({ auditId: unknownAudit!.id, result: 'failed', note: '再次登记', actor: 'U00008' }), { status: 409 })
   const resolvedAudit = (await service.listMcpInvocationAudits(connectorId)).find(item => item.id === unknownAudit!.id)
   assert.equal(resolvedAudit?.result, 'unknown', 'the original audit fact is preserved')
@@ -541,6 +556,8 @@ test('PF-03 resolves only the Connectors an Agent Version selected and confirms 
   await assert.rejects(service.validateSelection([connectorId]), { status: 422 })
   const retainedAudits = await service.listMcpInvocationAudits(connectorId)
   assert.equal(retainedAudits[0]?.attemptId, attemptId, 'deletion must retain invocation evidence')
+  const afterDeletion = await service.listMcpInvocationReconciliation({ status: 'resolved', connectorId })
+  assert.equal(afterDeletion.items[0]?.connectorDeleted, true, 'reconciliation stays reachable after connector deletion')
 })
 
 test('PF-03 deletion removes the Connector from Agent selections and destroys an exclusive encrypted credential', async () => {

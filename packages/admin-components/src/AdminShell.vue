@@ -24,6 +24,7 @@ import {
   Tickets,
   UserFilled,
   Lock,
+  Checked,
 } from '@element-plus/icons-vue'
 
 import { AppLogo } from '@dsh-work/ui-core'
@@ -74,6 +75,7 @@ const navigationGroups: Array<{ label: string; items: NavigationItem[] }> = [
       { label: 'Agent 管理', path: '/agents', icon: Grid, permission: 'admin' },
       { label: 'Skill 管理', path: '/skills', icon: Collection, permission: 'admin' },
       { label: 'MCP 连接器', path: '/connectors', icon: Connection, permission: 'admin' },
+      { label: '调用对账', path: '/mcp-reconciliation', icon: Checked, permission: 'admin' },
       { label: '经验迭代', path: '/experience-iterations', icon: Notebook, permission: 'admin' },
     ],
   },

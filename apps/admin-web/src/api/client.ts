@@ -28,6 +28,7 @@ import type {
   McpConnectionTestResult,
   McpConnectorDeletionResult,
   McpInvocationAudit,
+  McpReconciliationPage,
   DirectorySyncState,
   DingTalkBindingView,
   DingTalkBindPreview,
@@ -360,6 +361,10 @@ export const adminApi = {
     request<SkillSubmissionReviewDetail>(`/skill-submissions/${encodeURIComponent(id)}/reject`, { method: 'POST', body: JSON.stringify(input) }),
   setSkillVisibility: (skillId: string, input: { roleIds: string[] | null; reason: string }) =>
     request<SkillDefinition>(`/skills/${encodeURIComponent(skillId)}/visibility`, { method: 'PUT', body: JSON.stringify(input) }),
+  getMcpReconciliation: (status: 'pending' | 'resolved', connectorId?: string) =>
+    request<McpReconciliationPage>(`/connectors/mcp/invocations/reconciliation${listQuery({ status, connector_id: connectorId })}`),
+  resolveMcpInvocation: (auditId: string, input: { result: 'success' | 'failed'; note: string }) =>
+    request<{ resolved: boolean }>(`/connectors/mcp/invocations/${encodeURIComponent(auditId)}/resolve`, { method: 'POST', body: JSON.stringify(input) }),
   getMcpInvocationAudits: (connectorId: string) =>
     request<McpInvocationAudit[]>(`/connectors/mcp/invocations?connector_id=${encodeURIComponent(connectorId)}`),
   testMcpConnection: (input: {

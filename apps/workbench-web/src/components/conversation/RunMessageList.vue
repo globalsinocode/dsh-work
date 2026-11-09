@@ -143,7 +143,9 @@ function pastRunNote(message: ChatMessage) {
 }
 
 /** 写入外部系统但效果未知的操作：失败说明与停止提醒共用。 */
-const unknownExternalEffects = computed(() => task.value.result.pendingItems.filter(item => item.kind === 'external_effect_unknown'))
+const unknownExternalEffects = computed(() => task.value.result.pendingItems.filter(item => item.kind === 'external_effect_unknown' || item.kind === 'external_effect_applied'))
+
+const onlyAppliedEffects = computed(() => unknownExternalEffects.value.every(item => item.kind === 'external_effect_applied'))
 
 /** 个人对话只有本人发起，不再标“由某人发起”；团队对话保留归因。 */
 const showRequester = computed(() => task.value.workspaceType === 'team')
@@ -283,8 +285,8 @@ function messageBadge(message: ChatMessage) {
   >
     <span class="conversation-notice__icon"><el-icon><Warning /></el-icon></span>
     <div>
-      <strong>停止时有操作的实际效果尚未确认</strong>
-      <p>重新发送前，请先在对应系统中核对结果，避免重复操作。</p>
+      <strong>{{ onlyAppliedEffects ? '停止前的操作已确认生效' : '停止时有操作的实际效果尚未确认' }}</strong>
+      <p>{{ onlyAppliedEffects ? '不能重试本轮，避免重复操作；如需继续请发起新任务。' : '重新发送前，请先在对应系统中核对结果，避免重复操作。' }}</p>
       <ul class="result-pending">
         <li v-for="item in unknownExternalEffects" :key="item.message">{{ item.message }}</li>
       </ul>

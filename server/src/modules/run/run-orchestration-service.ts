@@ -580,7 +580,7 @@ export class RunOrchestrationService {
       || (mcpConnections.length > 0
         && !await this.deps.conversations.isMcpInvocationAuditFinalized(run.id, lastAttempt.id))
     )) {
-      throw requestInvalid('原 Attempt 的外部操作结果可能未确定；请先核对权威回执，再明确发起新任务，不要直接重试')
+      throw requestInvalid('原 Attempt 的外部操作结果可能未确定或已确认生效；请先核对权威回执，再明确发起新任务，不要直接重试')
     }
     if ((lastAttempt?.manifest as RuntimeManifest | undefined)?.purpose === 'automation') {
       throw invalidRequest('自动任务运行不支持在此重试；请在自动任务详情页使用「再次运行」')

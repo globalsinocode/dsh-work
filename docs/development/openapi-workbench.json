@@ -6444,7 +6444,8 @@
               "no_verified_deliverable",
               "output_truncated",
               "output_interrupted",
-              "external_effect_unknown"
+              "external_effect_unknown",
+              "external_effect_applied"
             ]
           },
           "message": {

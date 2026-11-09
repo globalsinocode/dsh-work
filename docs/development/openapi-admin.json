@@ -1713,6 +1713,43 @@
         }
       }
     },
+    "/connectors/mcp/invocations/reconciliation": {
+      "get": {
+        "operationId": "listMcpInvocationReconciliation",
+        "summary": "跨连接器（含已删除连接器）查询结果未知的 MCP 调用，按待核对或已登记过滤，最多 200 条，并返回各连接器计数",
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "pending",
+                "resolved"
+              ],
+              "default": "pending"
+            }
+          },
+          {
+            "name": "connector_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
     "/connectors/check": {
       "post": {
         "operationId": "checkConnector",
@@ -5575,7 +5612,7 @@
     "/connectors/mcp/invocations/{auditId}/resolve": {
       "post": {
         "operationId": "resolveMcpInvocationAudit",
-        "summary": "管理员核对权威状态后，登记结果未知的 MCP 调用；只接受 result 为 unknown 且未登记的审计，否则返回 409",
+        "summary": "管理员核对权威状态后，登记结果未知的 MCP 调用；只接受 result 为 unknown 且未登记的审计，否则返回 409。登记 failed 后解除重试拦截，登记 success 后继续拦截",
         "requestBody": {
           "required": true,
           "content": {

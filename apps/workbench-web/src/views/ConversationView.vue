@@ -160,7 +160,7 @@ const canStop = computed(() => Boolean(
 const canRetry = computed(() => Boolean(
   task.value && canOperateRun.value
   && ['failed', 'cancelled'].includes(task.value.status)
-  && !task.value.result.pendingItems.some(item => item.kind === 'external_effect_unknown')
+  && !task.value.result.pendingItems.some(item => item.kind === 'external_effect_unknown' || item.kind === 'external_effect_applied')
   && (task.value.result.error?.retryable ?? true)))
 const canFollowUp = computed(() => !workspaceArchived.value && !isRunViewer.value)
 /**

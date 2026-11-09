@@ -818,6 +818,20 @@ export interface McpInvocationAudit {
   resolutionNote?: string | null
 }
 
+export interface McpReconciliationItem extends McpInvocationAudit {
+  connectorName: string
+  connectorDeleted: boolean
+  actorName: string | null
+  executorName: string | null
+  resolvedByName: string | null
+}
+
+export interface McpReconciliationPage {
+  items: McpReconciliationItem[]
+  limit: number
+  connectors: Array<{ id: string; name: string; deleted: boolean; pendingCount: number; resolvedCount: number }>
+}
+
 export interface AuditEvent {
   id: string
   time: string

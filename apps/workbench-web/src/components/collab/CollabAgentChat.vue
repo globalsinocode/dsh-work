@@ -136,7 +136,7 @@ function canRetry(segment: AgentConversationSegment) {
   const task = segmentTask(segment)
   return Boolean(task && segment === newestSegment.value && canSend.value && canOperate.value
     && ['failed', 'cancelled'].includes(task.status)
-    && !task.result.pendingItems.some(item => item.kind === 'external_effect_unknown')
+    && !task.result.pendingItems.some(item => item.kind === 'external_effect_unknown' || item.kind === 'external_effect_applied')
     && (task.result.error?.retryable ?? true))
 }
 

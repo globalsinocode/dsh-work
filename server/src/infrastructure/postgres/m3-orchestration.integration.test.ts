@@ -1167,6 +1167,12 @@ test('unknown MCP effect appears in every result projection and blocks generic r
   const outcomes = await conversations.getTaskResultOutcomes([created.id])
   assert.equal(outcomes.get(created.id), 'not_achieved')
   await assert.rejects(orchestration.retry(created.id, 'U00001'), /外部操作结果可能未确定/)
+  await database`update mcp_invocation_audits set resolved_result = 'success' where run_id = ${created.id}`
+  const applied = await conversations.getTask(created.id, 'U00001')
+  assert.equal(applied?.result.pendingItems.some(item => item.kind === 'external_effect_applied'), true)
+  assert.equal(applied?.result.error?.retryable, false)
+  await assert.rejects(orchestration.retry(created.id, 'U00001'), /已确认生效/)
+  await database`update mcp_invocation_audits set resolved_result = null where run_id = ${created.id}`
   const [count] = await database<{ count: number }[]>`
     select count(*)::integer as count from run_attempts
      where tenant_id = 'tenant-dsh-work' and run_id = ${created.id}
