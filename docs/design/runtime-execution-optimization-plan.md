@@ -37,7 +37,7 @@
 | 每次工具调用在 Attempt 结束时以 `tool.completed` 事件补齐（成功、失败原因、未收到结果）；执行过程中看不到工具步骤，ACP `tool_call` 实时通知未经验证 | 同上；测试目录 EX-TOOL-01 |
 | 员工会话每轮携带首条消息原文、较早对话的摘要与最近消息原文，合计不超过 64000 字符；摘要由后台 `session-summary` 运行生成，缺失时退回保留首条的裁剪。管理会话仍为最近 12 条、24000 字符 | [对话上下文](../../server/src/domain/conversation-context.ts)、[摘要运行](../../server/src/modules/run/orchestration/session-summary-entry.ts) |
 | 超时中断的 Attempt 把已生成的部分回答落库，重试时带入；员工可在对话中“继续修改”上一轮成果，同名输出登记为下一版本 | 测试目录 EX-ARTIFACT-01 |
-| PF-04 持久化审批：Worker 在审批前保存有界检查点（待执行参数、已完成工具结果、输出工作文件、未提交的部分回答），释放 Worker；批准后以 `new-attempt-context-v1` 策略新建 Attempt，从检查点上下文继续 | [持久化等待服务](../../server/src/modules/run/postgres-persistent-wait-service.ts) |
+| PF-04 持久化审批（真实 Agent 审批当前固定为 `never`，暂不可达，见 [PF-07 验收手册](../development/pf07-platform-acceptance.md)）：Worker 在审批前保存有界检查点（待执行参数、已完成工具结果、输出工作文件、未提交的部分回答），释放 Worker；批准后以 `new-attempt-context-v1` 策略新建 Attempt，从检查点上下文继续 | [持久化等待服务](../../server/src/modules/run/postgres-persistent-wait-service.ts) |
 | 服务重启时排队的 Attempt 重新调度；活动 Attempt 标记 `SERVICE_RESTARTED` 失败，已完成的工具结果与部分回答不保留；用户手动重试新建 Attempt，从头执行 | [Run Repository](../../server/src/modules/run/postgres-run-repository.ts) |
 | 数据库锁住 Runtime 容量并原子领取 Attempt；只有自动任务有独立并发上限（为交互任务保留 1 个 Worker） | 同上 |
 

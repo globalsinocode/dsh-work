@@ -574,7 +574,7 @@ bash "${DWP_ROOT}/current/scripts/deploy/rollback.sh" "${DWP_ROLLBACK_VERSION}" 
 项目副本续期后都需要分别更新并生效。
 
 部署交接只记录账号、目录、Release Tag/Commit、DSH Lock、健康/登录/任务/备份与重启
-验收结论，不记录密码、Token 或私钥。绝不执行 `docker compose down -v`、删除数据卷，
+验收结论，以及 9.4 节要求的清单结论、Run/Attempt 引用和证据位置，不记录密码、Token 或私钥。绝不执行 `docker compose down -v`、删除数据卷，
 或覆盖已有 `runtime.env` 来处理部署失败。
 
 ## 12. 升级与备份恢复
