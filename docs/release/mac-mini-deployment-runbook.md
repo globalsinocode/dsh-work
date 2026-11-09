@@ -484,6 +484,10 @@ dsh-work 数据库、`DSH_WORK_DATA_ROOT` 与发布清单，不覆盖 `runtime.e
 恢复验收必须抽查 `${DSH_WORK_DATA_ROOT}/skills/packages` 中的文件夹能够按数据库中的
 `artifact_ref` 找到并通过摘要校验；只恢复数据库或只恢复数据目录都会造成 Skill 不可执行。
 
+### 9.4 目标环境部署验收
+
+完成 9.1～9.3 后，按 [PF-07 手册的目标环境部署验收清单](../development/pf07-platform-acceptance.md#目标环境部署验收) 逐项检查并留证。首次部署和之后的每次发布都要执行；恢复演练只在隔离环境进行，不在本机运行 `restore.sh`。清单完成前，不在该环境开放新版本带来的新能力；已开放的能力继续运行，清单未通过时回退版本或停用相关 Agent。交接记录须包含清单结论、Run/Attempt 引用和证据位置。
+
 ## 10. 验收后启用自动部署
 
 watcher 只跟随 GitHub 的最新稳定 Release，安装后会立即运行。先确认最新版本就是刚验收
@@ -519,7 +523,7 @@ launchctl print "gui/$(id -u)/com.company.dsh-work.release-watcher"
 2. 发布人员在 GitHub Actions 人工运行 **Manual release**，发布新的不可变稳定版本。
 3. Mac mini 通常在下一次 300 秒轮询时发现，自动验证 → 停止旧后端并备份 → 验证异机副本 →
    向前迁移 → 切换应用 → 健康检查。不需要每次手工执行 `release.sh`。
-4. 查看 `active-release` 和日志，完成该版本的业务验收。
+4. 查看 `active-release` 和日志，按 9.4 节完成该版本的部署验收。watcher 没有等待验收的拦截点，新版本会先被安装；需要先验收后安装时，保持 `DSH_WORK_AUTO_DEPLOY_ENABLED=false` 并人工升级。
 
 与 AI Hub 的区别仍然保留：AI Hub watcher 只暂存，提升需要其新鲜加密异机备份回执；
 dsh-work 自己创建并校验备份，因而可以自动提升。两者不能互用发布脚本或备份回执。
