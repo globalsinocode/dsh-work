@@ -57,6 +57,7 @@ export class RunRevocationSweep {
   private timer?: NodeJS.Timeout
   private sweeping = false
   private closing = false
+  private inFlight?: Promise<void>
   private readonly lastSeenRevisions = new Map<string, number>()
   private readonly database: DatabaseClient
   private readonly runs: RunRepository
@@ -80,12 +81,17 @@ export class RunRevocationSweep {
     this.scheduleTick(0)
   }
 
-  close() {
+  /**
+   * Stops the loop and waits for an in-flight pass. Shutdown closes orchestration
+   * and the database next, so a pass must not outlive this call.
+   */
+  async close() {
     this.closing = true
     if (this.timer) {
       clearTimeout(this.timer)
       this.timer = undefined
     }
+    await this.inFlight
   }
 
   /**
@@ -95,8 +101,10 @@ export class RunRevocationSweep {
   async sweepOnce() {
     const { changedWorkspaces, pendingWorkspaces } = await this.readWorkspacesNeedingSweep()
     for (const workspace of changedWorkspaces) {
+      if (this.closing) return
       try {
         await this.processPendingEvents(workspace.id)
+        if (this.closing) return
         // team_auth_revision changed → full re-check of the workspace's active
         // runs. This is the catch-all for deduped events: a mutation whose
         // event row was swallowed by the payload_hash unique key still bumps
@@ -111,6 +119,7 @@ export class RunRevocationSweep {
       }
     }
     for (const workspaceId of pendingWorkspaces) {
+      if (this.closing) return
       try {
         await this.processPendingEvents(workspaceId)
       } catch (error) {
@@ -127,7 +136,9 @@ export class RunRevocationSweep {
     if (this.timer || this.closing) return
     this.timer = setTimeout(() => {
       this.timer = undefined
-      void this.tick()
+      this.inFlight = this.tick().finally(() => {
+        this.inFlight = undefined
+      })
     }, delayMs)
     this.timer.unref()
   }
@@ -193,6 +204,7 @@ export class RunRevocationSweep {
   private async processPendingEvents(workspaceId: string) {
     const events = await this.readPendingEvents(workspaceId)
     for (const event of events) {
+      if (this.closing) return
       try {
         // Current-state gate: the event payload is a hint, never the source
         // of truth. If the revocation is no longer effective (member

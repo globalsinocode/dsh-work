@@ -775,7 +775,7 @@ async function start() {
         await notificationRetentionRun
         if (workspaceSweep) clearInterval(workspaceSweep)
         if (automationSweep) await automationSweep.close()
-        if (revocationSweep) revocationSweep.close()
+        if (revocationSweep) await revocationSweep.close()
         persistentWait?.close()
         if (orchestration) await orchestration.close()
         await modelGateway?.stop()

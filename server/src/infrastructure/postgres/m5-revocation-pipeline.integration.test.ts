@@ -392,6 +392,23 @@ test('收权清扫：agent_disabled 只取消锁定在该 Agent 成员版本上�
 // 5.1.4 事件消费者：处理、重放与当前状态门
 // ---------------------------------------------------------------------------
 
+test('消费者：归档空间的 pending 事件收敛为 processed，不再残留', async () => {
+  const ws = uniqueWorkspace('consumer-archived')
+  const ownerId = `${ws}-owner`
+  const userId = `${ws}-user`
+  await seedUser(ownerId, '归档负责人')
+  await seedUser(userId, '归档成员')
+  await createTeamWorkspace(ws, [{ userId: ownerId, role: 'owner' }])
+  await insertRevocationEvent(ws, userId, 'member_removed', { by: ownerId })
+  await archiveWorkspace(ws)
+  const cancelsBefore = runtime.cancels.length
+
+  await sweep.sweepOnce()
+
+  assert.equal((await revocationEventRows(ws))[0]?.status, 'processed')
+  assert.equal(runtime.cancels.length, cancelsBefore, '归档空间没有在途运行，不应发起取消')
+})
+
 test('消费者：pending 事件处理后取消运行并标记 processed，重放安全', async () => {
   const ws = uniqueWorkspace('consumer-replay')
   const ownerId = `${ws}-owner`

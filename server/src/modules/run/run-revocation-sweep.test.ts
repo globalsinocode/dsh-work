@@ -2,6 +2,91 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
 import { isAuthorizationDenial, AuthorizationDeniedError, authorizationDenied } from '../../domain/authorization-errors.ts'
+import type { DatabaseClient } from '../../infrastructure/postgres/database.ts'
+import type { PostgresAuthorizationService } from '../authorization/postgres-authorization-service.ts'
+import { RunRevocationSweep } from './run-revocation-sweep.ts'
+import type { RunRepository } from './run-repository.ts'
+
+const nextLoop = () => new Promise<void>(resolve => setImmediate(resolve))
+
+function sweepWith(database: unknown, runs: unknown = {}) {
+  return new RunRevocationSweep(
+    database as DatabaseClient,
+    runs as RunRepository,
+    { systemCancelRun: async () => { throw new Error('不应取消运行') } } as never,
+    {} as PostgresAuthorizationService,
+  )
+}
+
+test('close waits for the in-flight pass and no new pass starts', async () => {
+  let queries = 0
+  let release = () => {}
+  const database = () => {
+    queries += 1
+    if (queries > 1) return Promise.resolve([])
+    return new Promise(resolve => { release = () => resolve([]) })
+  }
+  const sweep = sweepWith(database)
+  sweep.start()
+  while (queries === 0) await nextLoop()
+
+  let closed = false
+  const closing = sweep.close().then(() => { closed = true })
+  for (let index = 0; index < 5; index += 1) await nextLoop()
+  assert.equal(closed, false, '扫描未结束时 close 不得返回')
+
+  release()
+  await closing
+  const queriesAtClose = queries
+  for (let index = 0; index < 5; index += 1) await nextLoop()
+  assert.equal(queries, queriesAtClose, '关闭后不得再访问数据库')
+})
+
+test('closing during event processing leaves later events pending and skips the workspace re-check', async () => {
+  const processed: unknown[] = []
+  let rechecks = 0
+  const database = (strings: TemplateStringsArray, ...values: unknown[]) => {
+    const sql = strings.join('')
+    if (sql.includes('team_auth_revision')) return Promise.resolve([{ id: 'workspace-1', revision: 1 }])
+    if (sql.includes('order by created_at')) {
+      return Promise.resolve(['event-1', 'event-2'].map(id => ({ id, userId: 'user-1', kind: 'member_removed', payload: {} })))
+    }
+    if (sql.includes("set status = 'processed'")) {
+      processed.push(values[1])
+      return sweep.close().then(() => [])
+    }
+    return Promise.resolve([])
+  }
+  const sweep: RunRevocationSweep = sweepWith(database, {
+    listActiveRunsInWorkspace: async () => {
+      rechecks += 1
+      return []
+    },
+  })
+
+  await sweep.sweepOnce()
+  assert.deepEqual(processed, ['event-1'], '关闭后未处理的事件必须保持 pending')
+  assert.equal(rechecks, 0, '关闭后不得再复核整个空间')
+})
+
+test('a closing sweep finishes the current workspace and skips the rest', async () => {
+  const swept: string[] = []
+  const database = (strings: TemplateStringsArray) => Promise.resolve(
+    strings.join('').includes('team_auth_revision')
+      ? [{ id: 'workspace-1', revision: 1 }, { id: 'workspace-2', revision: 1 }]
+      : [],
+  )
+  const sweep: RunRevocationSweep = sweepWith(database, {
+    listActiveRunsInWorkspace: async (_tenantId: string, workspaceId: string) => {
+      swept.push(workspaceId)
+      await sweep.close()
+      return []
+    },
+  })
+
+  await sweep.sweepOnce()
+  assert.deepEqual(swept, ['workspace-1'])
+})
 
 /**
  * Locks the authorization-denial classifier (1A-T5). The authorization service
