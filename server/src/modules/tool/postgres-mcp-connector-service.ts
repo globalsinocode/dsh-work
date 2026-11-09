@@ -31,6 +31,7 @@ interface McpConnectorRow {
   latencyMs: number | null
   lastCheckedAt: Date | null
   lastHealthMessage: string | null
+  lastHealthCheckedAt: Date | null
   createdAt: Date
   createdBy: string
   updatedAt: Date
@@ -89,7 +90,7 @@ export class PostgresMcpConnectorService implements McpScopePort {
     const rows = await this.database<McpConnectorRow[]>`
       select c.id, c.name, c.status, c.endpoint, c.auth_type as "authType",
              cr.backend as "credentialBackend", c.scope_description as "scopeDescription",
-             c.latency_ms as "latencyMs", c.last_checked_at as "lastCheckedAt", hc.message as "lastHealthMessage",
+             c.latency_ms as "latencyMs", c.last_checked_at as "lastCheckedAt", hc.message as "lastHealthMessage", hc.checked_at as "lastHealthCheckedAt",
              c.created_at as "createdAt", creator.display_name as "createdBy", c.updated_at as "updatedAt",
              p.server_name as "serverName", p.approval_status as "approvalStatus",
              p.capability_digest as "capabilityDigest", p.approved_digest as "approvedDigest",
@@ -101,7 +102,7 @@ export class PostgresMcpConnectorService implements McpScopePort {
         left join users reviewer on reviewer.tenant_id = p.tenant_id and reviewer.id = p.reviewed_by
         left join credential_refs cr on cr.tenant_id = c.tenant_id and cr.id = c.credential_ref_id
         left join lateral (
-          select message from connector_health_checks
+          select message, checked_at from connector_health_checks
            where tenant_id = c.tenant_id and connector_id = c.id
            order by checked_at desc, id desc limit 1
         ) hc on true
@@ -681,7 +682,7 @@ function toConnectorDefinition(row: McpConnectorRow): ConnectorDefinition {
     updatedAt: row.updatedAt.toISOString(),
     latency: row.latencyMs === null ? '未检查' : `${row.latencyMs} ms`,
     lastCheckedAt: formatRelative(row.lastCheckedAt),
-    ...(row.lastHealthMessage ? { lastHealthMessage: row.lastHealthMessage } : {}),
+    ...(healthMessage(row) ? { lastHealthMessage: healthMessage(row)! } : {}),
     mcp: {
       serverName: row.serverName,
       transport: 'streamable-http',
@@ -743,4 +744,11 @@ function formatRelative(value: Date | null) {
   if (seconds < 60) return '刚刚'
   if (seconds < 3600) return `${Math.floor(seconds / 60)} 分钟前`
   return `${Math.floor(seconds / 3600)} 小时前`
+}
+
+/** 确认清单不是连通性检查：只在连接正常且确认晚于最近一次检查时替换说明，故障原因保持可见。 */
+function healthMessage(row: McpConnectorRow): string | null {
+  const confirmedAfterCheck = row.approvalStatus === 'approved' && row.status === 'healthy' && row.reviewedAt !== null
+    && row.lastHealthCheckedAt !== null && row.reviewedAt > row.lastHealthCheckedAt
+  return confirmedAfterCheck ? `已确认 MCP 能力清单，共 ${row.approvedSnapshot.length} 个 Tool 生效` : row.lastHealthMessage
 }

@@ -428,6 +428,8 @@ test('PF-03 resolves only the Connectors an Agent Version selected and confirms 
   const approved = await service.approveMcpCapabilities({ connectorId, capabilityDigest: added.mcp!.capabilityDigest!, actor: 'U00008' })
   assert.equal(approved.mcp?.approvalStatus, 'approved')
   assert.equal(approved.mcp?.capabilityCount, 3)
+  assert.equal(approved.lastHealthMessage, '已确认 MCP 能力清单，共 3 个 Tool 生效')
+  assert.equal(approved.status, added.status, 'confirming the list is not a connectivity check')
   assert.deepEqual(approved.mcp?.pendingCapabilities, [])
   await assert.rejects(service.assertPinnedConnections(pins), /生效能力已变化/,
     'an already prepared Attempt stays pinned to the list it started with')
@@ -441,7 +443,15 @@ test('PF-03 resolves only the Connectors an Agent Version selected and confirms 
   assert.equal(changed.mcp?.approvalStatus, 'changes_pending')
   assert.deepEqual(changed.mcp?.capabilities.map(item => [item.name, item.description]), [['customer_export', 'Export customers as CSV.']])
   assert.deepEqual(changed.mcp?.pendingCapabilities.map(item => item.name), ['customer_get'])
-  const reapproved = await service.approveMcpCapabilities({ connectorId, capabilityDigest: changed.mcp!.capabilityDigest!, actor: 'U00008' })
+  inspectionFailure = new Error('MCP 认证失败：Token 已过期')
+  const failedCheck = await service.checkMcpConnector({ connectorId, actor: 'U00008' })
+  assert.notEqual(failedCheck.status, 'healthy')
+  const approvedWhileFailing = await service.approveMcpCapabilities({ connectorId, capabilityDigest: changed.mcp!.capabilityDigest!, actor: 'U00008' })
+  assert.equal(approvedWhileFailing.status, failedCheck.status)
+  assert.equal(approvedWhileFailing.lastHealthMessage, failedCheck.lastHealthMessage, 'confirming the list must not hide why the Connector is failing')
+  inspectionFailure = undefined
+  const reapproved = await service.checkMcpConnector({ connectorId, actor: 'U00008' })
+  assert.equal(reapproved.status, 'healthy')
   assert.deepEqual(reapproved.mcp?.capabilities.map(item => item.name), ['customer_export', 'customer_get'])
 
   const disabled = await service.setMcpConnectorStatus({ connectorId, status: 'disabled', actor: 'U00008' })

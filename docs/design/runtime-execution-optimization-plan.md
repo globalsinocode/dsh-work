@@ -14,7 +14,7 @@
 约束：
 
 1. 已发布版本、Attempt Manifest 和终态不可覆盖；新一轮消息与重新执行必须明确区分。
-2. **不做中断后继续执行（2026-10-16 决定）：** 部署重启、Worker 崩溃、模型或网络临时故障导致的中断，Attempt 以失败结束，员工或调用方重新执行，从头开始。审批等待后继续（PF-04）不受影响。
+2. **不做中断后继续执行（2026-10-16 决定）：** 部署重启、Worker 崩溃、模型或网络临时故障导致的中断，Attempt 以失败结束，员工或调用方重新执行，从头开始。审批等待后继续（PF-04）不受影响，该能力当前未开放，见 [PF-07 验收手册](../development/pf07-platform-acceptance.md)。
 3. 独立 Worker 继续承担执行故障隔离。
 4. PostgreSQL 保存业务事实和受控存储引用；运行状态文件放在受控文件存储，不把正文或二进制塞入数据库。
 5. 未经当前 DSH 精确版本和适配链路验证的能力标记为不可用；上游有接口、有事件名称或保存了日志，都不能直接证明本平台支持。
@@ -37,7 +37,7 @@
 | 每次工具调用在 Attempt 结束时以 `tool.completed` 事件补齐（成功、失败原因、未收到结果）；执行过程中看不到工具步骤，ACP `tool_call` 实时通知未经验证 | 同上；测试目录 EX-TOOL-01 |
 | 员工会话每轮携带首条消息原文、较早对话的摘要与最近消息原文，合计不超过 64000 字符；摘要由后台 `session-summary` 运行生成，缺失时退回保留首条的裁剪。管理会话仍为最近 12 条、24000 字符 | [对话上下文](../../server/src/domain/conversation-context.ts)、[摘要运行](../../server/src/modules/run/orchestration/session-summary-entry.ts) |
 | 超时中断的 Attempt 把已生成的部分回答落库，重试时带入；员工可在对话中“继续修改”上一轮成果，同名输出登记为下一版本 | 测试目录 EX-ARTIFACT-01 |
-| PF-04 持久化审批（真实 Agent 审批当前固定为 `never`，暂不可达，见 [PF-07 验收手册](../development/pf07-platform-acceptance.md)）：Worker 在审批前保存有界检查点（待执行参数、已完成工具结果、输出工作文件、未提交的部分回答），释放 Worker；批准后以 `new-attempt-context-v1` 策略新建 Attempt，从检查点上下文继续 | [持久化等待服务](../../server/src/modules/run/postgres-persistent-wait-service.ts) |
+| PF-04 持久化审批（真实 Agent 审批当前固定为 `never`，已移出 PF-07 门禁，不得开放发布，见 [PF-07 验收手册](../development/pf07-platform-acceptance.md)）：Worker 在审批前保存有界检查点（待执行参数、已完成工具结果、输出工作文件、未提交的部分回答），释放 Worker；批准后以 `new-attempt-context-v1` 策略新建 Attempt，从检查点上下文继续 | [持久化等待服务](../../server/src/modules/run/postgres-persistent-wait-service.ts) |
 | 服务重启时排队的 Attempt 重新调度；活动 Attempt 标记 `SERVICE_RESTARTED` 失败，已完成的工具结果与部分回答不保留；用户手动重试新建 Attempt，从头执行 | [Run Repository](../../server/src/modules/run/postgres-run-repository.ts) |
 | 数据库锁住 Runtime 容量并原子领取 Attempt；只有自动任务有独立并发上限（为交互任务保留 1 个 Worker） | 同上 |
 
@@ -193,6 +193,6 @@ EX-00、EX-01 已交付部分与 EX-02 可以并行；EX-04 在 EX-00 给出结�
 | 参考 | 可借鉴内容 | 本项目采用方式 |
 | --- | --- | --- |
 | [Octop 架构](https://github.com/TencentCloud/Octop/blob/main/docs/architecture.md) | 运行库统一承接各入口、集中实例管理 | 完善 DSH 接线，保留平台业务状态与独立 Worker |
-| [AgentManager](https://github.com/TencentCloud/Octop/blob/main/src/octop/infra/agents/manager.py) | 会话 checkpoint、审批恢复入口、描述缓存 | 审批恢复已由 PF-04 实现；不做中断后的 checkpoint 恢复；缓存只在 EX-04 证明有收益时引入 |
+| [AgentManager](https://github.com/TencentCloud/Octop/blob/main/src/octop/infra/agents/manager.py) | 会话 checkpoint、审批恢复入口、描述缓存 | 审批恢复已由 PF-04 实现（当前未开放发布）；不做中断后的 checkpoint 恢复；缓存只在 EX-04 证明有收益时引入 |
 
 Octop 的 `harness-agent` 与 DeepSeek Harness 是不同的运行库，其接口不能直接视为 dsh-work 已支持的能力。
