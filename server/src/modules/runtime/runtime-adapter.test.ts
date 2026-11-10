@@ -1239,21 +1239,23 @@ describe('DSH ACP Runtime Adapter', () => {
     assert.match(tampered.errorMessage ?? '', /校验失败|输入原始文件/)
 
     // 4.7: once the Attempt has ended its workspace is removed; a failed one keeps it for diagnosis.
-    const ended = async (attemptDirectory: string) => {
+    // Retirement runs after `done` resolves and writes the end record before removing the workspace
+    // (so an interrupted removal is finished by the sweep), so wait for the removal, not the record alone.
+    const present = (path: string) => stat(path).then(() => true, () => false)
+    const retired = async (attemptDirectory: string) => {
       const marker = join(attemptDirectory, 'attempt-end.json')
       const deadline = Date.now() + 5_000
       while (Date.now() < deadline) {
-        const text = await readFile(marker, 'utf8').catch(() => null)
-        if (text) return JSON.parse(text) as { status: string }
+        const end = await readFile(marker, 'utf8').then(text => JSON.parse(text) as { status: string }).catch(() => null)
+        if (end && (end.status === 'failed' || !await present(join(attemptDirectory, 'workspace')))) return end
         await new Promise(resolve => setTimeout(resolve, 20))
       }
-      throw new Error(`no end record in ${attemptDirectory}`)
+      throw new Error(`${attemptDirectory} was not retired`)
     }
-    const present = (path: string) => stat(path).then(() => true, () => false)
-    assert.equal((await ended(ok.attemptDirectory)).status, 'completed')
+    assert.equal((await retired(ok.attemptDirectory)).status, 'completed')
     assert.equal(await present(join(ok.attemptDirectory, 'workspace')), false)
     assert.equal(await present(join(ok.attemptDirectory, 'manifest.json')), true, 'metadata stays')
-    assert.equal((await ended(tampered.attemptDirectory)).status, 'failed')
+    assert.equal((await retired(tampered.attemptDirectory)).status, 'failed')
     assert.equal(await present(join(tampered.attemptDirectory, 'workspace')), true)
 
     const noLoader = await createAdapter(500, undefined, collect, { remoteExecution })
