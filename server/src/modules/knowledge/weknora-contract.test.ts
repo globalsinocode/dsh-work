@@ -29,7 +29,8 @@ test('WeKnora 新建知识库、检索、文档元数据与删除接口符合平
     const emptySearch = await client.search({ query: '契约测试', knowledgeBaseIds: [created.id], matchCount: 10 })
     assert.deepEqual(emptySearch.results, [])
     // 优化方案 O5：检索响应带重排序结果（meta.rerank.outcome），平台记录到管理端健康状态。
-    assert.ok(emptySearch.rerankOutcome === null || /^[a-z0-9_]+$/.test(emptySearch.rerankOutcome))
+    // 未配置重排序时 WeKnora 也返回 no_model 或 disabled，因此字段必须存在。
+    assert.equal(typeof emptySearch.rerankOutcome, 'string', '检索响应应带 meta.rerank.outcome')
     // 优化方案 O7：平台新建的知识库没有摘要模型，入库不会调用对话模型。
     const stats = (await client.listKnowledgeBases()).find(item => item.id === created.id)
     assert.ok(stats, '知识库列表包含新建的知识库')
@@ -80,15 +81,31 @@ test('最低相关度：命中文档高于门槛，无关提问低于门槛', { 
       await new Promise(resolve => setTimeout(resolve, 1000))
     }
     const search = async (query: string) => (await client.search({ query, knowledgeBaseIds: [created.id], matchCount: 10 })).results
-    for (const [query, expected] of [['安全库存怎么定', '库存管理规范.txt'], ['出差住宿可以报多少钱', '差旅报销制度.txt'], ['请假超过三天谁审批', '请假与考勤.txt']]) {
-      const [top] = (await search(query!)).sort((a, b) => b.score - a.score)
+    // 相关提问：最高分须来自目标文档且不低于门槛，同一提问中的非目标文档须低于门槛（优化方案第 10 节的 12 个提问）。
+    const relevant: Array<[string, string]> = [
+      ['安全库存怎么定', '库存管理规范.txt'], ['出差住宿可以报多少钱', '差旅报销制度.txt'], ['请假超过三天谁审批', '请假与考勤.txt'],
+      ['呆滞物料多久清理', '库存管理规范.txt'], ['报销要附什么材料', '差旅报销制度.txt'], ['年假几天', '请假与考勤.txt'],
+      ['库存', '库存管理规范.txt'], ['出差', '差旅报销制度.txt'],
+    ]
+    const scores: string[] = []
+    for (const [query, expected] of relevant) {
+      const results = (await search(query)).sort((a, b) => b.score - a.score)
+      const [top] = results
       assert.equal(top?.knowledge_filename || top?.knowledge_title, expected, `“${query}”的最高分应来自目标文档`)
       assert.ok(top!.score >= minimumRelevanceScore, `“${query}”命中分 ${top!.score} 低于门槛 ${minimumRelevanceScore}`)
+      const others = results.filter(result => (result.knowledge_filename || result.knowledge_title) !== expected)
+      assert.deepEqual(others.filter(result => result.score >= minimumRelevanceScore).map(result => result.score), [],
+        `“${query}”中非目标文档不应高于门槛`)
+      scores.push(`${query}: 命中 ${top!.score.toFixed(3)}，非目标最高 ${others[0]?.score.toFixed(3) ?? '—'}`)
     }
-    for (const query of ['今天北京天气怎么样', '用 Python 写一个快速排序', '公司年会在哪里办']) {
-      const above = (await search(query)).filter(result => result.score >= minimumRelevanceScore)
-      assert.deepEqual(above.map(result => result.score), [], `无关提问“${query}”不应有高于门槛的分段`)
+    for (const query of ['今天北京天气怎么样', '用 Python 写一个快速排序', '公司年会在哪里办', '采购订单怎么审批']) {
+      const results = await search(query)
+      assert.deepEqual(results.filter(result => result.score >= minimumRelevanceScore).map(result => result.score), [],
+        `无关提问“${query}”不应有高于门槛的分段`)
+      scores.push(`${query}: 最高 ${Math.max(0, ...results.map(result => result.score)).toFixed(3)}`)
     }
+    // 输出分值，供复核时记录（不含文档正文）。
+    console.log(`最低相关度复核（门槛 ${minimumRelevanceScore}）\n${scores.join('\n')}`)
   } finally {
     await client.deleteKnowledgeBase(created.id)
   }
