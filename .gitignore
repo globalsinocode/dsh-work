@@ -16,6 +16,7 @@ blob-report/
 !.env.example
 deploy/runtime.env
 deploy/docker/stack.env
+deploy/docker/dsh_work-migrate.sql
 deploy/docker/tls/*.pem
 deploy/docker/tls/*.key
 deploy/docker/tls/*.crt

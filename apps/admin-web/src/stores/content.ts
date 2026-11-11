@@ -364,6 +364,19 @@ export const useContentStore = defineStore('admin-content', () => {
     return connector
   }
 
+  async function updateMcpConnectorRegistration(
+    connectorId: string,
+    input: Parameters<typeof adminApi.updateMcpConnectorRegistration>[1],
+  ) {
+    const connector = await adminApi.updateMcpConnectorRegistration(connectorId, input)
+    replaceById(connectors.value, connector)
+    return connector
+  }
+
+  function getMcpConnectorRegistration(connectorId: string) {
+    return adminApi.getMcpConnectorRegistration(connectorId)
+  }
+
   function testMcpConnection(input: Parameters<typeof adminApi.testMcpConnection>[0]) {
     return adminApi.testMcpConnection(input)
   }
@@ -468,6 +481,8 @@ export const useContentStore = defineStore('admin-content', () => {
     testMcpConnection,
     beginMcpProbeAuthorization,
     registerMcpConnector,
+    updateMcpConnectorRegistration,
+    getMcpConnectorRegistration,
     deleteMcpConnector,
     rotateMcpCredential,
     setMcpConnectorStatus,

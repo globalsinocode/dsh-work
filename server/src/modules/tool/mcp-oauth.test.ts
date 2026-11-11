@@ -4,9 +4,12 @@ import { test } from 'node:test'
 
 import {
   assertJwtAccessToken,
+  assertOAuthEndpointScheme,
+  assertOAuthTokenEndpointReachable,
   authorizationUrl,
   createPkce,
   exchangeAuthorizationCode,
+  normalizeOAuthDiscoveryEndpoint,
 } from './mcp-oauth.ts'
 
 function unsignedJwt(payload: Record<string, unknown>): string {
@@ -15,6 +18,34 @@ function unsignedJwt(payload: Record<string, unknown>): string {
   return `${header}.${body}.sig`
 }
 
+test('normalizeOAuthDiscoveryEndpoint fixes mistaken /api/oauth paths for data-hub', () => {
+  assert.equal(
+    normalizeOAuthDiscoveryEndpoint('http://localhost:5175/api/oauth/authorize', 'authorize'),
+    'http://localhost:5175/oauth/authorize',
+  )
+  assert.equal(
+    normalizeOAuthDiscoveryEndpoint('http://localhost:3005/api/oauth/token', 'token'),
+    'http://localhost:3005/oauth/token',
+  )
+  assert.equal(
+    normalizeOAuthDiscoveryEndpoint('http://192.168.0.248:5175/oauth/authorize', 'authorize'),
+    'http://192.168.0.248:5175/oauth/authorize',
+  )
+})
+
+test('authorizationUrl uses corrected authorize endpoint', () => {
+  const url = authorizationUrl({
+    authorizationEndpoint: 'http://localhost:5175/api/oauth/authorize',
+    clientId: 'c',
+    redirectUri: 'https://localhost/cb',
+    scopes: ['mcp:read'],
+    resource: 'http://localhost:3005/mcp',
+    state: 's',
+    codeChallenge: 'ch',
+  })
+  assert.equal(url.pathname, '/oauth/authorize')
+})
+
 test('createPkce challenge matches S256 of verifier', () => {
   const { verifier, challenge } = createPkce()
   const expected = createHash('sha256').update(verifier, 'utf8').digest('base64url')
@@ -22,7 +53,31 @@ test('createPkce challenge matches S256 of verifier', () => {
   assert.ok(verifier.length >= 43)
 })
 
-test('authorizationUrl keeps registered endpoint host and rejects non-https', () => {
+test('authorizationUrl allows http localhost for dev', () => {
+  const url = authorizationUrl({
+    authorizationEndpoint: 'http://localhost:5175/oauth/authorize',
+    clientId: 'client-dev',
+    redirectUri: 'http://localhost:4174/api/workbench/v1/mcp-grants/callback',
+    scopes: ['mcp:read'],
+    resource: 'http://localhost:3005/mcp',
+    state: 'state-dev',
+    codeChallenge: 'challenge-dev',
+  })
+  assert.equal(url.protocol, 'http:')
+  assert.equal(url.hostname, 'localhost')
+  assert.equal(url.searchParams.get('scope'), 'mcp:read')
+})
+
+test('assertOAuthEndpointScheme allows http on LAN hosts', () => {
+  assert.ok(assertOAuthEndpointScheme('http://192.168.1.10:8085/oauth/authorize', '授权端点'))
+  assert.ok(assertOAuthEndpointScheme('http://host.docker.internal:3005/oauth/token', '令牌端点'))
+  assert.throws(
+    () => assertOAuthEndpointScheme('ftp://idp.example/oauth/token', '令牌端点'),
+    /http 或 https/i,
+  )
+})
+
+test('authorizationUrl keeps registered endpoint host and allows plain http', () => {
   const registered = 'https://auth.example.com/oauth/authorize?tenant=acme'
   const url = authorizationUrl({
     authorizationEndpoint: registered,
@@ -46,18 +101,17 @@ test('authorizationUrl keeps registered endpoint host and rejects non-https', ()
   assert.equal(url.searchParams.get('resource'), 'https://mcp.example.com/mcp')
   assert.equal(url.searchParams.get('state'), 'state-abc')
 
-  assert.throws(
-    () => authorizationUrl({
-      authorizationEndpoint: 'http://auth.example.com/authorize',
-      clientId: 'c',
-      redirectUri: 'https://portal/cb',
-      scopes: ['s'],
-      resource: 'https://mcp/mcp',
-      state: 'st',
-      codeChallenge: 'ch',
-    }),
-    /https/i,
-  )
+  const httpUrl = authorizationUrl({
+    authorizationEndpoint: 'http://192.168.0.8:8085/oauth/authorize',
+    clientId: 'c',
+    redirectUri: 'https://portal/cb',
+    scopes: ['s'],
+    resource: 'http://192.168.0.8:8085/mcp',
+    state: 'st',
+    codeChallenge: 'ch',
+  })
+  assert.equal(httpUrl.protocol, 'http:')
+  assert.equal(httpUrl.hostname, '192.168.0.8')
 })
 
 test('assertJwtAccessToken validates aud, iss origin, and exp', () => {
@@ -189,6 +243,41 @@ test('exchangeAuthorizationCode posts secrets in body and validates JWT access t
     }),
     /用户令牌受众或签发方不匹配/,
   )
+})
+
+test('assertOAuthTokenEndpointReachable rejects 404 with data-hub hint for /oauth/token on localhost', async () => {
+  const fetchImpl = (async () => new Response('not found', { status: 404 })) as typeof fetch
+  await assert.rejects(
+    () => assertOAuthTokenEndpointReachable('http://localhost:3005/oauth/token', fetchImpl),
+    /令牌端点不存在（HTTP 404）/,
+  )
+})
+
+test('exchangeAuthorizationCode validates JWT iss against authorizationEndpoint when it differs from token host', async () => {
+  const resource = 'http://localhost:3005/mcp'
+  const tokenEndpoint = 'http://localhost:3005/api/oauth/token'
+  const authorizationEndpoint = 'http://localhost:5175/api/oauth/authorize'
+  const accessToken = unsignedJwt({
+    aud: resource,
+    iss: 'http://localhost:5175/',
+    exp: Math.floor(Date.now() / 1000) + 3600,
+  })
+
+  const result = await exchangeAuthorizationCode({
+    tokenEndpoint,
+    authorizationEndpoint,
+    clientId: 'client-1',
+    code: 'code',
+    codeVerifier: 'verifier',
+    redirectUri: 'https://localhost:4174/callback',
+    resource,
+    fetchImpl: async () => new Response(JSON.stringify({ access_token: accessToken }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }),
+  })
+
+  assert.equal(result.accessToken, accessToken)
 })
 
 test('exchangeAuthorizationCode returns null refresh token when absent', async () => {

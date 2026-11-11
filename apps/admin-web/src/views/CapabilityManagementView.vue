@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox, ElNotification } from 'element-plus'
-import { ArrowDown, Check, Clock, Close, Connection, Delete, DocumentCopy, Key, Loading, Plus, Refresh, Search, SwitchButton, View } from '@element-plus/icons-vue'
+import { ArrowDown, Check, Clock, Close, Connection, Delete, DocumentCopy, EditPen, Key, Loading, Plus, Refresh, Search, SwitchButton, View } from '@element-plus/icons-vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import { StatusTag } from '@dsh-work/ui-core'
@@ -12,6 +12,14 @@ import { useAuthStore } from '@/stores/auth'
 import { useContentStore } from '@/stores/content'
 import { useToolGovernanceStore } from '@/stores/toolGovernance'
 import { adminApi } from '@/api/client'
+import {
+  clearMcpCreateDraft,
+  hasMcpCreateDraft,
+  loadMcpCreateDraft,
+  saveMcpCreateDraft,
+  type McpCreateFormDraft,
+} from '@/utils/mcp-create-draft'
+import { normalizeMcpOAuthFormEndpoints } from '@/utils/normalize-oauth-endpoint'
 import type { BuiltinSkill, BuiltinSkillScenario, ConnectorDefinition, IdentityRoleSummary, McpConnectionTestResult, SkillDefinition, SkillReleaseRecord, SkillTestRunProgress, SkillVersionRecord, ToolDefinition } from '@/types/domain'
 
 type CapabilityTab = 'skills' | 'review' | 'install' | 'tools' | 'connectors'
@@ -54,6 +62,9 @@ const skillDetailTab = ref<'config' | 'versions' | 'releases'>('config')
 const actionLoading = ref('')
 const healthRefreshing = ref(false)
 const mcpCreateDialogOpen = ref(false)
+const mcpDialogMode = ref<'create' | 'edit'>('create')
+const mcpEditingConnectorId = ref('')
+const mcpDialogTitle = computed(() => mcpDialogMode.value === 'edit' ? '编辑 MCP Connector' : '新增 MCP Connector')
 const mcpTesting = ref(false)
 const mcpCreating = ref(false)
 const mcpTestResult = ref<McpConnectionTestResult | null>(null)
@@ -91,12 +102,157 @@ const mcpConnectionInputReady = computed(() => Boolean(
         && mcpCreateForm.clientId.trim() && mcpOAuthScopes.value.length
       : true),
 ))
+const mcpCanSaveDraft = computed(() => {
+  if (!mcpCreateForm.name.trim() || !mcpCreateForm.endpoint.trim() || !mcpCreateForm.scopeDescription.trim()) return false
+  if (mcpDialogMode.value === 'edit') {
+    if (mcpCreateForm.authType === 'user_oauth') {
+      return Boolean(
+        mcpCreateForm.authorizationEndpoint.trim() && mcpCreateForm.tokenEndpoint.trim()
+        && mcpCreateForm.clientId.trim() && mcpOAuthScopes.value.length,
+      )
+    }
+    return true
+  }
+  return mcpConnectionInputReady.value
+})
 const mcpCanRegister = computed(() => Boolean(
-  mcpConnectionInputReady.value
-  && mcpCreateForm.scopeDescription.trim()
+  mcpCanSaveDraft.value
   && mcpTestResult.value
   && testedMcpSignature.value === mcpConnectionSignature.value,
 ))
+const mcpCreateDraftPending = computed(() => hasMcpCreateDraft())
+let mcpCreateDraftTimer: ReturnType<typeof setTimeout> | undefined
+
+function snapshotMcpCreateForm(): McpCreateFormDraft {
+  return {
+    name: mcpCreateForm.name,
+    endpoint: mcpCreateForm.endpoint,
+    authType: mcpCreateForm.authType,
+    bearerToken: mcpCreateForm.bearerToken,
+    scopeDescription: mcpCreateForm.scopeDescription,
+    authorizationEndpoint: mcpCreateForm.authorizationEndpoint,
+    tokenEndpoint: mcpCreateForm.tokenEndpoint,
+    clientId: mcpCreateForm.clientId,
+    clientSecret: mcpCreateForm.clientSecret,
+    scopesText: mcpCreateForm.scopesText,
+    resource: mcpCreateForm.resource,
+  }
+}
+
+function persistMcpCreateDraft(extra: { awaitingProbeOAuth?: boolean } = {}) {
+  if (!mcpCreateForm.name.trim() && !mcpCreateForm.endpoint.trim()) return
+  saveMcpCreateDraft({
+    form: snapshotMcpCreateForm(),
+    testError: mcpTestError.value,
+    awaitingProbeOAuth: extra.awaitingProbeOAuth === true,
+    mode: mcpDialogMode.value,
+    ...(mcpDialogMode.value === 'edit' && mcpEditingConnectorId.value
+      ? { editingConnectorId: mcpEditingConnectorId.value }
+      : {}),
+  })
+}
+
+function applyMcpCreateDraftFromStorage() {
+  const draft = loadMcpCreateDraft()
+  if (!draft) return false
+  Object.assign(mcpCreateForm, draft.form)
+  mcpTestError.value = draft.testError ?? null
+  if (draft.mode === 'edit' && draft.editingConnectorId) {
+    mcpDialogMode.value = 'edit'
+    mcpEditingConnectorId.value = draft.editingConnectorId
+  }
+  return true
+}
+
+function openMcpCreateDialog() {
+  mcpDialogMode.value = 'create'
+  mcpEditingConnectorId.value = ''
+  applyMcpCreateDraftFromStorage()
+  mcpCreateDialogOpen.value = true
+}
+
+async function openMcpEditDialog(connector: ConnectorDefinition) {
+  mcpDialogMode.value = 'edit'
+  mcpEditingConnectorId.value = connector.id
+  resetMcpCreateForm()
+  try {
+    const registration = await contentStore.getMcpConnectorRegistration(connector.id)
+    Object.assign(mcpCreateForm, {
+      name: registration.name,
+      endpoint: registration.endpoint,
+      authType: registration.authType,
+      bearerToken: '',
+      scopeDescription: registration.scopeDescription,
+      authorizationEndpoint: registration.authorizationEndpoint ?? '',
+      tokenEndpoint: registration.tokenEndpoint ?? '',
+      clientId: registration.clientId ?? '',
+      clientSecret: '',
+      scopesText: (registration.scopes ?? []).join(' '),
+      resource: registration.resource ?? '',
+    })
+    mcpCreateDialogOpen.value = true
+  } catch (cause) {
+    ElMessage.error(cause instanceof Error ? cause.message : '加载 MCP 登记配置失败')
+  }
+}
+
+function closeMcpCreateDialog() {
+  persistMcpCreateDraft()
+  mcpCreateDialogOpen.value = false
+}
+
+async function discardMcpCreateDraft() {
+  try {
+    await ElMessageBox.confirm('将清空本机保存的 MCP 登记表单草稿，且无法恢复。', '放弃草稿', {
+      confirmButtonText: '放弃草稿',
+      cancelButtonText: '继续编辑',
+      type: 'warning',
+    })
+  } catch {
+    return
+  }
+  resetMcpCreateForm()
+  clearMcpCreateDraft()
+  mcpCreateDialogOpen.value = false
+}
+
+function consumeMcpProbeReturnQuery() {
+  const probe = typeof route.query.mcpProbe === 'string' ? route.query.mcpProbe : ''
+  if (!probe) return
+  const reason = typeof route.query.reason === 'string' ? decodeURIComponent(route.query.reason).trim() : ''
+  applyMcpCreateDraftFromStorage()
+  mcpCreateDialogOpen.value = true
+  if (probe === 'connected') {
+    mcpTestError.value = null
+    ElMessage.success('OAuth 同意已完成：表单已恢复，请再次点击「测试连接」完成探活。')
+    persistMcpCreateDraft()
+  } else if (probe === 'failed') {
+    mcpTestError.value = {
+      title: 'OAuth 探活未完成',
+      description: reason || '请检查令牌端点等配置后重试「测试连接」。',
+    }
+    persistMcpCreateDraft()
+    ElMessage.warning('OAuth 未完成，已保留登记表单与错误信息。')
+  }
+  const query = { ...route.query }
+  delete query.mcpProbe
+  delete query.reason
+  void router.replace({ query })
+}
+
+watch(mcpCreateDialogOpen, open => {
+  if (open && mcpDialogMode.value === 'create') applyMcpCreateDraftFromStorage()
+})
+
+watch(
+  () => ({ open: mcpCreateDialogOpen.value, sig: mcpConnectionSignature.value }),
+  () => {
+    if (!mcpCreateDialogOpen.value) return
+    clearTimeout(mcpCreateDraftTimer)
+    mcpCreateDraftTimer = setTimeout(() => persistMcpCreateDraft(), 500)
+  },
+)
+
 watch(mcpConnectionSignature, (signature) => {
   if (testedMcpSignature.value && signature !== testedMcpSignature.value) {
     mcpTestResult.value = null
@@ -690,6 +846,47 @@ function connectorRecoveryMessage(connector: ConnectorDefinition, fallback: stri
   return `原因：${reason}。下一步：检查 ${connector.endpoint}、凭据和 DSH Runtime 状态，恢复后重新检查。`
 }
 
+function mcpRegistrationPayload() {
+  return {
+    name: mcpCreateForm.name.trim(),
+    endpoint: mcpCreateForm.endpoint.trim(),
+    scopeDescription: mcpCreateForm.scopeDescription.trim(),
+    ...(mcpCreateForm.authType === 'bearer' && mcpCreateForm.bearerToken ? { bearerToken: mcpCreateForm.bearerToken } : {}),
+    ...(mcpCreateForm.authType === 'user_oauth' ? {
+      authorizationEndpoint: mcpCreateForm.authorizationEndpoint.trim(),
+      tokenEndpoint: mcpCreateForm.tokenEndpoint.trim(),
+      clientId: mcpCreateForm.clientId.trim(),
+      scopes: mcpOAuthScopes.value,
+      ...(mcpCreateForm.clientSecret ? { clientSecret: mcpCreateForm.clientSecret } : {}),
+      ...(mcpCreateForm.resource.trim() ? { resource: mcpCreateForm.resource.trim() } : {}),
+    } : {}),
+  }
+}
+
+async function registerMcpConnectorDraft() {
+  if (!mcpCanSaveDraft.value) {
+    ElMessage.warning('请填写完整的连接器配置与权限说明')
+    return
+  }
+  if (mcpCreateForm.authType === 'user_oauth') normalizeMcpOAuthFormEndpoints(mcpCreateForm)
+  mcpCreating.value = true
+  try {
+    const connector = await contentStore.registerMcpConnector({
+      authType: mcpCreateForm.authType,
+      saveWithoutConnectivityCheck: true,
+      ...mcpRegistrationPayload(),
+    })
+    mcpCreateDialogOpen.value = false
+    resetMcpCreateForm()
+    clearMcpCreateDraft()
+    ElMessage.success(`已保存「${connector.name}」（默认未启用）；连通测试通过后可启用`)
+  } catch (cause) {
+    ElMessage.error(cause instanceof Error ? cause.message : '保存 MCP 登记失败')
+  } finally {
+    mcpCreating.value = false
+  }
+}
+
 async function registerMcpConnector() {
   if (!mcpCanRegister.value) {
     ElMessage.warning('请先完成连通测试，且测试后不要修改连接信息')
@@ -698,22 +895,12 @@ async function registerMcpConnector() {
   mcpCreating.value = true
   try {
     const connector = await contentStore.registerMcpConnector({
-      name: mcpCreateForm.name.trim(),
-      endpoint: mcpCreateForm.endpoint.trim(),
       authType: mcpCreateForm.authType,
-      scopeDescription: mcpCreateForm.scopeDescription.trim(),
-      ...(mcpCreateForm.authType === 'bearer' ? { bearerToken: mcpCreateForm.bearerToken } : {}),
-      ...(mcpCreateForm.authType === 'user_oauth' ? {
-        authorizationEndpoint: mcpCreateForm.authorizationEndpoint.trim(),
-        tokenEndpoint: mcpCreateForm.tokenEndpoint.trim(),
-        clientId: mcpCreateForm.clientId.trim(),
-        scopes: mcpOAuthScopes.value,
-        ...(mcpCreateForm.clientSecret ? { clientSecret: mcpCreateForm.clientSecret } : {}),
-        ...(mcpCreateForm.resource.trim() ? { resource: mcpCreateForm.resource.trim() } : {}),
-      } : {}),
+      ...mcpRegistrationPayload(),
     })
     mcpCreateDialogOpen.value = false
     resetMcpCreateForm()
+    clearMcpCreateDraft()
     ElMessage.success(`MCP Connector 已添加，${connector.mcp?.capabilityCount ?? 0} 个 Tool 已自动生效`)
   } catch (cause) {
     ElMessage.error(cause instanceof Error ? cause.message : 'MCP Connector 登记失败')
@@ -722,8 +909,30 @@ async function registerMcpConnector() {
   }
 }
 
+async function saveMcpRegistrationEdit() {
+  if (!mcpCanSaveDraft.value || !mcpEditingConnectorId.value) return
+  if (mcpCreateForm.authType === 'user_oauth') normalizeMcpOAuthFormEndpoints(mcpCreateForm)
+  mcpCreating.value = true
+  try {
+    const connector = await contentStore.updateMcpConnectorRegistration(mcpEditingConnectorId.value, mcpRegistrationPayload())
+    mcpCreateDialogOpen.value = false
+    resetMcpCreateForm()
+    mcpEditingConnectorId.value = ''
+    mcpDialogMode.value = 'create'
+    ElMessage.success(`已更新「${connector.name}」；连接器已设为未启用，请重新检查后再启用`)
+  } catch (cause) {
+    ElMessage.error(cause instanceof Error ? cause.message : '更新 MCP 登记失败')
+  } finally {
+    mcpCreating.value = false
+  }
+}
+
 async function testMcpConnection() {
   if (!mcpConnectionInputReady.value) return
+  if (mcpCreateForm.authType === 'user_oauth') {
+    normalizeMcpOAuthFormEndpoints(mcpCreateForm)
+    persistMcpCreateDraft()
+  }
   const testedSignature = mcpConnectionSignature.value
   mcpTesting.value = true
   mcpTestResult.value = null
@@ -762,6 +971,12 @@ async function testMcpConnection() {
           scopes: mcpOAuthScopes.value,
           ...(mcpCreateForm.clientSecret ? { clientSecret: mcpCreateForm.clientSecret } : {}),
           ...(mcpCreateForm.resource.trim() ? { resource: mcpCreateForm.resource.trim() } : {}),
+        })
+        persistMcpCreateDraft({ awaitingProbeOAuth: true })
+        ElMessage.warning({
+          message: 'OAuth 回调在员工端（4174）完成。请先在同一浏览器登录员工端，再完成 data-hub 授权。',
+          duration: 10_000,
+          showClose: true,
         })
         window.location.assign(probe.authorizationUrl)
       } catch (probeError) {
@@ -905,7 +1120,8 @@ async function deleteMcpConnector(connector: ConnectorDefinition) {
 }
 
 function handleMcpMoreCommand(command: string, connector: ConnectorDefinition) {
-  if (command === 'credential') openMcpCredentialRotation(connector)
+  if (command === 'edit') void openMcpEditDialog(connector)
+  else if (command === 'credential') openMcpCredentialRotation(connector)
   else if (command === 'status') void toggleMcpConnector(connector)
   else if (command === 'delete') void deleteMcpConnector(connector)
 }
@@ -961,7 +1177,9 @@ onMounted(() => {
   void contentStore.load()
   // B-03/I-04：工具绑定修订为服务端真实记录（/tools/bindings）。
   void toolStore.loadBindings()
+  consumeMcpProbeReturnQuery()
 })
+watch(() => route.query.mcpProbe, () => consumeMcpProbeReturnQuery())
 onUnmounted(() => clearSkillTestPoll())
 </script>
 
@@ -1007,7 +1225,7 @@ onUnmounted(() => clearSkillTestPoll())
           <el-button type="primary" :icon="Refresh" :loading="toolCatalogSyncing" data-action="sync-dsh-tools" @click="syncDshTools">同步 DSH 工具</el-button>
         </div>
         <div v-if="authStore.canManage && activeTab === 'connectors'" class="capability-toolbar__actions">
-          <el-button type="primary" :icon="Plus" data-action="add-mcp-connector" @click="mcpCreateDialogOpen = true">新增 MCP</el-button>
+          <el-button type="primary" :icon="Plus" data-action="add-mcp-connector" @click="openMcpCreateDialog">新增 MCP</el-button>
           <el-button :icon="Refresh" :loading="healthRefreshing" data-action="refresh-connectors" @click="refreshHealth">全部检查</el-button>
         </div>
       </div>
@@ -1114,6 +1332,7 @@ onUnmounted(() => clearSkillTestPoll())
                 <el-button link type="primary" data-action="mcp-more"><span>更多</span><el-icon><ArrowDown /></el-icon></el-button>
                 <template #dropdown>
                   <el-dropdown-menu>
+                    <el-dropdown-item command="edit" :icon="EditPen" data-action="edit-mcp-connector">编辑登记</el-dropdown-item>
                     <el-dropdown-item v-if="scope.row.authType === 'bearer'" command="credential" :icon="Key" data-action="rotate-mcp-credential">{{ mcpCredentialActionLabel(scope.row) }}</el-dropdown-item>
                     <el-dropdown-item command="status" :icon="SwitchButton" :disabled="actionLoading === `mcp-status:${scope.row.id}`">{{ scope.row.status === 'disabled' ? '启用' : '停用' }}</el-dropdown-item>
                     <el-dropdown-item command="delete" :icon="Delete" divided :disabled="actionLoading === `mcp-delete:${scope.row.id}`" class="mcp-more-dropdown__danger" data-action="delete-mcp-connector">删除</el-dropdown-item>
@@ -1153,15 +1372,27 @@ onUnmounted(() => clearSkillTestPoll())
       </template>
     </el-dialog>
 
-    <el-dialog v-model="mcpCreateDialogOpen" title="新增 MCP Connector" width="min(640px, calc(100vw - 32px))" destroy-on-close @closed="resetMcpCreateForm">
+    <el-alert
+      v-if="activeTab === 'connectors' && mcpCreateDraftPending && !mcpCreateDialogOpen"
+      class="mcp-draft-banner"
+      type="info"
+      show-icon
+      :closable="false"
+    >
+      <template #title>有未完成的 MCP 登记表单（本浏览器已自动保存）</template>
+      <p class="mcp-draft-banner__text">OAuth 跳转或关闭弹窗不会清空内容。</p>
+      <el-button type="primary" link data-action="resume-mcp-create-draft" @click="openMcpCreateDialog">继续登记</el-button>
+      <el-button type="danger" link @click="discardMcpCreateDraft">放弃草稿</el-button>
+    </el-alert>
+    <el-dialog v-model="mcpCreateDialogOpen" :title="mcpDialogTitle" width="min(640px, calc(100vw - 32px))" @closed="mcpDialogMode === 'create' ? persistMcpCreateDraft() : undefined">
       <el-form label-position="top" :model="mcpCreateForm">
         <el-form-item label="连接器名称" required><el-input v-model="mcpCreateForm.name" placeholder="例如：ERP 只读查询 MCP" /></el-form-item>
         <el-form-item label="Streamable HTTP 地址" required><el-input v-model="mcpCreateForm.endpoint" class="mono" placeholder="https://erp.example.internal/mcp" /></el-form-item>
-        <el-form-item label="认证方式" required><el-radio-group v-model="mcpCreateForm.authType" @change="clearMcpTokenForNoAuth"><el-radio value="none">无认证</el-radio><el-radio value="bearer">Bearer Token</el-radio><el-radio value="user_oauth">用户授权</el-radio></el-radio-group></el-form-item>
+        <el-form-item label="认证方式" required><el-radio-group v-model="mcpCreateForm.authType" :disabled="mcpDialogMode === 'edit'" @change="clearMcpTokenForNoAuth"><el-radio value="none">无认证</el-radio><el-radio value="bearer">Bearer Token</el-radio><el-radio value="user_oauth">用户授权</el-radio></el-radio-group></el-form-item>
         <el-form-item v-if="mcpCreateForm.authType === 'bearer'" label="Bearer Token" required><el-input v-model="mcpCreateForm.bearerToken" type="password" autocomplete="new-password" placeholder="输入 MCP 服务签发的 Token" /><small>Token 使用 AES-256-GCM 加密后存入数据库，保存后不再回显。</small></el-form-item>
         <template v-if="mcpCreateForm.authType === 'user_oauth'">
-          <el-form-item label="授权端点" required><el-input v-model="mcpCreateForm.authorizationEndpoint" class="mono" placeholder="https://idp.example/oauth/authorize" /></el-form-item>
-          <el-form-item label="令牌端点" required><el-input v-model="mcpCreateForm.tokenEndpoint" class="mono" placeholder="https://idp.example/oauth/token" /></el-form-item>
+          <el-form-item label="授权端点" required><el-input v-model="mcpCreateForm.authorizationEndpoint" class="mono" placeholder="data-hub 开发：http://localhost:5175/oauth/authorize" /></el-form-item>
+          <el-form-item label="令牌端点" required><el-input v-model="mcpCreateForm.tokenEndpoint" class="mono" placeholder="data-hub 开发：http://localhost:3005/oauth/token" /></el-form-item>
           <el-form-item label="客户端标识" required><el-input v-model="mcpCreateForm.clientId" class="mono" /></el-form-item>
           <el-form-item label="客户端密钥"><el-input v-model="mcpCreateForm.clientSecret" type="password" autocomplete="new-password" placeholder="可空，仅 PKCE 时可留空" /></el-form-item>
           <el-form-item label="Scope" required><el-input v-model="mcpCreateForm.scopesText" placeholder="以空格或逗号分隔，至少一项" /></el-form-item>
@@ -1171,8 +1402,19 @@ onUnmounted(() => clearSkillTestPoll())
       </el-form>
       <el-alert v-if="mcpTestResult" type="success" :closable="false" show-icon :title="`连通测试成功：${mcpTestResult.latencyMs} ms，发现 ${mcpTestResult.capabilityCount} 个 Tool`" />
       <el-alert v-else-if="mcpTestError" type="error" :closable="false" show-icon :title="mcpTestError.title" :description="mcpTestError.description" />
-      <el-alert v-else type="info" :closable="false" show-icon title="先通过 DSH 测试 Streamable HTTP 连通性并发现 Tool；登记复核成功后连接器与 Tool 清单立即生效，并由 Agent 能力配置按需选择。" />
-      <template #footer><el-button @click="mcpCreateDialogOpen = false">取消</el-button><el-button :loading="mcpTesting" :disabled="!mcpConnectionInputReady || mcpCreating" data-action="test-mcp-connection" @click="testMcpConnection">测试连接</el-button><el-button type="primary" :loading="mcpCreating" :disabled="!mcpCanRegister || mcpTesting" data-action="confirm-add-mcp-connector" @click="registerMcpConnector">添加 MCP</el-button></template>
+      <el-alert v-else-if="mcpDialogMode === 'create'" type="info" :closable="false" show-icon title="可先保存登记（默认未启用），或测试连通后添加并立即生效 Tool 清单。" />
+      <el-alert v-else type="info" :closable="false" show-icon title="可先「测试连接」验证地址与 OAuth；保存后连接器将设为未启用，修改 OAuth 后请重新检查并让员工重新授权。" />
+      <template #footer>
+        <el-button v-if="mcpDialogMode === 'create'" link type="danger" @click="discardMcpCreateDraft">放弃草稿</el-button>
+        <span class="mcp-create-dialog__footer-spacer" />
+        <el-button @click="mcpDialogMode === 'create' ? closeMcpCreateDialog() : (mcpCreateDialogOpen = false)">{{ mcpDialogMode === 'create' ? '关闭（保留草稿）' : '取消' }}</el-button>
+        <el-button :loading="mcpTesting" :disabled="!mcpConnectionInputReady || mcpCreating" data-action="test-mcp-connection" @click="testMcpConnection">测试连接</el-button>
+        <template v-if="mcpDialogMode === 'create'">
+          <el-button :loading="mcpCreating" :disabled="!mcpCanSaveDraft || mcpTesting" data-action="save-mcp-connector-draft" @click="registerMcpConnectorDraft">保存（未启用）</el-button>
+          <el-button type="primary" :loading="mcpCreating" :disabled="!mcpCanRegister || mcpTesting" data-action="confirm-add-mcp-connector" @click="registerMcpConnector">测试通过后添加</el-button>
+        </template>
+        <el-button v-else type="primary" :loading="mcpCreating" :disabled="!mcpCanSaveDraft || mcpTesting" data-action="save-mcp-registration-edit" @click="saveMcpRegistrationEdit">保存修改</el-button>
+      </template>
     </el-dialog>
 
     <el-dialog v-model="mcpCredentialDialogOpen" :title="`轮换 Bearer Token · ${selectedMcpCredentialConnector?.name ?? ''}`" width="min(520px, calc(100vw - 32px))" destroy-on-close @closed="mcpCredentialToken = ''">
@@ -1462,4 +1704,7 @@ onUnmounted(() => clearSkillTestPoll())
 .release-record small { color: var(--color-text-muted); font-size: var(--font-size-badge); }
 .release-record p { margin: 6px 0; color: var(--color-text-secondary); font-size: var(--font-size-caption); line-height: 1.5; }
 @media (max-width: 760px) { .capability-toolbar { align-items: stretch; flex-direction: column; } .capability-toolbar .el-input { width: 100%; } .capability-toolbar__legend { margin-left: 0; } .tool-filter-controls { min-width: 0; } .tool-filter-controls :deep(.el-select) { width: 50%; } .mcp-form-grid { grid-template-columns: 1fr; } }
+.mcp-draft-banner { margin-bottom: 12px; }
+.mcp-draft-banner__text { margin: 0 0 4px; color: var(--color-text-secondary); font-size: var(--font-size-badge); }
+.mcp-create-dialog__footer-spacer { flex: 1; }
 </style>

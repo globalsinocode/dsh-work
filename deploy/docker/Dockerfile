@@ -9,9 +9,15 @@ FROM docker:cli AS docker-cli
 
 FROM node:22-bookworm-slim AS builder
 
-RUN apt-get update \
-  && apt-get install -y --no-install-recommends git ca-certificates \
-  && rm -rf /var/lib/apt/lists/*
+RUN set -eux; \
+  apt_install() { apt-get update -o Acquire::Retries=3 "$@" && apt-get install -y --no-install-recommends git ca-certificates; }; \
+  if ! apt_install; then \
+    for attempt in 1 2 3 4 5; do apt_install && exit 0 || sleep 8; done; \
+    sed -i '/bookworm-security/Id' /etc/apt/sources.list.d/debian.sources 2>/dev/null \
+      || sed -i '/security.debian.org/d' /etc/apt/sources.list; \
+    apt_install; \
+  fi; \
+  rm -rf /var/lib/apt/lists/*
 
 RUN corepack enable && corepack prepare pnpm@11.7.0 --activate
 
@@ -23,21 +29,35 @@ COPY packages ./packages
 COPY apps ./apps
 COPY deploy/.dsh ./deploy/.dsh
 COPY deploy/deepseek-harness ./deploy/deepseek-harness
+COPY docs/development/openapi-mobile-h5.json docs/development/openapi-mobile-h5.json
+COPY docs/development/mobile-integration-guide.md docs/development/mobile-integration-guide.md
 
 RUN pnpm install --frozen-lockfile
 
+ARG DSH_CLIENT_COMMIT_HASH=0000000
+ENV DSH_CLIENT_COMMIT_HASH=${DSH_CLIENT_COMMIT_HASH}
+
 WORKDIR /src/deploy/deepseek-harness
 RUN pnpm install --frozen-lockfile && pnpm run build
+# Source-checkout 模式依赖 git rev-parse；镜像内无 .git，写入与 runtime-lock 一致的元数据供受管启动。
+RUN node -e "const fs=require('node:fs');const lock=JSON.parse(fs.readFileSync('/src/server/config/dsh/runtime-lock.json','utf8'));fs.writeFileSync('dsh-runtime.json',JSON.stringify({version:lock.version,commit:lock.commit,protocolVersion:lock.protocolVersion}));"
 
 WORKDIR /src
-RUN pnpm build
+RUN pnpm build \
+  && pnpm --config.inject-workspace-packages=true --filter @dsh-work/server deploy --prod /src/server-deploy
 
 # --- API + DSH runtime (non-root, Docker CLI for execution containers) ---
 FROM node:22-bookworm-slim AS server
 
-RUN apt-get update \
-  && apt-get install -y --no-install-recommends gosu git ca-certificates curl \
-  && rm -rf /var/lib/apt/lists/*
+RUN set -eux; \
+  apt_install() { apt-get update -o Acquire::Retries=3 "$@" && apt-get install -y --no-install-recommends gosu git ca-certificates curl; }; \
+  if ! apt_install; then \
+    for attempt in 1 2 3 4 5; do apt_install && exit 0 || sleep 8; done; \
+    sed -i '/bookworm-security/Id' /etc/apt/sources.list.d/debian.sources 2>/dev/null \
+      || sed -i '/security.debian.org/d' /etc/apt/sources.list; \
+    apt_install; \
+  fi; \
+  rm -rf /var/lib/apt/lists/*
 
 COPY --from=docker-cli /usr/local/bin/docker /usr/local/bin/docker
 
@@ -46,16 +66,19 @@ RUN chmod 755 /usr/local/bin/dsh-work-server-entrypoint.sh
 
 WORKDIR /app
 
-COPY --from=builder /src/server/dist ./server/dist
-COPY --from=builder /src/server/migrations ./server/migrations
+COPY --from=builder /src/server-deploy/dist ./server/dist
+COPY --from=builder /src/server-deploy/migrations ./server/migrations
+COPY --from=builder /src/server-deploy/node_modules ./server/node_modules
 COPY --from=builder /src/server/config ./server/config
-COPY --from=builder /src/server/package.json ./server/package.json
+COPY --from=builder /src/server-deploy/package.json ./server/package.json
 COPY --from=builder /src/deploy/.dsh ./deploy/.dsh
 COPY --from=builder /src/deploy/deepseek-harness ./deploy/deepseek-harness
 COPY --from=builder /src/package.json ./package.json
 
 ENV NODE_ENV=production \
   DSH_RUNTIME_HOME=/app/deploy/deepseek-harness \
+  DSH_RUNTIME_COMMAND=/usr/local/bin/node \
+  DSH_RUNTIME_ARGS_JSON='["--import","tsx/esm","apps/cli/lib/bin.js"]' \
   DSH_HOME=/app/deploy/.dsh \
   DSH_WORK_DATA_ROOT=/app/data \
   DSH_WORK_DSH_SESSIONS_ROOT=/app/data/dsh-sessions \

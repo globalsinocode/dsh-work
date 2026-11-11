@@ -1,5 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 
+import { invalidRequest } from '../../domain/request-errors.ts'
 import { loadStartupIdentityConfiguration } from '../../modules/identity/config.ts'
 import { resolveRequestOrigin } from '../../modules/identity/auth-service.ts'
 import type { McpUserGrantService } from '../../modules/tool/mcp-user-grant-service.ts'
@@ -17,10 +18,32 @@ const basePath = '/api/workbench/v1'
 
 function workbenchPortalOrigin(request: IncomingMessage) {
   const configuration = loadStartupIdentityConfiguration()
-  const settings = configuration.mode === 'oidc'
-    ? configuration.audiences.workbench
-    : configuration.audiences.workbench
+  const settings = configuration.audiences.workbench
   return resolveRequestOrigin(request, settings)
+}
+
+/** 管理端 OAuth 探活结束后回到连接器页，避免员工台设置页与登记表单割裂。 */
+function configuredAdminPortalOrigin() {
+  const configuration = loadStartupIdentityConfiguration()
+  const origin = configuration.audiences.admin.defaultOrigin
+    ?? configuration.audiences.admin.allowedOrigins[0]
+  if (!origin) {
+    throw invalidRequest(
+      '未配置管理端入口：请设置 DSH_WORK_ADMIN_ORIGINS 与 DSH_WORK_ADMIN_DEFAULT_ORIGIN',
+    )
+  }
+  return origin.replace(/\/$/, '')
+}
+
+function redirectWithReason(baseUrl: string, extraQuery: Record<string, string>, reason?: string) {
+  const url = new URL(baseUrl)
+  for (const [key, value] of Object.entries(extraQuery)) {
+    url.searchParams.set(key, value)
+  }
+  if (reason?.trim()) {
+    url.searchParams.set('reason', reason.trim().slice(0, 180))
+  }
+  return url.toString()
 }
 
 export function registerMcpGrantRoutes(
@@ -51,17 +74,25 @@ export function registerMcpGrantRoutes(
     const identity = requireRequestIdentity(context, 'workbench')
     const code = context.url.searchParams.get('code') ?? ''
     const state = context.url.searchParams.get('state') ?? ''
-    const origin = workbenchPortalOrigin(request)
-    const successLocation = `${origin.replace(/\/$/, '')}/settings?mcpGrant=connected`
-    const failureLocation = `${origin.replace(/\/$/, '')}/settings?mcpGrant=failed`
+    const workbenchOrigin = workbenchPortalOrigin(request).replace(/\/$/, '')
+    const adminOrigin = configuredAdminPortalOrigin()
+    const phaseHint = state ? await grantService.oauthTransactionPhase(state) : null
+    const probeFlow = phaseHint === 'probe'
     try {
       if (!code || !state) throw routeValidationFailed('OAuth 回调缺少 code 或 state')
-      await grantService.completeAuthorization({ code, state, userId: identity.userId })
-      response.writeHead(302, { Location: successLocation })
+      const flow = await grantService.completeAuthorization({ code, state, userId: identity.userId })
+      const location = flow === 'probe'
+        ? redirectWithReason(`${adminOrigin}/connectors`, { mcpProbe: 'connected' })
+        : `${workbenchOrigin}/settings?mcpGrant=connected`
+      response.writeHead(302, { Location: location })
       response.end()
       return
-    } catch {
-      response.writeHead(302, { Location: failureLocation })
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : 'OAuth 回调未完成'
+      const location = probeFlow
+        ? redirectWithReason(`${adminOrigin}/connectors`, { mcpProbe: 'failed' }, reason)
+        : redirectWithReason(`${workbenchOrigin}/settings`, { mcpGrant: 'failed' }, reason)
+      response.writeHead(302, { Location: location })
       response.end()
     }
   })

@@ -745,6 +745,37 @@ export interface RegisterMcpConnectorInput {
   scopes?: string[]
   resource?: string
   scopeDescription: string
+  /** 为 true 时跳过 DSH 连通发现，登记为未启用草稿。 */
+  saveWithoutConnectivityCheck?: boolean
+  actor: string
+}
+
+export interface McpConnectorRegistrationDetail {
+  connectorId: string
+  name: string
+  endpoint: string
+  authType: 'none' | 'bearer' | 'user_oauth'
+  scopeDescription: string
+  authorizationEndpoint?: string
+  tokenEndpoint?: string
+  clientId?: string
+  scopes?: string[]
+  resource?: string
+  hasClientSecret: boolean
+}
+
+export interface UpdateMcpConnectorRegistrationInput {
+  connectorId: string
+  name?: string
+  endpoint?: string
+  scopeDescription?: string
+  bearerToken?: string
+  authorizationEndpoint?: string
+  tokenEndpoint?: string
+  clientId?: string
+  clientSecret?: string
+  scopes?: string[]
+  resource?: string
   actor: string
 }
 

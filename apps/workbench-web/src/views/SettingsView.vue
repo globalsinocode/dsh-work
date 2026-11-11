@@ -11,6 +11,7 @@ import NotificationSettings from '@/components/notification-settings/notificatio
 import { roleLabels, useAuthStore } from '@/stores/auth'
 import { isWorkbenchNotificationSupported } from '@/utils/system-notification-client'
 import type { McpUserGrantListItem } from '@/types/domain'
+import { clearMcpGrantNotice, loadMcpGrantNotice, saveMcpGrantNotice } from '@/utils/mcp-grant-notice'
 
 const authStore = useAuthStore()
 const notificationSupported = isWorkbenchNotificationSupported()
@@ -47,21 +48,34 @@ async function revokeMcp(connectorId: string) {
   await loadMcpGrants()
 }
 
+function dismissMcpGrantBanner() {
+  mcpGrantBanner.value = ''
+  clearMcpGrantNotice()
+}
+
 onMounted(async () => {
   void loadPolicy()
   await loadMcpGrants()
   const grant = typeof route.query.mcpGrant === 'string' ? route.query.mcpGrant : ''
   if (grant === 'connected') {
     mcpGrantBanner.value = ''
+    clearMcpGrantNotice()
     await loadMcpGrants()
     const query = { ...route.query }
     delete query.mcpGrant
     void router.replace({ query })
   } else if (grant === 'failed') {
-    mcpGrantBanner.value = '授权没有完成，请重试'
+    const reason = typeof route.query.reason === 'string' ? decodeURIComponent(route.query.reason).trim() : ''
+    const message = reason ? `授权没有完成：${reason}` : '授权没有完成，请重试'
+    mcpGrantBanner.value = `${message}。若在管理端登记 MCP，探活失败也会回到管理后台并保留表单。`
+    saveMcpGrantNotice(mcpGrantBanner.value)
     const query = { ...route.query }
     delete query.mcpGrant
+    delete query.reason
     void router.replace({ query })
+  } else {
+    const stored = loadMcpGrantNotice()
+    if (stored) mcpGrantBanner.value = stored
   }
 })
 </script>
@@ -93,6 +107,7 @@ onMounted(async () => {
         :authorize="authorizeMcp"
         :revoke="revokeMcp"
         :reload="loadMcpGrants"
+        :dismiss-grant-error="dismissMcpGrantBanner"
       />
 
       <NotificationSettings :enabled="notificationSupported" />

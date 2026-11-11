@@ -13,7 +13,7 @@ const tlsCert = resolve(composeDir, 'tls/server.crt')
 const tlsKey = resolve(composeDir, 'tls/server.key')
 
 function composeArgs() {
-  return ['compose', '--project-name', 'dsh-work', '-f', 'compose.yaml']
+  return ['compose', '--project-name', 'dsh-work', '--env-file', 'stack.env', '-f', 'compose.yaml']
 }
 
 function runDocker(args, { inherit = false } = {}) {
@@ -33,6 +33,25 @@ function ensureStackEnv() {
   console.error(`缺少 ${stackEnv}`)
   console.error(`请执行: copy deploy\\docker\\stack.env.example deploy\\docker\\stack.env 并编辑密码与 ACP 配置`)
   process.exit(1)
+}
+
+/** DSH harness build reads DSH_CLIENT_COMMIT_HASH; .git is not in the image build context. */
+function resolveGitCommitForBuild() {
+  const result = spawnSync('git', ['rev-parse', '--short=7', 'HEAD'], {
+    cwd: projectRoot,
+    encoding: 'utf8',
+  })
+  if (result.status === 0) {
+    const hash = result.stdout.trim()
+    if (/^[0-9a-f]{7,40}$/i.test(hash)) return hash.slice(0, 7).toLowerCase()
+  }
+  return '0000000'
+}
+
+function ensureBuildMetadata() {
+  if (!process.env.DSH_CLIENT_COMMIT_HASH) {
+    process.env.DSH_CLIENT_COMMIT_HASH = resolveGitCommitForBuild()
+  }
 }
 
 function ensureTls() {
@@ -59,13 +78,16 @@ function main() {
 
   switch (command) {
     case 'up':
+      ensureBuildMetadata()
       runDocker([...composeArgs(), 'up', '--build', '-d'], { inherit: true })
       printUrls()
       break
     case 'up:fg':
+      ensureBuildMetadata()
       runDocker([...composeArgs(), 'up', '--build'], { inherit: true })
       break
     case 'build':
+      ensureBuildMetadata()
       runDocker([...composeArgs(), 'build'], { inherit: true })
       break
     case 'down':

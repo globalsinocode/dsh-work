@@ -37,6 +37,8 @@ services:
       context: ../..
       dockerfile: deploy/docker/Dockerfile
       target: server
+      args:
+        DSH_CLIENT_COMMIT_HASH: ${DSH_CLIENT_COMMIT_HASH:-0000000}
     image: dsh-work/server:latest
     container_name: dsh-work-server
     env_file:
@@ -45,6 +47,9 @@ services:
       DSH_WORK_SERVER_HOST: 0.0.0.0
       DSH_WORK_DATABASE_URL: postgres://${DSH_WORK_POSTGRES_USER:-dsh_work}:${DSH_WORK_POSTGRES_PASSWORD}@postgres:5432/${DSH_WORK_POSTGRES_DB:-dsh_work}
       DSH_RUNTIME_HOME: /app/deploy/deepseek-harness
+      # Harness 打进镜像时无 .git，用 runtime-lock 生成的 dsh-runtime.json + 显式启动命令。
+      DSH_RUNTIME_COMMAND: /usr/local/bin/node
+      DSH_RUNTIME_ARGS_JSON: '["--import","tsx/esm","apps/cli/lib/bin.js"]'
       DSH_HOME: /app/deploy/.dsh
       DSH_WORK_DATA_ROOT: /app/data
       DSH_WORK_DSH_SESSIONS_ROOT: /app/data/dsh-sessions
@@ -68,6 +73,8 @@ services:
       context: ../..
       dockerfile: deploy/docker/Dockerfile
       target: web
+      args:
+        DSH_CLIENT_COMMIT_HASH: ${DSH_CLIENT_COMMIT_HASH:-0000000}
     image: dsh-work/web:latest
     container_name: dsh-work-web
     env_file:

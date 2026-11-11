@@ -8,6 +8,7 @@ import type {
   ApiAuthenticator,
   RequestIdentity,
 } from '../modules/identity/types.ts'
+import { IdentityAccessError } from '../modules/identity/auth-service.ts'
 import { isAuthorizationDenial, publicAuthorizationResponseCode } from '../domain/authorization-errors.ts'
 import { invalidRequest, stateConflict } from '../domain/request-errors.ts'
 
@@ -135,9 +136,26 @@ export class Router {
         route.parameterNames.map((name, index) => [name, decodeURIComponent(match?.[index + 1] ?? '')]),
       )
       const audience = apiAudience(url.pathname)
-      const identity = audience && this.authenticateApi
-        ? await this.authenticateApi(request, audience)
-        : undefined
+      let identity: RequestIdentity | undefined
+      if (audience && this.authenticateApi) {
+        try {
+          identity = await this.authenticateApi(request, audience)
+        } catch (error) {
+          if (
+            route.path === '/api/workbench/v1/mcp-grants/callback'
+            && method === 'GET'
+            && error instanceof IdentityAccessError
+            && error.code === 'authentication_required'
+          ) {
+            const returnTo = `${url.pathname}${url.search}`
+            const location = `/auth/workbench/login?return_to=${encodeURIComponent(returnTo)}`
+            response.writeHead(302, { 'Cache-Control': 'no-store', Location: location })
+            response.end()
+            return
+          }
+          throw error
+        }
+      }
       if (identity) assertApiRouteAccess(identity, url.pathname, request.method)
       const result = await route.handler(request, { params, url, identity }, response)
       if (response.headersSent || response.writableEnded) return

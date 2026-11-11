@@ -1,14 +1,20 @@
-import type { IncomingMessage } from 'node:http'
-
-import type { RegisterMcpConnectorInput, TestMcpConnectionInput, ToolDefinition } from '../../domain/types.ts'
+import type { RegisterMcpConnectorInput, TestMcpConnectionInput, ToolDefinition, UpdateMcpConnectorRegistrationInput } from '../../domain/types.ts'
 import { loadStartupIdentityConfiguration } from '../../modules/identity/config.ts'
-import { resolveRequestOrigin } from '../../modules/identity/auth-service.ts'
 import type { PostgresToolConnectorService } from '../../modules/tool/postgres-tool-connector-service.ts'
+import { invalidRequest } from '../../domain/request-errors.ts'
 import { envelope, readJsonBody, requireRequestIdentity, type Router } from '../router.ts'
 
-function adminPortalOrigin(request: IncomingMessage) {
+/** 探活 OAuth 回调走 workbench 路由；管理端请求不能沿用当前 Host（多为 4180），须用员工台登记 origin。 */
+function configuredWorkbenchPortalOrigin() {
   const configuration = loadStartupIdentityConfiguration()
-  return resolveRequestOrigin(request, configuration.audiences.admin)
+  const origin = configuration.audiences.workbench.defaultOrigin
+    ?? configuration.audiences.workbench.allowedOrigins[0]
+  if (!origin) {
+    throw invalidRequest(
+      '未配置员工工作台入口：请在 stack.env 或 .env 设置 DSH_WORK_WORKBENCH_ORIGINS（Docker 全栈示例 https://localhost:4174）',
+    )
+  }
+  return origin
 }
 
 const basePath = '/api/admin/v1'
@@ -80,7 +86,7 @@ export function registerToolRoutes(router: Router, service: PostgresToolConnecto
     const result = await service.beginMcpProbeAuthorization({
       ...input,
       actor: requireRequestIdentity(context, 'admin').userId,
-      portalOrigin: adminPortalOrigin(request),
+      portalOrigin: configuredWorkbenchPortalOrigin(),
     })
     return envelope('admin', result, 'postgres')
   })
@@ -88,6 +94,22 @@ export function registerToolRoutes(router: Router, service: PostgresToolConnecto
     const input = await readJsonBody<Omit<RegisterMcpConnectorInput, 'actor'>>(request)
     return envelope('admin', await service.registerMcpConnector({
       ...input,
+      actor: requireRequestIdentity(context, 'admin').userId,
+    }), 'postgres')
+  })
+  router.get(`${basePath}/connectors/mcp/:connectorId/registration`, async (_request, context) => envelope(
+    'admin',
+    await service.getMcpConnectorRegistration({
+      connectorId: context.params['connectorId'] ?? '',
+      actor: requireRequestIdentity(context, 'admin').userId,
+    }),
+    'postgres',
+  ))
+  router.patch(`${basePath}/connectors/mcp/:connectorId/registration`, async (request, context) => {
+    const input = await readJsonBody<Omit<UpdateMcpConnectorRegistrationInput, 'actor' | 'connectorId'>>(request)
+    return envelope('admin', await service.updateMcpConnectorRegistration({
+      ...input,
+      connectorId: context.params['connectorId'] ?? '',
       actor: requireRequestIdentity(context, 'admin').userId,
     }), 'postgres')
   })

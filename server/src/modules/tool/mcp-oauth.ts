@@ -2,6 +2,34 @@ import { createHash, randomBytes } from 'node:crypto'
 
 const JWT_MISMATCH_MESSAGE = '用户令牌受众或签发方不匹配'
 
+/** 授权/令牌端点登记校验：允许 http 或 https（内网 HTTP 部署与 Docker 联调）。 */
+export function assertOAuthEndpointScheme(endpoint: string, label = 'OAuth 端点'): URL {
+  let parsed: URL
+  try { parsed = new URL(endpoint.trim()) }
+  catch { throw new TypeError(`${label} 必须是有效的 URL`) }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    throw new TypeError(`${label} 须为 http 或 https URL`)
+  }
+  return parsed
+}
+
+/** 登记用 OAuth 端点：保持登记值，仅去掉 `/api/oauth` 误写为 data-hub 实际的 `/oauth`。 */
+export function normalizeOAuthDiscoveryEndpoint(raw: string, role: 'authorize' | 'token'): string {
+  const trimmed = raw.trim()
+  if (!trimmed) return trimmed
+  let url: URL
+  try { url = new URL(trimmed) }
+  catch { return trimmed }
+  const wrong = role === 'authorize' ? '/api/oauth/authorize' : '/api/oauth/token'
+  const right = role === 'authorize' ? '/oauth/authorize' : '/oauth/token'
+  const path = url.pathname.replace(/\/$/, '') || '/'
+  if (path === wrong) {
+    url.pathname = right
+    return url.toString()
+  }
+  return trimmed
+}
+
 export function createPkce(): { verifier: string; challenge: string } {
   const verifier = randomBytes(32).toString('base64url')
   const challenge = createHash('sha256').update(verifier, 'utf8').digest('base64url')
@@ -17,10 +45,8 @@ export function authorizationUrl(input: {
   state: string
   codeChallenge: string
 }): URL {
-  const url = new URL(input.authorizationEndpoint)
-  if (url.protocol !== 'https:') {
-    throw new TypeError('authorizationEndpoint 必须是 https URL')
-  }
+  assertOAuthEndpointScheme(input.authorizationEndpoint, 'authorizationEndpoint')
+  const url = new URL(normalizeOAuthDiscoveryEndpoint(input.authorizationEndpoint, 'authorize'))
 
   url.searchParams.set('response_type', 'code')
   url.searchParams.set('client_id', input.clientId)
@@ -67,6 +93,29 @@ function expirationValid(exp: unknown, now: Date): boolean {
   return exp > Math.floor(now.getTime() / 1000)
 }
 
+/** 登记前探测令牌端点是否可达，避免 OAuth 同意后换票 404 却只显示「授权没有完成」。 */
+export async function assertOAuthTokenEndpointReachable(
+  tokenEndpoint: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<void> {
+  let url: URL
+  try { url = new URL(tokenEndpoint.trim()) }
+  catch { throw new TypeError('令牌端点必须是有效的 URL') }
+
+  const normalized = normalizeOAuthDiscoveryEndpoint(url.toString(), 'token')
+  const response = await fetchImpl(normalized, {
+    method: 'POST',
+    headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    body: 'grant_type=authorization_code',
+  })
+  if (response.status !== 404) return
+
+  const dataHubHint = url.pathname.startsWith('/api/oauth/')
+    ? ' data-hub 使用 /oauth/token（无 /api 前缀），勿写 /api/oauth/token。'
+    : ''
+  throw new Error(`令牌端点不存在（HTTP 404）。${dataHubHint}`.trim())
+}
+
 export function assertJwtAccessToken(token: string, input: {
   resource: string
   authorizationEndpoint: string
@@ -87,6 +136,8 @@ export function assertJwtAccessToken(token: string, input: {
 
 export async function exchangeAuthorizationCode(input: {
   tokenEndpoint: string
+  /** 用于校验 access token JWT 的 `iss` 来源；未传时回退为 tokenEndpoint（同主机部署） */
+  authorizationEndpoint?: string
   clientId: string
   clientSecret?: string
   code: string
@@ -96,6 +147,7 @@ export async function exchangeAuthorizationCode(input: {
   fetchImpl?: typeof fetch
 }): Promise<{ accessToken: string; refreshToken: string | null; expiresAt: string | null }> {
   const fetchImpl = input.fetchImpl ?? fetch
+  const tokenEndpoint = normalizeOAuthDiscoveryEndpoint(input.tokenEndpoint, 'token')
   const body = new URLSearchParams({
     grant_type: 'authorization_code',
     client_id: input.clientId,
@@ -108,14 +160,20 @@ export async function exchangeAuthorizationCode(input: {
     body.set('client_secret', input.clientSecret)
   }
 
-  const response = await fetchImpl(input.tokenEndpoint, {
+  const response = await fetchImpl(tokenEndpoint, {
     method: 'POST',
     headers: { 'content-type': 'application/x-www-form-urlencoded' },
     body: body.toString(),
   })
 
   if (!response.ok) {
-    throw new Error(`MCP OAuth 换票失败：HTTP ${response.status}`)
+    let detail = `HTTP ${response.status}`
+    try {
+      const err = await response.json() as { error?: string; error_description?: string }
+      if (err.error_description?.trim()) detail = err.error_description.trim()
+      else if (err.error?.trim()) detail = err.error.trim()
+    } catch { /* non-JSON body */ }
+    throw new Error(`MCP OAuth 换票失败：${detail}`)
   }
 
   const json = await response.json() as {
@@ -129,9 +187,12 @@ export async function exchangeAuthorizationCode(input: {
     throw new Error('MCP OAuth 换票响应缺少 access_token')
   }
 
+  const authorizationEndpoint = input.authorizationEndpoint?.trim()
+    ? normalizeOAuthDiscoveryEndpoint(input.authorizationEndpoint, 'authorize')
+    : tokenEndpoint
   assertJwtAccessToken(accessToken, {
     resource: input.resource,
-    authorizationEndpoint: input.tokenEndpoint,
+    authorizationEndpoint,
   })
 
   const refreshToken = typeof json.refresh_token === 'string' ? json.refresh_token : null
@@ -152,6 +213,7 @@ export async function exchangeRefreshToken(input: {
   fetchImpl?: typeof fetch
 }): Promise<{ accessToken: string; refreshToken: string | null; expiresAt: string | null }> {
   const fetchImpl = input.fetchImpl ?? fetch
+  const tokenEndpoint = normalizeOAuthDiscoveryEndpoint(input.tokenEndpoint, 'token')
   const body = new URLSearchParams({
     grant_type: 'refresh_token',
     client_id: input.clientId,
@@ -162,7 +224,7 @@ export async function exchangeRefreshToken(input: {
     body.set('client_secret', input.clientSecret)
   }
 
-  const response = await fetchImpl(input.tokenEndpoint, {
+  const response = await fetchImpl(tokenEndpoint, {
     method: 'POST',
     headers: { 'content-type': 'application/x-www-form-urlencoded' },
     body: body.toString(),

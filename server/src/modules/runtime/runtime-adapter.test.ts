@@ -967,6 +967,23 @@ describe('DSH ACP Runtime Adapter', () => {
     assert.equal(installation.process.env?.['DSH_ACP_BASE_CONFIG'], undefined)
   })
 
+  it('falls back to the runtime lock commit when harness has no git metadata', async () => {
+    const fixture = await createSourceCheckoutFixture()
+    await rm(join(fixture.runtimeHome, '.git'), { recursive: true, force: true })
+    const installation = await resolveDshRuntimeInstallation({
+      projectRoot: fixture.projectRoot,
+      env: {
+        DSH_RUNTIME_HOME: fixture.runtimeHome,
+        DSH_WORK_ACP_PROVIDER: 'test-provider',
+        DSH_WORK_ACP_MODEL: 'test-model',
+        DSH_WORK_DATA_ROOT: join(fixture.projectRoot, 'persistent-data'),
+      },
+    })
+
+    assert.equal(installation.commit, fixture.commit)
+    assert.equal(installation.launchMode, 'source-checkout')
+  })
+
   it('resolves the exact legacy source checkout only through the development compatibility mode', async () => {
     const fixture = await createLegacySourceCheckoutFixture()
     const dataRoot = join(fixture.projectRoot, 'persistent-data')

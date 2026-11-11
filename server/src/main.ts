@@ -252,6 +252,12 @@ async function start() {
     const installation = await resolveDshRuntimeInstallation({ projectRoot })
     await preflightDshRuntime(installation)
     return installation
+  }, error => {
+    console.warn(
+      `DSH runtime unavailable; Agent runs and MCP discovery are refused until fixed: ${
+        redactSensitiveText(error instanceof Error ? error.message : String(error)).slice(0, 500)
+      }`,
+    )
   })
   dshCapability = dsh.state
   // 执行隔离阶段 3（方案 4.9）：执行容器为必需。DSH 子进程只经执行容器叠加层运行；

@@ -73,9 +73,10 @@ export async function resolveDshRuntimeInstallation(
   const launchMode = configuredCommand ? 'managed-distribution' : 'source-checkout'
 
   await access(home, constants.R_OK)
+  // Docker / release images copy harness without .git; source-checkout falls back to the locked commit.
   const metadata = launchMode === 'managed-distribution'
     ? await readJson<RuntimeMetadata>(resolve(home, 'dsh-runtime.json'))
-    : await readSourceMetadata(home, target.protocolVersion)
+    : await readSourceMetadata(home, target.protocolVersion, target.commit)
 
   if (metadata.version !== target.version) {
     throw new Error(`DSH runtime version mismatch: expected ${target.version}, received ${metadata.version}`)
@@ -289,12 +290,22 @@ export async function preflightDshRuntime(
   }
 }
 
-async function readSourceMetadata(home: string, protocolVersion: number): Promise<RuntimeMetadata> {
+async function readSourceMetadata(
+  home: string,
+  protocolVersion: number,
+  lockedCommit: string,
+): Promise<RuntimeMetadata> {
   const packageJson = await readJson<{ version?: string }>(resolve(home, 'package.json'))
   if (!packageJson.version) throw new Error(`DSH package.json has no version: ${home}`)
+  let commit: string
+  try {
+    commit = await gitHead(home)
+  } catch {
+    commit = lockedCommit
+  }
   return {
     version: packageJson.version,
-    commit: await gitHead(home),
+    commit,
     protocolVersion,
   }
 }

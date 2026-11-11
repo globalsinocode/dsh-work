@@ -132,15 +132,20 @@ export class McpUserGrantService {
         ${redirectUri}, ${expiresAt}
       )
     `
-    const url = authorizationUrl({
-      authorizationEndpoint: oauth.authorizationEndpoint,
-      clientId: oauth.clientId,
-      redirectUri,
-      scopes: oauth.scopes,
-      resource: oauth.resource,
-      state,
-      codeChallenge: challenge,
-    })
+    let url: URL
+    try {
+      url = authorizationUrl({
+        authorizationEndpoint: oauth.authorizationEndpoint,
+        clientId: oauth.clientId,
+        redirectUri,
+        scopes: oauth.scopes,
+        resource: oauth.resource,
+        state,
+        codeChallenge: challenge,
+      })
+    } catch (cause) {
+      throw invalidRequest(cause instanceof Error ? cause.message : 'OAuth 授权端点无效')
+    }
     return { authorizationUrl: url.toString() }
   }
 
@@ -176,23 +181,40 @@ export class McpUserGrantService {
       )
     `
     const resource = input.registration.resource?.trim() || normalizeHttpsEndpoint(input.registration.endpoint)
-    const url = authorizationUrl({
-      authorizationEndpoint: input.registration.authorizationEndpoint,
-      clientId: input.registration.clientId,
-      redirectUri,
-      scopes: input.registration.scopes,
-      resource,
-      state,
-      codeChallenge: challenge,
-    })
+    let url: URL
+    try {
+      url = authorizationUrl({
+        authorizationEndpoint: input.registration.authorizationEndpoint,
+        clientId: input.registration.clientId,
+        redirectUri,
+        scopes: input.registration.scopes,
+        resource,
+        state,
+        codeChallenge: challenge,
+      })
+    } catch (cause) {
+      throw invalidRequest(cause instanceof Error ? cause.message : 'OAuth 授权端点无效')
+    }
     return { authorizationUrl: url.toString() }
+  }
+
+  async oauthTransactionPhase(state: string): Promise<'probe' | 'grant' | null> {
+    const stateHash = hashState(state)
+    const [row] = await this.database<{ probeFingerprint: string | null }[]>`
+      select probe_fingerprint as "probeFingerprint"
+        from mcp_oauth_transactions
+       where tenant_id = ${tenantId} and state_hash = ${stateHash}
+       limit 1
+    `
+    if (!row) return null
+    return row.probeFingerprint ? 'probe' : 'grant'
   }
 
   async completeAuthorization(input: {
     code: string
     state: string
     userId: string
-  }): Promise<void> {
+  }): Promise<'probe' | 'grant'> {
     const stateHash = hashState(input.state)
     const [transaction] = await this.database<{
       id: string
@@ -256,7 +278,7 @@ export class McpUserGrantService {
                 expires_at = excluded.expires_at
         `
       })
-      return
+      return 'probe'
     }
 
     if (!transaction.connectorId) throw invalidRequest('OAuth 交易缺少连接器')
@@ -264,6 +286,7 @@ export class McpUserGrantService {
     const clientSecret = await this.readClientSecret(oauth.clientSecretCredentialRefId)
     const exchanged = await exchangeAuthorizationCode({
       tokenEndpoint: oauth.tokenEndpoint,
+      authorizationEndpoint: oauth.authorizationEndpoint,
       clientId: oauth.clientId,
       clientSecret,
       code: input.code,
@@ -286,6 +309,7 @@ export class McpUserGrantService {
         },
       })
     })
+    return 'grant'
   }
 
   async revoke(userId: string, connectorId: string): Promise<{ id: string; deleted: boolean }> {
@@ -539,6 +563,7 @@ export class McpUserGrantService {
     const resource = registration.resource?.trim() || normalizeHttpsEndpoint(registration.endpoint)
     const exchanged = await exchangeAuthorizationCode({
       tokenEndpoint: registration.tokenEndpoint,
+      authorizationEndpoint: registration.authorizationEndpoint,
       clientId: registration.clientId,
       clientSecret: registration.clientSecret,
       code,
@@ -711,9 +736,14 @@ export function probeFingerprint(input: McpOAuthProbeRegistrationInput, clientSe
   }), 'utf8').digest('hex')
 }
 
+/** MCP Streamable HTTP 地址；与 Connector 登记使用同一套 HTTP(S) 规则。 */
 export function normalizeHttpsEndpoint(endpoint: string): string {
-  const url = new URL(endpoint.trim())
-  if (url.protocol !== 'https:') throw invalidRequest('MCP 服务地址必须是 HTTPS')
+  let url: URL
+  try { url = new URL(endpoint.trim()) }
+  catch { throw invalidRequest('MCP 服务地址必须是有效的 HTTP(S) URL') }
+  if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.hash || url.search) {
+    throw invalidRequest('MCP 服务地址只能使用 HTTP(S)，且不得包含账号、密码、查询参数或片段')
+  }
   return url.toString()
 }
 

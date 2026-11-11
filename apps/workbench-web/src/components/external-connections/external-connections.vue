@@ -8,6 +8,7 @@ defineProps<{
   authorize: (connectorId: string) => void | Promise<void>
   revoke: (connectorId: string) => void | Promise<void>
   reload: () => void | Promise<void>
+  dismissGrantError?: () => void
 }>()
 
 function statusLabel(status: McpUserGrantListItem['status']) {
@@ -24,8 +25,18 @@ function statusLabel(status: McpUserGrantListItem['status']) {
       <div><h2>外部连接</h2><p>管理员登记的需要个人授权的外部 MCP；此处只能查看状态并完成授权。</p></div>
       <el-button link type="primary" :loading="loading" @click="reload">刷新</el-button>
     </div>
-    <el-alert v-if="grantError" type="warning" :closable="false" show-icon :title="grantError" />
-    <p v-if="!loading && !items.length" class="external-connections__empty">管理员尚未登记需要个人授权的外部连接</p>
+    <el-alert
+      v-if="grantError"
+      type="warning"
+      show-icon
+      :closable="Boolean(dismissGrantError)"
+      :title="grantError"
+      @close="dismissGrantError?.()"
+    />
+    <p v-if="!loading && !items.length && !grantError" class="external-connections__empty">管理员尚未登记需要个人授权的外部连接</p>
+    <p v-else-if="!loading && !items.length && grantError" class="external-connections__empty external-connections__empty--hint">
+      列表仍为空：管理端 OAuth 探活失败时，此处不会出现连接器。请在管理后台完成「测试连接」与「添加 MCP」后刷新。
+    </p>
     <el-table v-else v-loading="loading" :data="items" empty-text="暂无外部连接">
       <el-table-column label="名称" prop="name" min-width="160" />
       <el-table-column label="权限说明" prop="scopeDescription" min-width="220" />
@@ -57,4 +68,5 @@ function statusLabel(status: McpUserGrantListItem['status']) {
 
 <style scoped>
 .external-connections__empty { margin: 12px 0; color: var(--el-text-color-secondary); }
+.external-connections__empty--hint { font-size: 13px; line-height: 1.55; }
 </style>

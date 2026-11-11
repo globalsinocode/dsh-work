@@ -11,6 +11,9 @@
 **/test-results
 e2e
 docs
+!docs/development
+!docs/development/openapi-mobile-h5.json
+!docs/development/mobile-integration-guide.md
 agent-transcripts
 .cursor
 *.md

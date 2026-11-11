@@ -416,7 +416,34 @@ export const adminApi = {
     scopes?: string[]
     resource?: string
     scopeDescription: string
+    saveWithoutConnectivityCheck?: boolean
   }) => request<ConnectorDefinition>('/connectors/mcp', { method: 'POST', body: JSON.stringify(input) }),
+  getMcpConnectorRegistration: (connectorId: string) =>
+    request<{
+      connectorId: string
+      name: string
+      endpoint: string
+      authType: 'none' | 'bearer' | 'user_oauth'
+      scopeDescription: string
+      authorizationEndpoint?: string
+      tokenEndpoint?: string
+      clientId?: string
+      scopes?: string[]
+      resource?: string
+      hasClientSecret: boolean
+    }>(`/connectors/mcp/${encodeURIComponent(connectorId)}/registration`),
+  updateMcpConnectorRegistration: (connectorId: string, input: {
+    name?: string
+    endpoint?: string
+    scopeDescription?: string
+    bearerToken?: string
+    authorizationEndpoint?: string
+    tokenEndpoint?: string
+    clientId?: string
+    clientSecret?: string
+    scopes?: string[]
+    resource?: string
+  }) => request<ConnectorDefinition>(`/connectors/mcp/${encodeURIComponent(connectorId)}/registration`, { method: 'PATCH', body: JSON.stringify(input) }),
   deleteMcpConnector: (connectorId: string) =>
     request<McpConnectorDeletionResult>(`/connectors/mcp/${encodeURIComponent(connectorId)}`, { method: 'DELETE' }),
   rotateMcpCredential: (input: { connectorId: string; bearerToken: string }) =>
