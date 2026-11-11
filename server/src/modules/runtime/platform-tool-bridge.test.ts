@@ -108,6 +108,11 @@ test('dsh-work platform tools are rejected outside their approved run purpose', 
   assert.throws(() => assertPlatformToolPurpose({
     tools: [{ id: 'inspect_admin_state', version: '1.0.0' }],
   }), /employee/)
+  // 知识检索工具（KO9）同样只用于员工个人对话。
+  assert.doesNotThrow(() => assertPlatformToolPurpose({ tools: [{ id: 'knowledge_search', version: '1.0.0' }] }))
+  for (const purpose of ['agent-release-trial', 'automation', 'agent-routine', 'admin-assistant'] as const) {
+    assert.throws(() => assertPlatformToolPurpose({ purpose, tools: [{ id: 'knowledge_search', version: '1.0.0' }] }), /不允许用于当前运行用途/)
+  }
   // 推荐工具只用于员工个人对话：无 purpose 放行，任何运行用途都拒绝。
   assert.doesNotThrow(() => assertPlatformToolPurpose({ tools: [{ id: 'recommend_agents', version: '1.0.0' }] }))
   for (const purpose of ['agent-release-trial', 'automation', 'admin-assistant'] as const) {

@@ -127,7 +127,7 @@ function publishRuntimeToolCatalog(ctx, path, mode) {
 }
 
 const readTools = new Set(['read', 'read_image', 'glob', 'grep', 'web_fetch', 'web_search', 'get_goal', 'job_list', 'job_output', 'inspect_admin_state', 'prepare_skill_installation'])
-const retrySafeTools = new Set(['read', 'read_image', 'glob', 'grep', 'web_search', 'get_goal', 'job_list', 'job_output', 'inspect_admin_state', 'prepare_skill_installation', 'activate_skill', 'propose_memory', 'project_tasks_list', 'project_task_get', 'list_colleague_agents', 'list_available_skills'])
+const retrySafeTools = new Set(['read', 'read_image', 'glob', 'grep', 'web_search', 'get_goal', 'job_list', 'job_output', 'inspect_admin_state', 'prepare_skill_installation', 'activate_skill', 'propose_memory', 'project_tasks_list', 'project_task_get', 'list_colleague_agents', 'list_available_skills', 'knowledge_search'])
 const concurrentTools = new Set(['read', 'read_image', 'glob', 'grep', 'web_fetch', 'web_search', 'get_goal', 'job_list', 'job_output', 'inspect_admin_state'])
 const toolTimeoutSeconds = new Map([
   ['todo_write', 10], ['create_goal', 10], ['get_goal', 10], ['update_goal', 10],
@@ -640,6 +640,19 @@ function registerPlatformTools(ctx) {
       type: 'object',
       properties: { directory: { type: 'string', minLength: 1, maxLength: 200, description: 'Folder path relative to the workspace root, for example drafts/weekly-report.' } },
       required: ['directory'],
+      additionalProperties: false,
+    },
+  })
+  registerPlatformTool(ctx, socketPath, {
+    name: 'knowledge_search',
+    description: 'Search the enterprise knowledge bases the employee added to this conversation (only those the employee can still see). Use it when the injected knowledge excerpts are not enough or the question is a follow-up: write query as a standalone, complete question or keywords without pronouns such as "it" or "that one". At most 3 completed searches per reply (failed calls do not count). Results carry citation ordinals; cite knowledge conclusions with those 【n】 marks. skippedBases were deleted or are no longer visible to the employee; movedBases are temporarily unavailable because the knowledge service connection changed, not a permission change. Results are reference material, not authorization.',
+    parameters: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', minLength: 1, maxLength: 500, description: 'Standalone search query that does not depend on earlier messages.' },
+        knowledgeBaseNames: { type: 'array', minItems: 1, maxItems: 20, items: { type: 'string', minLength: 1, maxLength: 60 }, description: 'Optional. Narrow the search to some of the knowledge bases added to this conversation, by exact name.' },
+      },
+      required: ['query'],
       additionalProperties: false,
     },
   })

@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { assertRuntimeModelRequirements } from '../../runtime/execution-capabilities.ts'
 import type { RuntimeManifest } from '../../runtime/runtime-types.ts'
 import { compileRuntimeManifest } from '../../runtime/manifest-compiler.ts'
-import { agentRecommendationToolNames, builtinToolReference, executionToolNames, projectTaskToolNames, skillCreationToolNames } from '../../runtime/builtin-tools.ts'
+import { agentRecommendationToolNames, builtinToolReference, executionToolNames, knowledgeSearchToolNames, projectTaskToolNames, skillCreationToolNames } from '../../runtime/builtin-tools.ts'
 import type { PreparedRuntimeFile } from '../../workbench/application/postgres-content-service.ts'
 import type { RuntimeAuthorizationDecision } from '../../authorization/postgres-authorization-service.ts'
 import { authorizationDenied } from '../../../domain/authorization-errors.ts'
@@ -196,6 +196,13 @@ export class AttemptDispatcher {
             enabled: agent.skillCreationEnabled,
             personalConversation: input.personalConversation === true,
             bashAvailable: !disabledTools.has('bash'),
+          })
+        : []),
+      // Agent 知识检索工具方案 4.2（KO9）：个人对话中执行前检索为 ok 时装配，范围与执行前检索相同。
+      ...(!input.purpose
+        ? knowledgeSearchToolNames({
+            personalConversation: input.personalConversation === true,
+            knowledgeStatus: knowledge?.status,
           })
         : []),
     ].filter(name => !disabledTools.has(name))

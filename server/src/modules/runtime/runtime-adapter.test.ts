@@ -5,7 +5,7 @@ import { cp, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { afterEach, describe, it } from 'node:test'
+import { afterEach, describe, it, test } from 'node:test'
 import { DataProtectionService, MemoryDataProtectionStore } from '../data-protection/data-protection-service.ts'
 import { PlaceholderRestorer, maskTexts } from '../data-protection/data-protection-masking.ts'
 import { AcpJsonRpcClient, buildAcpChildEnvironment } from './acp-json-rpc-client.ts'
@@ -20,6 +20,7 @@ import {
   type DurablePermissionContext,
   readSessionEvidence,
   isUnconfirmedMcpFailure,
+  countedKnowledgeSearch,
 } from './dsh-acp-runtime-adapter.ts'
 import { createManagedDshAcpProcessConfiguration } from './dsh-acp-process-configuration.ts'
 import { prepareMcpProcess } from './dsh-attempt-patch.ts'
@@ -332,6 +333,28 @@ describe('Runtime Manifest compiler', () => {
     reason.knowledge_status = 'skipped'
     ;(reason as { knowledge_skipped_reason?: string }).knowledge_skipped_reason = 'other'
     assert.throws(() => compileRuntimeManifest(reason), /knowledge_skipped_reason is invalid/)
+  })
+
+  it('explains the knowledge search tool only when it is assembled (KO9)', () => {
+    const withTool = manifest('run-knowledge-tool', 'attempt-1')
+    withTool.knowledge_status = 'ok'
+    withTool.tools = [...withTool.tools, { id: 'knowledge_search', version: '1.0.0' }]
+    const prompt = renderSystemPrompt(compileRuntimeManifest(withTool).manifest)
+    assert.match(prompt, /# 企业知识检索工具[\s\S]*knowledge_search[\s\S]*最多调用 3 次[\s\S]*不是新的操作授权/)
+    // 评审 PR 118：执行前没有命中时要求先补查，不再出现“请如实说明没有查到”的直接结论。
+    assert.match(prompt, /没有找到相关内容。员工的问题可能是追问[\s\S]*调用 knowledge_search 再查/)
+    assert.doesNotMatch(prompt, /已查询用户添加的企业知识库，没有找到相关内容。不得把企业制度/)
+    const withContext = manifest('run-knowledge-tool-context', 'attempt-1')
+    withContext.knowledge_status = 'ok'
+    withContext.tools = [...withContext.tools, { id: 'knowledge_search', version: '1.0.0' }]
+    withContext.knowledge_context = [{
+      documentId: 'weknora:knowledge-1', title: '规范', version: '20260801.0930', effectiveDate: '2026-08-01',
+      dataScope: 'knowledge:库', contentChecksum: 'a'.repeat(64), excerpt: '片段',
+    }]
+    assert.match(renderSystemPrompt(compileRuntimeManifest(withContext).manifest), /只能依据以下已授权知识片段与 knowledge_search 返回的结果回答/)
+    const without = manifest('run-knowledge-no-tool', 'attempt-1')
+    without.knowledge_status = 'ok'
+    assert.doesNotMatch(renderSystemPrompt(compileRuntimeManifest(without).manifest), /企业知识检索工具/)
   })
 
   it('renders the pinned project brief as reference context, not authorization (项目空间 S1)', () => {
@@ -2332,4 +2355,26 @@ describe('模型路由生效与模型网关（MR-S2 / DLP-S1）', () => {
     assert.equal(result.status, 'completed', result.errorMessage ?? undefined)
     assert.match(await readFile(promptLog, 'utf8'), /本次不可用的工具[\s\S]*联网搜索暂时不可用/)
   })
+})
+
+// 评审 PR 118：检索次数只计成功完成的检索；取消信号传给处理函数。
+test('knowledge search counts only completed searches and forwards the abort signal', async () => {
+  const seen: number[] = []
+  let fail = false
+  const controller = new AbortController()
+  const handler = countedKnowledgeSearch(async (_input, _manifest, callNumber, signal) => {
+    seen.push(callNumber)
+    assert.equal(signal, controller.signal)
+    if (fail) throw new Error('unavailable')
+    return { callNumber }
+  }, manifest('run-knowledge-count', 'attempt-1'))
+  await handler({ query: 'a' }, controller.signal)
+  fail = true
+  await assert.rejects(handler({ query: 'b' }, controller.signal))
+  fail = false
+  await handler({ query: 'c' }, controller.signal)
+  await handler({ query: 'd' }, controller.signal)
+  await handler({ query: 'e' }, controller.signal)
+  // 失败的第 2 次调用不占用次数：成功的调用依次是第 1、2、3、4 次，第 4 次由处理函数按上限拒绝。
+  assert.deepEqual(seen, [1, 2, 2, 3, 4])
 })

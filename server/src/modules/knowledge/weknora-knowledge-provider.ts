@@ -1,15 +1,19 @@
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 
+import type { AuditTrail } from '../../domain/audit-trail.ts'
 import type { DatabaseClient } from '../../infrastructure/postgres/database.ts'
+import { toolPreconditionFailed, toolUnavailable } from '../runtime/platform-tool-contract.ts'
 import type { RuntimeKnowledgeDocument } from '../runtime/runtime-types.ts'
 import { knowledgeViewLevel, visibleBaseIdsSql } from './knowledge-access.ts'
-import type { KnowledgeCitation, KnowledgeProvider, KnowledgeResolution } from './knowledge-provider.ts'
+import type { KnowledgeCitation, KnowledgeProvider, KnowledgeResolution, KnowledgeToolResult } from './knowledge-provider.ts'
 import type { PostgresKnowledgeConnection } from './knowledge-connection.ts'
 import { WeKnoraRequestError, WeKnoraUnavailableError, type WeKnoraClient, type WeKnoraFailureReason } from './weknora-client.ts'
 
 const tenantId = 'tenant-dsh-work'
 const maxContextDocuments = 3
 const searchMatchCount = 10
+/** Agent 知识检索工具每个 Attempt 最多调用的次数（KS3）。 */
+export const maxKnowledgeToolCalls = 3
 /**
  * WeKnora 分值在 0～1 之间（重排序或混合检索）。低于该值的分段不注入，避免每次都带上弱相关内容
  * （4.4 第 1 步）。2026-11-02 在 WeKnora v0.9.0、未配置重排序时校准：命中文档 0.56～0.83，无关提问最高
@@ -39,21 +43,20 @@ export class WeKnoraKnowledgeProvider implements KnowledgeProvider {
   readonly connectionId: string
   private readonly database: DatabaseClient
   private readonly connection: PostgresKnowledgeConnection
+  private readonly audit: AuditTrail | undefined
 
-  constructor(database: DatabaseClient, connection: PostgresKnowledgeConnection) {
+  constructor(database: DatabaseClient, connection: PostgresKnowledgeConnection, audit?: AuditTrail) {
     this.database = database
     this.connection = connection
     this.connectionId = connection.connectionId
+    this.audit = audit
   }
 
-  async resolveContext(input: {
-    sessionId: string
-    userId: string
-    agentVersionId: string
-    query: string
-    fallbackQuery?: string
-  }): Promise<KnowledgeResolution> {
-    const empty = { documents: [], citations: [], skippedBases: [] }
+  /**
+   * 执行前检索与知识检索工具共用的复核（5.1、5.3、5.7，WK14）：连接、身份模式、员工与 Agent 的查看级别，
+   * 以及会话所选知识库当前是否可见。每次调用都实时读取，不使用 Manifest 中冻结的结果。
+   */
+  private async evaluate(input: { sessionId: string; userId: string; agentVersionId: string }) {
     const [levels] = await this.database<{ connection: boolean; localIdentity: boolean; employee: boolean; agent: boolean }[]>`
       select
         exists (
@@ -84,9 +87,7 @@ export class WeKnoraKnowledgeProvider implements KnowledgeProvider {
              and r.permissions ?| ${knowledgeViewLevel}::text[]
         ) as agent
     `
-    if (!levels?.localIdentity) return { status: 'not_applicable', ...empty }
-
-    const selected = await this.database<SelectedBaseRow[]>`
+    const selected: SelectedBaseRow[] = levels?.localIdentity ? await this.database<SelectedBaseRow[]>`
       select kb.id, kb.external_id as "externalId", kb.name,
              (kb.status = 'active' and kb.id in (${visibleBaseIdsSql(this.database, input.userId)})) as visible,
              kb.status = 'unavailable' as moved
@@ -95,7 +96,24 @@ export class WeKnoraKnowledgeProvider implements KnowledgeProvider {
        where skb.tenant_id = ${tenantId} and skb.session_id = ${input.sessionId}
          and kb.connection_id = ${this.connectionId}
        order by skb.added_at, kb.id
-    `
+    ` : []
+    return {
+      levels: levels ?? { connection: false, localIdentity: false, employee: false, agent: false },
+      selected,
+    }
+  }
+
+  async resolveContext(input: {
+    sessionId: string
+    userId: string
+    agentVersionId: string
+    query: string
+    fallbackQuery?: string
+  }): Promise<KnowledgeResolution> {
+    const empty = { documents: [], citations: [], skippedBases: [] }
+    const { levels, selected } = await this.evaluate(input)
+    if (!levels.localIdentity) return { status: 'not_applicable', ...empty }
+
     // Manifest 最多记 20 个名称；会话所选知识库没有数量上限，超出的不再逐一提示。
     const names = (bases: SelectedBaseRow[]) => bases.map(base => base.name.trim()).filter(Boolean).slice(0, maxSkippedBases)
 
@@ -146,6 +164,127 @@ export class WeKnoraKnowledgeProvider implements KnowledgeProvider {
     return { status: 'ok', documents: retrieved.documents, citations: retrieved.citations, ...skips }
   }
 
+  /**
+   * Agent 知识检索工具（Agent 知识检索工具方案 4.3，KO9）：每次调用实时复核范围，筛选规则与执行前检索相同，
+   * 结果写入引用快照并续编序号（KS5）。审计不记录检索词与摘录（KS6）；失败单独审计，不计入健康状态的
+   * 检索与不可用次数（KS7）。
+   */
+  async searchForTool(input: {
+    runId: string
+    attemptId: string
+    sessionId: string
+    userId: string
+    agentVersionId: string
+    traceId: string
+    query: string
+    knowledgeBaseNames?: string[]
+    callNumber: number
+    signal?: AbortSignal
+  }): Promise<KnowledgeToolResult> {
+    if (input.callNumber > maxKnowledgeToolCalls) {
+      throw toolPreconditionFailed(`本次回答的知识检索次数已用完（每次回答最多 ${maxKnowledgeToolCalls} 次），请依据已有资料回答或如实说明`)
+    }
+    const query = input.query.trim()
+    if (!query) throw toolPreconditionFailed('检索词不能为空')
+    const { levels, selected } = await this.evaluate(input)
+    if (!levels.localIdentity || !levels.employee || !levels.agent) {
+      throw toolPreconditionFailed('当前不能检索企业知识库：员工或 AI 同事已没有知识库查看权限')
+    }
+    const client = levels.connection ? await this.connection.client() : null
+    if (!client) throw toolUnavailable('企业知识库尚未配置或已停用，本次检索未执行')
+    if (!selected.length) throw toolPreconditionFailed('这次对话没有添加知识库')
+    let candidates = selected
+    if (input.knowledgeBaseNames?.length) {
+      const wanted = new Set(input.knowledgeBaseNames.map(name => name.trim()))
+      const known = new Set(selected.map(base => base.name.trim()))
+      const unknown = [...wanted].filter(name => !known.has(name))
+      if (unknown.length) {
+        throw toolPreconditionFailed(`这些知识库不在本次对话添加的范围内：${unknown.join('、')}。可用的知识库：${[...known].join('、')}`)
+      }
+      candidates = selected.filter(base => wanted.has(base.name.trim()))
+    }
+    const scope = candidates.filter(base => base.visible)
+    const names = (bases: SelectedBaseRow[]) => bases.map(base => base.name.trim()).filter(Boolean).slice(0, maxSkippedBases)
+    const skippedBases = names(candidates.filter(base => !base.visible && !base.moved))
+    const movedBases = names(candidates.filter(base => !base.visible && base.moved))
+    if (!scope.length) throw toolPreconditionFailed('所选知识库当前都不可用（已删除、已无权查看或连接已更换）')
+    input.signal?.throwIfAborted()
+    const auditTarget = `Attempt ${input.attemptId}`
+
+    let retrieved: Awaited<ReturnType<WeKnoraKnowledgeProvider['retrieve']>>
+    try {
+      retrieved = await this.retrieve(client, query, scope)
+    } catch (error) {
+      if (!(error instanceof WeKnoraUnavailableError || error instanceof WeKnoraRequestError)) throw error
+      const reason = error instanceof WeKnoraUnavailableError ? error.reason : 'protocol'
+      await this.recordFailure(reason)
+      await this.audit?.appendAudit(input.userId, 'knowledge.search.tool', input.runId, 'failed', input.traceId,
+        `${auditTarget}：知识检索工具调用失败（${reason}），检索词 ${query.length} 字`, 'run')
+      throw toolUnavailable('企业知识库暂不可用，本次检索未完成')
+    }
+    await this.recordSuccess(retrieved.rerankOutcome)
+    // 工具超时或 Attempt 取消后不再写入引用：模型没有拿到的资料不能出现在页脚（评审 PR 118）。
+    input.signal?.throwIfAborted()
+    const ordinals = await this.appendToolCitations(input, retrieved.citations)
+    await this.audit?.appendAudit(input.userId, 'knowledge.search.tool', input.runId, 'success', input.traceId,
+      `${auditTarget}：知识检索工具（第 ${input.callNumber} 次），检索词 ${query.length} 字，知识库 ${scope.map(base => base.id).join('、')}，`
+        + `命中 ${retrieved.citations.map(citation => `${citation.externalDocumentId}:${citation.relevanceScore.toFixed(3)}`).join('、') || '无'}`,
+      'run')
+    return {
+      documents: retrieved.citations.map((citation, index) => ({
+        ordinal: ordinals[index]!,
+        title: citation.title,
+        knowledgeBaseName: citation.knowledgeBaseName,
+        updatedDate: citation.documentUpdatedAt.slice(0, 10),
+        excerpt: citation.excerpt,
+      })),
+      skippedBases,
+      movedBases,
+      remainingCalls: maxKnowledgeToolCalls - input.callNumber,
+    }
+  }
+
+  /**
+   * 引用续编（KS5）：接在本 Attempt 已有引用之后编号；同一文档、同一校验值的分段已在本 Attempt 中出现时
+   * 不新增行，沿用原序号。锁住 Attempt 行，序号分配与写入在同一事务中完成。
+   */
+  private async appendToolCitations(input: { runId: string; attemptId: string }, citations: KnowledgeCitation[]): Promise<number[]> {
+    if (!citations.length) return []
+    return this.database.begin(async transaction => {
+      await transaction`select id from run_attempts where tenant_id = ${tenantId} and id = ${input.attemptId} for update`
+      const existing = await transaction<{ ordinal: number; externalDocumentId: string; contentChecksum: string }[]>`
+        select ordinal, external_document_id as "externalDocumentId", content_checksum as "contentChecksum"
+          from run_knowledge_citations where tenant_id = ${tenantId} and attempt_id = ${input.attemptId}
+      `
+      const known = new Map(existing.map(row => [`${row.externalDocumentId}|${row.contentChecksum}`, row.ordinal]))
+      let next = existing.reduce((max, row) => Math.max(max, row.ordinal), 0) + 1
+      const ordinals: number[] = []
+      for (const citation of citations) {
+        const key = `${citation.externalDocumentId}|${citation.contentChecksum}`
+        const reused = known.get(key)
+        if (reused !== undefined) {
+          ordinals.push(reused)
+          continue
+        }
+        await transaction`
+          insert into run_knowledge_citations (
+            id, tenant_id, run_id, attempt_id, ordinal, external_document_id, knowledge_base_id, knowledge_base_name,
+            title, file_name, document_updated_at, content_checksum, excerpt, relevance_score, source
+          ) values (
+            ${`run-knowledge-${randomUUID()}`}, ${tenantId}, ${input.runId}, ${input.attemptId}, ${next},
+            ${citation.externalDocumentId}, ${citation.knowledgeBaseId}, ${citation.knowledgeBaseName}, ${citation.title},
+            ${citation.fileName}, ${citation.documentUpdatedAt}, ${citation.contentChecksum}, ${citation.excerpt},
+            ${citation.relevanceScore}, 'tool'
+          )
+        `
+        known.set(key, next)
+        ordinals.push(next)
+        next += 1
+      }
+      return ordinals
+    })
+  }
+
   async addCitationFooter(attemptId: string, answer: string): Promise<string> {
     const [attempt] = await this.database<{ status: string | null; skipped: string[] | null; moved: string[] | null; reason: string | null }[]>`
       select manifest->>'knowledge_status' as status, manifest->'knowledge_skipped_bases' as skipped,
@@ -153,17 +292,24 @@ export class WeKnoraKnowledgeProvider implements KnowledgeProvider {
              manifest->>'knowledge_skipped_reason' as reason
         from run_attempts where tenant_id = ${tenantId} and id = ${attemptId}
     `
-    const citations = await this.database<{ title: string; updatedAt: Date }[]>`
-      select title, document_updated_at as "updatedAt"
+    const citations = await this.database<{ ordinal: number; documentId: string; title: string; updatedAt: Date }[]>`
+      select ordinal, external_document_id as "documentId", title, document_updated_at as "updatedAt"
         from run_knowledge_citations
        where tenant_id = ${tenantId} and attempt_id = ${attemptId}
        order by ordinal
     `
     const sections: string[] = []
     if (citations.length) {
-      // 优化方案 O6：列出的是本次注入的全部资料，不代表模型都引用了。
-      sections.push(['本次检索到的资料', ...citations.map((row, index) =>
-        `- 【${index + 1}】${row.title}（更新于 ${formatDate(row.updatedAt)}）`)].join('\n'))
+      // 优化方案 O6：列出的是本次注入的全部资料，不代表模型都引用了。同一篇文档的多个分段合并为一行，
+      // 列出它的全部序号（评审 PR 118：检索工具可能取到同一文档的另一个分段）。
+      const documents = new Map<string, { ordinals: number[]; title: string; updatedAt: Date }>()
+      for (const row of citations) {
+        const entry = documents.get(row.documentId)
+        if (entry) entry.ordinals.push(row.ordinal)
+        else documents.set(row.documentId, { ordinals: [row.ordinal], title: row.title, updatedAt: row.updatedAt })
+      }
+      sections.push(['本次检索到的资料', ...[...documents.values()].map(document =>
+        `- ${document.ordinals.map(ordinal => `【${ordinal}】`).join('')}${document.title}（更新于 ${formatDate(document.updatedAt)}）`)].join('\n'))
     } else if (attempt?.status === 'ok') {
       sections.push('已查询所添加的知识库，没有找到相关内容，本次回答未引用企业知识。')
     }

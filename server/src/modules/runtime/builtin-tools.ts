@@ -48,6 +48,7 @@ const projectOnly = '只访问本次运行所在项目空间的任务'
 const actorLimited = '按发起成员的任务权限执行，定时执行不装配'
 const colleaguesOnly = '只涉及发起员工本人当前可用的 AI 同事，不含本 Agent'
 const skillCreationOnly = 'Agent 版本开启“可创建 Skill”时装配，仅个人对话'
+const knowledgeOnly = '仅个人对话，执行前检索成功时装配；只检索会话所选且员工当前可见的知识库'
 
 export const builtinTools: readonly BuiltinTool[] = [
   { name: 'read', label: '读取文本文件', source: 'dsh', effect: 'read', risk: 'low', assembly: 'always', constraints: [workspace] },
@@ -74,6 +75,7 @@ export const builtinTools: readonly BuiltinTool[] = [
   { name: 'list_colleague_agents', label: '查看可推荐的 AI 同事', source: 'platform', effect: 'read', risk: 'low', assembly: 'personal-conversation', constraints: [colleaguesOnly, '仅个人对话'] },
   { name: 'recommend_agents', label: '推荐 AI 同事', source: 'platform', effect: 'write', risk: 'low', assembly: 'personal-conversation', constraints: [colleaguesOnly, '每次 1～3 位，只记录推荐，不转交对话'] },
   { name: 'list_available_skills', label: '查看可用的 Skill', source: 'platform', effect: 'read', risk: 'low', assembly: 'personal-conversation', constraints: [skillCreationOnly, '只列出发起员工可选用的 Skill 与平台内置 Skill'] },
+  { name: 'knowledge_search', label: '检索企业知识库', source: 'platform', effect: 'read', risk: 'low', assembly: 'personal-conversation', constraints: [knowledgeOnly, '每次回答最多 3 次，只读'] },
   { name: 'skill_draft_save', label: '保存 Skill 草稿', source: 'platform', effect: 'write', risk: 'low', assembly: 'personal-conversation', constraints: [skillCreationOnly, '只保存草稿，提交审核由员工决定', '按 Skill 包规则校验，不覆盖已有 Skill'] },
 ]
 
@@ -134,6 +136,16 @@ export const skillCreationToolNamesList = ['list_available_skills', 'skill_draft
 export function skillCreationToolNames(input: { enabled: boolean; personalConversation: boolean; bashAvailable: boolean }): string[] {
   if (!input.enabled || !input.personalConversation) return []
   return input.bashAvailable ? [...skillCreationToolNamesList] : ['list_available_skills']
+}
+
+/**
+ * 知识检索工具（Agent 知识检索工具方案 4.2，KO9）：个人对话中、执行前检索结果为 ok（会话添加了可见知识库，
+ * 员工与 Agent 都具备查看级别，连接可用）时装配。不需要 Agent 版本开关（KS2）。
+ */
+export const knowledgeSearchToolName = 'knowledge_search'
+
+export function knowledgeSearchToolNames(input: { personalConversation: boolean; knowledgeStatus: string | undefined }): string[] {
+  return input.personalConversation && input.knowledgeStatus === 'ok' ? [knowledgeSearchToolName] : []
 }
 
 /**

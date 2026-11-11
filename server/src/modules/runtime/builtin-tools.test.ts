@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict'
+import { platformToolContracts } from './platform-tool-contracts.ts'
 import { test } from 'node:test'
 import {
+  knowledgeSearchToolNames,
   agentBuiltinToolNames, agentRecommendationToolNames, builtinTool, executionToolNames, invalidSkillToolReferences, isDshBuiltinTool,
   normalizeDisabledTools, skillCreationToolNames, skillToolName, unavailableSkillTools,
 } from './builtin-tools.ts'
@@ -50,4 +52,18 @@ test('Skill creation tools assemble only for enabled personal conversations, sav
     assert.equal(builtinTool(name)?.source, 'platform')
     assert.deepEqual(invalidSkillToolReferences([`${name}@1.0.0`]), [`${name}@1.0.0`], 'Skills cannot declare it')
   }
+})
+
+// Agent 知识检索工具方案 4.2（KO9）：个人对话且执行前检索为 ok 时装配，不需要 Agent 开关。
+test('knowledge search tool assembles only for personal conversations whose pre-retrieval succeeded', () => {
+  assert.deepEqual(knowledgeSearchToolNames({ personalConversation: true, knowledgeStatus: 'ok' }), ['knowledge_search'])
+  for (const status of ['not_selected', 'skipped', 'unavailable', 'not_applicable', undefined]) {
+    assert.deepEqual(knowledgeSearchToolNames({ personalConversation: true, knowledgeStatus: status }), [], String(status))
+  }
+  assert.deepEqual(knowledgeSearchToolNames({ personalConversation: false, knowledgeStatus: 'ok' }), [])
+  assert.equal(builtinTool('knowledge_search')?.assembly, 'personal-conversation')
+  assert.equal(builtinTool('knowledge_search')?.effect, 'read')
+  assert.deepEqual(invalidSkillToolReferences(['knowledge_search@1.0.0']), ['knowledge_search@1.0.0'], 'Skills cannot declare it')
+  // 读工具：平台工具桥只为写工具登记 task_operations，检索词与结果不会写入（KS6）。
+  assert.equal(platformToolContracts.knowledge_search.effect, 'read')
 })

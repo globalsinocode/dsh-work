@@ -206,6 +206,44 @@ export const platformToolContracts = {
     outputSchema: objectOutput,
     effect: 'write', retryPolicy: 'never', concurrencyPolicy: 'serialized', timeoutMs: 60_000,
   }),
+  /**
+   * Agent 知识检索工具方案（KO9）：在会话所选、员工当前可见的知识库中检索。读工具：写入的引用快照与审计是
+   * 执行证据，不是业务效果，不进入 task_operations 登记；同一 Attempt 内串行，保证引用序号连续。
+   */
+  knowledge_search: contract({
+    inputSchema: {
+      type: 'object', additionalProperties: false,
+      properties: {
+        query: { type: 'string', minLength: 1, maxLength: 500 },
+        knowledgeBaseNames: { type: 'array', minItems: 1, maxItems: 20, items: { type: 'string', minLength: 1, maxLength: 60 } },
+      },
+      required: ['query'],
+    },
+    outputSchema: {
+      type: 'object', additionalProperties: false,
+      properties: {
+        documents: {
+          type: 'array',
+          items: {
+            type: 'object', additionalProperties: false,
+            properties: {
+              ordinal: { type: 'integer', minimum: 1 },
+              title: { type: 'string' },
+              knowledgeBaseName: { type: 'string' },
+              updatedDate: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' },
+              excerpt: { type: 'string', maxLength: 4000 },
+            },
+            required: ['ordinal', 'title', 'knowledgeBaseName', 'updatedDate', 'excerpt'],
+          },
+        },
+        skippedBases: { type: 'array', items: { type: 'string' } },
+        movedBases: { type: 'array', items: { type: 'string' } },
+        remainingCalls: { type: 'integer', minimum: 0 },
+      },
+      required: ['documents', 'skippedBases', 'movedBases', 'remainingCalls'],
+    },
+    effect: 'read', retryPolicy: 'safe', concurrencyPolicy: 'serialized', timeoutMs: 15_000,
+  }),
   propose_memory: contract({
     inputSchema: {
       type: 'object', additionalProperties: false,
@@ -246,13 +284,14 @@ export function platformToolsForPurpose(purpose: AdminRunPurpose): RuntimeManife
 }
 
 /**
- * 项目空间 S6 的任务工具只用于员工在团队空间发起的运行，推荐与 Skill 创建工具只用于员工个人对话；
+ * 项目空间 S6 的任务工具只用于员工在团队空间发起的运行，推荐、Skill 创建与知识检索工具只用于员工个人对话；
  * 它们都不进入任何管理或系统运行。
  */
 const projectTaskTools = new Set<string>([
   'project_tasks_list', 'project_task_get', 'project_task_create', 'project_task_update',
   'list_colleague_agents', 'recommend_agents',
   'list_available_skills', 'skill_draft_save',
+  'knowledge_search',
 ])
 
 export function assertPlatformToolPurpose(manifest: Pick<RuntimeManifest, 'purpose' | 'tools'>): void {

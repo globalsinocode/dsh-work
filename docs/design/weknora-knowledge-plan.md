@@ -26,7 +26,7 @@
 | WK1 | WeKnora 替代项目原有的知识库模块，一期直接删除原有模块（`PostgresKnowledgeService`、本地知识表、两篇合成种子文档与检索函数），不保留为测试或生产备用；历史执行的旧引用记录随表删除，不迁移（第 6 节第 6 条）。 | 已确认（2026-11-01，修订：由保留给测试改为一期删除） |
 | WK2 | WeKnora 超时或不可用时，执行继续，不注入知识；提示词告知模型知识库不可用、不得给出企业制度结论；回答末尾注明“企业知识库暂不可用，本次回答未引用企业知识”；记录事件，管理端显示健康状态。 | 已确认（2026-11-01） |
 | WK3 | 操作权限按角色授予，分三级：仅查看（`knowledge:view`）、文档管理（`knowledge:docs`）、知识库管理（`knowledge:bases`）。可见范围按部门：员工只能看到授给自己所属部门的知识库；文档管理和知识库管理只作用于归属部门是自己所属部门的知识库（WK15，第 5 节）。 | 已确认（2026-11-01） |
-| WK4 | 只有员工在对话框中添加了知识库，才在执行前检索一次，且只检索所添加的知识库；查询词为同一会话中员工的上一条提问加本次提问（4.3），以便“那第二条呢”这类追问也能检索到；没有添加时完全不调用 WeKnora，按普通对话回复。不向 Agent 提供检索工具。这改变了现有行为：现在每次执行都会自动检索本地知识。 | 已确认（2026-11-01，修订：由每次自动检索改为员工主动添加；第二轮评审后查询词加上一条提问）。2026-11-11 [优化方案](weknora-knowledge-optimization-plan.md) KO9 确认将向 Agent 提供只读知识检索工具，设计确认并实施前本条现行规则不变 |
+| WK4 | 只有员工在对话框中添加了知识库，才在执行前检索一次，且只检索所添加的知识库；查询词为同一会话中员工的上一条提问加本次提问（4.3），以便“那第二条呢”这类追问也能检索到；没有添加时完全不调用 WeKnora，按普通对话回复。个人对话中执行前检索成功时，另向 Agent 提供只读检索工具 `knowledge_search`，由模型决定是否用改写后的检索词补查，范围与执行前检索相同，每次回答最多 3 次（[Agent 知识检索工具方案](knowledge-search-tool-plan.md)）。这改变了现有行为：现在每次执行都会自动检索本地知识。 | 已确认（2026-11-01，修订：由每次自动检索改为员工主动添加；第二轮评审后查询词加上一条提问；2026-11-11 按[优化方案](weknora-knowledge-optimization-plan.md) KO9 与检索工具方案 KS8 修订：由“不向 Agent 提供检索工具”改为个人对话中提供只读检索工具） |
 | WK5 | 只调用 WeKnora 的检索、知识库与文档管理接口。WeKnora 的 `ask`、对话、Agent 对话等由 WeKnora 调用大模型生成回答的接口一律不用，WeKnora 的 MCP Server 和前端也不对员工开放（第 3 节）。 | 已确认（2026-11-01） |
 | WK6 | 团队空间中的执行，只检索全体现任成员（含只读成员，不含停用账号）都能看到的知识库，即各成员可见知识库的交集。这与现有数据范围的交付边界一致（功能规则 3.3、3.4，`resolveTeamCommonDataScopes`）：Agent 的回复对所有成员可见，不能包含部分成员无权看到的知识。个人空间按员工本人计算。 | 已确认（2026-11-01，评审后修订：原“按发起人计算”的前提有误）；**二期**（2.1） |
 | WK7 | 没有分配任何部门的员工没有可见知识库。授给根部门并包含下级的知识库，只覆盖属于某个部门的员工。 | 已确认（2026-11-01） |
@@ -272,7 +272,7 @@ DSH 适配器拼装“# 企业知识上下文”（`dsh-acp-runtime-adapter.ts`�
 | `external_knowledge_connections` | `tenant_id`、`id`、`provider`（固定 `weknora`）、`base_url`、`credential_ref`（加密凭据引用）、`credential_hint`、`credential_expires_at`、`embedding_model_id`、`status`（active / disabled）、`last_success_at`、`last_failure_at`、`last_failure_reason`、`updated_by`、`updated_at`。每个企业最多一条。 |
 | `external_knowledge_bases` | `tenant_id`、`id`、`connection_id`、`external_id`（WeKnora 知识库 ID）、`name`、`description`、`owner_department_id`（归属部门，WK15）、`embedding_model_id`（建库时的嵌入模型，4.6）、`status`（active / deleted / unavailable）、`created_by`、`created_at`、`updated_by`、`updated_at`。同一连接下 `external_id` 唯一。 |
 | `external_knowledge_base_grants` | `tenant_id`、`knowledge_base_id`、`department_id`、`include_descendants`、`status`（active / invalid）、`granted_by`、`granted_via`（employee / admin）、`created_at`、`invalidated_at`。同一知识库同一部门只有一条有效授权。 |
-| `run_knowledge_citations` | `tenant_id`、`id`、`run_id`、`attempt_id`、`ordinal`、`external_document_id`、`knowledge_base_id`、`knowledge_base_name`、`title`、`file_name`、`document_updated_at`、`content_checksum`、`excerpt`、`relevance_score`、`created_at`。 |
+| `run_knowledge_citations` | `tenant_id`、`id`、`run_id`、`attempt_id`、`ordinal`、`external_document_id`、`knowledge_base_id`、`knowledge_base_name`、`title`、`file_name`、`document_updated_at`、`content_checksum`、`excerpt`、`relevance_score`、`source`（`pre_retrieval` 执行前检索 / `tool` 检索工具，迁移 0128）、`created_at`。 |
 | `session_knowledge_bases` | 会话所选知识库：`tenant_id`、`session_id`、`knowledge_base_id`、`added_by`、`added_at`。移除即删除该行，并写会话动态（团队空间）或审计。 |
 | `automation_knowledge_bases`（二期） | 定时任务所选知识库：`tenant_id`、`automation_id`、`knowledge_base_id`、`added_by`、`added_at`。 |
 | 自定义测试问题上的知识库（二期） | 在现有 Agent 测试问题上增加 `knowledge_base_ids`，开始验证时随案例快照。 |

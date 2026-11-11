@@ -312,6 +312,7 @@ async function start() {
   const controlledMemoryRef: { current?: PostgresControlledMemoryService } = {}
   const projectTaskToolsRef: { current?: ProjectTaskTools } = {}
   const agentRecommendationsRef: { current?: AgentRecommendationService } = {}
+  const knowledgeToolRef: { current?: WeKnoraKnowledgeProvider } = {}
   const skillSubmissionsRef: { current?: SkillSubmissionService } = {}
   // 平台模型网关（模型路由方案第 7 节、数据防护方案 DLP-S1）：正式执行的全部模型请求与联网搜索经网关，
   // 用 DSH_CREDENTIAL_MASTER_KEY 加密保存的厂商密钥转发；DSH 只持有 Attempt 短期令牌。只监听本机。
@@ -397,6 +398,19 @@ async function start() {
       return name === 'list_colleague_agents'
         ? agentRecommendationsRef.current.listColleagues(manifest, signal)
         : agentRecommendationsRef.current.recommend(manifest, input, signal)
+    },
+    knowledgeSearchTool: async (input, manifest, callNumber, signal) => {
+      const provider = knowledgeToolRef.current
+      if (!provider?.searchForTool) throw new Error('企业知识检索服务尚未就绪')
+      if (!manifest.session_id || !manifest.agent_version_id) throw new Error('知识检索工具只用于员工个人对话')
+      return provider.searchForTool({
+        runId: manifest.run_id, attemptId: manifest.attempt_id, sessionId: manifest.session_id,
+        userId: manifest.user_context.user_id, agentVersionId: manifest.agent_version_id, traceId: manifest.trace_id ?? `trace-${manifest.run_id}`,
+        query: String(input['query'] ?? ''),
+        ...(Array.isArray(input['knowledgeBaseNames']) ? { knowledgeBaseNames: input['knowledgeBaseNames'] as string[] } : {}),
+        callNumber,
+        signal,
+      })
     },
     skillCreationTool: async (name, input, manifest, workspaceDirectory) => {
       if (!skillSubmissionsRef.current) throw new Error('Skill 提交服务尚未就绪')
@@ -519,7 +533,8 @@ async function start() {
       : undefined,
   })
   await knowledgeConnection.ensureBootstrap()
-  const knowledge = new WeKnoraKnowledgeProvider(database, knowledgeConnection)
+  const knowledge = new WeKnoraKnowledgeProvider(database, knowledgeConnection, operations)
+  knowledgeToolRef.current = knowledge
   const knowledgeBases = new PostgresKnowledgeBaseService(database, operations, knowledgeConnection)
   const knowledgeAdmin = new PostgresKnowledgeAdminService(database, operations, knowledgeConnection, credentialSecrets)
   const controlledMemory = new PostgresControlledMemoryService(database, authorization, operations)

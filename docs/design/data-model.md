@@ -177,7 +177,7 @@ flowchart LR
 | `external_knowledge_bases` | 经平台创建的知识库 | 同一连接下外部 ID 唯一；有且只有一个归属部门；记录建库时的嵌入模型；删除为置 `deleted`，不再检索；更换连接地址后原有知识库置 `unavailable`（原连接已更换），不参与检索、员工端不显示，平台管理员确认新地址中存在后可恢复 |
 | `external_knowledge_base_grants` | 知识库按部门的可见范围授权 | 同一知识库同一部门只有一条有效授权；可选包含下级；区分员工与管理员授予；可见范围读取时实时计算 |
 | `session_knowledge_bases` | 会话所选知识库 | 员工在个人空间对话中添加；每次执行与员工当前可见知识库取交集后检索 |
-| `run_knowledge_citations` | Attempt 注入的企业知识引用快照 | 不依赖外部文档仍存在；同一 Attempt 内按序号唯一；用于回答末尾的引用与执行详情来源 |
+| `run_knowledge_citations` | Attempt 注入的企业知识引用快照 | 不依赖外部文档仍存在；同一 Attempt 内按序号唯一；`source` 区分执行前检索与 Agent 检索工具（迁移 0128），两者共用序号，同一分段在同一 Attempt 中只记一次；用于回答末尾的引用与执行详情来源 |
 | `memory_proposals` | Agent 在运行中提出的短期记忆建议 | 只有人能确认范围与保留期后提交审核；按 Attempt + 提案键幂等 |
 | `memory_consents` | 来源用户对记忆使用范围的授权 | 可撤回；撤回后不能再发布 |
 | `memory_candidates` | 待审核的记忆候选 | 按提交人 + 提交键幂等；只能被处理一次 |
@@ -250,6 +250,7 @@ Run 和 Attempt 的普通状态转换不能从终态回退。只有失败或取�
 - [删除 Agent 数据平面](../../server/migrations/0087_remove_agent_data_plane.sql)：删除工作数据（集合、记录、提案、私有状态、安装实例）共 11 张表；旧版本定义中的 `data` 声明不再读取。
 - [企业知识库接入 WeKnora](../../server/migrations/0115_weknora_knowledge.sql)：新增连接、知识库、部门授权、会话所选知识库与引用快照五张表，给带 `workbench:use` 的角色加 `knowledge:view`；删除原有本地知识库四张表、两篇合成文档与检索函数。
 - [知识库重排序结果](../../server/migrations/0127_knowledge_rerank_outcome.sql)：连接上增加最近一次检索的重排序结果与时间，供管理端健康状态显示（知识库优化方案 O5）。
+- [知识引用来源](../../server/migrations/0128_knowledge_citation_source.sql)：引用快照增加 `source`，区分执行前检索与 Agent 检索工具（Agent 知识检索工具方案，KO9）。
 
 新增变更使用新的顺序迁移，保留已应用迁移；迁移运行器以咨询锁串行执行并校验已执行迁移的 SHA-256，修改已执行迁移会拒绝启动。应用回滚不会自动降低 Schema，至少保持上一版本兼容；破坏性清理需独立安排。操作流程见 [部署手册](../release/mac-mini-deployment-runbook.md)。
 
