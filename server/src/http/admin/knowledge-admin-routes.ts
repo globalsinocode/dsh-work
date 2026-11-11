@@ -6,7 +6,7 @@ const basePath = '/api/admin/v1/knowledge'
 type KnowledgeAdminStore = Pick<
   PostgresKnowledgeAdminService,
   'overview' | 'updateConnection' | 'testConnection' | 'listBases' | 'departments'
-  | 'createBase' | 'updateOwner' | 'addGrant' | 'revokeGrant' | 'deleteBase'
+  | 'createBase' | 'updateOwner' | 'addGrant' | 'revokeGrant' | 'deleteBase' | 'restoreBase'
 >
 
 /**
@@ -66,6 +66,10 @@ export function registerKnowledgeAdminRoutes(
 
   router.delete(`${basePath}/bases/:knowledgeBaseId`, async (_request, context) =>
     ok(await knowledge.deleteBase(actor(context), context.params['knowledgeBaseId'] ?? '')))
+
+  // 优化方案 O9：恢复“原连接已更换”的知识库，服务层先确认当前连接中存在该知识库。
+  router.post(`${basePath}/bases/:knowledgeBaseId/restore`, async (_request, context) =>
+    ok(await knowledge.restoreBase(actor(context), context.params['knowledgeBaseId'] ?? '')))
 
   router.post(`${basePath}/bases/:knowledgeBaseId/grants`, async (request, context) => {
     const body = await readJsonBody<Record<string, unknown>>(request)

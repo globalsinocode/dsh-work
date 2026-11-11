@@ -306,7 +306,8 @@ describe('Runtime Manifest compiler', () => {
     assert.match(render('skipped'), /本次没有查询企业知识库/)
     assert.doesNotMatch(render('skipped'), /添加相关知识库/)
     assert.match(render('unavailable'), /企业知识库本次不可用/)
-    assert.doesNotMatch(render('ok'), /企业知识/)
+    // 优化方案 O1：已检索但没有相关内容时，同样约束不得把企业制度当作确定事实。
+    assert.match(render('ok'), /已查询用户添加的企业知识库，没有找到相关内容[\s\S]*不得把企业制度/)
     assert.doesNotMatch(render(), /企业知识/)
   })
 
@@ -321,6 +322,16 @@ describe('Runtime Manifest compiler', () => {
     const unknown = manifest('run-knowledge-unknown', 'attempt-1')
     ;(unknown as { knowledge_status?: string }).knowledge_status = 'not_applicable'
     assert.throws(() => compileRuntimeManifest(unknown), /knowledge_status is invalid/)
+    // 优化方案 O2：跳过原因只与 skipped 同时出现，只有一个取值。
+    const reason = manifest('run-knowledge-reason', 'attempt-1')
+    reason.knowledge_status = 'skipped'
+    reason.knowledge_skipped_reason = 'agent_not_permitted'
+    assert.doesNotThrow(() => compileRuntimeManifest(reason))
+    reason.knowledge_status = 'ok'
+    assert.throws(() => compileRuntimeManifest(reason), /knowledge_skipped_reason is invalid/)
+    reason.knowledge_status = 'skipped'
+    ;(reason as { knowledge_skipped_reason?: string }).knowledge_skipped_reason = 'other'
+    assert.throws(() => compileRuntimeManifest(reason), /knowledge_skipped_reason is invalid/)
   })
 
   it('renders the pinned project brief as reference context, not authorization (项目空间 S1)', () => {

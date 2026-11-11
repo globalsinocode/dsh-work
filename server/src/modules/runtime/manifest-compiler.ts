@@ -320,6 +320,13 @@ export function compileRuntimeManifest(input: RuntimeManifest): CompiledRuntimeM
     input.knowledge_skipped_bases.length > 20
     || input.knowledge_skipped_bases.some(name => !name.trim() || name.length > 60)
   )) throw new TypeError('knowledge_skipped_bases is invalid')
+  if (input.knowledge_moved_bases !== undefined && (
+    input.knowledge_moved_bases.length > 20
+    || input.knowledge_moved_bases.some(name => !name.trim() || name.length > 60)
+  )) throw new TypeError('knowledge_moved_bases is invalid')
+  if (input.knowledge_skipped_reason !== undefined && (
+    input.knowledge_skipped_reason !== 'agent_not_permitted' || input.knowledge_status !== 'skipped'
+  )) throw new TypeError('knowledge_skipped_reason is invalid')
 
   if ((input.memory_context?.length ?? 0) > 3) throw new RangeError('memory_context must contain at most 3 memories')
   const memoryVersions = new Set<string>()

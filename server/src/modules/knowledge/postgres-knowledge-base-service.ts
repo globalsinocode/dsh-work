@@ -179,9 +179,11 @@ export class PostgresKnowledgeBaseService implements KnowledgeBaseService {
     // 计数与撤销在同一事务中，锁住知识库行：并发撤销不会撤到没有任何授权。
     await this.database.begin(async transaction => {
       await transaction`select id from external_knowledge_bases where tenant_id = ${tenantId} and id = ${row.id} for update`
+      // 优化方案 O11：只统计所在部门仍有效的授权，与可见范围的计算口径（5.5）一致，避免撤到实际无人可见。
       const [{ count }] = await transaction<{ count: number }[]>`
-        select count(*)::int as count from external_knowledge_base_grants
-         where tenant_id = ${tenantId} and knowledge_base_id = ${row.id} and status = 'active'
+        select count(*)::int as count from external_knowledge_base_grants g
+          join org_departments d on d.tenant_id = g.tenant_id and d.id = g.department_id and d.status = 'active'
+         where g.tenant_id = ${tenantId} and g.knowledge_base_id = ${row.id} and g.status = 'active'
       `
       if (count <= 1) throw stateConflict('至少保留一个可见部门')
       await transaction`

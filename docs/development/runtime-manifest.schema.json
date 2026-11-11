@@ -392,6 +392,16 @@
       "items": { "type": "string", "minLength": 1, "maxLength": 60 },
       "description": "所选但本次因已删除或对员工不可见而跳过的知识库名称；只用于回答页脚，不进入提示词。"
     },
+    "knowledge_moved_bases": {
+      "type": "array",
+      "maxItems": 20,
+      "items": { "type": "string", "minLength": 1, "maxLength": 60 },
+      "description": "所选但本次因更换连接地址标为“原连接已更换”而跳过的知识库名称；只用于回答页脚，不进入提示词。"
+    },
+    "knowledge_skipped_reason": {
+      "enum": ["agent_not_permitted"],
+      "description": "跳过原因：agent_not_permitted 表示会话添加了知识库，但当前 Agent 不具备知识库查看级别；只与 knowledge_status = skipped 同时出现，只用于回答页脚，不进入提示词。"
+    },
     "project_context": {
       "type": "object",
       "description": "项目空间 S1/S2：项目任务线程的执行固定当时的项目简报与项目档案版本，至少携带其一；参考资料，不是操作授权。",

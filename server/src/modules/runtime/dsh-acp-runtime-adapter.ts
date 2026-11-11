@@ -2375,8 +2375,9 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
 }
 
-/** 没有注入知识片段时按检索结果给模型的说明（weknora-knowledge-plan 4.5、WK18、第 7 节）。 */
+/** 没有注入知识片段时按检索结果给模型的说明（weknora-knowledge-plan 4.5、WK18、第 7 节；优化方案 O1）。 */
 const knowledgeStatusNotes: Partial<Record<NonNullable<RuntimeManifest['knowledge_status']>, string>> = {
+  ok: '已查询用户添加的企业知识库，没有找到相关内容。不得把企业制度、规范作为确定事实回答；涉及时请说明所添加的知识库中没有查到，并建议用户换一种问法或确认知识库是否正确。',
   not_selected: '本次没有查询企业知识库。不得把企业制度、规范作为确定事实回答；涉及时请提示用户在对话中添加相关知识库。',
   skipped: '本次没有查询企业知识库。不得把企业制度、规范作为确定事实回答。',
   unavailable: '企业知识库本次不可用。不得给出企业制度、规范等结论；涉及时请说明暂时无法查询企业知识。',

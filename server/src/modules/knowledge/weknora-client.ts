@@ -4,7 +4,8 @@
  * 错误信息不带 Key、请求正文或响应正文。
  */
 
-export type WeKnoraFailureReason = 'timeout' | 'network' | 'auth' | 'rate_limited' | 'server' | 'protocol'
+/** not_configured：连接已停用、未配置或 API Key 读不出（优化方案 O2），不是 WeKnora 自身故障。 */
+export type WeKnoraFailureReason = 'timeout' | 'network' | 'auth' | 'rate_limited' | 'server' | 'protocol' | 'not_configured'
 
 export class WeKnoraUnavailableError extends Error {
   readonly reason: WeKnoraFailureReason
@@ -37,6 +38,16 @@ export interface WeKnoraSearchResult {
   score: number
 }
 
+export interface WeKnoraSearchResponse {
+  results: WeKnoraSearchResult[]
+  /**
+   * 重排序结果（响应 `meta.rerank.outcome`，WeKnora v0.9.0 `types.RerankOutcome`）：ok、threshold_degraded、
+   * fallback_top1、all_below_threshold、model_error、model_unavailable、no_model、disabled、no_candidates。
+   * 缺失或格式不符时为 null。
+   */
+  rerankOutcome: string | null
+}
+
 export interface WeKnoraKnowledge {
   id: string
   knowledge_base_id: string
@@ -56,6 +67,8 @@ export interface WeKnoraKnowledgeBaseStats {
   knowledgeCount: number
   processingCount: number
   updatedAt: string | null
+  /** WeKnora 中为该知识库配置的摘要模型；平台建库不设置，非空表示有人在 WeKnora 中修改过（优化方案 O7）。 */
+  summaryModelId: string | null
 }
 
 export interface WeKnoraDocument {
@@ -113,7 +126,7 @@ export class WeKnoraClient {
     this.fetchImpl = config.fetch ?? fetch
   }
 
-  async search(input: { query: string; knowledgeBaseIds: string[]; matchCount: number }): Promise<WeKnoraSearchResult[]> {
+  async search(input: { query: string; knowledgeBaseIds: string[]; matchCount: number }): Promise<WeKnoraSearchResponse> {
     // rerank 不传：沿用 WeKnora 工作空间默认的重排序配置（4.3）。
     const body = await this.request('POST', '/api/v1/knowledge-search', {
       query: input.query,
@@ -121,7 +134,9 @@ export class WeKnoraClient {
       match_count: input.matchCount,
     })
     const data = arrayData(body)
-    return data.map(item => {
+    const outcome = ((body as { meta?: { rerank?: { outcome?: unknown } } }).meta?.rerank?.outcome)
+    const rerankOutcome = typeof outcome === 'string' && /^[a-z0-9_]{1,40}$/.test(outcome) ? outcome : null
+    const results = data.map(item => {
       const row = item as Record<string, unknown>
       if (typeof row.id !== 'string' || typeof row.content !== 'string' || typeof row.knowledge_id !== 'string'
         || typeof row.score !== 'number') {
@@ -137,6 +152,7 @@ export class WeKnoraClient {
         score: row.score,
       }
     })
+    return { results, rerankOutcome }
   }
 
   async knowledgeBatch(ids: string[]): Promise<WeKnoraKnowledge[]> {
@@ -189,6 +205,7 @@ export class WeKnoraClient {
         knowledgeCount: typeof row.knowledge_count === 'number' ? row.knowledge_count : 0,
         processingCount: typeof row.processing_count === 'number' ? row.processing_count : 0,
         updatedAt: typeof row.updated_at === 'string' ? row.updated_at : null,
+        summaryModelId: typeof row.summary_model_id === 'string' && row.summary_model_id.trim() ? row.summary_model_id : null,
       }]
     })
   }

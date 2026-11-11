@@ -139,6 +139,13 @@ export interface RuntimeManifest {
   knowledge_status?: Exclude<RuntimeKnowledgeStatus, 'not_applicable'>
   /** 所选但已删除或对员工不可见、本次跳过的知识库名称；只用于回答页脚，不进入提示词。 */
   knowledge_skipped_bases?: string[]
+  /**
+   * 跳过原因（企业知识库优化方案 O2）：agent_not_permitted 表示会话添加了知识库，但当前 Agent 不具备查看级别；
+   * 只用于回答页脚，不进入提示词。只与 knowledge_status = skipped 同时出现。
+   */
+  knowledge_skipped_reason?: 'agent_not_permitted'
+  /** 所选但因更换连接地址标为“原连接已更换”而跳过的知识库名称（优化方案 O9）；只用于回答页脚，不进入提示词。 */
+  knowledge_moved_bases?: string[]
   /** PF-05 reviewed, ACL-filtered memory versions fixed for this Attempt. */
   memory_context?: RuntimeControlledMemory[]
   /**

@@ -6,7 +6,8 @@ import type {
   KnowledgeAdminOverview,
 } from '../../modules/knowledge/postgres-knowledge-admin-service.ts'
 
-type MemoryAdminBase = Omit<KnowledgeAdminBase, 'needsRebuild' | 'ownerDepartmentName' | 'ownerDepartmentActive'>
+type MemoryAdminBase = Omit<KnowledgeAdminBase, 'needsRebuild' | 'ownerDepartmentName' | 'ownerDepartmentActive' | 'status' | 'summaryModelConfigured'>
+  & { status?: KnowledgeAdminBase['status']; summaryModelConfigured?: boolean }
 
 const departments: Array<KnowledgeAdminDepartment & { active: boolean; name: string }> = [
   { id: 'dept-root', label: '全公司', name: '全公司', root: true, active: true },
@@ -27,22 +28,24 @@ export class MemoryKnowledgeAdminStore {
   private sequence = 1
   private connection: KnowledgeAdminOverview['connection'] = {
     configured: true, baseUrl: 'https://weknora.internal.example.com', credentialHint: '7f3a',
-    credentialExpiresAt: '2027-05-01T00:00:00.000Z', credentialSource: 'admin', embeddingModelId: 'bge-m3', enabled: true,
+    credentialExpiresAt: '2027-05-01T00:00:00.000Z', credentialSource: 'admin', embeddingModelId: '5d0f6c2a-7b1e-4c3d-9a8e-2f4b6d8c1a90', enabled: true,
     lastSuccessAt: new Date(Date.now() - 2 * 60_000).toISOString(), lastFailureAt: '2026-11-01T13:14:00.000Z', lastFailureReason: 'timeout',
+    lastRerankOutcome: 'model_unavailable', lastRerankAt: new Date(Date.now() - 2 * 60_000).toISOString(),
     credentialReadable: true,
   }
   private bases: MemoryAdminBase[] = [
-    { id: 'kb-plan', name: '计划组工作手册', description: '排产、补货与例会规范', ownerDepartmentId: 'dept-plan', documentCount: 4, updatedAt: '2026-10-28T09:30:00Z', embeddingModelId: 'bge-m3',
+    { id: 'kb-plan', name: '计划组工作手册', description: '排产、补货与例会规范', ownerDepartmentId: 'dept-plan', documentCount: 4, updatedAt: '2026-10-28T09:30:00Z', embeddingModelId: '5d0f6c2a-7b1e-4c3d-9a8e-2f4b6d8c1a90',
       grants: [
         { id: 'grant-plan', departmentId: 'dept-plan', departmentName: '计划组', includeDescendants: true, grantedVia: 'employee' },
         { id: 'grant-plan-finance', departmentId: 'dept-finance', departmentName: '财务部', includeDescendants: false, grantedVia: 'admin' },
       ] },
-    { id: 'kb-supply', name: '供应链制度库', description: '供应链部发布的制度与流程', ownerDepartmentId: 'dept-supply', documentCount: 12, updatedAt: '2026-10-20T10:00:00Z', embeddingModelId: 'bge-m3',
+    { id: 'kb-supply', name: '供应链制度库', description: '供应链部发布的制度与流程', ownerDepartmentId: 'dept-supply', documentCount: 12, updatedAt: '2026-10-20T10:00:00Z', embeddingModelId: '5d0f6c2a-7b1e-4c3d-9a8e-2f4b6d8c1a90',
       grants: [{ id: 'grant-supply', departmentId: 'dept-supply', departmentName: '供应链部', includeDescendants: true, grantedVia: 'employee' }] },
-    { id: 'kb-all', name: '全员制度汇编', description: '人事、行政、财务通用制度', ownerDepartmentId: 'dept-general', documentCount: 36, updatedAt: '2026-09-30T09:00:00Z', embeddingModelId: 'bge-m3',
+    { id: 'kb-all', name: '全员制度汇编', description: '人事、行政、财务通用制度', ownerDepartmentId: 'dept-general', documentCount: 36, updatedAt: '2026-09-30T09:00:00Z', embeddingModelId: '5d0f6c2a-7b1e-4c3d-9a8e-2f4b6d8c1a90',
       grants: [{ id: 'grant-all', departmentId: 'dept-root', departmentName: '全公司', includeDescendants: true, grantedVia: 'admin' }] },
-    { id: 'kb-quality', name: '旧版质量手册', description: '质量部撤并前的检验规范', ownerDepartmentId: 'dept-quality', documentCount: 9, updatedAt: '2026-06-12T08:00:00Z', embeddingModelId: 'bge-m3', grants: [] },
-    { id: 'kb-sales', name: '销售话术库', description: '产品介绍与常见问题', ownerDepartmentId: 'dept-sales', documentCount: 21, updatedAt: '2026-08-02T08:00:00Z', embeddingModelId: 'text-embedding-v1',
+    { id: 'kb-quality', name: '旧版质量手册', description: '质量部撤并前的检验规范', ownerDepartmentId: 'dept-quality', documentCount: 9, updatedAt: '2026-06-12T08:00:00Z', embeddingModelId: '5d0f6c2a-7b1e-4c3d-9a8e-2f4b6d8c1a90', grants: [] },
+    { id: 'kb-sales', name: '销售话术库', description: '产品介绍与常见问题', ownerDepartmentId: 'dept-sales', documentCount: 21, updatedAt: '2026-08-02T08:00:00Z', embeddingModelId: '9e1b3a7c-2d4f-4e6a-8b0c-1f3e5d7a9c2b',
+      summaryModelConfigured: true,
       grants: [{ id: 'grant-sales', departmentId: 'dept-sales', departmentName: '销售部', includeDescendants: true, grantedVia: 'employee' }] },
   ]
 
@@ -52,9 +55,14 @@ export class MemoryKnowledgeAdminStore {
 
   async updateConnection(_actorId: string, input: { baseUrl: string; apiKey?: string; credentialExpiresAt?: string | null; embeddingModelId?: string | null; enabled: boolean }) {
     if (!/^https?:\/\//.test(input.baseUrl.trim())) throw invalidRequest('WeKnora 地址必须以 http 或 https 开头')
+    const baseUrl = input.baseUrl.trim().replace(/\/+$/, '')
+    // 优化方案 O9：更换地址后原有知识库标为“原连接已更换”。
+    if (baseUrl !== this.connection.baseUrl) {
+      for (const base of this.bases) if ((base.status ?? 'active') === 'active') base.status = 'unavailable'
+    }
     this.connection = {
       ...this.connection,
-      baseUrl: input.baseUrl.trim().replace(/\/+$/, ''),
+      baseUrl,
       enabled: input.enabled,
       embeddingModelId: input.embeddingModelId?.trim() || null,
       ...(input.apiKey ? { credentialHint: input.apiKey.slice(-4), credentialSource: 'admin' as const } : {}),
@@ -80,6 +88,8 @@ export class MemoryKnowledgeAdminStore {
           ...base, grants: base.grants.map(grant => ({ ...grant })),
           ownerDepartmentName: owner?.name ?? '', ownerDepartmentActive: owner?.active ?? false,
           needsRebuild: Boolean(this.connection.embeddingModelId && base.embeddingModelId !== this.connection.embeddingModelId),
+          status: base.status ?? 'active',
+          summaryModelConfigured: base.summaryModelConfigured ?? false,
         }
       }),
     }
@@ -105,7 +115,7 @@ export class MemoryKnowledgeAdminStore {
     const base = this.find(knowledgeBaseId)
     const department = this.activeDepartment(input.departmentId, true)
     const existing = base.grants.find(grant => grant.departmentId === department.id)
-    if (existing) existing.includeDescendants = input.includeDescendants ?? true
+    if (existing) Object.assign(existing, { includeDescendants: input.includeDescendants ?? true, grantedVia: 'admin' as const })
     else {
       base.grants.push({ id: `grant-admin-${this.sequence++}`, departmentId: department.id, departmentName: department.name, includeDescendants: input.includeDescendants ?? true, grantedVia: 'admin' })
     }
@@ -116,6 +126,14 @@ export class MemoryKnowledgeAdminStore {
     const base = this.find(knowledgeBaseId)
     if (!base.grants.some(grant => grant.id === grantId)) throw notFound('授权不存在')
     base.grants = base.grants.filter(grant => grant.id !== grantId)
+    return this.listBases()
+  }
+
+  /** 内存数据中原地址的知识库在新连接中都视为存在，恢复总是成功。 */
+  async restoreBase(_actorId: string, knowledgeBaseId: string) {
+    const base = this.find(knowledgeBaseId)
+    if ((base.status ?? 'active') !== 'unavailable') throw invalidRequest('知识库不需要恢复')
+    base.status = 'active'
     return this.listBases()
   }
 

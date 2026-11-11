@@ -25,6 +25,8 @@ interface SelectedBaseRow {
   externalId: string
   name: string
   visible: boolean
+  /** 知识库因更换连接地址标为“原连接已更换”（优化方案 O9）。 */
+  moved: boolean
 }
 
 /**
@@ -48,6 +50,7 @@ export class WeKnoraKnowledgeProvider implements KnowledgeProvider {
     userId: string
     agentVersionId: string
     query: string
+    fallbackQuery?: string
   }): Promise<KnowledgeResolution> {
     const empty = { documents: [], citations: [], skippedBases: [] }
     const [levels] = await this.database<{ connection: boolean; localIdentity: boolean; employee: boolean; agent: boolean }[]>`
@@ -80,45 +83,73 @@ export class WeKnoraKnowledgeProvider implements KnowledgeProvider {
              and r.permissions ?| ${knowledgeViewLevel}::text[]
         ) as agent
     `
-    // Agent 的判断取其执行身份的全部岗位角色，不用与员工角色取交集后的权限（5.1）。
-    if (!levels?.connection || !levels.localIdentity || !levels.employee || !levels.agent) {
-      return { status: 'not_applicable', ...empty }
-    }
-    // 连接按管理端当前配置读取（地址与加密的 API Key），保存后下一次执行即生效。
-    const client = await this.connection.client()
-    if (!client) return { status: 'not_applicable', ...empty }
+    if (!levels?.localIdentity) return { status: 'not_applicable', ...empty }
 
     const selected = await this.database<SelectedBaseRow[]>`
       select kb.id, kb.external_id as "externalId", kb.name,
-             (kb.status = 'active' and kb.id in (${visibleBaseIdsSql(this.database, input.userId)})) as visible
+             (kb.status = 'active' and kb.id in (${visibleBaseIdsSql(this.database, input.userId)})) as visible,
+             kb.status = 'unavailable' as moved
         from session_knowledge_bases skb
         join external_knowledge_bases kb on kb.tenant_id = skb.tenant_id and kb.id = skb.knowledge_base_id
        where skb.tenant_id = ${tenantId} and skb.session_id = ${input.sessionId}
          and kb.connection_id = ${this.connectionId}
        order by skb.added_at, kb.id
     `
-    if (!selected.length) return { status: 'not_selected', ...empty }
-    const scope = selected.filter(base => base.visible)
     // Manifest 最多记 20 个名称；会话所选知识库没有数量上限，超出的不再逐一提示。
-    const skippedBases = selected.filter(base => !base.visible)
-      .map(base => base.name.trim()).filter(Boolean).slice(0, maxSkippedBases)
-    if (!scope.length) return { status: 'skipped', documents: [], citations: [], skippedBases }
+    const names = (bases: SelectedBaseRow[]) => bases.map(base => base.name.trim()).filter(Boolean).slice(0, maxSkippedBases)
 
+    // 会话没有添加知识库：不具备检索条件时与之前相同，不进入 Manifest；否则按 WK18 提示添加知识库。
+    if (!selected.length) {
+      const ready = levels.connection && levels.employee && levels.agent && await this.connection.client() !== null
+      return { status: ready ? 'not_selected' : 'not_applicable', ...empty }
+    }
+    // 优化方案 O2：员工添加了知识库但本次没有检索时，都要让模型与员工知道，不能静默按普通对话回答。
+    // 连接停用、未配置或 API Key 读不出按不可用处理；这不是 WeKnora 故障，不写连接的失败记录。
+    const client = levels.connection ? await this.connection.client() : null
+    if (!client) return { status: 'unavailable', ...empty, failureReason: 'not_configured' }
+    // 员工已不具备查看级别：所选知识库都按“你已无权查看”跳过。
+    if (!levels.employee) return { status: 'skipped', ...empty, skippedBases: names(selected) }
+    // Agent 的判断取其执行身份的全部岗位角色，不用与员工角色取交集后的权限（5.1、WK14）。
+    if (!levels.agent) return { status: 'skipped', ...empty, skippedReason: 'agent_not_permitted' }
+
+    const scope = selected.filter(base => base.visible)
+    // 原连接已更换的知识库单独提示，不说成“你已无权查看”，避免员工误以为被收回了权限。
+    const skippedBases = names(selected.filter(base => !base.visible && !base.moved))
+    const movedBases = names(selected.filter(base => !base.visible && base.moved))
+    const skips = { skippedBases, ...(movedBases.length ? { movedBases } : {}) }
+    if (!scope.length) return { status: 'skipped', documents: [], citations: [], ...skips }
+
+    let retrieved: Awaited<ReturnType<WeKnoraKnowledgeProvider['retrieve']>>
     try {
-      const documents = await this.retrieve(client, input.query, scope)
-      await this.recordSuccess()
-      return { status: 'ok', ...documents, skippedBases }
+      retrieved = await this.retrieve(client, input.query, scope)
     } catch (error) {
       if (!(error instanceof WeKnoraUnavailableError || error instanceof WeKnoraRequestError)) throw error
       const failureReason = error instanceof WeKnoraUnavailableError ? error.reason : 'protocol'
       await this.recordFailure(failureReason)
-      return { status: 'unavailable', documents: [], citations: [], skippedBases, failureReason }
+      return { status: 'unavailable', documents: [], citations: [], ...skips, failureReason }
     }
+    // 优化方案 O3：本次提问没有结果时，再用“上一条提问 + 本次提问”检索一次，追问也能命中；两次结果不合并。
+    // 第二次失败时保留第一次“没有找到”的结果，不算不可用。
+    const fallbackQuery = input.fallbackQuery?.trim()
+    if (!retrieved.documents.length && fallbackQuery && fallbackQuery !== input.query.trim()) {
+      try {
+        const second = await this.retrieve(client, fallbackQuery, scope)
+        if (second.documents.length) retrieved = second
+        else retrieved = { ...retrieved, rerankOutcome: second.rerankOutcome ?? retrieved.rerankOutcome }
+      } catch (error) {
+        if (!(error instanceof WeKnoraUnavailableError || error instanceof WeKnoraRequestError)) throw error
+        console.warn('WeKnora fallback search failed; keeping the first empty result')
+      }
+    }
+    await this.recordSuccess(retrieved.rerankOutcome)
+    return { status: 'ok', documents: retrieved.documents, citations: retrieved.citations, ...skips }
   }
 
   async addCitationFooter(attemptId: string, answer: string): Promise<string> {
-    const [attempt] = await this.database<{ status: string | null; skipped: string[] | null }[]>`
-      select manifest->>'knowledge_status' as status, manifest->'knowledge_skipped_bases' as skipped
+    const [attempt] = await this.database<{ status: string | null; skipped: string[] | null; moved: string[] | null; reason: string | null }[]>`
+      select manifest->>'knowledge_status' as status, manifest->'knowledge_skipped_bases' as skipped,
+             manifest->'knowledge_moved_bases' as moved,
+             manifest->>'knowledge_skipped_reason' as reason
         from run_attempts where tenant_id = ${tenantId} and id = ${attemptId}
     `
     const citations = await this.database<{ title: string; updatedAt: Date }[]>`
@@ -129,17 +160,28 @@ export class WeKnoraKnowledgeProvider implements KnowledgeProvider {
     `
     const sections: string[] = []
     if (citations.length) {
-      sections.push(['参考来源', ...citations.map((row, index) =>
+      // 优化方案 O6：列出的是本次注入的全部资料，不代表模型都引用了。
+      sections.push(['本次检索到的资料', ...citations.map((row, index) =>
         `- 【${index + 1}】${row.title}（更新于 ${formatDate(row.updatedAt)}）`)].join('\n'))
+    } else if (attempt?.status === 'ok') {
+      sections.push('已查询所添加的知识库，没有找到相关内容，本次回答未引用企业知识。')
+    }
+    if (attempt?.reason === 'agent_not_permitted') {
+      sections.push('当前 AI 同事未开通企业知识，本次未使用所添加的知识库。')
     }
     for (const name of attempt?.skipped ?? []) sections.push(`知识库“${name}”你已无权查看，本次未使用。`)
+    for (const name of attempt?.moved ?? []) sections.push(`知识库“${name}”的连接已更换，暂不可用，本次未使用；如需继续使用请联系管理员。`)
     if (attempt?.status === 'unavailable') sections.push('企业知识库暂不可用，本次回答未引用企业知识。')
     return sections.length ? `${answer.trim()}\n\n${sections.join('\n\n')}` : answer
   }
 
-  private async retrieve(client: WeKnoraClient, query: string, scope: SelectedBaseRow[]): Promise<Omit<KnowledgeResolution, 'status' | 'skippedBases'>> {
+  private async retrieve(client: WeKnoraClient, query: string, scope: SelectedBaseRow[]): Promise<{
+    documents: RuntimeKnowledgeDocument[]
+    citations: KnowledgeCitation[]
+    rerankOutcome: string | null
+  }> {
     const byExternalId = new Map(scope.map(base => [base.externalId, base]))
-    const results = await client.search({
+    const { results, rerankOutcome } = await client.search({
       query,
       knowledgeBaseIds: scope.map(base => base.externalId),
       matchCount: searchMatchCount,
@@ -154,7 +196,7 @@ export class WeKnoraKnowledgeProvider implements KnowledgeProvider {
       }
       best.set(result.knowledge_id, result)
     }
-    if (!best.size) return { documents: [], citations: [] }
+    if (!best.size) return { documents: [], citations: [], rerankOutcome }
     const metadata = new Map((await client.knowledgeBatch([...best.keys()])).map(item => [item.id, item]))
     const documents: RuntimeKnowledgeDocument[] = []
     const citations: KnowledgeCitation[] = []
@@ -204,12 +246,16 @@ export class WeKnoraKnowledgeProvider implements KnowledgeProvider {
         relevanceScore: result.score,
       })
     }
-    return { documents, citations }
+    return { documents, citations, rerankOutcome }
   }
 
-  private async recordSuccess() {
+  /** 记录成功与本次重排序结果（优化方案 O5）：WeKnora 重排序降级时检索照常返回，只能靠这里让管理员看到。 */
+  private async recordSuccess(rerankOutcome: string | null) {
     await this.database`
-      update external_knowledge_connections set last_success_at = now()
+      update external_knowledge_connections
+         set last_success_at = now(),
+             last_rerank_outcome = coalesce(${rerankOutcome}, last_rerank_outcome),
+             last_rerank_at = case when ${rerankOutcome}::text is null then last_rerank_at else now() end
        where tenant_id = ${tenantId} and id = ${this.connectionId}
     `
   }

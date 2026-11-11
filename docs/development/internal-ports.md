@@ -37,7 +37,7 @@ Agent 通用设计与评审要求见 [Agent 设计规范](agent-design-standard.
 
 - [Workbench OpenAPI](openapi-workbench.json)：`/api/workbench/v1`。
 - [Admin OpenAPI](openapi-admin.json)：`/api/admin/v1`。
-- [Runtime Manifest](runtime-manifest.schema.json)：不可变输入、能力、文件、知识与权限快照；企业知识的检索结果见可选字段 `knowledge_status`（缺省表示本次执行不支持检索）与 `knowledge_skipped_bases`。
+- [Runtime Manifest](runtime-manifest.schema.json)：不可变输入、能力、文件、知识与权限快照；企业知识的检索结果见可选字段 `knowledge_status`（缺省表示本次执行不支持检索）、`knowledge_skipped_bases`、`knowledge_moved_bases`（因更换连接地址跳过的知识库名称，只用于页脚）与 `knowledge_skipped_reason`（`agent_not_permitted`：会话添加了知识库但 Agent 不具备查看级别，只用于页脚）。会话添加了知识库时，连接停用或 API Key 读不出记为 `unavailable`，`ok` 且没有片段时提示词与页脚说明“没有找到相关内容”（[知识库优化方案](../design/weknora-knowledge-optimization-plan.md) O1、O2）。
 - [Run Event](run-event.schema.json)：标准可展示事件，不包含隐藏推理和凭据。
 
 接口修改必须同步消费者、Schema 和相应测试。公开 API、内部 TypeScript 类型和 DSH ACP 是不同边界，不应直接复用上游内部对象代替产品契约。

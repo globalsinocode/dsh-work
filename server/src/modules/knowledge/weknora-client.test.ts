@@ -18,11 +18,16 @@ beforeEach(() => {
 const client = (timeoutMs?: number) => new WeKnoraClient({ baseUrl, apiKey: double.apiKey, timeoutMs })
 
 test('检索只调用 knowledge-search，带 API Key，不传 rerank（4.3）', async () => {
-  const results = await client().search({ query: '安全库存', knowledgeBaseIds: ['kb-1'], matchCount: 10 })
+  double.rerankOutcome = 'model_unavailable'
+  const { results, rerankOutcome } = await client().search({ query: '安全库存', knowledgeBaseIds: ['kb-1'], matchCount: 10 })
   assert.deepEqual(results, [{
     id: 'chunk-1', content: '安全库存不低于七天用量。', knowledge_id: 'doc-1', knowledge_base_id: 'kb-1',
     knowledge_title: '库存规范', knowledge_filename: '库存规范.pdf', score: 0.82,
   }])
+  // 优化方案 O5：带回 meta.rerank.outcome；格式不符的值不记录。
+  assert.equal(rerankOutcome, 'model_unavailable')
+  double.rerankOutcome = 'Bad Value!'
+  assert.equal((await client().search({ query: 'q', knowledgeBaseIds: ['kb-1'], matchCount: 1 })).rerankOutcome, null)
   const [request] = double.requests
   assert.equal(request?.path, '/api/v1/knowledge-search')
   assert.equal(request?.apiKey, double.apiKey)

@@ -56,6 +56,7 @@ export class PostgresKnowledgeConnection {
       return
     }
     const hint = this.bootstrap.apiKey.length > 8 ? this.bootstrap.apiKey.slice(-4) : null
+    const existing = await this.row()
     await this.database`
       insert into external_knowledge_connections (id, tenant_id, base_url, credential_hint, embedding_model_id, updated_by)
       values (${this.connectionId}, ${tenantId}, ${baseUrl}, ${hint}, ${this.bootstrap.embeddingModelId ?? null}, 'deployment-config')
@@ -71,6 +72,14 @@ export class PostgresKnowledgeConnection {
               or (external_knowledge_connections.updated_by = 'deployment-config'
                   and external_knowledge_connections.embedding_model_id is distinct from excluded.embedding_model_id))
     `
+    // 优化方案 O9：部署配置的地址变化与管理端更换地址一样，原有知识库属于原实例，标为“原连接已更换”。
+    if (existing && !existing.credentialRef && !sameBaseUrl(existing.baseUrl, baseUrl)) {
+      const moved = await this.database`
+        update external_knowledge_bases set status = 'unavailable', updated_by = 'deployment-config', updated_at = now()
+         where tenant_id = ${tenantId} and connection_id = ${this.connectionId} and status = 'active'
+      `
+      if (moved.count) console.warn(`WEKNORA_BASE_URL changed; ${moved.count} knowledge bases marked unavailable`)
+    }
   }
 
   /** 有效连接的客户端；未配置、已停用或凭据不可读时为 null。按连接版本缓存，保存前不重复解密 Key。 */

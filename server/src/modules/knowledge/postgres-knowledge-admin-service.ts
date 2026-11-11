@@ -22,6 +22,9 @@ export interface KnowledgeAdminConnection {
   lastSuccessAt: string | null
   lastFailureAt: string | null
   lastFailureReason: string | null
+  /** 最近一次检索响应中的重排序结果（WeKnora meta.rerank.outcome，优化方案 O5）与时间。 */
+  lastRerankOutcome: string | null
+  lastRerankAt: string | null
 }
 
 export interface KnowledgeAdminOverview {
@@ -53,8 +56,15 @@ export interface KnowledgeAdminBase {
   documentCount: number | null
   updatedAt: string | null
   embeddingModelId: string | null
-  /** 建库时的嵌入模型与当前连接配置不同：须重建知识库并重新上传（4.6）。 */
+  /**
+   * 建库时的嵌入模型与当前连接配置不同（4.6）。WeKnora 按各知识库自己的嵌入模型检索，旧模型仍登记在 WeKnora 中时
+   * 照常可用；旧模型被删除后才失效（优化方案 O10）。
+   */
   needsRebuild: boolean
+  /** active：有效；unavailable：原连接已更换，不参与检索、员工端不显示，可恢复（优化方案 O9）。 */
+  status: 'active' | 'unavailable'
+  /** WeKnora 中为该知识库配置了摘要模型（优化方案 O7）；WeKnora 不可用时为 null。 */
+  summaryModelConfigured: boolean | null
 }
 
 export interface KnowledgeAdminBaseList {
@@ -80,6 +90,8 @@ interface ConnectionRow {
   lastSuccessAt: Date | null
   lastFailureAt: Date | null
   lastFailureReason: string | null
+  lastRerankOutcome: string | null
+  lastRerankAt: Date | null
 }
 
 /**
@@ -107,11 +119,18 @@ export class PostgresKnowledgeAdminService {
 
   async overview(): Promise<KnowledgeAdminOverview> {
     const row = await this.row()
+    // 不可用次数按失败审计统计：连接被停用或 Key 读不出（not_configured）时执行也记为 unavailable，但不是检索故障，
+    // 不写审计，也不计入检索与不可用次数（优化方案 O2）。
     const [health] = await this.database<{ retrievals: number; unavailable: number }[]>`
-      select count(*) filter (where manifest->>'knowledge_status' in ('ok', 'unavailable'))::int as retrievals,
-             count(*) filter (where manifest->>'knowledge_status' = 'unavailable')::int as unavailable
-        from run_attempts
-       where tenant_id = ${tenantId} and created_at > now() - interval '24 hours'
+      with unavailable as (
+        select count(*)::int as count from audit_events
+         where tenant_id = ${tenantId} and action = 'knowledge.retrieve.unavailable' and result = 'failed'
+           and occurred_at > now() - interval '24 hours'
+      )
+      select (select count(*)::int from run_attempts
+               where tenant_id = ${tenantId} and created_at > now() - interval '24 hours'
+                 and manifest->>'knowledge_status' = 'ok') + (select count from unavailable) as retrievals,
+             (select count from unavailable) as unavailable
     `
     return {
       connection: {
@@ -125,6 +144,8 @@ export class PostgresKnowledgeAdminService {
         lastSuccessAt: row?.lastSuccessAt?.toISOString() ?? null,
         lastFailureAt: row?.lastFailureAt?.toISOString() ?? null,
         lastFailureReason: row?.lastFailureReason ?? null,
+        lastRerankOutcome: row?.lastRerankOutcome ?? null,
+        lastRerankAt: row?.lastRerankAt?.toISOString() ?? null,
         credentialReadable: row?.status === 'active' ? (await this.connection.client()) !== null : false,
       },
       health: { retrievals24h: health?.retrievals ?? 0, unavailable24h: health?.unavailable ?? 0 },
@@ -150,6 +171,7 @@ export class PostgresKnowledgeAdminService {
     // 已保存的 Key 只发往已保存的地址：更换地址必须同时填写 Key，避免把 Key 带到新主机。
     if (existing && !apiKey && !sameBaseUrl(baseUrl, existing.baseUrl)) throw invalidRequest('更换 WeKnora 地址时须重新填写 API Key')
     if (apiKey && !this.credentials) throw stateConflict('服务未配置 DSH_CREDENTIAL_MASTER_KEY，不能保存 API Key')
+    let movedBases = 0
     await this.database.begin(async transaction => {
       if (apiKey) {
         await transaction`
@@ -172,6 +194,14 @@ export class PostgresKnowledgeAdminService {
       const credentialExpiresAt = input.credentialExpiresAt === undefined ? (apiKey ? null : existing?.credentialExpiresAt ?? null) : expiresAt
       // 换了 Key 或地址后，旧连接的失败记录不再代表当前状态。
       const connectionChanged = Boolean(apiKey) || !existing || !sameBaseUrl(baseUrl, existing.baseUrl)
+      // 优化方案 O9：更换地址后，现有知识库的外部 ID 属于原实例，标为“原连接已更换”，不再参与检索，由管理员逐个恢复。
+      if (existing && !sameBaseUrl(baseUrl, existing.baseUrl)) {
+        const moved = await transaction`
+          update external_knowledge_bases set status = 'unavailable', updated_by = ${actorId}, updated_at = now()
+           where tenant_id = ${tenantId} and connection_id = ${this.connection.connectionId} and status = 'active'
+        `
+        movedBases = moved.count
+      }
       await transaction`
         insert into external_knowledge_connections (
           id, tenant_id, base_url, credential_ref, credential_hint, credential_expires_at, embedding_model_id, status, updated_by
@@ -188,7 +218,7 @@ export class PostgresKnowledgeAdminService {
       `
     })
     await this.record(actorId, 'knowledge.connection.update', this.connection.connectionId,
-      `更新企业知识库连接：${baseUrl}，嵌入模型 ${embeddingModelId ?? '未配置'}，${input.enabled ? '启用' : '停用'}${apiKey ? '，已更换 API Key' : ''}`,
+      `更新企业知识库连接：${baseUrl}，嵌入模型 ${embeddingModelId ?? '未配置'}，${input.enabled ? '启用' : '停用'}${apiKey ? '，已更换 API Key' : ''}${movedBases ? `，${movedBases} 个知识库因更换地址标为原连接已更换` : ''}`,
       'knowledge_connection')
     return this.overview()
   }
@@ -218,10 +248,10 @@ export class PostgresKnowledgeAdminService {
   }
 
   async listBases(): Promise<KnowledgeAdminBaseList> {
-    const rows = await this.database<(Omit<KnowledgeAdminBase, 'grants' | 'documentCount' | 'updatedAt' | 'needsRebuild'> & { externalId: string })[]>`
+    const rows = await this.database<(Omit<KnowledgeAdminBase, 'grants' | 'documentCount' | 'updatedAt' | 'needsRebuild' | 'summaryModelConfigured'> & { externalId: string })[]>`
       select kb.id, kb.external_id as "externalId", kb.name, kb.description,
              kb.owner_department_id as "ownerDepartmentId", d.name as "ownerDepartmentName",
-             d.status = 'active' as "ownerDepartmentActive", kb.embedding_model_id as "embeddingModelId"
+             d.status = 'active' as "ownerDepartmentActive", kb.embedding_model_id as "embeddingModelId", kb.status
         from external_knowledge_bases kb
         join org_departments d on d.tenant_id = kb.tenant_id and d.id = kb.owner_department_id
        where kb.tenant_id = ${tenantId} and kb.connection_id = ${this.connection.connectionId} and kb.status <> 'deleted'
@@ -237,7 +267,7 @@ export class PostgresKnowledgeAdminService {
        order by g.created_at, g.id
     ` : []
     const currentModel = await this.connection.embeddingModelId()
-    let stats = new Map<string, { knowledgeCount: number; updatedAt: string | null }>()
+    let stats = new Map<string, { knowledgeCount: number; updatedAt: string | null; summaryModelId: string | null }>()
     let statsAvailable = true
     const client = rows.length ? await this.connection.client() : null
     if (rows.length) {
@@ -258,6 +288,7 @@ export class PostgresKnowledgeAdminService {
           grants: grants.filter(grant => grant.knowledgeBaseId === row.id).map(({ knowledgeBaseId: _id, ...grant }) => grant),
           documentCount: statsAvailable ? stat?.knowledgeCount ?? 0 : null,
           updatedAt: statsAvailable ? stat?.updatedAt ?? null : null,
+          summaryModelConfigured: statsAvailable && stat ? stat.summaryModelId !== null : null,
           needsRebuild: Boolean(currentModel && row.embeddingModelId && row.embeddingModelId !== currentModel),
         }
       }),
@@ -334,8 +365,10 @@ export class PostgresKnowledgeAdminService {
       insert into external_knowledge_base_grants (id, tenant_id, knowledge_base_id, department_id, include_descendants, granted_by, granted_via)
       values (${`knowledge-grant-${randomUUID()}`}, ${tenantId}, ${base.id}, ${department.id}, ${includeDescendants}, ${actorId}, 'admin')
       on conflict (tenant_id, knowledge_base_id, department_id) where status = 'active'
-      do update set include_descendants = excluded.include_descendants, granted_by = excluded.granted_by
+      do update set include_descendants = excluded.include_descendants, granted_by = excluded.granted_by, granted_via = 'admin'
+       -- 优化方案 O12：管理员再次授予或调整过的授权归管理员，员工不能再撤销。
        where external_knowledge_base_grants.include_descendants is distinct from excluded.include_descendants
+          or external_knowledge_base_grants.granted_via <> 'admin'
     `
     if (changed.count) {
       await this.record(actorId, 'knowledge.grant.add', base.id,
@@ -380,19 +413,39 @@ export class PostgresKnowledgeAdminService {
     return this.listBases()
   }
 
+  /**
+   * 恢复“原连接已更换”的知识库（优化方案 O9）：先确认当前连接的 WeKnora 中存在该知识库，存在才恢复为有效。
+   * 用于把地址改回原实例，或新地址只是同一实例的另一个访问地址。
+   */
+  async restoreBase(actorId: string, knowledgeBaseId: string): Promise<KnowledgeAdminBaseList> {
+    await requirePlatformAdminActor(this.database, actorId)
+    const base = await this.requireBase(knowledgeBaseId)
+    if (base.status !== 'unavailable') throw stateConflict('知识库不需要恢复')
+    const client = await this.requireClient()
+    const present = (await this.call(() => client.listKnowledgeBases())).some(item => item.id === base.externalId)
+    if (!present) throw stateConflict('当前连接的知识库服务中没有这个知识库，不能恢复；如需继续使用请重建')
+    await this.database`
+      update external_knowledge_bases set status = 'active', updated_by = ${actorId}, updated_at = now()
+       where tenant_id = ${tenantId} and id = ${base.id} and status = 'unavailable'
+    `
+    await this.record(actorId, 'knowledge.base.restore', base.id, `恢复知识库“${base.name}”（当前连接中存在）`)
+    return this.listBases()
+  }
+
   private async row(): Promise<ConnectionRow | undefined> {
     const [row] = await this.database<ConnectionRow[]>`
       select base_url as "baseUrl", credential_ref as "credentialRef", credential_hint as "credentialHint",
              credential_expires_at as "credentialExpiresAt", embedding_model_id as "embeddingModelId", status,
-             last_success_at as "lastSuccessAt", last_failure_at as "lastFailureAt", last_failure_reason as "lastFailureReason"
+             last_success_at as "lastSuccessAt", last_failure_at as "lastFailureAt", last_failure_reason as "lastFailureReason",
+             last_rerank_outcome as "lastRerankOutcome", last_rerank_at as "lastRerankAt"
         from external_knowledge_connections where tenant_id = ${tenantId} and id = ${this.connection.connectionId}
     `
     return row
   }
 
   private async requireBase(knowledgeBaseId: string) {
-    const [base] = await this.database<{ id: string; externalId: string; name: string }[]>`
-      select id, external_id as "externalId", name from external_knowledge_bases
+    const [base] = await this.database<{ id: string; externalId: string; name: string; status: string }[]>`
+      select id, external_id as "externalId", name, status from external_knowledge_bases
        where tenant_id = ${tenantId} and id = ${knowledgeBaseId} and connection_id = ${this.connection.connectionId} and status <> 'deleted'
     `
     if (!base) throw notFound('知识库不存在')

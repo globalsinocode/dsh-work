@@ -263,3 +263,88 @@ test('KB-ADM-02 全部知识库：跨部门授权、归属部门、需重建与�
     double.failWith = null
   }
 })
+
+test('KB-ADM-05 配置提示：摘要模型标记、重排序结果，管理员再次授予的授权归管理员（优化方案 O5、O7、O12）', async () => {
+  let list = await ok('POST', `${adminBase}/bases`, { name: '摘要检查库', ownerDepartmentId: 'dept-finance' })
+  const created = list.items.find((item: any) => item.name === '摘要检查库')
+  const externalId = [...double.knowledgeBases.keys()].at(-1)!
+  assert.ok(!('summary_model_id' in (double.knowledgeBases.get(externalId) ?? {})), '平台建库不带摘要模型')
+  assert.equal(created.summaryModelConfigured, false)
+  assert.equal(created.status, 'active')
+  double.summaryModels.set(externalId, 'chat-model-online')
+  list = await ok('GET', `${adminBase}/bases`)
+  assert.equal(list.items.find((item: any) => item.id === created.id).summaryModelConfigured, true)
+
+  await database`update external_knowledge_connections set last_rerank_outcome = 'model_unavailable', last_rerank_at = now() where tenant_id = ${tenantId}`
+  const overview = await ok('GET', adminBase)
+  assert.equal(overview.connection.lastRerankOutcome, 'model_unavailable')
+  assert.ok(overview.connection.lastRerankAt)
+  // 不可用次数按失败审计统计（连接停用不写该审计，评审 #116）。
+  await database`
+    insert into audit_events (id, tenant_id, actor_type, actor_id, action, object_type, object_id, result, trace_id)
+    values ('audit-kb-unavailable-1', ${tenantId}, 'user', ${EMPLOYEE}, 'knowledge.retrieve.unavailable', 'run', 'run-x', 'failed', 'trace-x')
+  `
+  const counted = await ok('GET', adminBase)
+  assert.equal(counted.health.unavailable24h, overview.health.unavailable24h + 1)
+  assert.equal(counted.health.retrievals24h, overview.health.retrievals24h + 1)
+
+  // 员工授予的授权被管理员再次授予（含相同或不同的“含下级”）后归管理员，员工不能再撤销。
+  await database`
+    insert into external_knowledge_base_grants (id, tenant_id, knowledge_base_id, department_id, include_descendants, granted_by, granted_via)
+    values ('grant-employee-plan', ${tenantId}, ${created.id}, 'dept-plan', true, ${EMPLOYEE}, 'employee')
+  `
+  list = await ok('POST', `${adminBase}/bases/${created.id}/grants`, { departmentId: 'dept-plan', includeDescendants: true })
+  const plan = list.items.find((item: any) => item.id === created.id).grants.find((grant: any) => grant.departmentId === 'dept-plan')
+  assert.equal(plan.grantedVia, 'admin')
+  assert.equal(plan.id, 'grant-employee-plan', '更新原授权，不新增')
+  await ok('DELETE', `${adminBase}/bases/${created.id}`)
+})
+
+test('KB-ADM-04 更换连接地址：原有知识库标为原连接已更换，确认新地址中存在后才能恢复（优化方案 O9）', async () => {
+  let list = await ok('POST', `${adminBase}/bases`, { name: '迁移验证库', ownerDepartmentId: 'dept-finance' })
+  const created = list.items.find((item: any) => item.name === '迁移验证库')
+  const externalId = [...double.knowledgeBases.keys()].at(-1)!
+  const visible = async () => (await ok('GET', '/api/workbench/v1/knowledge-bases?stats=false', undefined, EMPLOYEE)).map((item: any) => item.name)
+  const statusOf = (items: any[], id: string) => items.find(item => item.id === id)?.status
+  assert.deepEqual(await visible(), ['迁移验证库'])
+
+  // 只改末尾斜杠或补上 /api/v1：规范化后相同，不算更换。
+  await ok('PUT', `${adminBase}/connection`, { baseUrl: `${doubleUrl}/api/v1/`, embeddingModelId: 'embed-2', enabled: true })
+  assert.equal(statusOf((await ok('GET', `${adminBase}/bases`)).items, created.id), 'active')
+
+  // 新地址是另一个 WeKnora，其中只有“迁移验证库”（例如同一实例换了访问地址）。
+  const other = new WeKnoraDouble(double.apiKey)
+  const otherUrl = await other.start()
+  try {
+    other.knowledgeBases.set(externalId, { name: '迁移验证库' })
+    await ok('PUT', `${adminBase}/connection`, { baseUrl: otherUrl, apiKey: double.apiKey, embeddingModelId: 'embed-2', enabled: true })
+    list = await ok('GET', `${adminBase}/bases`)
+    assert.equal(statusOf(list.items, created.id), 'unavailable')
+    assert.equal(statusOf(list.items, 'kb-legacy'), 'unavailable')
+    assert.deepEqual(await visible(), [], '员工端不显示原连接的知识库')
+    const [audit] = await database<{ text: string }[]>`
+      select safe_context::text as text from audit_events
+       where tenant_id = ${tenantId} and action = 'knowledge.connection.update' order by occurred_at desc limit 1
+    `
+    assert.match(audit?.text ?? '', /标为原连接已更换/)
+
+    assert.equal((await api(READER, 'POST', `${adminBase}/bases/${created.id}/restore`)).status, 403)
+    list = await ok('POST', `${adminBase}/bases/${created.id}/restore`)
+    assert.equal(statusOf(list.items, created.id), 'active')
+    assert.deepEqual(await visible(), ['迁移验证库'])
+    assert.equal((await api(ADMIN, 'POST', `${adminBase}/bases/kb-legacy/restore`)).status, 409, '新地址中没有的知识库不能恢复')
+    assert.equal((await api(ADMIN, 'POST', `${adminBase}/bases/${created.id}/restore`)).status, 409, '有效的知识库不需要恢复')
+  } finally {
+    await other.stop()
+  }
+
+  // 部署配置提供连接、管理员从未保存过 Key 时，部署配置的地址变化同样标为原连接已更换。
+  await database`update external_knowledge_connections set credential_ref = null, base_url = ${doubleUrl} where tenant_id = ${tenantId}`
+  await database`update external_knowledge_bases set status = 'active' where tenant_id = ${tenantId} and status = 'unavailable'`
+  const moved = new PostgresKnowledgeConnection(database, { bootstrap: { baseUrl: 'http://127.0.0.1:9', apiKey: double.apiKey } })
+  await moved.ensureBootstrap()
+  const [row] = await database<{ count: number }[]>`
+    select count(*)::int as count from external_knowledge_bases where tenant_id = ${tenantId} and status = 'unavailable'
+  `
+  assert.ok((row?.count ?? 0) >= 2)
+})

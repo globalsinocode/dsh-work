@@ -5660,6 +5660,62 @@
           }
         ]
       }
+    },
+    "/knowledge/bases/{knowledgeBaseId}/restore": {
+      "post": {
+        "operationId": "restoreKnowledgeAdminBase",
+        "summary": "恢复原连接已更换的知识库",
+        "description": "只有平台管理员；先确认当前连接的 WeKnora 中存在该知识库，存在才恢复为有效，否则返回 409。",
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/Envelope"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "$ref": "#/components/schemas/KnowledgeAdminBaseList"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "name": "knowledgeBaseId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
     }
   },
   "components": {
@@ -5782,7 +5838,9 @@
               "lastSuccessAt",
               "lastFailureAt",
               "lastFailureReason",
-              "credentialReadable"
+              "credentialReadable",
+              "lastRerankOutcome",
+              "lastRerankAt"
             ],
             "properties": {
               "configured": {
@@ -5843,6 +5901,19 @@
               "credentialReadable": {
                 "type": "boolean",
                 "description": "启用且能读出 API Key 时为 true；为 false 时检索与员工端实际不可用。"
+              },
+              "lastRerankOutcome": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "最近一次检索响应中的重排序结果（WeKnora meta.rerank.outcome），例如 ok、model_unavailable、model_error、no_model；model_unavailable 与 model_error 表示检索已降级为不重排。"
+              },
+              "lastRerankAt": {
+                "type": [
+                  "string",
+                  "null"
+                ]
               }
             }
           },
@@ -5907,7 +5978,9 @@
                 "documentCount",
                 "updatedAt",
                 "embeddingModelId",
-                "needsRebuild"
+                "needsRebuild",
+                "status",
+                "summaryModelConfigured"
               ],
               "properties": {
                 "id": {
@@ -5980,7 +6053,22 @@
                   ]
                 },
                 "needsRebuild": {
-                  "type": "boolean"
+                  "type": "boolean",
+                  "description": "建库时的嵌入模型与当前连接配置不同；WeKnora 仍按该知识库自己的模型检索，原模型从 WeKnora 删除后失效。"
+                },
+                "status": {
+                  "enum": [
+                    "active",
+                    "unavailable"
+                  ],
+                  "description": "unavailable：更换 WeKnora 地址后原有知识库标为“原连接已更换”，不参与检索、员工端不显示，可恢复。"
+                },
+                "summaryModelConfigured": {
+                  "type": [
+                    "boolean",
+                    "null"
+                  ],
+                  "description": "WeKnora 中为该知识库配置了摘要模型（文档入库时会调用对话模型）；WeKnora 不可用时为 null。"
                 }
               }
             }

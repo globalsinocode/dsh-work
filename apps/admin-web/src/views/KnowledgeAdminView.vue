@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, h, onMounted, reactive, ref, watch } from 'vue'
 import { Plus, Search } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
@@ -30,12 +30,28 @@ const failureLabels: Record<string, string> = {
   api_key_required: '更换地址须重新填写 API Key',
 }
 
+/** WeKnora 重排序结果（meta.rerank.outcome，优化方案 O5）；模型不可用与调用失败表示检索已降级为不重排。 */
+const rerankLabels: Record<string, string> = {
+  ok: '正常', threshold_degraded: '正常（已放宽门槛）', fallback_top1: '正常（只保留首条）', all_below_threshold: '正常（全部低于门槛）',
+  no_candidates: '正常（没有候选）', no_model: '未配置重排序模型', disabled: '未启用',
+  model_unavailable: '模型不可用，已降级为不重排', model_error: '调用失败，已降级为不重排',
+}
+const rerankDegraded = (outcome: string | null | undefined) => outcome === 'model_unavailable' || outcome === 'model_error'
+/** WeKnora 的模型 ID 是 UUID；不是这个形状时多半填成了模型名称（优化方案 O8）。 */
+const modelIdPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
 const connection = computed(() => overview.value?.connection)
 const attentionOf = (base: KnowledgeAdminBase) => !base.ownerDepartmentActive || base.grants.length === 0 || base.needsRebuild
+  || base.status === 'unavailable' || base.summaryModelConfigured === true
+const activeBases = computed(() => baseList.value.items.filter(base => base.status === 'active'))
+const activeBaseCount = computed(() => activeBases.value.length)
+// 分项只统计有效的知识库：“原连接已更换”的单列一项，不再重复计入其他分项（PR 116 评审）。
 const counts = computed(() => ({
-  noGrant: baseList.value.items.filter(base => base.grants.length === 0).length,
-  ownerDeleted: baseList.value.items.filter(base => !base.ownerDepartmentActive).length,
-  rebuild: baseList.value.items.filter(base => base.needsRebuild).length,
+  noGrant: activeBases.value.filter(base => base.grants.length === 0).length,
+  ownerDeleted: activeBases.value.filter(base => !base.ownerDepartmentActive).length,
+  rebuild: activeBases.value.filter(base => base.needsRebuild).length,
+  moved: baseList.value.items.filter(base => base.status === 'unavailable').length,
+  summary: activeBases.value.filter(base => base.summaryModelConfigured === true).length,
   attention: baseList.value.items.filter(attentionOf).length,
   documents: baseList.value.items.reduce((sum, base) => sum + (base.documentCount ?? 0), 0),
 }))
@@ -159,6 +175,12 @@ async function confirmCreate() {
   }
 }
 
+// —— 恢复（优化方案 O9） ——
+async function restoreBase(base: KnowledgeAdminBase) {
+  const result = await run(() => adminApi.restoreKnowledgeBase(base.id), `已恢复“${base.name}”`)
+  if (result) baseList.value = result
+}
+
 // —— 删除 ——
 async function removeBase(base: KnowledgeAdminBase) {
   try {
@@ -216,7 +238,26 @@ async function testConnection() {
   }, '测试已完成')
   if (result) testResult.value = result
 }
+async function confirmConnectionChanges(): Promise<boolean> {
+  const modelId = connectionForm.embeddingModelId.trim()
+  const notices: string[] = []
+  if (modelId && !modelIdPattern.test(modelId)) {
+    notices.push(`“${modelId}”看起来不是 WeKnora 的模型 ID（应为 UUID，不是模型名称）。填错时新建知识库仍会成功，但上传的文档会解析失败。`)
+  }
+  if (addressChanged.value && activeBaseCount.value > 0) {
+    notices.push(`现有 ${activeBaseCount.value} 个知识库属于原地址，更换后将标为“原连接已更换”，不再参与检索、员工端不显示；确认新地址中有这些知识库时可以逐个恢复。`)
+  }
+  if (!notices.length) return true
+  try {
+    const message = h('div', { class: 'knowledge-admin__confirm' }, notices.map(text => h('p', text)))
+    await ElMessageBox.confirm(message, '确认保存连接配置', { confirmButtonText: '仍然保存', cancelButtonText: '返回修改', type: 'warning' })
+    return true
+  } catch {
+    return false
+  }
+}
 async function saveConnection() {
+  if (!await confirmConnectionChanges()) return
   const result = await run(() => adminApi.updateKnowledgeConnection({
     baseUrl: connectionForm.baseUrl.trim(),
     enabled: connectionForm.enabled,
@@ -251,6 +292,9 @@ onMounted(load)
       title="API Key 无法读取：企业知识库实际不可用，员工端已隐藏入口、对话不检索。"
       description="请检查服务的凭据主密钥 DSH_CREDENTIAL_MASTER_KEY 是否更换或缺失，然后在连接配置中重新填写 API Key。"
     />
+    <el-alert v-if="connection?.enabled && rerankDegraded(connection.lastRerankOutcome)" type="warning" :closable="false" show-icon
+      :title="`重排序${rerankLabels[connection.lastRerankOutcome ?? '']}（${formatDateTime(connection.lastRerankAt)}）。检索照常进行，但结果没有经过重排序，最低相关度门槛可能不再合适。`"
+      description="请检查 WeKnora 中重排序模型的地址与网络访问（包括 SSRF 白名单）。" />
     <el-alert v-if="unavailableBanner" type="error" :closable="false" show-icon :title="unavailableBanner">
       <template #default>请检查连接配置；知识库与授权仍可查看和调整。</template>
     </el-alert>
@@ -267,7 +311,7 @@ onMounted(load)
         </div>
         <div class="overview-stat" :class="{ 'overview-stat--attention': counts.attention > 0 }">
           <dt>需要处理</dt>
-          <dd><strong class="overview-stat__value">{{ counts.attention }}</strong><small>无可见部门 {{ counts.noGrant }} · 归属部门已删除 {{ counts.ownerDeleted }} · 需重建 {{ counts.rebuild }}</small></dd>
+          <dd><strong class="overview-stat__value">{{ counts.attention }}</strong><small>无可见部门 {{ counts.noGrant }} · 归属部门已删除 {{ counts.ownerDeleted }} · 需重建 {{ counts.rebuild }}<template v-if="counts.moved"> · 原连接已更换 {{ counts.moved }}</template><template v-if="counts.summary"> · 已配置摘要模型 {{ counts.summary }}</template></small></dd>
         </div>
         <div class="overview-stat">
           <dt>最近 24 小时检索</dt>
@@ -292,6 +336,10 @@ onMounted(load)
               <template #default="{ row }">
                 <strong class="knowledge-admin__name">{{ row.name }}</strong>
                 <span class="knowledge-admin__desc">{{ row.description || '暂无说明' }}</span>
+                <div v-if="row.status === 'unavailable' || row.summaryModelConfigured" class="knowledge-admin__tags">
+                  <el-tag v-if="row.status === 'unavailable'" type="danger" size="small">原连接已更换</el-tag>
+                  <el-tag v-if="row.summaryModelConfigured" type="danger" size="small" title="文档入库时 WeKnora 会把内容发给该对话模型生成摘要">已配置摘要模型</el-tag>
+                </div>
               </template>
             </el-table-column>
             <el-table-column label="归属部门" min-width="120">
@@ -314,24 +362,27 @@ onMounted(load)
             <el-table-column label="嵌入模型" min-width="140">
               <template #default="{ row }">
                 {{ row.embeddingModelId ?? '—' }}
-                <el-tag v-if="row.needsRebuild" type="warning" size="small">需重建</el-tag>
+                <el-tag v-if="row.needsRebuild" type="warning" size="small" title="仍按建库时的模型检索；该模型从 WeKnora 删除后失效">需重建</el-tag>
               </template>
             </el-table-column>
             <el-table-column label="更新时间" width="150">
               <template #default="{ row }">{{ formatDateTime(row.updatedAt) }}</template>
             </el-table-column>
-            <el-table-column v-if="canManage" label="操作" width="230">
+            <el-table-column v-if="canManage" label="操作" width="300">
               <template #default="{ row }">
+                <el-button v-if="row.status === 'unavailable'" link type="primary" :disabled="!connection?.enabled || saving" @click="restoreBase(row)">恢复</el-button>
                 <el-button link type="primary" @click="openGrants(row)">可见部门</el-button>
                 <el-button link type="primary" @click="openOwner(row)">归属部门</el-button>
                 <el-button link type="danger" :disabled="!connection?.enabled" @click="removeBase(row)">删除</el-button>
               </template>
             </el-table-column>
           </el-table>
-          <p class="knowledge-admin__hint">
-            “需重建”：知识库建库时的嵌入模型与当前连接配置不同。WeKnora 的嵌入模型建库后不能更换，请通知归属部门新建知识库并重新上传文档。
-            <template v-if="!baseList.statsAvailable">知识库服务暂不可用，文档数与更新时间显示为“—”。</template>
-          </p>
+          <ul class="knowledge-admin__legend">
+            <li>“需重建”：知识库建库时的嵌入模型与当前连接配置不同。WeKnora 按每个知识库自己的嵌入模型检索，它仍可正常使用；但原模型从 WeKnora 删除后将无法检索，计划下线原模型前请通知归属部门新建知识库并重新上传文档。</li>
+            <li>“原连接已更换”：更换 WeKnora 地址后，原有知识库不再参与检索；确认新地址中有该知识库时点“恢复”。</li>
+            <li>“已配置摘要模型”：有人在 WeKnora 中为该知识库设置了摘要模型，文档入库时内容会发给该对话模型，须确认它在内网运行，或在 WeKnora 中清除。</li>
+            <li v-if="!baseList.statsAvailable">知识库服务暂不可用，文档数与更新时间显示为“—”。</li>
+          </ul>
         </el-tab-pane>
 
         <el-tab-pane label="连接配置" name="connection">
@@ -339,7 +390,7 @@ onMounted(load)
             <el-form label-position="top" class="knowledge-connection__form" :disabled="!canManage" @submit.prevent="saveConnection">
               <el-form-item label="WeKnora 地址" required>
                 <el-input v-model="connectionForm.baseUrl" placeholder="https://weknora.internal.example.com" aria-label="WeKnora 地址" />
-                <span v-if="addressChanged" class="knowledge-admin__hint knowledge-admin__hint--warn">更换地址须重新填写 API Key：已保存的 Key 不会发往新地址。</span>
+                <span v-if="addressChanged" class="knowledge-admin__hint knowledge-admin__hint--warn">更换地址须重新填写 API Key：已保存的 Key 不会发往新地址。<template v-if="activeBaseCount"> 现有 {{ activeBaseCount }} 个知识库将标为“原连接已更换”。</template></span>
                 <span class="knowledge-admin__hint">只开放平台服务端到 WeKnora 后端 API 的访问，员工浏览器不直接访问。</span>
               </el-form-item>
               <el-form-item label="API Key" :required="!connection?.configured">
@@ -357,11 +408,12 @@ onMounted(load)
                 <el-date-picker v-model="connectionForm.credentialExpiresAt" type="date" value-format="YYYY-MM-DD" placeholder="选择日期" aria-label="API Key 到期日期" />
               </el-form-item>
               <el-form-item label="统一嵌入模型 ID">
-                <el-input v-model="connectionForm.embeddingModelId" placeholder="例如 bge-m3" aria-label="统一嵌入模型 ID" />
-                <span class="knowledge-admin__hint">新建知识库时自动带上，员工不选择。须是 WeKnora 中已登记、在内网运行的模型。</span>
+                <el-input v-model="connectionForm.embeddingModelId" placeholder="例如 00000000-0000-4000-8000-000000000000" aria-label="统一嵌入模型 ID" />
+                <span v-if="connectionForm.embeddingModelId.trim() && !modelIdPattern.test(connectionForm.embeddingModelId.trim())" class="knowledge-admin__hint knowledge-admin__hint--warn">这看起来不是 WeKnora 的模型 ID（应为 UUID，不是模型名称）。</span>
+                <span class="knowledge-admin__hint">WeKnora 模型管理中嵌入模型的 ID（UUID），不是模型名称；查看方法见部署手册。新建知识库时自动带上，员工不选择。须是在内网运行的模型。</span>
               </el-form-item>
               <el-alert v-if="modelChanged" type="warning" :closable="false" show-icon
-                :title="`更换嵌入模型只影响之后新建的知识库。现有 ${baseList.items.length} 个知识库仍按原模型检索，将标为“需重建”。`" />
+                :title="`更换嵌入模型只影响之后新建的知识库。现有 ${activeBaseCount} 个知识库仍按原模型检索，将标为“需重建”；原模型从 WeKnora 删除前它们都能正常使用。`" />
               <el-form-item>
                 <el-checkbox v-model="connectionForm.enabled">启用企业知识库</el-checkbox>
               </el-form-item>
@@ -382,6 +434,7 @@ onMounted(load)
                 <div><dt>失败原因</dt><dd>{{ failureLabels[connection?.lastFailureReason ?? ''] ?? '—' }}</dd></div>
                 <div><dt>24 小时检索</dt><dd>{{ overview?.health.retrievals24h ?? 0 }} 次</dd></div>
                 <div><dt>24 小时不可用</dt><dd>{{ overview?.health.unavailable24h ?? 0 }} 次</dd></div>
+                <div><dt>最近重排序</dt><dd>{{ connection?.lastRerankOutcome ? `${rerankLabels[connection.lastRerankOutcome] ?? connection.lastRerankOutcome}（${formatDateTime(connection.lastRerankAt)}）` : '—' }}</dd></div>
               </dl>
               <p class="knowledge-admin__hint">失败原因只记录分类（超时、连接失败、认证失败、限流、服务错误），不含 API Key 与请求正文。</p>
             </aside>
@@ -454,8 +507,11 @@ onMounted(load)
 .knowledge-admin__name { display: block; color: var(--color-text-heading); font-weight: 600; }
 .knowledge-admin__desc { color: var(--color-text-secondary); font-size: var(--font-size-caption); }
 .knowledge-admin__tags { display: flex; flex-wrap: wrap; gap: 4px; }
-.knowledge-admin__hint--warn { color: var(--color-warning-strong); }
+/* 警示提示须在通用提示之后声明，否则同等优先级下颜色被覆盖。 */
 .knowledge-admin__hint { margin: 0; color: var(--color-text-secondary); font-size: var(--font-size-caption); line-height: 1.6; }
+.knowledge-admin__hint--warn { color: var(--color-warning-strong); }
+:global(.knowledge-admin__confirm p) { margin: 0 0 8px; line-height: 1.6; }
+.knowledge-admin__legend { margin: 0; padding-left: 18px; color: var(--color-text-secondary); font-size: var(--font-size-caption); line-height: 1.6; }
 .knowledge-connection { display: flex; flex-wrap: wrap; gap: 24px; align-items: flex-start; }
 .knowledge-connection__form { display: flex; flex: 2 1 420px; flex-direction: column; gap: 4px; max-width: 640px; }
 .knowledge-connection__form :deep(.el-form-item__content) { flex-direction: column; align-items: flex-start; gap: 4px; }

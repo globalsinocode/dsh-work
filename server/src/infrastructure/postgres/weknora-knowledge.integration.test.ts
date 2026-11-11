@@ -164,7 +164,7 @@ test('会话没有添加知识库时不调用 WeKnora，Manifest 标为 not_sele
   assert.equal(result.manifest.knowledge_status, 'not_selected')
   assert.deepEqual(result.manifest.knowledge_context, [])
   assert.equal(searches().length, 0)
-  assert.doesNotMatch(result.answer, /参考来源|不可用/)
+  assert.doesNotMatch(result.answer, /本次检索到的资料|不可用|没有找到相关内容/)
 })
 
 test('只检索所选且可见的知识库，按部门授权与“包含下级”计算可见范围（5.3、5.7）', async () => {
@@ -182,18 +182,63 @@ test('只检索所选且可见的知识库，按部门授权与“包含下级�
   assert.equal(document?.version, '20260801.0930')
   assert.equal(document?.dataScope, 'knowledge:供应链制度库')
 
-  assert.match(result.answer, /参考来源\n- 【1】库存安全水位规范（更新于 2026-08-01）/)
+  assert.match(result.answer, /本次检索到的资料\n- 【1】库存安全水位规范（更新于 2026-08-01）/)
   assert.match(result.answer, /知识库“财务制度库”你已无权查看，本次未使用/)
   assert.deepEqual(result.task.result.sources.map(source => ({
     title: source.title, knowledgeBaseName: source.knowledgeBaseName, fileName: source.fileName, updatedAt: source.updatedAt,
   })), [{ title: '库存安全水位规范', knowledgeBaseName: '供应链制度库', fileName: '库存安全水位规范.pdf', updatedAt: '2026-08-01' }])
 })
 
-test('追问时查询词带上同一会话的上一条提问（WK4、4.3）', async () => {
+test('先只用本次提问检索，没有结果时再带上同一会话的上一条提问（优化方案 O3）', async () => {
+  // 替身中的分段只在查询词含“库存”时返回：追问本身查不到，带上一条提问才能命中。
+  double.chunks = double.chunks.map(chunk => ({ ...chunk, matchQuery: '库存' }))
+  const sessionId = await session(['kb-supply'])
+  const first = await ask(sessionId, '库存相关的制度有哪些？')
+  assert.deepEqual(searches().map(request => (request.body as { query: string }).query), ['库存相关的制度有哪些？'])
+  assert.equal(first.manifest.knowledge_context.length, 1)
+
+  const followUp = await ask(sessionId, '那第二条呢？')
+  assert.deepEqual(searches().slice(1).map(request => (request.body as { query: string }).query),
+    ['那第二条呢？', '库存相关的制度有哪些？\n那第二条呢？'])
+  assert.equal(followUp.manifest.knowledge_status, 'ok')
+  assert.deepEqual(followUp.manifest.knowledge_context.map(document => document.documentId), ['weknora:doc-safety'])
+
+  // 换了话题且本次提问就有结果：只检索一次，不被上一条提问带偏。
+  double.chunks = double.chunks.map(chunk => ({ ...chunk, matchQuery: undefined }))
+  const before = searches().length
+  await ask(sessionId, '安全库存按几天算？')
+  assert.equal(searches().length - before, 1)
+})
+
+test('补充检索失败时保留第一次“没有找到”的结果，不算不可用（优化方案 O3）', async () => {
+  double.chunks = double.chunks.map(chunk => ({ ...chunk, matchQuery: '库存' }))
   const sessionId = await session(['kb-supply'])
   await ask(sessionId, '库存相关的制度有哪些？')
-  await ask(sessionId, '那第二条呢？')
-  assert.equal((searches().at(-1)?.body as { query: string }).query, '库存相关的制度有哪些？\n那第二条呢？')
+  double.failSearchNumber = double.searchCount + 2
+  const followUp = await ask(sessionId, '那第二条呢？')
+  assert.equal(searches().length, 3)
+  assert.equal(followUp.manifest.knowledge_status, 'ok')
+  assert.deepEqual(followUp.manifest.knowledge_context, [])
+  assert.match(followUp.answer, /已查询所添加的知识库，没有找到相关内容/)
+})
+
+test('检索成功但没有相关内容时，回答末尾注明没有找到（优化方案 O1）', async () => {
+  double.chunks = [{ id: 'weak', knowledgeId: 'doc-transfer', content: '跨仓调拨须提前一天申请。', score: 0.12 }]
+  const result = await ask(await session(['kb-supply']), '年假有几天？')
+  assert.equal(result.manifest.knowledge_status, 'ok')
+  assert.deepEqual(result.manifest.knowledge_context, [])
+  assert.match(result.answer, /已查询所添加的知识库，没有找到相关内容，本次回答未引用企业知识。/)
+  assert.doesNotMatch(result.answer, /本次检索到的资料/)
+})
+
+test('记录检索响应中的重排序结果，供管理端健康状态显示（优化方案 O5）', async () => {
+  double.rerankOutcome = 'model_unavailable'
+  await ask(await session(['kb-supply']), '安全库存？')
+  const [connection] = await database<{ outcome: string | null; at: Date | null }[]>`
+    select last_rerank_outcome as outcome, last_rerank_at as at from external_knowledge_connections where tenant_id = ${tenantId}
+  `
+  assert.equal(connection?.outcome, 'model_unavailable')
+  assert.ok(connection?.at)
 })
 
 test('所选知识库全部不可见时跳过检索，状态为 skipped（5.7）', async () => {
@@ -277,7 +322,7 @@ test('单篇文档元数据缺失只丢弃该篇，由后面的候选补上（4.
     ['weknora:doc-safety', 'weknora:doc-a', 'weknora:doc-b'])
 })
 
-test('AI Hub 账号与停用的连接不检索，也不提示添加知识库（第 3 节、4.5）', async () => {
+test('AI Hub 账号不检索也不提示；停用的连接在会话添加了知识库时按不可用提示（第 3 节，优化方案 O2）', async () => {
   const sessionId = await session(['kb-supply'])
   await database`update users set identity_provider = 'ai-hub' where tenant_id = ${tenantId} and id = ${EMPLOYEE}`
   try {
@@ -286,10 +331,27 @@ test('AI Hub 账号与停用的连接不检索，也不提示添加知识库（�
   } finally {
     await database`update users set identity_provider = 'local' where tenant_id = ${tenantId} and id = ${EMPLOYEE}`
   }
+  const [before] = await database<{ reason: string | null; at: Date | null }[]>`
+    select last_failure_reason as reason, last_failure_at as at from external_knowledge_connections where tenant_id = ${tenantId}
+  `
   await database`update external_knowledge_connections set status = 'disabled' where tenant_id = ${tenantId}`
   try {
     const disabled = await ask(sessionId, '安全库存？')
-    assert.equal(disabled.manifest.knowledge_status, undefined)
+    assert.equal(disabled.manifest.knowledge_status, 'unavailable')
+    assert.match(disabled.answer, /企业知识库暂不可用，本次回答未引用企业知识/)
+    // 管理员主动停用不是 WeKnora 故障：不写失败审计（不计入健康状态的不可用次数），也不写连接的失败记录。
+    const audits = await database`
+      select 1 from audit_events
+       where tenant_id = ${tenantId} and action = 'knowledge.retrieve.unavailable' and object_id = ${disabled.runId}
+    `
+    assert.equal(audits.length, 0)
+    const [after] = await database<{ reason: string | null; at: Date | null }[]>`
+      select last_failure_reason as reason, last_failure_at as at from external_knowledge_connections where tenant_id = ${tenantId}
+    `
+    assert.deepEqual(after, before)
+    // 会话没有添加知识库时，停用的连接仍不进入 Manifest，也不提示添加。
+    const plain = await ask(await session([]), '安全库存？')
+    assert.equal(plain.manifest.knowledge_status, undefined)
   } finally {
     await database`update external_knowledge_connections set status = 'active' where tenant_id = ${tenantId}`
   }
@@ -322,14 +384,55 @@ test('WeKnora 不可用时执行继续，回答注明不可用并记录原因（
   assert.equal(metadata.manifest.knowledge_status, 'unavailable')
 })
 
-test('Agent 岗位角色不具备查看级别时不检索，也不加知识说明（WK14）', async () => {
+test('Agent 岗位角色不具备查看级别时不检索，会话添加了知识库时提示 AI 同事未开通（WK14，优化方案 O2）', async () => {
   await database`
     insert into roles (id, tenant_id, code, name, permissions)
     values ('role-no-knowledge', ${tenantId}, 'no_knowledge', '无知识权限', '["workbench:use"]')
+    on conflict (id) do nothing
   `
   const versionId = await publishedAgent(['role-no-knowledge'])
   const result = await ask(await session(['kb-supply'], versionId), '安全库存？')
-  assert.equal(result.manifest.knowledge_status, undefined)
+  assert.equal(result.manifest.knowledge_status, 'skipped')
+  assert.equal(result.manifest.knowledge_skipped_reason, 'agent_not_permitted')
+  assert.equal(result.manifest.knowledge_skipped_bases, undefined)
+  assert.match(result.answer, /当前 AI 同事未开通企业知识，本次未使用所添加的知识库。/)
+  assert.doesNotMatch(result.answer, /你已无权查看/)
+  const plain = await ask(await session([], versionId), '安全库存？')
+  assert.equal(plain.manifest.knowledge_status, undefined)
+  assert.equal(searches().length, 0)
+})
+
+test('原连接已更换的知识库在页脚单独提示，不说成无权查看（优化方案 O9，评审 #116）', async () => {
+  const sessionId = await session(['kb-supply', 'kb-finance'])
+  await database`update external_knowledge_bases set status = 'unavailable' where tenant_id = ${tenantId} and id = 'kb-supply'`
+  try {
+    const result = await ask(sessionId, '安全库存？')
+    assert.equal(result.manifest.knowledge_status, 'skipped')
+    assert.deepEqual(result.manifest.knowledge_moved_bases, ['供应链制度库'])
+    assert.deepEqual(result.manifest.knowledge_skipped_bases, ['财务制度库'])
+    assert.match(result.answer, /知识库“供应链制度库”的连接已更换，暂不可用，本次未使用/)
+    assert.doesNotMatch(result.answer, /“供应链制度库”你已无权查看/)
+  } finally {
+    await database`update external_knowledge_bases set status = 'active' where tenant_id = ${tenantId} and id = 'kb-supply'`
+  }
+  assert.equal(searches().length, 0)
+})
+
+test('员工已不具备查看级别时，所选知识库按“你已无权查看”跳过（优化方案 O2）', async () => {
+  const sessionId = await session(['kb-supply'])
+  await database`update roles set permissions = permissions - 'knowledge:view' where tenant_id = ${tenantId} and id = 'role-employee'`
+  try {
+    // Agent 的岗位角色也是 role-employee：员工的判断在前，提示按员工无权查看。
+    const result = await ask(sessionId, '安全库存？')
+    assert.equal(result.manifest.knowledge_status, 'skipped')
+    assert.deepEqual(result.manifest.knowledge_skipped_bases, ['供应链制度库'])
+    assert.match(result.answer, /知识库“供应链制度库”你已无权查看，本次未使用。/)
+  } finally {
+    await database`
+      update roles set permissions = permissions || '["knowledge:view"]'::jsonb
+       where tenant_id = ${tenantId} and id = 'role-employee' and not permissions ? 'knowledge:view'
+    `
+  }
   assert.equal(searches().length, 0)
 })
 

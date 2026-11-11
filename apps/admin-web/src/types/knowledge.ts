@@ -10,6 +10,9 @@ export interface KnowledgeAdminConnection {
   lastSuccessAt: string | null
   lastFailureAt: string | null
   lastFailureReason: string | null
+  /** 最近一次检索的重排序结果（WeKnora meta.rerank.outcome，优化方案 O5）与时间。 */
+  lastRerankOutcome: string | null
+  lastRerankAt: string | null
 }
 
 export interface KnowledgeAdminOverview {
@@ -36,7 +39,12 @@ export interface KnowledgeAdminBase {
   documentCount: number | null
   updatedAt: string | null
   embeddingModelId: string | null
+  /** 嵌入模型与当前配置不同；仍按原模型检索，原模型从 WeKnora 删除后才失效（优化方案 O10）。 */
   needsRebuild: boolean
+  /** unavailable：原连接已更换，不参与检索、员工端不显示，可恢复（优化方案 O9）。 */
+  status: 'active' | 'unavailable'
+  /** WeKnora 中为该知识库配置了摘要模型（优化方案 O7）；WeKnora 不可用时为 null。 */
+  summaryModelConfigured: boolean | null
 }
 
 export interface KnowledgeAdminBaseList {

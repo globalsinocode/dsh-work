@@ -821,3 +821,30 @@ AI Hub 登录（`/auth/workbench/oidc/*`、`/auth/workbench/callback`）与切�
 5. 在 iOS 与 Android 钉钉中从工作台打开 dsh-work：未绑定时显示“当前钉钉账号”与“登录并绑定”，登录后进入协作模式；再次打开免登。按 `e2e/catalog/dingtalk.md` 的 DT-P2 记录真机结果（返回键、软键盘、上传下载、安全区）。
 
 回退：网关先撤下公网入口；用 `set-macmini-endpoints.sh` 去掉公网 origin（`plan`、`check`、`apply --confirm`，参数中不再包含 `https://m.example.com:4174`），或在刚变更后用 `rollback --confirm` 恢复上一份入口配置——不要手改 `DSH_WORK_WORKBENCH_ORIGINS`，否则与生成的 Nginx `server_name` 不一致；再在“钉钉集成 › 应用配置”点“清除配置”（删除已加密的 AppSecret，立即生效）。已写入的绑定记录保留，钉钉免登接口返回“未启用”。
+
+## 15. 企业知识库（WeKnora）连接
+
+设计见[企业知识库接入 WeKnora 方案](../design/weknora-knowledge-plan.md)与[企业知识库优化方案](../design/weknora-knowledge-optimization-plan.md)。连接在管理端“知识库 → 企业知识库 → 连接配置”中维护。
+
+### 15.1 上线前必须确认
+
+1. **API Key 只给最小能力。** 在 WeKnora 中为平台专用工作空间单独创建 Key，能力只勾 `retrieve`、`ingest`、`manage_kbs`，不设知识库白名单，设置到期时间。不要复用全权限或带 `manage_models`、`chat` 等能力的 Key。
+2. **WeKnora 中登记的全部模型都在内网。** 包括嵌入模型、重排序模型，以及摘要、问答等对话模型。平台建库不设摘要模型，但在 WeKnora 前端修改知识库时可以设置，设置后入库会把文档内容发给该模型。WeKnora 前端只供运维使用，不要为平台创建的知识库设置摘要模型、问题生成、图谱抽取或多模态模型；管理端会标出“已配置摘要模型”的知识库。
+3. **重排序模型可达。** WeKnora 出站访问模型服务受 SSRF 检查约束，模型主机解析到内网或代理虚拟地址（如 198.18.0.0/15）时须加入 WeKnora 的 `SSRF_WHITELIST`。上线后在管理端健康状态确认“最近重排序”不是“模型不可用”或“调用失败”。
+
+### 15.2 查看统一嵌入模型 ID
+
+“统一嵌入模型 ID”填 WeKnora 中模型记录的 ID（UUID），不是模型名称。填成名称时新建知识库仍会成功，但上传的文档全部解析失败（`model not found`）。任选一种方法查看：
+
+- 在 WeKnora 前端“设置 → 模型管理”页打开浏览器开发者工具的网络面板，刷新后在 `models` 请求的响应里找 `type` 为 `Embedding` 的记录，复制 `id`。
+- 在 WeKnora 的数据库中查询（容器名按实际部署）：
+
+```bash
+docker exec WeKnora-postgres psql -U postgres -d WeKnora -c "select id, name, type from models where deleted_at is null;"
+```
+
+只能填 `type` 为 `Embedding` 的那一行。平台的最小能力 Key 读不到模型列表，因此管理端不提供下拉选择。
+
+### 15.3 更换 WeKnora 地址
+
+更换地址（或部署配置中的 `WEKNORA_BASE_URL`）后，原有知识库标为“原连接已更换”，不再参与检索、员工端不显示。新地址只是同一实例的另一个访问地址，或已把数据迁到新实例时，在“全部知识库”中逐个点“恢复”：平台会先确认新地址的 WeKnora 中存在该知识库。

@@ -275,6 +275,19 @@ test('KB-03 可见部门：只能授给本人所属的非根部门，不能撤�
   `
   assert.equal((await api(users.bases, 'DELETE', `${base}/knowledge-bases/${planBase}/grants/grant-admin-plan`)).status, 403)
   assert.deepEqual((await ok(users.outsider, 'GET', `${base}/knowledge-bases`)).map((item: any) => item.name).sort(), ['全员制度汇编', '计划组工作手册'].sort())
+
+  // 优化方案 O11：所在部门已删除的授权不算剩余的可见部门，不能借它撤到实际无人可见。
+  await database`
+    insert into org_departments (id, tenant_id, parent_id, name, path, status)
+    values ('dept-old', ${tenantId}, ${root}, '已撤并部门', ${`/${root}/dept-old/`}, 'removed')
+  `
+  const lonely = await ok(users.bases, 'POST', `${base}/knowledge-bases`, { name: '只授一个部门的库', ownerDepartmentId: 'dept-plan' })
+  await database`
+    insert into external_knowledge_base_grants (id, tenant_id, knowledge_base_id, department_id, include_descendants, granted_by, granted_via)
+    values ('grant-removed-dept', ${tenantId}, ${lonely.id}, 'dept-old', true, ${users.bases}, 'employee')
+  `
+  assert.equal((await api(users.bases, 'DELETE', `${base}/knowledge-bases/${lonely.id}/grants/${lonely.grants[0].id}`)).status, 409)
+  await ok(users.bases, 'DELETE', `${base}/knowledge-bases/${lonely.id}`)
 })
 
 test('KB-05 会话所选知识库：只能为本人个人空间的会话添加当前可见的知识库', async () => {

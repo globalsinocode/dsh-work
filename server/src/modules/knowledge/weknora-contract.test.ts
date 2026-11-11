@@ -26,7 +26,14 @@ test('WeKnora 新建知识库、检索、文档元数据与删除接口符合平
   try {
     assert.match(created.id, /^[A-Za-z0-9][A-Za-z0-9._:-]{0,100}$/, '知识库 ID 可以放进平台 ID 格式')
     // 新知识库没有文档：检索与元数据接口仍须返回 data 列表（客户端会校验结构）。
-    assert.deepEqual(await client.search({ query: '契约测试', knowledgeBaseIds: [created.id], matchCount: 10 }), [])
+    const emptySearch = await client.search({ query: '契约测试', knowledgeBaseIds: [created.id], matchCount: 10 })
+    assert.deepEqual(emptySearch.results, [])
+    // 优化方案 O5：检索响应带重排序结果（meta.rerank.outcome），平台记录到管理端健康状态。
+    assert.ok(emptySearch.rerankOutcome === null || /^[a-z0-9_]+$/.test(emptySearch.rerankOutcome))
+    // 优化方案 O7：平台新建的知识库没有摘要模型，入库不会调用对话模型。
+    const stats = (await client.listKnowledgeBases()).find(item => item.id === created.id)
+    assert.ok(stats, '知识库列表包含新建的知识库')
+    assert.equal(stats.summaryModelId, null, '平台新建的知识库不应带摘要模型')
     assert.deepEqual(await client.knowledgeBatch([`missing-${randomUUID()}`]), [])
 
     // WK-S2 员工端文档管理依赖的接口：上传、列表、元数据、改标题、预览、下载、重新解析、删除。
@@ -72,7 +79,7 @@ test('最低相关度：命中文档高于门槛，无关提问低于门槛', { 
       assert.ok(attempt < 120, '文档在 120 秒内没有解析完成')
       await new Promise(resolve => setTimeout(resolve, 1000))
     }
-    const search = (query: string) => client.search({ query, knowledgeBaseIds: [created.id], matchCount: 10 })
+    const search = async (query: string) => (await client.search({ query, knowledgeBaseIds: [created.id], matchCount: 10 })).results
     for (const [query, expected] of [['安全库存怎么定', '库存管理规范.txt'], ['出差住宿可以报多少钱', '差旅报销制度.txt'], ['请假超过三天谁审批', '请假与考勤.txt']]) {
       const [top] = (await search(query!)).sort((a, b) => b.score - a.score)
       assert.equal(top?.knowledge_filename || top?.knowledge_title, expected, `“${query}”的最高分应来自目标文档`)

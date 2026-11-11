@@ -170,6 +170,8 @@ export const adminApi = {
     request<KnowledgeAdminBaseList>('/knowledge/bases', { method: 'POST', body: JSON.stringify(input) }),
   updateKnowledgeBaseOwner: (knowledgeBaseId: string, ownerDepartmentId: string) =>
     request<KnowledgeAdminBaseList>(`/knowledge/bases/${encodeURIComponent(knowledgeBaseId)}`, { method: 'PATCH', body: JSON.stringify({ ownerDepartmentId }) }),
+  restoreKnowledgeBase: (knowledgeBaseId: string) =>
+    request<KnowledgeAdminBaseList>(`/knowledge/bases/${encodeURIComponent(knowledgeBaseId)}/restore`, { method: 'POST' }),
   deleteKnowledgeBase: (knowledgeBaseId: string) =>
     request<KnowledgeAdminBaseList>(`/knowledge/bases/${encodeURIComponent(knowledgeBaseId)}`, { method: 'DELETE' }),
   addKnowledgeGrant: (knowledgeBaseId: string, input: { departmentId: string; includeDescendants?: boolean }) =>

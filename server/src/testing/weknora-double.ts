@@ -22,6 +22,8 @@ export interface WeKnoraDoubleChunk {
   knowledgeId: string
   content: string
   score: number
+  /** 只在查询词包含该文字时返回（模拟追问只有带上一条提问才能命中，优化方案 O3）。 */
+  matchQuery?: string
 }
 
 export interface WeKnoraDoubleRequest {
@@ -48,6 +50,14 @@ export class WeKnoraDouble {
   ignoreKnowledgeBaseScope = false
   /** 元数据接口不返回这些文档（模拟两次请求之间被删除）。 */
   hiddenMetadataIds: string[] = []
+  /** 检索响应 meta.rerank.outcome（优化方案 O5）。 */
+  rerankOutcome = 'disabled'
+  /** 只让第 N 次检索请求失败（从 1 开始，返回 503）。 */
+  failSearchNumber: number | null = null
+  /** 已收到的检索请求数。 */
+  searchCount = 0
+  /** WeKnora 中为知识库配置的摘要模型（模拟有人在 WeKnora 前端修改过，优化方案 O7）。 */
+  readonly summaryModels = new Map<string, string>()
   /** 经 POST /knowledge-bases 创建、尚未删除的知识库及收到的建库请求体。 */
   readonly knowledgeBases = new Map<string, Record<string, unknown>>()
   private server: Server | null = null
@@ -91,6 +101,10 @@ export class WeKnoraDouble {
     this.omitKnowledgeBaseId = false
     this.ignoreKnowledgeBaseScope = false
     this.hiddenMetadataIds = []
+    this.rerankOutcome = 'disabled'
+    this.failSearchNumber = null
+    this.searchCount = 0
+    this.summaryModels.clear()
     this.knowledgeBases.clear()
   }
 
@@ -106,10 +120,13 @@ export class WeKnoraDouble {
     if (this.failWith) return { status: this.failWith, body: { success: false, error: { code: 1007, message: 'failure' } } }
 
     if (request.method === 'POST' && url.pathname === '/api/v1/knowledge-search') {
+      this.searchCount += 1
+      if (this.failSearchNumber === this.searchCount) return { status: 503, body: { success: false, error: { code: 1007, message: 'failure' } } }
+      const query = String(body?.query ?? '')
       const bases = new Set((body?.knowledge_base_ids as string[] | undefined) ?? [])
       const documents = new Map(this.documents.filter(document => this.ignoreKnowledgeBaseScope || bases.has(document.knowledgeBaseId)).map(document => [document.id, document]))
       const data = this.chunks
-        .filter(chunk => documents.has(chunk.knowledgeId))
+        .filter(chunk => documents.has(chunk.knowledgeId) && (!chunk.matchQuery || query.includes(chunk.matchQuery)))
         .sort((a, b) => b.score - a.score)
         .slice(0, Number(body?.match_count ?? 10))
         .map((chunk, index) => {
@@ -136,7 +153,7 @@ export class WeKnoraDouble {
             ...(this.omitKnowledgeBaseId ? {} : { knowledge_base_id: document.knowledgeBaseId }),
           }
         })
-      return { status: 200, body: { success: true, data, meta: { rerank: { applied: false, outcome: 'disabled' } } } }
+      return { status: 200, body: { success: true, data, meta: { rerank: { applied: false, outcome: this.rerankOutcome } } } }
     }
     if (request.method === 'GET' && url.pathname === '/api/v1/knowledge/batch') {
       if (this.failBatchWith) return { status: this.failBatchWith, body: { success: false, error: { code: 1007, message: 'failure' } } }
@@ -168,6 +185,7 @@ export class WeKnoraDouble {
           id, name: String(this.knowledgeBases.get(id)?.name ?? id), knowledge_count: documents.length,
           processing_count: documents.filter(document => (document.parseStatus ?? 'completed') === 'processing').length,
           updated_at: documents.map(document => document.updatedAt).sort().at(-1) ?? '2026-11-01T00:00:00Z',
+          summary_model_id: this.summaryModels.get(id) ?? '',
         }
       }) } }
     }
