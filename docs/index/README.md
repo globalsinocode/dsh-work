@@ -19,8 +19,8 @@
 | 待评审：钉钉工作通知、工作台免登与机器人对话 | [钉钉接入方案](../design/dingtalk-integration-plan.md) |
 | 决策已确认（SP1～SP16）、未实施：场景包（独立于 Skill 的平台对象，由工作规则固定版本）+ 共享数据服务 + 主动任务的程序编排，按人交付的跟进项；首个场景欠料风险预警 | [场景包与跟进项方案](../design/scene-package-plan.md) |
 | 一期已实施（WK-S1～S4；生产切换前按发布流程复核）：企业知识库改用 WeKnora，员工端管理知识库与文档，按角色与部门授权 | [企业知识库接入 WeKnora 方案](../design/weknora-knowledge-plan.md) |
-| 部分实施（O1～O3、O5～O12、KO10 与 KO9 已完成，KO9 的装配对比未做；KO8 未实施）：知识库检索提示、连接更换、授权修正与后续方向 | [企业知识库优化方案](../design/weknora-knowledge-optimization-plan.md) |
-| 已实施（KS-S1）；KS-S2 部分完成（本机追问场景已验收，装配对比未做）：给 Agent 提供只读知识检索工具（KO9） | [Agent 知识检索工具方案](../design/knowledge-search-tool-plan.md) |
+| 部分实施（O1～O3、O5～O12、KO9 与 KO10 已完成；KO8、O4 经对比后不实施，篇数上限未检验；O8 校验按钮未做）：知识库检索提示、连接更换、授权修正与后续方向 | [企业知识库优化方案](../design/weknora-knowledge-optimization-plan.md) |
+| 已实施（KS-S1、KS-S2；本机追问场景与装配对比已验收）：给 Agent 提供只读知识检索工具（KO9） | [Agent 知识检索工具方案](../design/knowledge-search-tool-plan.md) |
 | 已实施（NC-S1～S4，P2 待验收）：员工端统一站内通知（与我相关的事件、未读与跳转） | [站内通知方案](../design/notification-center-plan.md) |
 | 实施中：员工经 Skill 创建专家新建 Skill、管理员审核发布 | [Skill 创建专家方案](../design/skill-creator-plan.md) |
 | 平台内置 Skill（文件分析、HTML、Office 基线方法；代码级已实施，P2 待验收） | [平台内置 Skill 方案](../design/builtin-skills-plan.md) |
