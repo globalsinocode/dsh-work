@@ -330,16 +330,25 @@ export class AttemptExecutionContainers {
   }
 }
 
+/**
+ * What the model reads when no command can run (plan 4.7). Space does not come back within one
+ * Attempt, so the text tells the model to stop retrying and answer: with “请稍后重试” it kept
+ * calling bash until the Attempt timed out and the employee got an empty reply.
+ */
+export const DISK_LOW_GUIDANCE = '本次运行内不要再调用运行命令的工具（重试不会成功），也不要改用其他工具代替命令。'
+  + '请立即结束并答复用户：不需要运行命令就能完成的部分照常完成；需要运行命令的部分（处理或生成表格、文档、图片等文件）说明本次没有完成，'
+  + '原因是服务器存储空间不足、需要平台管理员处理后再试。不要声称已经完成，也不要编造结果。'
+
 function diskLowError() {
   return new PlatformToolError({
     status: 503, code: 'EXECUTION_DISK_LOW',
-    message: '服务器磁盘剩余空间不足，暂时不能运行命令；请稍后重试或联系管理员',
+    message: `服务器磁盘剩余空间不足，现在不能运行命令。${DISK_LOW_GUIDANCE}`,
   })
 }
 
 /** What the model reads when the platform stopped a command (plan 4.7). */
 function limitNotice(limit: 'workspace' | 'disk', usage: WorkspaceUsage) {
-  if (limit === 'disk') return '命令已终止：服务器磁盘剩余空间不足。请停止写入大文件，并联系管理员。'
+  if (limit === 'disk') return `命令已终止：服务器磁盘剩余空间不足。${DISK_LOW_GUIDANCE}`
   const used = usage.truncated ? `超过 ${WORKSPACE_LIMITS.maxEntries} 个文件和目录` : `已用 ${formatBytes(usage.bytes)}`
   return `命令已终止：工作区${used}，超过上限 ${formatBytes(WORKSPACE_LIMITS.maxBytes)}。请删除不需要的中间文件（例如 rm -rf work/临时目录）后再继续；删除文件的命令不受影响。`
 }

@@ -306,6 +306,14 @@ test('free space: no command starts on a low data volume, and a running one is s
   const result = await containers.exec('a1', '/ws', command({ argv: ['bash', '-c', 'x'], mayLeaveProcesses: true }), new AbortController().signal)
   assert.equal(result.limit, 'disk')
   assert.match(result.stderr, /服务器磁盘剩余空间不足/)
+
+  // Both notices tell the model to stop and answer: “稍后重试” made it call bash until the Attempt timed out.
+  const refusal = await low.exec('a1', '/ws', command(), new AbortController().signal).then(() => '', (error: unknown) => (error as Error).message)
+  for (const notice of [refusal, result.stderr]) {
+    assert.match(notice, /不要再调用运行命令的工具/)
+    assert.match(notice, /立即结束并答复用户/)
+    assert.doesNotMatch(notice, /稍后重试/)
+  }
 })
 
 test('admission: only plain reads may run alongside other tools; bash and writes must be exclusive', () => {
