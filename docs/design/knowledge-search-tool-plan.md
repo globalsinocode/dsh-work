@@ -53,7 +53,7 @@
 | --- | --- |
 | 输入 | `query`：1～500 字的检索词，要求模型写成独立、完整的问题或关键词（不含“它”“那个”等指代）；`knowledgeBaseNames`：可选，只在会话所选知识库中进一步限定范围，按名称匹配，不认识的名称返回错误 |
 | 输出 | `documents`：每条含 `ordinal`（引用序号，KS5）、`title`、`knowledgeBaseName`、`updatedDate`（YYYY-MM-DD）、`excerpt`；`skippedBases`：本次因已删除或员工已无权查看而跳过的知识库名称；`movedBases`：因原连接已更换而跳过的知识库名称（与无权查看分开，避免模型误导员工）；`remainingCalls`：本 Attempt 剩余的调用次数 |
-| 性质 | `effect: 'read'`（写入的引用快照与审计是执行证据，不是业务效果；读工具不进入 `task_operations` 登记，也没有“写入效果可能已发生”的复核语义）、`retryPolicy: 'safe'`、`concurrencyPolicy: 'serialized'`（同一 Attempt 内串行，保证引用序号连续）、`timeoutMs: 15_000`（WeKnora 请求 5 秒，含一次元数据补全，留出余量） |
+| 性质 | `effect: 'read'`（写入的引用快照与审计是执行证据，不是业务效果；读工具不进入 `task_operations` 登记，也没有“写入效果可能已发生”的复核语义）、`retryPolicy: 'safe'`、`concurrencyPolicy: 'serialized'`（同一 Attempt 内串行，保证引用序号连续）、`timeoutMs: 25_000`（WeKnora 检索与元数据补全各最多 10 秒，留出余量，并小于 DSH 侧默认的 30 秒；2026-11-12 随检索超时放宽由 15 秒调整，优化方案第 11 节） |
 | 内置工具清单 | `builtin-tools.ts` 登记为平台工具，`assembly: 'personal-conversation'`，约束写“仅个人对话、只检索会话所选且员工可见的知识库、只读” |
 
 不提供“读取整篇文档”：整篇可能很长、且一篇文档的不同章节可见范围相同但敏感程度不同，第一期只返回与检索词相关的分段。

@@ -88,7 +88,7 @@
 | `match_count` | 10，取回后在平台侧截断 |
 | `rerank` | 不传，使用 WeKnora 工作空间默认的重排序配置（生产配置内网重排序模型，4.1；本地开发没有重排序模型时由 WeKnora 回退） |
 
-- 每个请求超时 5 秒（代码常量），检索加元数据最长约 10 秒。不重试，避免拖慢员工执行；超时按第 7 节处理。
+- 每个请求超时 10 秒（代码常量；2026-11-12 由 5 秒放宽，优化方案第 11 节），检索加元数据最长约 20 秒，需要补充检索（优化方案 O3）时约 30 秒。超时只影响检索与文档元数据两类请求，员工端管理操作（15 秒）与上传下载（120 秒）不变；Agent 的检索工具单次最多约 20 秒，工具契约超时为 25 秒，每次回答最多调用 3 次。不重试，避免拖慢员工执行；超时按第 7 节处理。
 - 响应中的 `meta.rerank.outcome` 表示重排序是否失败回退。回退时结果仍然可用。**优化方案 O5：** 平台记录最近一次结果与时间（迁移 0127），管理端健康状态显示，`model_unavailable`、`model_error`（检索已降级为不重排）时页头提示。
 
 ### 4.4 结果处理
@@ -221,7 +221,7 @@ DSH 适配器拼装“# 企业知识上下文”（`dsh-acp-runtime-adapter.ts`�
 1. **知识端口。** 把 `orchestration-dependencies.ts` 中对 `PostgresKnowledgeService` 具体类的依赖改为接口 `KnowledgeProvider`（`resolveContext`、`addCitationFooter`）。生产实现为 `WeKnoraKnowledgeProvider`，测试中注入按 WeKnora 接口实现的替身（第 12 节），不再使用原有实现。
 2. **调度器。** `attempt-dispatcher.ts` 改为传入 `userId`、`purpose` 与 Agent 版本，由 Provider 自行完成第 5 节的授权计算，并传入本次所选知识库（一期只有个人空间会话，5.7；二期增加定时任务、验证案例，5.8）；Provider 用所选知识库与可见知识库的交集检索（二期团队空间按 WK6 取成员交集），并校验 Agent 岗位角色（WK14）；没有所选知识库时不调用 WeKnora；不再传 `dataScopes` 和 `roleIds`。`agent-routine` 仍不调用 Provider。
 3. **引用快照。** 新表 `run_knowledge_citations` 记录本次 Attempt 注入的每个分段：外部文档 ID、知识库 ID 和名称、标题、文件名、更新时间、校验值、摘录、得分。它不依赖 `knowledge_documents`，替代 `run_knowledge_sources` 在生产中的作用。引用页脚和员工端来源展示都读这张表；文档之后被删除，快照仍保留。
-4. **引用页脚。** 标题为“本次检索到的资料”（优化方案 O6，原为“参考来源”），每条格式为 `【n】标题（更新于 YYYY-MM-DD）`。WeKnora 的文档没有版本号，所以不显示“v版本”。不可用时追加 WK2 的说明（第 7 节）。
+4. **引用页脚。** 标题为“本次检索到的资料”（优化方案 O6，原为“参考来源”），每条格式为 `【n】标题（更新于 YYYY-MM-DD）`。WeKnora 的文档没有版本号，所以不显示“v版本”。不可用时追加 WK2 的说明（第 7 节）。页脚只给员工看：回答作为对话历史再发给模型前去掉页脚，平台追加页脚前也先去掉模型照抄写在末尾的同类段落（按行识别，容忍加粗、Markdown 标题、`*` 列表与分隔线等写法），避免出现两段；整条消息只有页脚时保留原文（优化方案第 11 节）。
 5. **员工端来源展示。** 执行详情中的“企业知识”来源，显示标题、文件名、更新日期和摘录。查看者当前仍能看到该知识库且文档未删除时，提供跳转到员工端“知识库”中对应文档的链接；否则只显示快照。
 6. **删除原有知识库模块（WK1）。** 一期在 WK-S1 中删除：
    - **代码：** `server/src/modules/knowledge/postgres-knowledge-service.ts`，以及 `main.ts`、`run-orchestration-service.ts`、`orchestration-dependencies.ts` 中的装配；`run-types.ts`、`attempt-dispatcher.ts` 中的 `knowledgeSources` 字段改为引用快照；`postgres-run-repository.ts` 写 `run_knowledge_sources` 的逻辑改为写 `run_knowledge_citations`；`postgres-conversation-repository.ts` 的来源查询改读新表；员工端 `ConversationView.vue` 与 `types/domain.ts` 的来源字段随之调整（新快照没有 `synthetic`、`version`、`dataScope`）；

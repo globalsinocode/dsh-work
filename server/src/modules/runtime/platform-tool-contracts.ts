@@ -242,7 +242,8 @@ export const platformToolContracts = {
       },
       required: ['documents', 'skippedBases', 'movedBases', 'remainingCalls'],
     },
-    effect: 'read', retryPolicy: 'safe', concurrencyPolicy: 'serialized', timeoutMs: 15_000,
+    // WeKnora 检索与文档元数据各最多 10 秒（weknoraSearchTimeoutMs），留出余量；须小于 DSH 侧默认 30 秒。
+    effect: 'read', retryPolicy: 'safe', concurrencyPolicy: 'serialized', timeoutMs: 25_000,
   }),
   propose_memory: contract({
     inputSchema: {

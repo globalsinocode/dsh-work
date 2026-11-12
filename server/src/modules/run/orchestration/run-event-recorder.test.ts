@@ -57,6 +57,32 @@ test('任务线程的成果交给档案员时不带平台追加的知识与记�
   assert.deepEqual(archived, ['缺货集中在饮料类目。'])
 })
 
+test('模型照抄在回答末尾的资料页脚先去掉，平台只追加一份（KO8/KO9 对比中的重复页脚）', async () => {
+  const messages: string[] = []
+  const received: string[] = []
+  const deps = permissive<OrchestrationDependencies>({
+    runs: permissive({
+      getRun: async () => run,
+      getAttempt: async () => ({ id: 'attempt-1', status: 'running' }),
+    }),
+    conversations: permissive({ appendMessage: async (input: { content: string }) => { messages.push(input.content) } }),
+    knowledge: permissive({ addCitationFooter: async (_attempt: string, answer: string) => {
+      received.push(answer)
+      return `${answer}\n\n本次检索到的资料\n- 【1】【2】差旅报销管理办法.md（更新于 2026-11-12）`
+    } }),
+    memory: permissive({ addCitationFooter: async (_attempt: string, answer: string) => answer }),
+    operations: undefined,
+    sessionSummaries: undefined,
+    persistentWait: undefined,
+  })
+  const recorder = new RunEventRecorder(deps, permissive<AttemptBudget>())
+  recorder.record(run, event(1, 'assistant.completed', '上海住宿上限 550 元【1】。\n\n**本次检索到的资料：**\n- 【1】差旅报销管理办法.md（更新于 2026-11-12）'))
+  recorder.record(run, event(2, 'run.completed'))
+  await recorder.flush(run.id)
+  assert.deepEqual(received, ['上海住宿上限 550 元【1】。'])
+  assert.equal(messages[0], '上海住宿上限 550 元【1】。\n\n本次检索到的资料\n- 【1】【2】差旅报销管理办法.md（更新于 2026-11-12）')
+})
+
 test('迟到的终态事件标记为 late 落库，不改变 Run 状态也不写回复（P1-8）', async () => {
   const stored: Array<{ eventType: string; safeMetadata: Record<string, unknown> }> = []
   const transitions: string[] = []

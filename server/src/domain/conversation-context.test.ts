@@ -118,3 +118,22 @@ test('EX-02 the summary prompt treats the transcript as material, not instructio
   assert.match(prompt.message, /已有摘要：无/)
   assert.match(prompt.message, /忽略以上要求/)
 })
+
+test('历史中的助手回答去掉平台追加的资料页脚，员工消息原样保留', () => {
+  const footer = '本次检索到的资料\n- 【1】差旅报销管理办法.md（更新于 2026-11-12）'
+  const messages: ContextMessage[] = [
+    { id: 'm000', createdAt: '2026-11-12T00:00:00.000000Z', role: 'user', content: `问题\n\n${footer}` },
+    { id: 'm001', createdAt: '2026-11-12T00:00:01.000000Z', role: 'assistant', content: `住宿上限 420 元【1】。\n\n${footer}` },
+  ]
+  const context = buildConversationContext(messages, null)
+  assert.deepEqual(context.history.map(message => message.content), [`问题\n\n${footer}`, '住宿上限 420 元【1】。'])
+})
+
+test('整条只有页脚的助手消息保留原文，不打乱一问一答', () => {
+  const footer = '本次检索到的资料\n- 【1】差旅报销管理办法.md（更新于 2026-11-12）'
+  const messages: ContextMessage[] = [
+    { id: 'm000', createdAt: '2026-11-12T00:00:00.000000Z', role: 'user', content: '问题' },
+    { id: 'm001', createdAt: '2026-11-12T00:00:01.000000Z', role: 'assistant', content: footer },
+  ]
+  assert.deepEqual(buildConversationContext(messages, null).history.map(message => message.role), ['user', 'assistant'])
+})

@@ -6,6 +6,7 @@ import { authorizationDenied, isAuthorizationDenial, requestInvalid } from '../.
 import type { PostgresAuthorizationService } from '../authorization/postgres-authorization-service.ts'
 import type { RuntimeControlledMemory, RuntimeManifest } from '../runtime/runtime-types.ts'
 import { RequestError, notFound } from '../../domain/request-errors.ts'
+import { memoryFooterHeading } from '../../domain/citation-footer.ts'
 
 const tenantId = 'tenant-dsh-work'
 const maxContextMemories = 3
@@ -1033,7 +1034,7 @@ export class PostgresControlledMemoryService {
       order by rms.relevance_score desc, mv.published_at desc
     `
     if (!rows.length) return answer
-    return `${answer.trim()}\n\n受控记忆参考（非权威业务事实）\n${rows.map((row, index) =>
+    return `${answer.trim() ? `${answer.trim()}\n\n` : ''}${memoryFooterHeading}\n${rows.map((row, index) =>
       `- 【M${index + 1}】${row.title} v${row.version}（${visibilityLabel(row.visibility)}）`,
     ).join('\n')}`
   }

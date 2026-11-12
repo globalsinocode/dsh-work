@@ -8,6 +8,7 @@ import { knowledgeViewLevel, visibleBaseIdsSql } from './knowledge-access.ts'
 import type { KnowledgeCitation, KnowledgeProvider, KnowledgeResolution, KnowledgeToolResult } from './knowledge-provider.ts'
 import type { PostgresKnowledgeConnection } from './knowledge-connection.ts'
 import { WeKnoraRequestError, WeKnoraUnavailableError, type WeKnoraClient, type WeKnoraFailureReason } from './weknora-client.ts'
+import { knowledgeFooterHeading, knowledgeFooterNotes } from '../../domain/citation-footer.ts'
 
 const tenantId = 'tenant-dsh-work'
 const maxContextDocuments = 3
@@ -308,18 +309,19 @@ export class WeKnoraKnowledgeProvider implements KnowledgeProvider {
         if (entry) entry.ordinals.push(row.ordinal)
         else documents.set(row.documentId, { ordinals: [row.ordinal], title: row.title, updatedAt: row.updatedAt })
       }
-      sections.push(['本次检索到的资料', ...[...documents.values()].map(document =>
+      sections.push([knowledgeFooterHeading, ...[...documents.values()].map(document =>
         `- ${document.ordinals.map(ordinal => `【${ordinal}】`).join('')}${document.title}（更新于 ${formatDate(document.updatedAt)}）`)].join('\n'))
     } else if (attempt?.status === 'ok') {
-      sections.push('已查询所添加的知识库，没有找到相关内容，本次回答未引用企业知识。')
+      sections.push(knowledgeFooterNotes.noMatch)
     }
     if (attempt?.reason === 'agent_not_permitted') {
-      sections.push('当前 AI 同事未开通企业知识，本次未使用所添加的知识库。')
+      sections.push(knowledgeFooterNotes.agentNotPermitted)
     }
-    for (const name of attempt?.skipped ?? []) sections.push(`知识库“${name}”你已无权查看，本次未使用。`)
-    for (const name of attempt?.moved ?? []) sections.push(`知识库“${name}”的连接已更换，暂不可用，本次未使用；如需继续使用请联系管理员。`)
-    if (attempt?.status === 'unavailable') sections.push('企业知识库暂不可用，本次回答未引用企业知识。')
-    return sections.length ? `${answer.trim()}\n\n${sections.join('\n\n')}` : answer
+    for (const name of attempt?.skipped ?? []) sections.push(knowledgeFooterNotes.skipped(name))
+    for (const name of attempt?.moved ?? []) sections.push(knowledgeFooterNotes.moved(name))
+    if (attempt?.status === 'unavailable') sections.push(knowledgeFooterNotes.unavailable)
+    if (!sections.length) return answer
+    return answer.trim() ? `${answer.trim()}\n\n${sections.join('\n\n')}` : sections.join('\n\n')
   }
 
   private async retrieve(client: WeKnoraClient, query: string, scope: SelectedBaseRow[]): Promise<{

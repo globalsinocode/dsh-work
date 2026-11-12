@@ -88,12 +88,12 @@ export interface WeKnoraDocument {
 export interface WeKnoraClientConfig {
   baseUrl: string
   apiKey: string
-  /** 检索超时（4.3）：5 秒，不重试。 */
+  /** 检索超时（4.3）：10 秒，不重试（2026-11-12 由 5 秒放宽，在线嵌入模型时约 3% 的检索超过 5 秒）。 */
   timeoutMs?: number
   fetch?: typeof fetch
 }
 
-export const weknoraSearchTimeoutMs = 5000
+export const weknoraSearchTimeoutMs = 10000
 /** 员工端管理操作不在执行链路上，可以多等一会儿；上传与下载按文件大小再放宽。 */
 const managementTimeoutMs = 15000
 const uploadTimeoutMs = 120000

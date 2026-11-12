@@ -4,6 +4,7 @@ import type { JsonObject, RunRecord, StoredRunEvent } from '../run-types.ts'
 import type { AttemptBudget } from './attempt-budget.ts'
 import { tenantId, type OrchestrationDependencies } from './orchestration-dependencies.ts'
 import { isRunTerminalState } from '../run-state-machine.ts'
+import { stripCitationFooters } from '../../../domain/citation-footer.ts'
 
 /** Events that change state, messages or budget; deltas and tool progress are log-only. */
 const CONSEQUENTIAL_EVENTS = new Set([
@@ -116,10 +117,13 @@ export class RunEventRecorder {
       }
       await this.deps.operations?.appendAudit(run.requestedBy, 'run.waiting', run.id, 'success', event.trace_id, 'Worker 已释放，等待动作审批')
     } else if (event.event_type === 'assistant.completed' && event.display_message) {
+      // 模型照抄历史写在末尾的资料页脚先去掉，再由平台追加本次的页脚，避免出现两段（domain/citation-footer）。
+      const answer = stripCitationFooters(event.display_message)
       let assistantContent = this.deps.knowledge
-        ? await this.deps.knowledge.addCitationFooter(event.attempt_id, event.display_message)
-        : event.display_message
+        ? await this.deps.knowledge.addCitationFooter(event.attempt_id, answer)
+        : answer
       if (this.deps.memory) assistantContent = await this.deps.memory.addCitationFooter(event.attempt_id, assistantContent)
+      if (!assistantContent.trim()) assistantContent = event.display_message
       this.assistantOutputs.set(event.attempt_id, assistantContent)
       this.modelOutputs.set(event.attempt_id, event.display_message)
       if (run.sessionId) {

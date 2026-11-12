@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { stripCitationFooters } from './citation-footer.ts'
 
 /**
  * EX-02: what a conversation turn carries into the Runtime Manifest.
@@ -98,6 +99,11 @@ export function buildConversationContext(
   budget: ConversationBudget = defaultConversationBudget,
 ): ConversationContext {
   if (!messages.length) return { history: [], summary: null, summaryRequest: null }
+  // 平台追加的资料页脚不发回模型，否则模型会照抄（domain/citation-footer）。整条只有页脚时保留原文，
+  // 不让助手消息消失、打乱一问一答的顺序。
+  messages = messages.map(message => message.role === 'assistant'
+    ? { ...message, content: stripCitationFooters(message.content).trim() ? stripCitationFooters(message.content) : message.content }
+    : message)
   const firstIndex = Math.max(0, messages.findIndex(message => message.role === 'user'))
   const first = messages[firstIndex]!
   const firstContent = first.content.slice(0, budget.firstMessageChars)

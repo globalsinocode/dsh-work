@@ -848,3 +848,19 @@ docker exec WeKnora-postgres psql -U postgres -d WeKnora -c "select id, name, ty
 ### 15.3 更换 WeKnora 地址
 
 更换地址（或部署配置中的 `WEKNORA_BASE_URL`）后，原有知识库标为“原连接已更换”，不再参与检索、员工端不显示。新地址只是同一实例的另一个访问地址，或已把数据迁到新实例时，在“全部知识库”中逐个点“恢复”：平台会先确认新地址的 WeKnora 中存在该知识库。
+
+### 15.4 已知问题：关键词检索失败（WeKnora v0.9.0）
+
+WeKnora v0.9.0 中，未开启问题生成的知识库做关键词检索时，ParadeDB 报 `Unsupported query shape`。WeKnora 保留向量结果、接口仍返回 200，员工端没有报错，但混合检索实际只剩向量检索，含编号、型号、专有名词等精确词的提问召回会变差。平台建的知识库都不开启问题生成（开启会把文档发给对话模型，见 15.1 第 2 条），所以全部受影响。上游登记为 [Tencent/WeKnora#4899](https://github.com/Tencent/WeKnora/issues/4899)，修复见 [Tencent/WeKnora#4908](https://github.com/Tencent/WeKnora/pull/4908)。不要为绕过此问题在 WeKnora 中开启问题生成。
+
+判断是否受影响（容器名按实际部署）：
+
+```bash
+docker logs --since 24h WeKnora-app 2>&1 | grep -c 'Keywords retrieval failed'
+```
+
+结果大于 0 即受影响。升级到包含修复的 WeKnora 版本后：
+
+1. 重跑契约测试（[开发与测试](../development/development.md)）。
+2. 在员工端用含精确编号或型号的提问检索一次，确认上面的命令在升级后不再增加。
+3. 关键词检索恢复后分值会变化，查看第 1 步契约测试“最低相关度”用例输出的分值，确认命中仍高于、无关提问仍低于最低相关度 0.5。
