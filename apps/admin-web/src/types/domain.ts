@@ -91,6 +91,9 @@ export interface AdminSession {
   identityProvider: 'prototype-sso' | 'ai-hub-oidc' | 'local-password'
   apiAudience: 'admin'
   permissions: string[]
+  /** 各模块的可用级别（管理端模块权限方案 5.6）；旧服务端没有时由前端按权限码推算。 */
+  adminModules?: Partial<Record<'agent' | 'skill' | 'connector' | 'model' | 'dlp' | 'knowledge' | 'org' | 'identity' | 'dingtalk' | 'ops', 'none' | 'read' | 'write'>>
+  platformAdmin?: boolean
 }
 
 export interface IdentityRoleSummary {
@@ -259,6 +262,20 @@ export interface DingTalkUnboundEmployee {
   status: 'unbound' | 'invalid'
   revokeReason: string | null
   selfRebindLocked: boolean
+  /** 当前管理员能否操作这名员工的绑定（不能操作自己、平台管理员或权限更高的员工）。 */
+  manageable: boolean
+}
+
+/** 钉钉集成 › 已绑定名单（只有钉钉权限也可查看）。 */
+export interface DingTalkBoundEmployee {
+  id: string
+  name: string
+  loginAccount: string
+  department: string
+  dingtalkName: string | null
+  boundBy: 'self' | 'admin'
+  boundAt: string
+  manageable: boolean
 }
 
 export interface IdentityUserPage {

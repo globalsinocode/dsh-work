@@ -5,6 +5,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { AdminShell } from '@dsh-work/admin-components'
 import { roleLabels, useAuthStore } from '@/stores/auth'
 import { useAdminAssistantStore } from '@/stores/admin-assistant'
+import { ADMIN_MODULE_LABELS, ADMIN_MODULES, READ_ONLY_MODULES, type AdminModule } from '@/utils/admin-modules'
 
 const route = useRoute()
 const router = useRouter()
@@ -18,6 +19,14 @@ const routeTitle = computed(() => String(route.meta.title ?? '管理后台'))
 const routeSubtitle = computed(() => typeof route.meta.subtitle === 'string' ? route.meta.subtitle : undefined)
 const publicRoute = computed(() => Boolean(route.meta.public))
 const shellRoute = computed(() => route.matched.length > 0 && !publicRoute.value)
+/** 只读模块的页面说明（管理端模块权限方案 AP15）：修改类操作已停用。 */
+const readOnlyModule = computed(() => {
+  const owner = route.meta.module as string | undefined
+  if (!owner || !(ADMIN_MODULES as readonly string[]).includes(owner)) return null
+  const module = owner as AdminModule
+  if (READ_ONLY_MODULES.has(module) || authStore.moduleLevels[module] !== 'read') return null
+  return ADMIN_MODULE_LABELS[module]
+})
 
 function navigate(path: string) {
   void router.push(path)
@@ -59,6 +68,7 @@ function logout() {
     :can-read-admin="authStore.canReadAdmin"
     :can-read-audit="authStore.canReadAudit"
     :identity-administration-available="authStore.identityAdministrationAvailable"
+    :can-see="authStore.canSee"
     :conversation-items="conversationItems"
     :selected-conversation-id="assistant.selectedId"
     @navigate="navigate"
@@ -66,6 +76,18 @@ function logout() {
     @logout="logout"
     @select-conversation="selectConversation"
   >
+    <el-alert
+      v-if="readOnlyModule"
+      class="module-read-only-alert"
+      type="warning"
+      :closable="false"
+      show-icon
+      :title="`你只有“查看${readOnlyModule}”权限，新建、编辑和删除等修改操作已停用。`"
+    />
     <router-view />
   </AdminShell>
 </template>
+
+<style scoped>
+.module-read-only-alert { margin-bottom: 10px; }
+</style>

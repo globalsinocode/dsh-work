@@ -262,3 +262,27 @@ test('LOCAL-AUTH-P1 phone accounts accept +86 and prevent duplicate equivalent n
     await expect(form.getByText('登录账号已存在，请使用其他手机号或邮箱', { exact: true })).toBeVisible()
   }
 })
+
+// AMP-P1-02（e2e/catalog/admin-permissions.md）：平台管理员按模块新建角色，编码由系统生成。
+test('AMP-P1-02 administrator creates a role by module without entering a code', async ({ page }) => {
+  const name = `知识库管理员-${randomUUID().slice(0, 6)}`
+  await page.goto(`${adminUrl}/identity`)
+  await signIn(page, 'browser.admin@example.invalid', 'AdminPass123')
+  await expect(page).toHaveURL(`${adminUrl}/identity`)
+  await page.getByRole('tab', { name: '角色与权限' }).click()
+  await page.getByRole('button', { name: '新建角色', exact: true }).click()
+  const dialog = page.getByRole('dialog', { name: '新建角色' })
+  await expect(dialog.getByText('系统自动生成，不需要填写')).toBeVisible()
+  await expect(dialog.getByRole('region', { name: '员工与权限' })).toBeVisible()
+  await expect(dialog.getByRole('radiogroup', { name: '员工端企业知识库级别' })).toBeVisible()
+  await dialog.getByLabel('角色名称').fill(name)
+  const knowledge = dialog.getByRole('region', { name: '企业知识库' })
+  // Element Plus 的复选框原生输入框不可见，点击其标签文字勾选。
+  await knowledge.getByText('管理端修改', { exact: false }).click()
+  await expect(knowledge.getByRole('checkbox', { name: /管理端修改/ })).toBeChecked()
+  await dialog.getByRole('button', { name: '创建角色' }).click()
+  await expect(dialog).toBeHidden()
+  const row = page.getByRole('row').filter({ hasText: name })
+  await expect(row.getByText('企业知识库·修改')).toBeVisible()
+  await expect(row.getByText(/^role_[0-9a-f]{8}$/)).toBeVisible()
+})

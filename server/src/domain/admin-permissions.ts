@@ -5,7 +5,7 @@
  * 不再各自写 `admin:*` / `admin:write` 的组合。纯函数，不访问数据库。
  */
 
-export const ADMIN_MODULES = ['agent', 'skill', 'connector', 'model', 'dlp', 'knowledge', 'org', 'ops'] as const
+export const ADMIN_MODULES = ['agent', 'skill', 'connector', 'model', 'dlp', 'knowledge', 'org', 'identity', 'dingtalk', 'ops'] as const
 export type AdminModule = typeof ADMIN_MODULES[number]
 export type AdminLevel = 'read' | 'write'
 
@@ -26,6 +26,8 @@ export const ADMIN_MODULE_LABELS: Record<AdminModule, string> = {
   dlp: '数据防护',
   knowledge: '企业知识库',
   org: '组织架构',
+  identity: '员工与权限',
+  dingtalk: '钉钉集成',
   ops: '运营',
 }
 
@@ -181,9 +183,10 @@ export function adminModuleForAction(actionType: string): AdminModule | null {
  * 未登记的路径一律拒绝（默认拒绝）。
  */
 export type AdminRouteRule =
-  | { kind: 'module'; module: AdminModule }
+  /** `writePlatformOnly`：查看按模块，修改只限平台管理员（钉钉应用配置，方案 AP12）。 */
+  | { kind: 'module'; module: AdminModule; writePlatformOnly?: boolean }
   | { kind: 'session' }
-  | { kind: 'identity' }
+  | { kind: 'any-admin-read' }
   | { kind: 'platform-only' }
   | { kind: 'audit' }
   | { kind: 'assistant' }
@@ -215,12 +218,13 @@ const ROUTE_SEGMENT_RULES: Record<string, AdminRouteRule> = {
   workspaces: { kind: 'module', module: 'ops' },
   tasks: { kind: 'module', module: 'ops' },
   usage: { kind: 'module', module: 'ops' },
-  health: { kind: 'module', module: 'ops' },
+  // 系统健康（含知识库检索、执行容器等组件状态）供各模块页面提示可用性，任一模块管理员可读。
+  health: { kind: 'any-admin-read' },
   'platform-status': { kind: 'module', module: 'ops' },
   'audit-events': { kind: 'audit' },
   operations: { kind: 'audit' },
-  identity: { kind: 'identity' },
-  dingtalk: { kind: 'platform-only' },
+  identity: { kind: 'module', module: 'identity' },
+  dingtalk: { kind: 'module', module: 'dingtalk' },
   assistant: { kind: 'assistant' },
 }
 
@@ -233,9 +237,11 @@ export function adminRouteRule(path: string): AdminRouteRule | null {
   if (segment === 'data-protection' && (second === 'terms' || second === 'allowlist')) {
     return { kind: 'data-protection-terms' }
   }
-  // 员工的钉钉绑定（查看、代绑、解绑、解锁）属于钉钉集成，只限平台管理员（方案 AP6）。
+  // 钉钉应用配置（CorpId、AppKey、AppSecret）：查看为钉钉集成查看级，保存与清除只限平台管理员（方案 AP12）。
+  if (segment === 'dingtalk' && second === 'settings') return { kind: 'module', module: 'dingtalk', writePlatformOnly: true }
+  // 员工的钉钉绑定（查看、代绑、解绑、解锁）属于钉钉集成模块（方案 AP12）。
   if (segment === 'identity' && /^identity\/users\/[^/]+\/dingtalk-binding(\/|$)/.test(rest)) {
-    return { kind: 'platform-only' }
+    return { kind: 'module', module: 'dingtalk' }
   }
   return ROUTE_SEGMENT_RULES[segment ?? ''] ?? null
 }
@@ -246,14 +252,20 @@ export function registeredAdminRouteSegments(): string[] {
 }
 
 /**
- * 跨模块选择器（方案 AP3、5.2）：持有 Agent 修改权限时，可读取 Agent 草稿需要的候选列表，
+ * 跨模块选择器（方案 AP3、5.2）：持有下列模块权限时，可读取表单需要的其他模块候选列表，
  * 不需另授对方模块的查看权限；处理函数按 `view: 'selector'` 只返回精简字段。
  */
-const AGENT_SELECTOR_PATHS: ReadonlySet<string> = new Set([
-  `${ADMIN_API_PREFIX}skills`,
-  `${ADMIN_API_PREFIX}skills/builtin`,
-  `${ADMIN_API_PREFIX}runtimes/builtin-tools`,
-  `${ADMIN_API_PREFIX}connectors`,
+const SELECTOR_PATHS: ReadonlyMap<string, ReadonlyArray<readonly [AdminModule, AdminLevel]>> = new Map([
+  // Agent 草稿的能力步骤
+  [`${ADMIN_API_PREFIX}skills`, [['agent', 'write']]],
+  [`${ADMIN_API_PREFIX}skills/builtin`, [['agent', 'write']]],
+  [`${ADMIN_API_PREFIX}connectors`, [['agent', 'write']]],
+  // Agent 能力与 Skill 所需工具
+  [`${ADMIN_API_PREFIX}runtimes/builtin-tools`, [['agent', 'write'], ['skill', 'read']]],
+  // Skill 可见范围、Skill 审核选择可见角色
+  [`${ADMIN_API_PREFIX}identity/roles`, [['skill', 'write']]],
+  // 主动任务选择接收人
+  [`${ADMIN_API_PREFIX}identity/users`, [['agent', 'write']]],
 ])
 
 export type AdminRouteView = 'full' | 'selector'
@@ -281,11 +293,11 @@ export function decideAdminRouteAccess(permissions: Iterable<string>, path: stri
   switch (rule.kind) {
     case 'session':
       return ALLOW
-    case 'identity':
-      if (write) return isPlatformAdmin(granted) ? ALLOW : { allowed: false, message: '只有平台管理员可以修改员工授权和身份同步配置' }
+    case 'any-admin-read':
+      if (write) return { allowed: false, message: '该管理接口只提供查看' }
       return hasModuleAdministrationAccess(granted) ? ALLOW : { allowed: false, message: '当前用户没有管理读取权限' }
     case 'platform-only':
-      return isPlatformAdmin(granted) ? ALLOW : { allowed: false, message: '只有平台管理员可以管理钉钉集成' }
+      return isPlatformAdmin(granted) ? ALLOW : { allowed: false, message: '只有平台管理员可以执行该操作' }
     case 'audit':
       if (write) return isPlatformAdmin(granted) ? ALLOW : { allowed: false, message: '当前用户没有管理写权限' }
       return hasAuditAccess(granted) ? ALLOW : { allowed: false, message: '当前用户没有审计读取权限' }
@@ -301,9 +313,12 @@ export function decideAdminRouteAccess(permissions: Iterable<string>, path: stri
         : { allowed: false, message: write ? '当前用户没有数据防护的修改权限' : '当前用户没有数据防护的查看权限' }
     case 'module': {
       if (write && READ_ONLY_MODULES.has(rule.module)) return { allowed: false, message: `${ADMIN_MODULE_LABELS[rule.module]}只提供查看` }
+      if (write && rule.writePlatformOnly) {
+        return isPlatformAdmin(granted) ? ALLOW : { allowed: false, message: `${ADMIN_MODULE_LABELS[rule.module]}的应用配置只有平台管理员可以修改` }
+      }
       const level: AdminLevel = write ? 'write' : 'read'
       if (hasAdminModuleAccess(granted, rule.module, level)) return ALLOW
-      if (!write && AGENT_SELECTOR_PATHS.has(path) && hasAdminModuleAccess(granted, 'agent', 'write')) {
+      if (!write && (SELECTOR_PATHS.get(path) ?? []).some(([module, needed]) => hasAdminModuleAccess(granted, module, needed))) {
         return { allowed: true, view: 'selector' }
       }
       return { allowed: false, message: `当前用户没有${ADMIN_MODULE_LABELS[rule.module]}的${write ? '修改' : '查看'}权限` }

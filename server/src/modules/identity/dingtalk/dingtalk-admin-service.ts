@@ -5,7 +5,7 @@ import { recordUserNotification } from '../../notification/user-notification-wri
 import { IdentityAccessError } from '../auth-service.ts'
 import { hashOpaque, randomOpaque } from '../secure-values.ts'
 import { IdentitySessionRepository } from '../session-repository.ts'
-import { requirePlatformAdminOnly } from '../../authorization/admin-actor.ts'
+import { assertCanManageUser, manageableUserIds, requireAdminModuleActor, requirePlatformAdminOnly } from '../../authorization/admin-actor.ts'
 import { isManagementPermission } from '../../../domain/admin-permissions.ts'
 import { isAuthorizationDenial } from '../../../domain/authorization-errors.ts'
 import { DINGTALK_CHANNEL, invalidateUserBindings, revokeBindingSessions } from './dingtalk-bindings.ts'
@@ -77,7 +77,7 @@ export class DingTalkAdministrationService {
 
   /** “钉钉集成 › 应用配置”：查看、保存（先向钉钉验证凭据）与清除。只有平台管理员可用。 */
   async getSettings(actorId: string): Promise<DingTalkSettingsView> {
-    await this.database.begin(transaction => assertPlatformAdmin(transaction, actorId))
+    await this.database.begin(transaction => assertDingTalkAdmin(transaction, actorId, 'read'))
     return this.requireManager().view()
   }
 
@@ -98,7 +98,7 @@ export class DingTalkAdministrationService {
 
   async getBinding(userId: string, actorId: string): Promise<DingTalkBindingView> {
     return this.database.begin(async transaction => {
-      await assertPlatformAdmin(transaction, actorId)
+      await assertDingTalkAdmin(transaction, actorId, 'read')
       await requireLocalUser(transaction, userId)
       return readBinding(transaction, userId)
     })
@@ -110,7 +110,7 @@ export class DingTalkAdministrationService {
     const directory = this.settings.directory(configuration)
     const mobile = normalizeMobile(input.mobile)
     const target = await this.database.begin(async transaction => {
-      await assertPlatformAdmin(transaction, actorId)
+      await assertDingTalkAdmin(transaction, actorId, 'write', userId)
       const user = await requireLocalUser(transaction, userId)
       await this.assertBindable(transaction, userId, actorId, configuration, 'preview')
       const [own] = await transaction`
@@ -178,7 +178,7 @@ export class DingTalkAdministrationService {
     }
     const token = input.confirmationToken
     return this.database.begin(async transaction => {
-      await assertPlatformAdmin(transaction, actorId)
+      await assertDingTalkAdmin(transaction, actorId, 'write', userId)
       const [ticket] = await transaction<{
         externalUserId: string; externalUnionId: string | null; externalDisplayName: string | null
         externalDepartment: string | null; payload: ConfirmationPayload
@@ -258,7 +258,7 @@ export class DingTalkAdministrationService {
   async unbind(userId: string, input: { lockSelfRebind?: unknown }, actorId: string) {
     const lock = input.lockSelfRebind === true
     return this.database.begin(async transaction => {
-      await assertPlatformAdmin(transaction, actorId)
+      await assertDingTalkAdmin(transaction, actorId, 'write', userId)
       await requireLocalUser(transaction, userId, true)
       const invalidated = await invalidateUserBindings(transaction, userId, 'admin_unbind', { lockSelfRebind: lock })
       if (!invalidated.length) {
@@ -286,7 +286,7 @@ export class DingTalkAdministrationService {
   /** 解除“锁定自行绑定”。 */
   async unlock(userId: string, actorId: string) {
     return this.database.begin(async transaction => {
-      await assertPlatformAdmin(transaction, actorId)
+      await assertDingTalkAdmin(transaction, actorId, 'write', userId)
       await requireLocalUser(transaction, userId, true)
       await transaction`
         update external_account_bindings set self_rebind_locked = false, updated_at = now()
@@ -299,7 +299,7 @@ export class DingTalkAdministrationService {
 
   /** “钉钉集成”页概况。 */
   async overview(actorId: string) {
-    await this.database.begin(transaction => assertPlatformAdmin(transaction, actorId))
+    await this.database.begin(transaction => assertDingTalkAdmin(transaction, actorId, 'read'))
     const [status] = await this.database<{ checkedAt: Date | null; status: string | null; capabilities: Record<string, string>; message: string | null }[]>`
       select checked_at as "checkedAt", status, capabilities, message from external_channel_status
        where tenant_id = ${tenantId} and channel = ${DINGTALK_CHANNEL}
@@ -342,7 +342,7 @@ export class DingTalkAdministrationService {
    * 返回“未找到”说明权限已开通，返回权限错误说明未开通。不读取真实员工信息。
    */
   async checkConnection(actorId: string) {
-    await this.database.begin(transaction => assertPlatformAdmin(transaction, actorId))
+    await this.database.begin(transaction => assertDingTalkAdmin(transaction, actorId, 'write'))
     const capabilities: Record<string, 'ok' | 'denied' | 'unknown'> = {}
     let status: 'ok' | 'configuration_error' | 'unavailable' = 'ok'
     let message: string | null = null
@@ -382,7 +382,7 @@ export class DingTalkAdministrationService {
 
   /** 未绑定名单：有效独立账号中没有有效绑定的员工（含已失效）。 */
   async listUnbound(input: { page?: number; pageSize?: number }, actorId: string) {
-    await this.database.begin(transaction => assertPlatformAdmin(transaction, actorId))
+    await this.database.begin(transaction => assertDingTalkAdmin(transaction, actorId, 'read'))
     const pageSize = Math.min(100, Math.max(10, Number.isInteger(input.pageSize) ? input.pageSize! : 50))
     const page = Math.max(1, Number.isInteger(input.page) ? input.page! : 1)
     const rows = await this.database<{ id: string; name: string; loginAccount: string; department: string; status: 'unbound' | 'invalid'; revokeReason: string | null; selfRebindLocked: boolean; total: number }[]>`
@@ -403,7 +403,34 @@ export class DingTalkAdministrationService {
        order by (latest.id is null) desc, u.display_name, u.id
        limit ${pageSize} offset ${(page - 1) * pageSize}
     `
-    return { items: rows.map(({ total: _total, ...row }) => row), total: rows[0]?.total ?? 0, page, pageSize }
+    // manageable：操作人能否操作这名员工（AP13 ③④），只用于页面显示按钮。
+    const manageable = await manageableUserIds(this.database, actorId, rows.map(row => row.id))
+    return { items: rows.map(({ total: _total, ...row }) => ({ ...row, manageable: manageable.has(row.id) })), total: rows[0]?.total ?? 0, page, pageSize }
+  }
+
+  /**
+   * 已绑定名单（2026-11-15，评审 #127）：只有钉钉集成权限的管理员在钉钉集成页内解绑、解锁，
+   * 不需要员工与权限的查看权限。只返回姓名、账号、部门与绑定方式；按姓名或登录账号搜索。
+   */
+  async listBound(input: { page?: number; pageSize?: number; query?: string }, actorId: string) {
+    await this.database.begin(transaction => assertDingTalkAdmin(transaction, actorId, 'read'))
+    const pageSize = Math.min(100, Math.max(10, Number.isInteger(input.pageSize) ? input.pageSize! : 50))
+    const page = Math.max(1, Number.isInteger(input.page) ? input.page! : 1)
+    const query = typeof input.query === 'string' ? input.query.trim().slice(0, 100) : ''
+    const rows = await this.database<{ id: string; name: string; loginAccount: string; department: string; dingtalkName: string | null; boundBy: 'self' | 'admin'; boundAt: Date; total: number }[]>`
+      select u.id, u.display_name as name, c.username as "loginAccount", coalesce(u.department_id, '未分配部门') as department,
+             b.external_display_name as "dingtalkName", b.bound_by as "boundBy", b.bound_at as "boundAt",
+             count(*) over ()::integer as total
+        from users u
+        join local_user_credentials c on c.tenant_id = u.tenant_id and c.user_id = u.id
+        join external_account_bindings b on b.tenant_id = u.tenant_id and b.user_id = u.id and b.channel = ${DINGTALK_CHANNEL} and b.status = 'valid'
+       where u.tenant_id = ${tenantId} and u.identity_provider = 'local' and u.business_user and u.status = 'active'
+         and (${query} = '' or u.display_name ilike ${`%${query}%`} or c.username ilike ${`%${query}%`})
+       order by u.display_name, u.id
+       limit ${pageSize} offset ${(page - 1) * pageSize}
+    `
+    const manageable = await manageableUserIds(this.database, actorId, rows.map(row => row.id))
+    return { items: rows.map(({ total: _total, ...row }) => ({ ...row, manageable: manageable.has(row.id) })), total: rows[0]?.total ?? 0, page, pageSize }
   }
 
   /** “提醒员工”：给未绑定且未被锁定的员工各登记一条站内通知；同一员工每天最多一条。 */
@@ -412,7 +439,7 @@ export class DingTalkAdministrationService {
     const userIds = Array.isArray(input.userIds) ? input.userIds.filter((id): id is string => typeof id === 'string').slice(0, 500) : []
     if (!all && !userIds.length) throw new IdentityAccessError(422, 'invalid_request', '请选择要提醒的员工')
     return this.database.begin(async transaction => {
-      await assertPlatformAdmin(transaction, actorId)
+      await assertDingTalkAdmin(transaction, actorId, 'write')
       const targets = await transaction<{ id: string }[]>`
         select u.id from users u
          where u.tenant_id = ${tenantId} and u.identity_provider = 'local' and u.business_user and u.status = 'active'
@@ -505,12 +532,25 @@ export class DingTalkAdministrationService {
     const decision = input.decision === 'confirm' ? 'confirmed' : input.decision === 'dismiss' ? 'dismissed' : null
     if (!decision) throw new IdentityAccessError(422, 'invalid_request', 'decision 必须为 confirm 或 dismiss')
     return this.database.begin(async transaction => {
-      await assertPlatformAdmin(transaction, actorId)
+      await assertDingTalkAdmin(transaction, actorId, 'write')
       const [run] = await transaction<{ pending: string[] }[]>`
         select pending_binding_ids as pending from dingtalk_departure_checks
          where id = ${runId} and tenant_id = ${tenantId} and status = 'paused' for update
       `
       if (!run) throw new IdentityAccessError(409, 'departure_check_not_paused', '该次检查不在待确认状态')
+      if (decision === 'confirmed') {
+        // 确认会让这批绑定失效（方案 AP13 ④）：批次里有自己、平台管理员或权限比自己高的员工时需要平台管理员确认。
+        const owners = await transaction<{ userId: string }[]>`
+          select distinct user_id as "userId" from external_account_bindings
+           where tenant_id = ${tenantId} and id = any(${run.pending}::text[])
+        `
+        try {
+          for (const owner of owners) await assertCanManageUser(transaction, actorId, owner.userId)
+        } catch (error) {
+          if (isAuthorizationDenial(error)) throw new IdentityAccessError(403, 'permission_denied', '这批绑定里有你、平台管理员或权限比你高的员工，请由平台管理员确认')
+          throw error
+        }
+      }
       const invalidated = decision === 'confirmed' ? await this.invalidateDeparted(transaction, run.pending) : 0
       await transaction`
         update dingtalk_departure_checks set status = ${decision}, decided_by = ${actorId}, decided_at = now() where id = ${runId}
@@ -705,12 +745,26 @@ async function requireLocalUser(transaction: DatabaseTransaction, userId: string
   return user
 }
 
-/** 平台管理员专属范围（管理端模块权限方案 AP4、AP6）：只认本地授予的 `admin:*`。 */
+/** 钉钉应用配置的保存与清除仍只限平台管理员（管理端模块权限方案 AP12）：换成他人控制的应用可以冒充已绑定员工登录。 */
 async function assertPlatformAdmin(transaction: DatabaseTransaction, userId: string) {
   try {
     await requirePlatformAdminOnly(transaction, userId)
   } catch (error) {
-    if (isAuthorizationDenial(error)) throw new IdentityAccessError(403, 'permission_denied', '只有平台管理员可以管理钉钉绑定')
+    if (isAuthorizationDenial(error)) throw new IdentityAccessError(403, 'permission_denied', '钉钉应用配置只有平台管理员可以修改')
+    throw error
+  }
+}
+
+/**
+ * 钉钉集成模块（方案 AP12）：查看为查看级，其余为修改级；操作某员工的绑定时还要满足
+ * 员工与权限的对象约束（AP13 ③④：不能操作自己、平台管理员或权限比自己高的账号）。
+ */
+async function assertDingTalkAdmin(transaction: DatabaseTransaction, actorId: string, level: 'read' | 'write', targetUserId?: string) {
+  try {
+    await requireAdminModuleActor(transaction, actorId, 'dingtalk', level)
+    if (targetUserId) await assertCanManageUser(transaction, actorId, targetUserId)
+  } catch (error) {
+    if (isAuthorizationDenial(error)) throw new IdentityAccessError(403, 'permission_denied', error instanceof Error ? error.message : '没有钉钉集成的权限')
     throw error
   }
 }

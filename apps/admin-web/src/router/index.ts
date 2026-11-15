@@ -1,6 +1,7 @@
 import { createRouter, createWebHistory } from 'vue-router'
 
 import { pinia } from '@/stores'
+import type { AdminRouteOwner } from '@/utils/admin-modules'
 import { useAuthStore } from '@/stores/auth'
 
 const router = createRouter({
@@ -38,6 +39,12 @@ const router = createRouter({
       meta: { title: '登录失败', public: true },
     },
     {
+      path: '/no-access',
+      name: 'module-forbidden',
+      component: () => import('@/views/ModuleAccessDeniedView.vue'),
+      meta: { title: '无权访问', requiresAdmin: true },
+    },
+    {
       path: '/forbidden',
       name: 'forbidden',
       component: () => import('@/views/AccessDeniedView.vue'),
@@ -47,25 +54,25 @@ const router = createRouter({
       path: '/overview',
       name: 'overview',
       component: () => import('@/views/AdminOverviewView.vue'),
-      meta: { title: '运营概览', requiresAdmin: true, requiredPermission: 'adminRead' },
+      meta: { title: '运营概览', requiresAdmin: true, module: 'ops' },
     },
     {
       path: '/assistant',
       name: 'assistant',
       component: () => import('@/views/AdminAssistantView.vue'),
-      meta: { title: '管理助手', requiresAdmin: true, requiredPermission: 'adminRead' },
+      meta: { title: '管理助手', requiresAdmin: true, module: 'any' },
     },
     {
       path: '/agents',
       name: 'agents',
       component: () => import('@/views/AgentManagementView.vue'),
-      meta: { title: 'Agent 管理', requiresAdmin: true, requiredPermission: 'adminRead' },
+      meta: { title: 'Agent 管理', requiresAdmin: true, module: 'agent' },
     },
     {
       path: '/agents/:agentId',
       name: 'agent-detail',
       component: () => import('@/views/AgentDetailView.vue'),
-      meta: { title: 'Agent 详情', requiresAdmin: true, requiredPermission: 'adminRead' },
+      meta: { title: 'Agent 详情', requiresAdmin: true, module: 'agent' },
       // 编辑类分区已移到草稿编辑流程：旧的验证与发布地址进入流程最后一步，旧的定义分区落到只读概览。
       beforeEnter: to => {
         const section = String(to.query.section ?? '')
@@ -82,7 +89,7 @@ const router = createRouter({
       path: '/agents/:agentId/draft',
       name: 'agent-draft',
       component: () => import('@/views/AgentDraftView.vue'),
-      meta: { title: '编辑 Agent', requiresAdmin: true, requiredPermission: 'adminRead' },
+      meta: { title: '编辑 Agent', requiresAdmin: true, module: 'agent' },
     },
     {
       path: '/agents/:agentId/release/:step(definition|checks|trial|review)?',
@@ -96,67 +103,67 @@ const router = createRouter({
       path: '/skills',
       name: 'skills',
       component: () => import('@/views/CapabilityManagementView.vue'),
-      meta: { title: 'Skill 管理', requiresAdmin: true, requiredPermission: 'adminRead' },
+      meta: { title: 'Skill 管理', requiresAdmin: true, module: 'skill' },
     },
     {
       path: '/skills/review',
       name: 'skill-review',
       component: () => import('@/views/CapabilityManagementView.vue'),
-      meta: { title: 'Skill 待审核', requiresAdmin: true, requiredPermission: 'adminRead' },
+      meta: { title: 'Skill 待审核', requiresAdmin: true, module: 'skill' },
     },
     {
       path: '/skills/install',
       name: 'skill-install',
       component: () => import('@/views/CapabilityManagementView.vue'),
-      meta: { title: '新增 Skill', requiresAdmin: true, requiredPermission: 'adminRead' },
+      meta: { title: '新增 Skill', requiresAdmin: true, module: 'skill' },
     },
     {
       path: '/connectors',
       name: 'connectors',
       component: () => import('@/views/CapabilityManagementView.vue'),
-      meta: { title: 'MCP 连接器', requiresAdmin: true, requiredPermission: 'adminRead' },
+      meta: { title: 'MCP 连接器', requiresAdmin: true, module: 'connector' },
     },
     {
       path: '/mcp-reconciliation',
       name: 'mcp-reconciliation',
       component: () => import('@/views/McpReconciliationView.vue'),
-      meta: { title: '调用对账', requiresAdmin: true, requiredPermission: 'adminRead' },
+      meta: { title: '调用对账', requiresAdmin: true, module: 'connector' },
     },
     {
       path: '/model-governance',
       name: 'model-governance',
       component: () => import('@/views/ModelGovernanceView.vue'),
-      meta: { title: '模型治理', requiresAdmin: true, requiredPermission: 'adminRead' },
+      meta: { title: '模型治理', requiresAdmin: true, module: 'model' },
     },
     {
       path: '/model-usage',
       name: 'model-usage',
       component: () => import('@/views/ModelUsageView.vue'),
-      meta: { title: '模型用量', requiresAdmin: true, requiredPermission: 'adminRead' },
+      meta: { title: '模型用量', requiresAdmin: true, module: 'model' },
     },
     {
       path: '/data-protection',
       name: 'data-protection',
       component: () => import('@/views/DataProtectionView.vue'),
-      meta: { title: '数据防护', subtitle: '发往外部厂商的内容按规则遮盖，员工消息含密钥时不发送', requiresAdmin: true, requiredPermission: 'adminRead' },
+      meta: { title: '数据防护', subtitle: '发往外部厂商的内容按规则遮盖，员工消息含密钥时不发送', requiresAdmin: true, module: 'dlp' },
     },
     {
       path: '/runtimes',
       name: 'runtimes',
       component: () => import('@/views/RuntimeManagementView.vue'),
-      meta: { title: 'Runtimes', requiresAdmin: true, requiredPermission: 'adminRead' },
+      meta: { title: 'Runtimes', requiresAdmin: true, module: 'connector' },
     },
     {
       path: '/sessions',
       name: 'sessions',
       component: () => import('@/views/SessionManagementView.vue'),
-      meta: { title: 'Session 列表', requiresAdmin: true, requiredPermission: 'adminRead' },
+      meta: { title: 'Session 列表', requiresAdmin: true, module: 'ops' },
     },
     {
       path: '/workspaces',
       name: 'workspaces',
       component: () => import('@/views/WorkspaceManagementView.vue'),
-      meta: { title: '工作空间', requiresAdmin: true, requiredPermission: 'adminRead' },
+      meta: { title: '工作空间', requiresAdmin: true, module: 'ops' },
     },
     {
       path: '/knowledge',
@@ -166,7 +173,7 @@ const router = createRouter({
         title: '企业知识库',
         subtitle: '管理 WeKnora 连接、全部知识库与跨部门授权。文档由归属部门的员工在员工端上传和维护。',
         requiresAdmin: true,
-        requiredPermission: 'adminRead',
+        module: 'knowledge',
       },
     },
     {
@@ -177,7 +184,7 @@ const router = createRouter({
         title: '组织架构',
         subtitle: '维护部门树和员工的部门归属；员工的“部门”显示为其主部门。',
         requiresAdmin: true,
-        requiredPermission: 'adminRead',
+        module: 'org',
       },
     },
     {
@@ -187,7 +194,7 @@ const router = createRouter({
       meta: {
         title: '员工与权限',
         requiresAdmin: true,
-        requiredPermission: 'adminRead',
+        module: 'identity',
         requiresManagedIdentity: true,
       },
     },
@@ -199,7 +206,7 @@ const router = createRouter({
         title: '钉钉集成',
         subtitle: '钉钉工作通知与钉钉内打开员工端：应用配置、绑定情况、离职检查与未绑定名单。',
         requiresAdmin: true,
-        requiredPermission: 'adminRead',
+        module: 'dingtalk',
         requiresManagedIdentity: true,
       },
     },
@@ -211,26 +218,26 @@ const router = createRouter({
         title: '经验迭代',
         subtitle: '按稳定 Agent 归属；申请来自成功的 Run/Attempt，经管理员审核后发布不可变经验版本，不会自动修改 Soul、Skill 或权限。',
         requiresAdmin: true,
-        requiredPermission: 'adminRead',
+        module: 'agent',
       },
     },
     {
       path: '/approvals',
       name: 'approvals',
       component: () => import('@/views/ApprovalManagementView.vue'),
-      meta: { title: '动作审批', requiresAdmin: true, requiredPermission: 'adminRead' },
+      meta: { title: '动作审批', requiresAdmin: true, module: 'agent' },
     },
     {
       path: '/audit',
       name: 'audit',
       component: () => import('@/views/AuditView.vue'),
-      meta: { title: '审计记录', requiresAdmin: true, requiredPermission: 'auditRead' },
+      meta: { title: '审计记录', requiresAdmin: true, module: 'audit' },
     },
     {
       path: '/health',
       name: 'health',
       component: () => import('@/views/SystemHealthView.vue'),
-      meta: { title: '系统健康', requiresAdmin: true, requiredPermission: 'adminRead' },
+      meta: { title: '系统健康', requiresAdmin: true, module: 'ops' },
     },
     {
       path: '/docs/guide',
@@ -280,11 +287,14 @@ router.beforeEach(async (to) => {
     return { name: 'overview' }
   }
   if (to.meta.requiresAdmin && !authStore.canAccessAdmin) return { name: 'forbidden' }
-  if (to.meta.requiredPermission === 'adminRead' && !authStore.canReadAdmin) {
-    return authStore.canReadAudit ? { name: 'audit' } : { name: 'forbidden' }
+  // 管理端模块权限方案 AP15：根地址与 /overview 落到有权限的第一个页面；直接打开无权页面显示“无权访问”。
+  if (to.name === 'overview' && !authStore.canRead('ops')) {
+    const landing = authStore.landingRoute()
+    if (landing !== '/overview') return landing
   }
-  if (to.meta.requiredPermission === 'auditRead' && !authStore.canReadAudit) {
-    return authStore.canReadAdmin ? { name: 'overview' } : { name: 'forbidden' }
+  const owner = to.meta.module as AdminRouteOwner | undefined
+  if (to.meta.requiresAdmin && owner && !authStore.canSee(owner)) {
+    return { name: 'module-forbidden', query: { module: owner, from: to.fullPath } }
   }
   return true
 })

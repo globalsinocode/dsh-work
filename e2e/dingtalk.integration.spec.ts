@@ -2,7 +2,8 @@ import { expect, test, type Browser, type Page } from '@playwright/test'
 
 // P1 钉钉接入旅程（e2e/catalog/dingtalk.md）：真实应用 + 可丢弃数据库 + 假钉钉开放平台 HTTP 服务
 // （scripts/testing/dingtalk-browser.ts）。不是真实钉钉验收（DT-P2）。
-// 夹具账号：管理员陈默；赵宁、王一凡、孙悦、李响未绑定；林岚本人绑定；何青管理员代绑；周婷需改初始密码；吴凡已被锁定。
+// 夹具账号：管理员陈默；赵宁、王一凡、孙悦、李响未绑定；林岚本人绑定；何青管理员代绑；周婷需改初始密码；吴凡已被锁定；
+// 郑洁只有“修改钉钉集成”，蒋岩只供 AMP-P1-03 使用。
 
 const adminOrigin = `http://localhost:${process.env.DSH_WORK_DINGTALK_E2E_ADMIN_PORT ?? '4681'}`
 const workbenchOrigin = `http://localhost:${process.env.DSH_WORK_DINGTALK_E2E_WORKBENCH_PORT ?? '4675'}`
@@ -296,4 +297,42 @@ test.describe('DT-EMP-02 用户中心 › 钉钉', () => {
     await expect(section).toContainText('如果不是你本人的钉钉账号，请立即解除绑定并联系管理员')
     await context.close()
   })
+})
+
+// AMP-P1-03（e2e/catalog/admin-permissions.md）：只有钉钉权限的管理员在钉钉集成页内处理绑定，不跳转员工与权限。
+test('AMP-P1-03 钉钉模块管理员在集成页内代绑与解绑，看不到应用配置的修改按钮', async ({ page }) => {
+  await page.goto(`${adminOrigin}/login`)
+  await passwordForm(page, 'dingtalk.ops@example.invalid')
+  await page.getByRole('button', { name: '登录' }).click()
+  await expect(page).toHaveURL(/\/dingtalk/)
+  const config = page.getByRole('region', { name: '应用配置' })
+  await expect(config.getByRole('button', { name: '重新检查连接' })).toBeVisible()
+  await expect(config.getByRole('button', { name: /编辑配置|填写配置/ })).toHaveCount(0)
+  await expect(config.getByRole('button', { name: '清除配置' })).toHaveCount(0)
+  await expect(config).toContainText('只有平台管理员可以修改')
+
+  await page.getByRole('tab', { name: /未绑定/ }).click()
+  // 自己的账号只能查看（不能操作自己的钉钉绑定）。
+  await expect(page.getByRole('row').filter({ hasText: 'dingtalk.ops@example.invalid' }).getByRole('button', { name: '查看' })).toBeVisible()
+  await page.getByRole('row').filter({ hasText: 'jiangyan@example.invalid' }).getByRole('button', { name: '代为绑定' }).click()
+  const drawer = page.getByRole('dialog', { name: '蒋岩 的钉钉绑定' })
+  const panel = drawer.getByRole('region', { name: '钉钉' })
+  await lookup(panel, '13800002209')
+  await expect(panel).toContainText('蒋岩')
+  await panel.getByRole('button', { name: '确认绑定' }).click()
+  await expect(panel.getByRole('status')).toContainText('已绑定。已通知蒋岩')
+  await expect(page).toHaveURL(/\/dingtalk/)
+  await drawer.getByRole('button', { name: /关闭|Close/ }).click()
+
+  await page.getByRole('tab', { name: /已绑定/ }).click()
+  await page.getByLabel('按姓名或登录账号搜索已绑定员工').fill('蒋岩')
+  await page.getByRole('button', { name: '搜索', exact: true }).click()
+  const row = page.getByRole('row').filter({ hasText: 'jiangyan@example.invalid' })
+  await expect(row).toContainText('管理员代绑')
+  await row.getByRole('button', { name: '管理绑定' }).click()
+  await panel.getByRole('button', { name: '解除绑定' }).click()
+  await page.getByRole('dialog', { name: '解除蒋岩的钉钉绑定？' }).getByRole('button', { name: '解除绑定' }).click()
+  await expect(panel).toContainText('已失效')
+  await drawer.getByRole('button', { name: /关闭|Close/ }).click()
+  await expect(page.getByRole('row').filter({ hasText: 'jiangyan@example.invalid' })).toHaveCount(0)
 })

@@ -7,7 +7,7 @@ describe('admin authentication routes', () => {
     const route = router.resolve('/assistant')
     expect(route.name).toBe('assistant')
     expect(route.meta.title).toBe('管理助手')
-    expect(route.meta.requiredPermission).toBe('adminRead')
+    expect(route.meta.module).toBe('any')
     expect(route.meta.requiresAdmin).toBe(true)
   })
   it('serves login errors outside the backend auth proxy', () => {
@@ -22,7 +22,7 @@ describe('admin authentication routes', () => {
 
     expect(route.name).toBe('identity')
     expect(route.meta.title).toBe('员工与权限')
-    expect(route.meta.requiredPermission).toBe('adminRead')
+    expect(route.meta.module).toBe('identity')
     expect(route.meta.requiresManagedIdentity).toBe(true)
   })
 
@@ -37,7 +37,7 @@ describe('admin authentication routes', () => {
     expect(route.name).toBe('about')
     expect(route.meta.title).toBe('关于 dsh-work')
     expect(route.meta.requiresAdmin).toBe(true)
-    expect(route.meta.requiredPermission).toBeUndefined()
+    expect(route.meta.module).toBeUndefined()
   })
 
   it('publishes the experience iteration context as a topbar subtitle', () => {

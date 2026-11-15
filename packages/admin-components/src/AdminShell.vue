@@ -40,6 +40,11 @@ const props = defineProps<{
   canReadAdmin: boolean
   canReadAudit: boolean
   identityAdministrationAvailable: boolean
+  /**
+   * 菜单归属是否可见（管理端模块权限方案 AP15）：参数为模块名、`any`（任一管理员）或 `audit`。
+   * 未传入时按旧口径：`audit` 看 canReadAudit，其余看 canReadAdmin。
+   */
+  canSee?: (owner: string) => boolean
   conversationItems?: Array<{ id: string; title: string }>
   selectedConversationId?: string
 }>()
@@ -57,7 +62,8 @@ interface NavigationItem {
   label: string
   path: string
   icon: Component
-  permission: 'admin' | 'audit'
+  /** 归属：模块名、`any`（任一管理员）或 `audit`。没有查看权限的菜单直接不显示。 */
+  permission: string
   requiresIdentityAdministration?: boolean
 }
 
@@ -65,33 +71,33 @@ const navigationGroups: Array<{ label: string; items: NavigationItem[] }> = [
   {
     label: '概览',
     items: [
-      { label: '管理助手', path: '/assistant', icon: ChatDotRound, permission: 'admin' },
-      { label: '运营概览', path: '/overview', icon: DataAnalysis, permission: 'admin' },
+      { label: '管理助手', path: '/assistant', icon: ChatDotRound, permission: 'any' },
+      { label: '运营概览', path: '/overview', icon: DataAnalysis, permission: 'ops' },
     ],
   },
   {
     label: 'Agent 治理',
     items: [
-      { label: 'Agent 管理', path: '/agents', icon: Grid, permission: 'admin' },
-      { label: 'Skill 管理', path: '/skills', icon: Collection, permission: 'admin' },
-      { label: 'MCP 连接器', path: '/connectors', icon: Connection, permission: 'admin' },
-      { label: '调用对账', path: '/mcp-reconciliation', icon: Checked, permission: 'admin' },
-      { label: '经验迭代', path: '/experience-iterations', icon: Notebook, permission: 'admin' },
+      { label: 'Agent 管理', path: '/agents', icon: Grid, permission: 'agent' },
+      { label: 'Skill 管理', path: '/skills', icon: Collection, permission: 'skill' },
+      { label: 'MCP 连接器', path: '/connectors', icon: Connection, permission: 'connector' },
+      { label: '调用对账', path: '/mcp-reconciliation', icon: Checked, permission: 'connector' },
+      { label: '经验迭代', path: '/experience-iterations', icon: Notebook, permission: 'agent' },
     ],
   },
   {
     label: '运行治理',
     items: [
-      { label: 'Session 列表', path: '/sessions', icon: ChatDotRound, permission: 'admin' },
-      { label: '模型治理', path: '/model-governance', icon: Key, permission: 'admin' },
-      { label: '模型用量', path: '/model-usage', icon: PieChart, permission: 'admin' },
+      { label: 'Session 列表', path: '/sessions', icon: ChatDotRound, permission: 'ops' },
+      { label: '模型治理', path: '/model-governance', icon: Key, permission: 'model' },
+      { label: '模型用量', path: '/model-usage', icon: PieChart, permission: 'model' },
     ],
   },
   {
     // 企业知识库（weknora-knowledge-plan WK-S3）：独立分组，不放在组织与权限下。
     label: '知识库',
     items: [
-      { label: '企业知识库', path: '/knowledge', icon: Reading, permission: 'admin' },
+      { label: '企业知识库', path: '/knowledge', icon: Reading, permission: 'knowledge' },
     ],
   },
   {
@@ -101,29 +107,29 @@ const navigationGroups: Array<{ label: string; items: NavigationItem[] }> = [
         label: '员工与权限',
         path: '/identity',
         icon: UserFilled,
-        permission: 'admin',
+        permission: 'identity',
         requiresIdentityAdministration: true,
       },
-      { label: '组织架构', path: '/organization', icon: OfficeBuilding, permission: 'admin' },
-      { label: '钉钉集成', path: '/dingtalk', icon: Iphone, permission: 'admin', requiresIdentityAdministration: true },
-      { label: '工作空间', path: '/workspaces', icon: FolderOpened, permission: 'admin' },
+      { label: '组织架构', path: '/organization', icon: OfficeBuilding, permission: 'org' },
+      { label: '钉钉集成', path: '/dingtalk', icon: Iphone, permission: 'dingtalk', requiresIdentityAdministration: true },
+      { label: '工作空间', path: '/workspaces', icon: FolderOpened, permission: 'ops' },
     ],
   },
   {
     label: '安全与运维',
     items: [
-      { label: 'Runtimes', path: '/runtimes', icon: Cpu, permission: 'admin' },
-      { label: '动作审批', path: '/approvals', icon: CircleCheck, permission: 'admin' },
-      { label: '数据防护', path: '/data-protection', icon: Lock, permission: 'admin' },
+      { label: 'Runtimes', path: '/runtimes', icon: Cpu, permission: 'connector' },
+      { label: '动作审批', path: '/approvals', icon: CircleCheck, permission: 'agent' },
+      { label: '数据防护', path: '/data-protection', icon: Lock, permission: 'dlp' },
       { label: '审计记录', path: '/audit', icon: Tickets, permission: 'audit' },
-      { label: '系统健康', path: '/health', icon: Monitor, permission: 'admin' },
+      { label: '系统健康', path: '/health', icon: Monitor, permission: 'ops' },
     ],
   },
   {
     label: '开发接入',
     items: [
-      { label: '接入规范', path: '/docs/guide', icon: Notebook, permission: 'admin' },
-      { label: '接口文档', path: '/docs/api', icon: Document, permission: 'admin' },
+      { label: '接入规范', path: '/docs/guide', icon: Notebook, permission: 'any' },
+      { label: '接口文档', path: '/docs/api', icon: Document, permission: 'any' },
     ],
   },
 ]
@@ -132,7 +138,9 @@ const visibleNavigationGroups = computed(() => navigationGroups
   .map(group => ({
     ...group,
     items: group.items.filter(item => {
-      const permitted = item.permission === 'audit' ? props.canReadAudit : props.canReadAdmin
+      const permitted = props.canSee
+        ? props.canSee(item.permission)
+        : item.permission === 'audit' ? props.canReadAudit : props.canReadAdmin
       const available = !item.requiresIdentityAdministration
         || props.identityAdministrationAvailable
       return permitted && available

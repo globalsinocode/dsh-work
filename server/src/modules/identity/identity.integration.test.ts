@@ -295,7 +295,8 @@ test('AI Hub profile sync preserves local authorization and sessions use local v
   )
   const rejectedRevocation = concurrentRevocations.find(result => result.status === 'rejected')
   assert.ok(rejectedRevocation && rejectedRevocation.status === 'rejected')
-  assert.match(String(rejectedRevocation.reason), /不能移除最后一个有效的平台管理员/)
+  // 后执行的一方要么撞上“最后一位平台管理员”不变量，要么已经失去修改员工与权限的资格。
+  assert.match(String(rejectedRevocation.reason), /不能移除最后一个有效的平台管理员|没有员工与权限的修改权限/)
   const remainingAdministrators = await Promise.all([
     repository.resolveAuthorization(localUserId),
     repository.resolveAuthorization(backupAdminUserId),

@@ -7,7 +7,7 @@ import {
   parseCookies, resolveRequestOrigin, serializeCookie, validateRequestOrigin,
 } from './auth-service.ts'
 import { assignNewAccountDepartment } from '../organization/postgres-organization-service.ts'
-import { requirePlatformAdminOnly } from '../authorization/admin-actor.ts'
+import { assertCanGrant, assertCanManageUser, loadGrantCeiling, requireAdminModuleActor } from '../authorization/admin-actor.ts'
 import { isAuthorizationDenial } from '../../domain/authorization-errors.ts'
 import { lockPlatformAdminInvariant, requireAnotherPlatformAdmin } from './administration-service.ts'
 import { hashPassword, normalizeUsername, verifyPassword } from './password.ts'
@@ -383,9 +383,11 @@ export class LocalAuthService {
     const username = normalizeLoginAccount(input.username)
     const passwordHash = await hashPassword(input.password)
     return this.database.begin(async transaction => {
-      await assertPlatformAdmin(transaction, actorId)
+      await assertIdentityWriter(transaction, actorId)
       const userId = await insertAccount(transaction, input, username, passwordHash, true)
       if (input.departmentId) await assignNewAccountDepartment(transaction, { userId, departmentId: input.departmentId, actorId })
+      // 新账号经部门授权得到的角色同样不能超过建号人（方案 AP13 ①）。
+      await mapDenial(assertCanGrant(transaction, actorId, await loadGrantCeiling(transaction, userId), '新账号经所选部门获得的权限'))
       await revokeUserSessions(transaction, userId)
       await localAudit(transaction, actorId, 'identity.local.create', 'success', { userId })
       return { userId, username }
@@ -395,7 +397,7 @@ export class LocalAuthService {
   async checkLoginAccount(input: unknown, actorId: string) {
     const username = normalizeLoginAccount(input)
     return this.database.begin(async transaction => {
-      await assertPlatformAdmin(transaction, actorId)
+      await assertIdentityWriter(transaction, actorId)
       return { username, available: !await loginAccountExists(transaction, username) }
     })
   }
@@ -404,7 +406,8 @@ export class LocalAuthService {
     if (userId === actorId) throw new IdentityAccessError(422, 'self_reset_forbidden', '请通过修改密码验证自己的当前密码')
     const passwordHash = await hashPassword(password)
     await this.database.begin(async transaction => {
-      await assertPlatformAdmin(transaction, actorId)
+      await assertIdentityWriter(transaction, actorId)
+      await mapDenial(assertCanManageUser(transaction, actorId, userId))
       const [credential] = await transaction`
         update local_user_credentials set password_hash = ${passwordHash}, must_change_password = true, updated_at = now()
          where tenant_id = ${tenantId} and user_id = ${userId}
@@ -423,7 +426,8 @@ export class LocalAuthService {
     if (status !== 'active' && status !== 'disabled') throw new IdentityAccessError(422, 'invalid_status', '账号状态无效')
     await this.database.begin(async transaction => {
       await lockPlatformAdminInvariant(transaction)
-      await assertPlatformAdmin(transaction, actorId)
+      await assertIdentityWriter(transaction, actorId)
+      await mapDenial(assertCanManageUser(transaction, actorId, userId))
       const [user] = await transaction<{ identityProvider: string }[]>`
         select u.identity_provider as "identityProvider" from users u join local_user_credentials c on c.tenant_id = u.tenant_id and c.user_id = u.id
          where u.tenant_id = ${tenantId} and u.id = ${userId} for update of u
@@ -481,12 +485,22 @@ async function loginAccountExists(transaction: DatabaseTransaction, username: st
   return Boolean(existing)
 }
 
-/** 平台管理员专属范围（管理端模块权限方案 AP4、AP6）：只认本地授予的 `admin:*`。 */
-async function assertPlatformAdmin(transaction: DatabaseTransaction, userId: string) {
+/** 修改员工与权限（管理端模块权限方案 AP11）：只认本地授予的模块权限。 */
+async function assertIdentityWriter(transaction: DatabaseTransaction, userId: string) {
   try {
-    await requirePlatformAdminOnly(transaction, userId)
+    await requireAdminModuleActor(transaction, userId, 'identity', 'write')
   } catch (error) {
-    if (isAuthorizationDenial(error)) throw new IdentityAccessError(403, 'permission_denied', '只有平台管理员可以管理独立账号')
+    if (isAuthorizationDenial(error)) throw new IdentityAccessError(403, 'permission_denied', '当前用户没有员工与权限的修改权限')
+    throw error
+  }
+}
+
+/** 防提权拒绝（方案 AP13）以身份模块的错误类型返回，保留原因文案。 */
+async function mapDenial(check: Promise<unknown>) {
+  try {
+    await check
+  } catch (error) {
+    if (isAuthorizationDenial(error)) throw new IdentityAccessError(403, 'permission_denied', error instanceof Error ? error.message : '没有权限')
     throw error
   }
 }

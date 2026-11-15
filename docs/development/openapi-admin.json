@@ -702,7 +702,7 @@
     "/session": {
       "get": {
         "operationId": "getAdminSession",
-        "summary": "获取管理员身份、角色和权限",
+        "summary": "获取管理员身份、角色和权限；adminModules 为各模块的可用级别（none / read / write），platformAdmin 表示是否持有 admin:*（只用于展示，服务端逐请求校验）",
         "responses": {
           "200": {
             "$ref": "#/components/responses/Ok"
@@ -2548,7 +2548,7 @@
     "/identity/login-account/check": {
       "post": {
         "operationId": "checkLocalLoginAccount",
-        "summary": "平台管理员检查新登录账号格式及是否被独立账号或已同步 AI Hub 账号占用",
+        "summary": "检查新登录账号格式及是否被独立账号或已同步 AI Hub 账号占用",
         "requestBody": {
           "required": true,
           "content": {
@@ -2605,7 +2605,7 @@
             }
           },
           "403": {
-            "description": "仅平台管理员可检查账号占用"
+            "description": "需要员工与权限的修改权限（admin:identity:write）"
           },
           "422": {
             "description": "账号不是有效的手机号或邮箱"
@@ -2658,7 +2658,7 @@
             "$ref": "#/components/responses/Ok"
           },
           "403": {
-            "description": "仅平台管理员可修改组织架构"
+            "description": "需要组织架构的修改权限（admin:org:write）；非平台管理员授出的角色不能超过本人，也不能变更自己的部门归属"
           },
           "404": {
             "description": "部门或成员关系不存在"
@@ -2712,7 +2712,7 @@
             "$ref": "#/components/responses/Ok"
           },
           "403": {
-            "description": "仅平台管理员可修改组织架构"
+            "description": "需要组织架构的修改权限（admin:org:write）；非平台管理员授出的角色不能超过本人，也不能变更自己的部门归属"
           },
           "404": {
             "description": "部门或成员关系不存在"
@@ -2743,7 +2743,7 @@
             "$ref": "#/components/responses/Ok"
           },
           "403": {
-            "description": "仅平台管理员可修改组织架构"
+            "description": "需要组织架构的修改权限（admin:org:write）；非平台管理员授出的角色不能超过本人，也不能变更自己的部门归属"
           },
           "404": {
             "description": "部门或成员关系不存在"
@@ -2799,7 +2799,7 @@
             "$ref": "#/components/responses/Ok"
           },
           "403": {
-            "description": "仅平台管理员可修改组织架构"
+            "description": "需要组织架构的修改权限（admin:org:write）；非平台管理员授出的角色不能超过本人，也不能变更自己的部门归属"
           },
           "404": {
             "description": "部门或成员关系不存在"
@@ -2855,7 +2855,7 @@
             "$ref": "#/components/responses/Ok"
           },
           "403": {
-            "description": "仅平台管理员可修改组织架构"
+            "description": "需要组织架构的修改权限（admin:org:write）；非平台管理员授出的角色不能超过本人，也不能变更自己的部门归属"
           },
           "404": {
             "description": "部门、角色或部门授权不存在"
@@ -2888,7 +2888,7 @@
             "$ref": "#/components/responses/Ok"
           },
           "403": {
-            "description": "仅平台管理员可修改组织架构"
+            "description": "需要组织架构的修改权限（admin:org:write）；非平台管理员授出的角色不能超过本人，也不能变更自己的部门归属"
           },
           "404": {
             "description": "部门、角色或部门授权不存在"
@@ -2945,7 +2945,7 @@
             "$ref": "#/components/responses/Ok"
           },
           "403": {
-            "description": "仅平台管理员可修改组织架构"
+            "description": "需要组织架构的修改权限（admin:org:write）；非平台管理员授出的角色不能超过本人，也不能变更自己的部门归属"
           },
           "404": {
             "description": "部门或成员关系不存在"
@@ -2994,7 +2994,7 @@
             "$ref": "#/components/responses/Ok"
           },
           "403": {
-            "description": "仅平台管理员可修改组织架构"
+            "description": "需要组织架构的修改权限（admin:org:write）；非平台管理员授出的角色不能超过本人，也不能变更自己的部门归属"
           },
           "404": {
             "description": "部门或成员关系不存在"
@@ -3035,7 +3035,7 @@
             "$ref": "#/components/responses/Ok"
           },
           "403": {
-            "description": "仅平台管理员可修改组织架构"
+            "description": "需要组织架构的修改权限（admin:org:write）；非平台管理员授出的角色不能超过本人，也不能变更自己的部门归属"
           },
           "404": {
             "description": "部门或成员关系不存在"
@@ -3062,7 +3062,7 @@
       ],
       "get": {
         "operationId": "getUserDingTalkBinding",
-        "summary": "员工详情 › 钉钉：绑定状态（已绑定 / 未绑定 / 已失效）、钉钉姓名与部门、绑定方式与代绑管理员、失效原因、是否锁定自行绑定。仅平台管理员",
+        "summary": "员工详情 › 钉钉：绑定状态（已绑定 / 未绑定 / 已失效）、钉钉姓名与部门、绑定方式与代绑管理员、失效原因、是否锁定自行绑定。需要钉钉集成的查看权限（admin:dingtalk:read）",
         "responses": {
           "200": {
             "$ref": "#/components/responses/Ok"
@@ -3199,7 +3199,7 @@
     "/dingtalk/settings": {
       "get": {
         "operationId": "getDingTalkSettings",
-        "summary": "钉钉集成 › 应用配置（DT30）：CorpId、AgentId、AppKey、AppSecret 后 4 位（不回显）、能否读取已保存的 AppSecret、钉钉会话有效期、待绑定凭证有效期、每日代绑上限、接口超时、配置来源（deployment-config / admin）、服务能否保存密钥（是否配置 DSH_CREDENTIAL_MASTER_KEY）。仅平台管理员",
+        "summary": "钉钉集成 › 应用配置（DT30）：CorpId、AgentId、AppKey、AppSecret 后 4 位（不回显）、能否读取已保存的 AppSecret、钉钉会话有效期、待绑定凭证有效期、每日代绑上限、接口超时、配置来源（deployment-config / admin）、服务能否保存密钥（是否配置 DSH_CREDENTIAL_MASTER_KEY）。需要钉钉集成的查看权限（admin:dingtalk:read）",
         "responses": {
           "200": {
             "$ref": "#/components/responses/Ok"
@@ -3208,7 +3208,7 @@
       },
       "put": {
         "operationId": "saveDingTalkSettings",
-        "summary": "保存钉钉应用配置：先用这组凭据向钉钉换取 access_token，失败返回 422 dingtalk_credentials_rejected 或 503 dingtalk_unavailable 且不保存；AppSecret 留空沿用已保存的值，更换 CorpId 或 AppKey 时必须填写（422 dingtalk_secret_required）；服务未配置凭据主密钥时不能保存 AppSecret（409 credential_master_key_missing）。AppSecret 加密保存，立即生效，写审计（不含密钥）。仅平台管理员",
+        "summary": "保存钉钉应用配置：先用这组凭据向钉钉换取 access_token，失败返回 422 dingtalk_credentials_rejected 或 503 dingtalk_unavailable 且不保存；AppSecret 留空沿用已保存的值，更换 CorpId 或 AppKey 时必须填写（422 dingtalk_secret_required）；服务未配置凭据主密钥时不能保存 AppSecret（409 credential_master_key_missing）。AppSecret 加密保存，立即生效，写审计（不含密钥）。只限平台管理员（管理端模块权限方案 AP12：换成他人控制的应用可以冒充已绑定员工登录）",
         "requestBody": {
           "required": true,
           "content": {
@@ -3272,7 +3272,7 @@
       },
       "delete": {
         "operationId": "clearDingTalkSettings",
-        "summary": "清除钉钉应用配置：删除已加密的 AppSecret，免登、代绑与离职检查立即停用；已有绑定记录保留；部署配置不会自动重新生效。仅平台管理员",
+        "summary": "清除钉钉应用配置：删除已加密的 AppSecret，免登、代绑与离职检查立即停用；已有绑定记录保留；部署配置不会自动重新生效。只限平台管理员（管理端模块权限方案 AP12：换成他人控制的应用可以冒充已绑定员工登录）",
         "responses": {
           "200": {
             "$ref": "#/components/responses/Ok"
@@ -3322,6 +3322,44 @@
               "type": "integer",
               "minimum": 10,
               "maximum": 100
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          }
+        }
+      }
+    },
+    "/dingtalk/bound": {
+      "get": {
+        "operationId": "listDingTalkBound",
+        "summary": "已绑定名单：有效独立账号中有有效钉钉绑定的员工（姓名、账号、部门、钉钉成员名与绑定方式），按姓名或登录账号搜索；钉钉集成查看权限",
+        "parameters": [
+          {
+            "name": "page",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "name": "page_size",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 10,
+              "maximum": 100
+            }
+          },
+          {
+            "name": "query",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "maxLength": 100
             }
           }
         ],
@@ -3526,7 +3564,7 @@
             "$ref": "#/components/responses/Ok"
           },
           "403": {
-            "description": "仅平台管理员可修改账号"
+            "description": "需要员工与权限的修改权限（admin:identity:write）；非平台管理员不能操作自己、平台管理员或权限比自己高的账号"
           },
           "404": {
             "description": "所选部门不存在或已删除"
@@ -3553,7 +3591,7 @@
       ],
       "post": {
         "operationId": "resetLocalPassword",
-        "summary": "重置他人密码并撤销所有旧会话，下次登录强制改密",
+        "summary": "重置他人密码并撤销所有旧会话，下次登录强制改密；非平台管理员不能操作自己、平台管理员或权限比自己高的账号，授出的角色与数据范围不能超过本人",
         "requestBody": {
           "required": true,
           "content": {
@@ -3582,7 +3620,7 @@
             "$ref": "#/components/responses/Ok"
           },
           "403": {
-            "description": "仅平台管理员可修改账号"
+            "description": "需要员工与权限的修改权限（admin:identity:write）；非平台管理员不能操作自己、平台管理员或权限比自己高的账号"
           },
           "409": {
             "description": "账号已存在或最后一位管理员保护"
@@ -3606,7 +3644,7 @@
       ],
       "patch": {
         "operationId": "setLocalAccountStatus",
-        "summary": "启停账号；不能停用最后一位可登录的本地平台管理员",
+        "summary": "启停账号；不能停用最后一位可登录的本地平台管理员；非平台管理员不能操作自己、平台管理员或权限比自己高的账号，授出的角色与数据范围不能超过本人",
         "requestBody": {
           "required": true,
           "content": {
@@ -3635,7 +3673,7 @@
             "$ref": "#/components/responses/Ok"
           },
           "403": {
-            "description": "仅平台管理员可修改账号"
+            "description": "需要员工与权限的修改权限（admin:identity:write）；非平台管理员不能操作自己、平台管理员或权限比自己高的账号"
           },
           "409": {
             "description": "账号已存在或最后一位管理员保护"
@@ -3654,7 +3692,7 @@
       ],
       "post": {
         "operationId": "grantIdentityUserRole",
-        "summary": "由平台管理员为员工分配 dsh-work 本地角色",
+        "summary": "需要员工与权限的修改权限：为员工分配 dsh-work 本地角色；非平台管理员不能操作自己、平台管理员或权限比自己高的账号，授出的角色与数据范围不能超过本人",
         "responses": {
           "200": {
             "$ref": "#/components/responses/Ok"
@@ -3679,7 +3717,7 @@
       ],
       "delete": {
         "operationId": "revokeIdentityUserRole",
-        "summary": "由平台管理员移除员工的本地角色；禁止移除最后一个平台管理员",
+        "summary": "需要员工与权限的修改权限：移除员工的本地角色；禁止移除最后一个平台管理员；非平台管理员不能操作自己、平台管理员或权限比自己高的账号，授出的角色与数据范围不能超过本人",
         "responses": {
           "200": {
             "$ref": "#/components/responses/Ok"
@@ -3701,7 +3739,7 @@
       ],
       "patch": {
         "operationId": "replaceIdentityUserScopes",
-        "summary": "由平台管理员替换员工在 dsh-work 中的直接数据范围",
+        "summary": "需要员工与权限的修改权限：替换员工在 dsh-work 中的直接数据范围；非平台管理员不能操作自己、平台管理员或权限比自己高的账号，授出的角色与数据范围不能超过本人",
         "responses": {
           "200": {
             "$ref": "#/components/responses/Ok"
@@ -3720,7 +3758,7 @@
       ],
       "post": {
         "operationId": "revokeIdentityUserSessions",
-        "summary": "由平台管理员撤销员工全部 dsh-work 登录 Session",
+        "summary": "需要员工与权限的修改权限：撤销员工全部 dsh-work 登录 Session；非平台管理员不能操作自己、平台管理员或权限比自己高的账号，授出的角色与数据范围不能超过本人",
         "responses": {
           "200": {
             "$ref": "#/components/responses/Ok"
@@ -3743,7 +3781,7 @@
       },
       "post": {
         "operationId": "createIdentityRole",
-        "summary": "由平台管理员创建 dsh-work 本地角色",
+        "summary": "创建 dsh-work 本地角色：需要员工与权限的修改权限，角色编码由系统生成（role_ + 8 位随机字符，请求中的 code 被忽略），非平台管理员授出的权限不能超过本人",
         "responses": {
           "200": {
             "$ref": "#/components/responses/Ok"
@@ -3762,7 +3800,7 @@
       ],
       "patch": {
         "operationId": "updateIdentityRole",
-        "summary": "由平台管理员更新本地角色的状态、权限和数据范围",
+        "summary": "需要员工与权限的修改权限：更新本地角色的状态、权限和数据范围",
         "responses": {
           "200": {
             "$ref": "#/components/responses/Ok"
@@ -3796,7 +3834,7 @@
       },
       "post": {
         "operationId": "synchronizeIdentityDirectory",
-        "summary": "由平台管理员使用应用服务凭据增量或全量同步 AI Hub 员工资料，不修改本地授权",
+        "summary": "需要员工与权限的修改权限：使用应用服务凭据增量或全量同步 AI Hub 员工资料，不修改本地授权",
         "responses": {
           "200": {
             "$ref": "#/components/responses/Ok"
@@ -4585,7 +4623,7 @@
       "post": {
         "operationId": "resolveTaskOperation",
         "summary": "核对外部系统后收敛 Task Operation 状态",
-        "description": "仅平台管理员可用。用于把 accepted 或 unknown 操作收敛为 completed/failed；receipt 必须来自权威外部系统核对结果。",
+        "description": "需要工具与连接的修改权限（admin:connector:write）。用于把 accepted 或 unknown 操作收敛为 completed/failed；receipt 必须来自权威外部系统核对结果。",
         "parameters": [
           {
             "$ref": "#/components/parameters/TaskId"
@@ -4819,7 +4857,7 @@
       "put": {
         "operationId": "updateKnowledgeConnection",
         "summary": "保存连接配置",
-        "description": "只有平台管理员。apiKey 省略时保留已保存的 Key；Key 用凭据主密钥加密保存。保存后检索与员工端立即生效。",
+        "description": "需要企业知识库的修改权限（admin:knowledge:write）。apiKey 省略时保留已保存的 Key；Key 用凭据主密钥加密保存。保存后检索与员工端立即生效。",
         "responses": {
           "200": {
             "description": "成功",
@@ -5067,7 +5105,7 @@
       "post": {
         "operationId": "createKnowledgeAdminBase",
         "summary": "新建知识库",
-        "description": "只有平台管理员。归属部门为任意有效的非根部门，默认授给它并包含下级（管理员授予），带统一嵌入模型。",
+        "description": "需要企业知识库的修改权限（admin:knowledge:write）。归属部门为任意有效的非根部门，默认授给它并包含下级（管理员授予），带统一嵌入模型。",
         "responses": {
           "200": {
             "description": "成功",
@@ -5138,7 +5176,7 @@
       "patch": {
         "operationId": "updateKnowledgeAdminBaseOwner",
         "summary": "修改归属部门",
-        "description": "只有平台管理员；归属部门须为有效的非根部门，不改变可见部门。",
+        "description": "需要企业知识库的修改权限（admin:knowledge:write）；归属部门须为有效的非根部门，不改变可见部门。",
         "responses": {
           "200": {
             "description": "成功",
@@ -5207,7 +5245,7 @@
       "delete": {
         "operationId": "deleteKnowledgeAdminBase",
         "summary": "删除知识库",
-        "description": "只有平台管理员；员工端立即不可见、不再检索。",
+        "description": "需要企业知识库的修改权限（admin:knowledge:write）；员工端立即不可见、不再检索。",
         "responses": {
           "200": {
             "description": "成功",
@@ -5260,7 +5298,7 @@
       "post": {
         "operationId": "addKnowledgeAdminGrant",
         "summary": "授给部门",
-        "description": "只有平台管理员；可授给任意有效部门（含根部门），同一部门重复授予幂等。",
+        "description": "需要企业知识库的修改权限（admin:knowledge:write）；可授给任意有效部门（含根部门），同一部门重复授予幂等。",
         "responses": {
           "200": {
             "description": "成功",
@@ -5335,7 +5373,7 @@
       "delete": {
         "operationId": "revokeKnowledgeAdminGrant",
         "summary": "撤销授权",
-        "description": "只有平台管理员；可以撤销任何授权，包括员工授予的，也可以撤到没有授权。",
+        "description": "需要企业知识库的修改权限（admin:knowledge:write）；可以撤销任何授权，包括员工授予的，也可以撤到没有授权。",
         "responses": {
           "200": {
             "description": "成功",
@@ -5665,7 +5703,7 @@
       "post": {
         "operationId": "restoreKnowledgeAdminBase",
         "summary": "恢复原连接已更换的知识库",
-        "description": "只有平台管理员；先确认当前连接的 WeKnora 中存在该知识库，存在才恢复为有效，否则返回 409。",
+        "description": "需要企业知识库的修改权限（admin:knowledge:write）；先确认当前连接的 WeKnora 中存在该知识库，存在才恢复为有效，否则返回 409。",
         "responses": {
           "200": {
             "description": "成功",

@@ -99,20 +99,22 @@ export const useContentStore = defineStore('admin-content', () => {
       usageData,
       statusData,
     ] = await Promise.all([
-      adminApi.getTasks(),
-      adminApi.getRuntimes(),
-      adminApi.getWorkspaces(),
-      adminApi.getAgents(),
-      adminApi.getAgentVersions(),
-      adminApi.getSkills(),
-      adminApi.getSkillVersions(),
-      adminApi.getSkillReleaseRecords(),
-      adminApi.getMcpConnectors(),
-      adminApi.getBuiltinTools(),
-      adminApi.getBuiltinSkills(),
+      // 管理端模块权限方案 AP15：只请求有权限的模块，避免模块管理员首屏因无权数据报错。
+      // Agent 修改权限可读取 Skill、连接器与内置工具的精简候选列表（方案 5.2）。
+      when(authStore.canRead('ops'), adminApi.getTasks, []),
+      when(authStore.canRead('connector'), adminApi.getRuntimes, []),
+      when(authStore.canRead('ops'), adminApi.getWorkspaces, []),
+      when(authStore.canRead('agent'), adminApi.getAgents, []),
+      when(authStore.canRead('agent'), adminApi.getAgentVersions, []),
+      when(authStore.canRead('skill') || authStore.canWrite('agent'), adminApi.getSkills, []),
+      when(authStore.canRead('skill'), adminApi.getSkillVersions, []),
+      when(authStore.canRead('skill'), adminApi.getSkillReleaseRecords, []),
+      when(authStore.canRead('connector') || authStore.canWrite('agent'), adminApi.getMcpConnectors, []),
+      when(authStore.canRead('connector') || authStore.canRead('skill') || authStore.canWrite('agent'), adminApi.getBuiltinTools, null),
+      when(authStore.canRead('skill') || authStore.canWrite('agent'), adminApi.getBuiltinSkills, null),
       adminApi.getHealth(),
-      adminApi.getUsage(),
-      adminApi.getPlatformStatus(),
+      when(authStore.canRead('ops'), adminApi.getUsage, []),
+      when(authStore.canRead('ops'), adminApi.getPlatformStatus, null),
     ])
     tasks.value = taskData
     runtimes.value = runtimeData
@@ -407,4 +409,8 @@ function replaceById<T extends { id: string }>(collection: T[], item: T) {
   const index = collection.findIndex((candidate) => candidate.id === item.id)
   if (index >= 0) collection.splice(index, 1, item)
   else collection.unshift(item)
+}
+
+function when<T, E>(allowed: boolean, load: () => Promise<T>, empty: E): Promise<T | E> {
+  return allowed ? load() : Promise.resolve(empty)
 }

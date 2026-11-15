@@ -241,6 +241,11 @@ watch(() => props.userId, () => {
 </template>
 
 <style scoped>
+/* 面板既嵌在员工与权限的抽屉里，也在钉钉集成页的抽屉里单独使用，标题样式自带。 */
+.dingtalk-panel .drawer-section__heading { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+.dingtalk-panel .drawer-section__heading > div { display: flex; flex-direction: column; }
+.dingtalk-panel .drawer-section__heading strong { color: var(--color-text-heading); }
+.dingtalk-panel .drawer-section__heading span { margin-top: 3px; color: var(--color-text-muted); font-size: var(--font-size-badge); }
 .dingtalk-panel__card { display: grid; gap: 12px; padding: 14px 16px; border: 1px solid var(--el-border-color-lighter); border-radius: 8px; }
 .dingtalk-panel__state { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 13px; color: var(--el-text-color-secondary); }
 .dingtalk-panel__facts { display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: 8px 12px; margin: 0; font-size: 13px; }

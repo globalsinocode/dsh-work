@@ -85,10 +85,11 @@ export const useAdminAssistantStore = defineStore('admin-assistant', () => {
       if (conversation.draft.trim() === text) conversation.draft = ''
       requests.delete(conversation.id)
       return result
-    }, false, true)
+    }, false)
   }
-  async function act(id: string, perform: () => Promise<AdminConversation>, replyOnFailure = false, allowRead = false) {
-    if ((!auth.canManage && !(allowRead && auth.canReadAdmin)) || busyIds.value.includes(id)) return
+  /** 任一模块管理员都能使用管理助手；确认类操作由服务端按目标模块复核（管理端模块权限方案 5.5）。 */
+  async function act(id: string, perform: () => Promise<AdminConversation>, replyOnFailure = false) {
+    if (!auth.canReadAdmin || busyIds.value.includes(id)) return
     const epoch = generation
     const messageIds = new Set(conversations.value.find(item => item.id === id)?.messages.map(item => item.id) ?? [])
     busyIds.value.push(id); error.value = ''
@@ -106,7 +107,11 @@ export const useAdminAssistantStore = defineStore('admin-assistant', () => {
     }
     finally { if (epoch === generation) busyIds.value = busyIds.value.filter(value => value !== id) }
   }
-  async function confirm(runId: string, planSha256: string) { await act(selectedId.value, () => adminApi.confirmSkillInstallation(runId, planSha256), true) }
+  async function confirm(runId: string, planSha256: string) {
+    // 确认安装计划需要 Skill 修改权限（管理端模块权限方案 5.5），服务端同样复核。
+    if (!auth.canWrite('skill')) return
+    await act(selectedId.value, () => adminApi.confirmSkillInstallation(runId, planSha256), true)
+  }
   async function confirmProposal(proposalId: string, proposalSha256: string) { await act(selectedId.value, () => adminApi.confirmAssistantProposal(proposalId, proposalSha256), true) }
   async function cancelProposal(proposalId: string) { await act(selectedId.value, () => adminApi.cancelAssistantProposal(proposalId), true) }
   async function confirmAction(actionId: string, planSha256: string) { await act(selectedId.value, () => adminApi.confirmAssistantAction(actionId, planSha256), true) }

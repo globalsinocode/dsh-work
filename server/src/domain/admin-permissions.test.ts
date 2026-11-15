@@ -3,8 +3,12 @@ import { readFileSync } from 'node:fs'
 import test from 'node:test'
 
 import {
+  ADMIN_MODULE_LABELS,
+  ADMIN_MODULES,
   adminModuleForPurpose,
+  adminModulePermission,
   adminModuleSummary,
+  allAdminModulePermissions,
   adminRouteRule,
   decideAdminRouteAccess,
   hasAdminAudienceAccess,
@@ -28,7 +32,7 @@ test('module codes: write includes read, admin:read/write cover every module, ad
   assert.ok(hasAdminModuleAccess(['admin:write'], 'org', 'write'))
   assert.ok(hasAdminModuleAccess(['admin:*'], 'connector', 'write'))
   assert.deepEqual(adminModuleSummary(['admin:knowledge:write', 'admin:ops:read']), {
-    agent: 'none', skill: 'none', connector: 'none', model: 'none', dlp: 'none', knowledge: 'write', org: 'none', ops: 'read',
+    agent: 'none', skill: 'none', connector: 'none', model: 'none', dlp: 'none', knowledge: 'write', org: 'none', identity: 'none', dingtalk: 'none', ops: 'read',
   })
 })
 
@@ -47,25 +51,34 @@ test('routes: a module admin reaches only their module', () => {
   assert.ok(!allowed(knowledgeAdmin, 'agents'))
   assert.ok(!allowed(knowledgeAdmin, 'model-routes', 'POST'))
   assert.ok(!allowed(knowledgeAdmin, 'audit-events'))
-  // 员工与权限：任一模块管理员可读，只有平台管理员可写。
-  assert.ok(allowed(knowledgeAdmin, 'identity/users'))
+  // 员工与权限是模块（AP11）：没有该模块权限不能查看或修改；防提权由服务层复核。
+  assert.ok(!allowed(knowledgeAdmin, 'identity/users'))
   assert.ok(!allowed(knowledgeAdmin, 'identity/users/u1/roles', 'POST'))
-  assert.ok(!allowed(['admin:write'], 'identity/roles', 'POST'))
+  assert.ok(allowed(['admin:identity:read'], 'identity/users'))
+  assert.ok(!allowed(['admin:identity:read'], 'identity/roles', 'POST'))
+  assert.ok(allowed(['admin:identity:write'], 'identity/roles', 'POST'))
   assert.ok(allowed(['admin:*'], 'identity/roles', 'POST'))
+  // 系统健康对任一模块管理员可读。
+  assert.ok(allowed(knowledgeAdmin, 'health'))
+  assert.ok(!allowed(['audit:read'], 'health'))
   // 运营只读。
   assert.ok(allowed(['admin:ops:read'], 'tasks'))
   assert.ok(!allowed(['admin:write'], 'tasks', 'POST'))
 })
 
-test('routes: DingTalk stays platform-admin only, even for all-module admins and reads', () => {
-  assert.ok(!allowed(['admin:read', 'admin:write'], 'dingtalk/overview'))
-  assert.ok(!allowed(['admin:write'], 'dingtalk/settings', 'PUT'))
-  assert.ok(allowed(['admin:*'], 'dingtalk/overview'))
-  // 员工的钉钉绑定挂在 identity 下，同样只限平台管理员。
-  assert.ok(!allowed(['admin:read'], 'identity/users/u1/dingtalk-binding'))
-  assert.ok(!allowed(['admin:write'], 'identity/users/u1/dingtalk-binding/confirm', 'POST'))
-  assert.ok(allowed(['admin:*'], 'identity/users/u1/dingtalk-binding'))
-  assert.ok(allowed(['admin:read'], 'identity/users'))
+test('routes: DingTalk is a module; its application settings stay platform-admin only (AP12)', () => {
+  assert.ok(allowed(['admin:dingtalk:read'], 'dingtalk/overview'))
+  assert.ok(allowed(['admin:dingtalk:read'], 'dingtalk/settings'))
+  assert.ok(!allowed(['admin:dingtalk:read'], 'dingtalk/reminders', 'POST'))
+  assert.ok(allowed(['admin:dingtalk:write'], 'dingtalk/reminders', 'POST'))
+  assert.ok(!allowed(['admin:dingtalk:write'], 'dingtalk/settings', 'PUT'))
+  assert.ok(!allowed(['admin:write'], 'dingtalk/settings', 'DELETE'))
+  assert.ok(allowed(['admin:*'], 'dingtalk/settings', 'PUT'))
+  assert.ok(!allowed(['admin:knowledge:write'], 'dingtalk/overview'))
+  // 员工的钉钉绑定挂在 identity 下，属于钉钉集成模块。
+  assert.ok(allowed(['admin:dingtalk:read'], 'identity/users/u1/dingtalk-binding'))
+  assert.ok(allowed(['admin:dingtalk:write'], 'identity/users/u1/dingtalk-binding/confirm', 'POST'))
+  assert.ok(!allowed(['admin:identity:write'], 'identity/users/u1/dingtalk-binding/confirm', 'POST'))
 })
 
 test('routes: audit needs audit:read; terms need the data-protection module (the route adds terms itself)', () => {
@@ -98,6 +111,10 @@ test('routes: an Agent writer reads candidate lists in selector view only', () =
   assert.deepEqual(decideAdminRouteAccess(agentWriter, api('connectors'), 'GET'), { allowed: true, view: 'selector' })
   assert.deepEqual(decideAdminRouteAccess(['admin:skill:read'], api('skills'), 'GET'), { allowed: true, view: 'full' })
   assert.ok(!allowed(agentWriter, 'skills', 'POST'))
+  assert.deepEqual(decideAdminRouteAccess(agentWriter, api('identity/users'), 'GET'), { allowed: true, view: 'selector' })
+  assert.deepEqual(decideAdminRouteAccess(['admin:skill:write'], api('identity/roles'), 'GET'), { allowed: true, view: 'selector' })
+  assert.deepEqual(decideAdminRouteAccess(['admin:skill:read'], api('runtimes/builtin-tools'), 'GET'), { allowed: true, view: 'selector' })
+  assert.ok(!allowed(agentWriter, 'identity/roles'))
   assert.ok(!allowed(agentWriter, 'skill-versions'))
   assert.ok(!allowed(['admin:agent:read'], 'skills'))
 })
@@ -132,4 +149,31 @@ test('management prefixes and Run purposes', () => {
   assert.equal(adminModuleForPurpose('agent-release-trial'), 'agent')
   assert.equal(adminModuleForPurpose('admin-platform-operations'), 'connector')
   assert.equal(adminModuleForPurpose('admin-assistant'), null)
+})
+
+// 前端的模块清单与权限包含关系只用于展示，但必须与这里一致，否则按钮可用性与服务端判定不符（评审 #127）。
+test('admin-web module helpers stay in sync with the server permission tables', async () => {
+  // 用运行时路径导入，避免把前端文件纳入服务端的 tsc rootDir。
+  const web = await import(new URL('../../../apps/admin-web/src/utils/admin-modules.ts', import.meta.url).href) as {
+    ADMIN_MODULES: readonly string[]
+    ADMIN_MODULE_LABELS: Record<string, string>
+    READ_ONLY_MODULES: ReadonlySet<string>
+    permissionsBeyond: (granted: readonly string[], held: readonly string[]) => string[]
+    moduleLevelsOf: (permissions: readonly string[]) => Record<string, string>
+  }
+  assert.deepEqual([...web.ADMIN_MODULES], [...ADMIN_MODULES])
+  assert.deepEqual(web.ADMIN_MODULE_LABELS, ADMIN_MODULE_LABELS)
+  assert.deepEqual(
+    ADMIN_MODULES.filter(module => web.READ_ONLY_MODULES.has(module)),
+    ADMIN_MODULES.filter(module => !allAdminModulePermissions().includes(adminModulePermission(module, 'write'))),
+  )
+  const codes = ['admin:*', 'admin:read', 'admin:write', ...allAdminModulePermissions(), 'audit:read', 'data-protection:terms', 'knowledge:view', 'knowledge:docs', 'knowledge:bases', 'workbench:use']
+  for (const granted of codes) {
+    for (const held of codes) {
+      assert.deepEqual(web.permissionsBeyond([granted], [held]), missingPermissions([granted], [held]), `${granted} vs ${held}`)
+    }
+    for (const module of ADMIN_MODULES) {
+      assert.equal(web.moduleLevelsOf([granted])[module], adminModuleSummary([granted])[module], `${granted} on ${module}`)
+    }
+  }
 })

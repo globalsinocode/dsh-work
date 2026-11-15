@@ -74,7 +74,8 @@ async function load() {
   try {
     const [records, spaces, users] = await Promise.allSettled([
       adminApi.getAgentRoutines(agentId), adminApi.getAgentJoinedWorkspaces(agentId),
-      adminApi.getIdentityUsers({ status: 'active', pageSize: 100 }),
+      // 接收人候选只在能修改时需要（Agent 修改权限可读取员工姓名的精简列表，管理端模块权限方案 5.2）。
+      props.canManage ? adminApi.getIdentityUsers({ status: 'active', pageSize: 100 }) : Promise.reject(new Error('read only')),
     ])
     if (props.agentId !== agentId) return
     if (records.status === 'rejected') throw records.reason

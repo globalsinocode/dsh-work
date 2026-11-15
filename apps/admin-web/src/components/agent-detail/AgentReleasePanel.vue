@@ -92,7 +92,7 @@ const promptsDirty = computed(() => {
 })
 const promptsValid = computed(() => prompts.value.length <= MAX_TEST_CASES
   && prompts.value.every(prompt => prompt.trim() && prompt.length <= MAX_TEST_CASE_CHARS))
-const canStart = computed(() => authStore.canManage && Boolean(working.value) && checksPassed.value
+const canStart = computed(() => authStore.canWrite('agent') && Boolean(working.value) && checksPassed.value
   && !promptsDirty.value && busy.value === '')
 const passedCount = computed(() => liveValidation.value?.cases.filter(item => item.verdict === 'passed').length ?? 0)
 const finishedCount = computed(() => liveValidation.value?.cases
@@ -370,7 +370,7 @@ onBeforeUnmount(stopPolling)
 
       <section v-if="!working && !liveValidation" class="content-panel validation-card">
         <el-empty description="当前没有待发布的草稿；在职责与人格或能力步骤中修改会生成新的草稿版本" :image-size="72">
-          <el-button v-if="authStore.canManage" type="primary" data-action="edit-agent" @click="emit('edit')">编辑配置</el-button>
+          <el-button v-if="authStore.canWrite('agent')" type="primary" data-action="edit-agent" @click="emit('edit')">编辑配置</el-button>
         </el-empty>
       </section>
 
@@ -378,7 +378,7 @@ onBeforeUnmount(stopPolling)
         <section class="content-panel validation-card" aria-label="岗位权限摘要">
           <div class="card-head">
             <div class="card-head__title"><h3>岗位权限</h3><span>{{ access ? `${access.visibleRoleIds.length} 个可见角色 · ${access.roleIds.length} 个岗位角色 · ${access.dataScopes.length} 个数据范围` : '读取中' }}</span></div>
-            <el-button v-if="authStore.canManage && access" size="small" data-action="edit-agent-access" @click="emit('open-access')">调整</el-button>
+            <el-button v-if="authStore.canWrite('agent') && access" size="small" data-action="edit-agent-access" @click="emit('open-access')">调整</el-button>
           </div>
           <p class="hint">岗位权限属于 Agent，修改立即生效，不需要重新验证；发布时会按最新权限复核。</p>
           <el-alert v-if="accessLoadError" type="error" :closable="false" :title="accessLoadError">
@@ -415,7 +415,7 @@ onBeforeUnmount(stopPolling)
           <div class="card-head">
             <div class="card-head__title"><h3>验证案例</h3><span>示例问题、主动任务与自定义问题一起运行</span></div>
             <el-button
-              v-if="authStore.canManage"
+              v-if="authStore.canWrite('agent')"
               type="primary"
               :loading="busy === 'start'"
               :disabled="!canStart"
@@ -438,10 +438,10 @@ onBeforeUnmount(stopPolling)
           <div class="custom-prompts">
             <h4>自定义测试问题 <small class="hint">{{ prompts.length }}/{{ MAX_TEST_CASES }} · 属于 Agent，跨版本复用</small></h4>
             <div v-for="(_, index) in prompts" :key="index" class="custom-prompts__row">
-              <el-input v-model="prompts[index]" type="textarea" :rows="2" :maxlength="MAX_TEST_CASE_CHARS" :disabled="!authStore.canManage" :aria-label="`自定义测试问题 ${index + 1}`" />
-              <el-button v-if="authStore.canManage" text type="danger" @click="removePrompt(index)">删除</el-button>
+              <el-input v-model="prompts[index]" type="textarea" :rows="2" :maxlength="MAX_TEST_CASE_CHARS" :disabled="!authStore.canWrite('agent')" :aria-label="`自定义测试问题 ${index + 1}`" />
+              <el-button v-if="authStore.canWrite('agent')" text type="danger" @click="removePrompt(index)">删除</el-button>
             </div>
-            <div v-if="authStore.canManage" class="custom-prompts__actions">
+            <div v-if="authStore.canWrite('agent')" class="custom-prompts__actions">
               <el-button size="small" :disabled="prompts.length >= MAX_TEST_CASES" @click="addPrompt">添加问题</el-button>
               <el-button size="small" type="primary" plain :loading="busy === 'prompts'" :disabled="!promptsDirty || !promptsValid" @click="savePrompts">保存测试问题</el-button>
             </div>
@@ -485,7 +485,7 @@ onBeforeUnmount(stopPolling)
                 </dl>
               </details>
 
-              <div v-if="authStore.canManage" class="case-item__actions" role="group" :aria-label="`案例 ${item.position + 1} 判定`">
+              <div v-if="authStore.canWrite('agent')" class="case-item__actions" role="group" :aria-label="`案例 ${item.position + 1} 判定`">
                 <template v-if="rejectingCaseId === item.id">
                   <el-input v-model="rejectNote" type="textarea" :rows="2" :maxlength="2000" show-word-limit placeholder="说明哪里不符合预期，修改配置后据此重新验证" :aria-label="`案例 ${item.position + 1} 不通过原因`" />
                   <div class="case-item__buttons">
@@ -509,7 +509,7 @@ onBeforeUnmount(stopPolling)
           </article>
         </section>
 
-        <section v-if="liveValidation && authStore.canManage" class="content-panel validation-card" aria-label="确认发布">
+        <section v-if="liveValidation && authStore.canWrite('agent')" class="content-panel validation-card" aria-label="确认发布">
           <div class="card-head"><div class="card-head__title"><h3>确认发布</h3><span>v{{ liveValidation.version }}</span></div></div>
           <p class="hint">全部案例判定通过后才能发布。发布时会按最新的岗位权限、工具绑定和连接范围再复核一次；发布只移动当前版本指针。</p>
           <el-input v-model="publishNote" type="textarea" :rows="2" :maxlength="2000" aria-label="发布说明" placeholder="发布说明（选填）" />

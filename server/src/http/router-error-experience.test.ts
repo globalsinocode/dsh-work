@@ -102,7 +102,7 @@ test('malformed JSON is a validation error rather than an internal server failur
   assert.match(result.error.message, /有效 JSON/)
 })
 
-test('admin writers cannot escalate privileges through identity administration routes', () => {
+test('identity administration routes follow the identity module; escalation is rechecked by the service (AP11, AP13)', () => {
   const identity: RequestIdentity = {
     audience: 'admin',
     applicationId: 'dsh-work',
@@ -121,10 +121,13 @@ test('admin writers cannot escalate privileges through identity administration r
   }
 
   assert.doesNotThrow(() => assertApiRouteAccess(identity, '/api/admin/v1/identity/users', 'GET'))
+  assert.doesNotThrow(() => assertApiRouteAccess(identity, '/api/admin/v1/identity/users/user-1/roles', 'POST'))
+  const knowledgeAdmin = { ...identity, permissions: ['admin:knowledge:write'] }
   assert.throws(
-    () => assertApiRouteAccess(identity, '/api/admin/v1/identity/users/user-1/roles', 'POST'),
-    /只有平台管理员/,
+    () => assertApiRouteAccess(knowledgeAdmin, '/api/admin/v1/identity/users/user-1/roles', 'POST'),
+    /没有员工与权限的修改权限/,
   )
+  assert.throws(() => assertApiRouteAccess(knowledgeAdmin, '/api/admin/v1/identity/users', 'GET'), /没有员工与权限的查看权限/)
   assert.doesNotThrow(() => assertApiRouteAccess(identity, '/api/admin/v1/agents', 'POST'))
 })
 

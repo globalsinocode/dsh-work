@@ -306,12 +306,12 @@ defineExpose({ load })
             </article>
           </div>
           <pre v-if="!trialActive && (trialProgress?.resultSummary ?? detail.trial.resultSummary)" class="submission-review__file">{{ trialProgress?.resultSummary ?? detail.trial.resultSummary }}</pre>
-          <el-button v-if="authStore.canManage && !trialActive && detail.compatibility.status !== 'incompatible'" :loading="trialStarting" @click="startTrial">
+          <el-button v-if="authStore.canWrite('skill') && !trialActive && detail.compatibility.status !== 'incompatible'" :loading="trialStarting" @click="startTrial">
             {{ trialStatus === 'not_started' ? '开始试运行' : '重新试运行' }}
           </el-button>
         </section>
       </template>
-      <template v-if="detail && authStore.canManage" #footer>
+      <template v-if="detail && authStore.canWrite('skill')" #footer>
         <span v-if="approveBlockedReason" class="submission-review__blocked" role="note">{{ approveBlockedReason }}</span>
         <el-button @click="openReject">拒绝</el-button>
         <el-button type="primary" :disabled="Boolean(approveBlockedReason)" @click="openApprove">通过并发布</el-button>

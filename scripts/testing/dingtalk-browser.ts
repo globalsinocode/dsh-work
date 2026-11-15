@@ -30,6 +30,7 @@ const members = new Map<string, { name: string; mobile: string; departments: num
   ['ding-heqing', { name: '何青', mobile: '13800002206', departments: [13] }],
   ['ding-wufan', { name: '吴凡', mobile: '13800002207', departments: [11] }],
   ['ding-lixiang', { name: '李响', mobile: '13800002208', departments: [12] }],
+  ['ding-jiangyan', { name: '蒋岩', mobile: '13800002209', departments: [13] }],
   ['ding-stranger', { name: '陌生人', mobile: '13800002299', departments: [11] }],
 ])
 const departments = new Map([[1, 'dsh-work 测试企业'], [11, '销售部'], [12, '研发部'], [13, '市场部']])
@@ -144,6 +145,9 @@ try {
     { username: 'heqing@example.invalid', name: '何青', dingtalk: 'ding-heqing', boundBy: 'admin' },
     { username: 'wufan@example.invalid', name: '吴凡', locked: true },
     { username: 'lixiang@example.invalid', name: '李响' },
+    // AMP-P1-03：只供“只有钉钉权限的管理员在钉钉集成页内代绑与解绑”使用，其他用例不碰。
+    { username: 'jiangyan@example.invalid', name: '蒋岩' },
+    { username: 'dingtalk.ops@example.invalid', name: '郑洁' },
   ]
   for (const account of accounts) {
     const { userId } = await authentication.createAccount({ username: account.username, name: account.name, password: fixturePassword }, admin.userId)
@@ -164,6 +168,10 @@ try {
       `
     }
   }
+  // 郑洁只持有“修改钉钉集成”（AMP-P1-03），没有员工与权限的查看权限。
+  const dingTalkRole = await administration.createRole({ name: '钉钉专员', permissions: ['admin:dingtalk:write'], actorId: admin.userId })
+  const [ops] = await database.client<{ userId: string }[]>`select user_id as "userId" from local_user_credentials where username = 'dingtalk.ops@example.invalid'`
+  await administration.grantRole({ userId: ops!.userId, roleId: dingTalkRole.id, actorId: admin.userId })
   if (!closing) {
     child = spawn(process.execPath, ['--experimental-strip-types', 'server/src/main.ts'], {
       cwd: resolve(import.meta.dirname, '../..'), env: environment, stdio: ['ignore', 'inherit', 'inherit'],

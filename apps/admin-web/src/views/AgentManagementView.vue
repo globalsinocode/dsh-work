@@ -86,7 +86,6 @@ onMounted(async () => {
 <template>
   <div class="ops-page agent-page">
     <el-alert v-if="contentStore.error" :title="contentStore.error" type="error" show-icon @close="contentStore.error = ''" />
-    <el-alert v-if="authStore.isAuditor" type="info" show-icon :closable="false" title="当前为安全审计员视图，仅可查看 Agent 配置与版本；发布、回滚和启停记录见审计日志。" />
 
     <section class="content-panel filter-panel">
       <div class="filter-bar">
@@ -99,7 +98,7 @@ onMounted(async () => {
         </el-select>
         <span class="filter-bar__meta">{{ filteredAgents.length }} 个 Agent</span>
         <el-button @click="$router.push('/assistant?context=agents')">交给管理助手</el-button>
-        <el-button v-if="authStore.canManage" class="create-button" type="primary" :icon="Plus" data-action="create-agent" @click="createOpen = true">创建 Agent</el-button>
+        <el-button v-if="authStore.canWrite('agent')" class="create-button" type="primary" :icon="Plus" data-action="create-agent" @click="createOpen = true">创建 Agent</el-button>
       </div>
     </section>
 
@@ -133,8 +132,8 @@ onMounted(async () => {
         <el-table-column label="操作" width="260" fixed="right">
           <template #default="scope">
             <el-button link type="primary" :icon="View" data-action="view-agent" @click.stop="openDetail(scope.row)">查看</el-button>
-            <el-button v-if="authStore.canManage" link type="primary" data-action="edit-agent-draft" @click.stop="openDraft(scope.row)">{{ pendingVersionOf(scope.row.id) ? '继续编辑' : '编辑配置' }}</el-button>
-            <el-button v-if="authStore.canManage && activeVersionOf(scope.row)" link type="primary" :loading="actionLoading === `status:${scope.row.id}`" :data-action="scope.row.status === 'disabled' ? 'enable-agent' : 'disable-agent'" @click.stop="changeAvailability(scope.row)">{{ scope.row.status === 'disabled' ? '启用' : '停用' }}</el-button>
+            <el-button v-if="authStore.canWrite('agent')" link type="primary" data-action="edit-agent-draft" @click.stop="openDraft(scope.row)">{{ pendingVersionOf(scope.row.id) ? '继续编辑' : '编辑配置' }}</el-button>
+            <el-button v-if="authStore.canWrite('agent') && activeVersionOf(scope.row)" link type="primary" :loading="actionLoading === `status:${scope.row.id}`" :data-action="scope.row.status === 'disabled' ? 'enable-agent' : 'disable-agent'" @click.stop="changeAvailability(scope.row)">{{ scope.row.status === 'disabled' ? '启用' : '停用' }}</el-button>
           </template>
         </el-table-column>
       </el-table>

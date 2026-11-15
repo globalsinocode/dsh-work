@@ -120,7 +120,7 @@ test('administrator can create an account; ordinary users cannot grant or create
   assert.equal(employeeLogin.response.status, 200)
   assert.equal((await login('api.employee@example.invalid', 'admin')).response.status, 403)
   assert.equal((await call('/api/admin/v1/identity/users', { cookie: employeeLogin.cookie, body: { username: 'unauthorized@example.invalid', name: 'bad', password } })).response.status, 401)
-  await assert.rejects(auth.createAccount({ username: 'no.permission@example.invalid', name: 'bad', password }, userId), /只有平台管理员/)
+  await assert.rejects(auth.createAccount({ username: 'no.permission@example.invalid', name: 'bad', password }, userId), /没有员工与权限的修改权限/)
 })
 
 test('first password changes return directly with a fresh session and revoke both portals, including after a reset', async () => {

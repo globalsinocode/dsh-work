@@ -12,7 +12,7 @@ import type { KnowledgeAdminBase, KnowledgeAdminBaseList, KnowledgeAdminDepartme
  * 归属部门、新建与删除。平台管理员可以授给任意部门（含全公司）并撤销任何授权；文档由归属部门的员工在员工端维护。
  */
 const authStore = useAuthStore()
-const canManage = computed(() => authStore.canManage)
+const canManage = computed(() => authStore.canWrite('knowledge'))
 
 const overview = ref<KnowledgeAdminOverview | null>(null)
 const baseList = ref<KnowledgeAdminBaseList>({ items: [], statsAvailable: true })

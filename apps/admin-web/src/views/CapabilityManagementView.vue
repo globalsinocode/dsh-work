@@ -20,7 +20,7 @@ const contentStore = useContentStore()
 const router = useRouter()
 const route = useRoute()
 const activeTab = computed<CapabilityTab>(() => {
-  if (route.path === '/skills/install') return authStore.canManage ? 'install' : 'skills'
+  if (route.path === '/skills/install') return authStore.canWrite('skill') ? 'install' : 'skills'
   if (route.path === '/skills/review') return 'review'
   if (route.path === '/connectors') return 'connectors'
   return 'skills'
@@ -30,7 +30,7 @@ const tabs = computed<Array<{ id: CapabilityTab; label: string; count?: number }
   { id: 'skills', label: 'Skill 列表', count: managedSkills.value.length },
   // 员工经 Skill 创建专家提交的 Skill（skill-creator-plan 4.4）。
   { id: 'review', label: '待审核', ...(pendingSubmissionCount.value === undefined ? {} : { count: pendingSubmissionCount.value }) },
-  ...(authStore.canManage ? [{ id: 'install' as const, label: '新增 Skill' }] : []),
+  ...(authStore.canWrite('skill') ? [{ id: 'install' as const, label: '新增 Skill' }] : []),
 ])
 const skillSection = computed(() => activeTab.value !== 'connectors')
 const pendingSubmissionCount = ref<number>()
@@ -511,7 +511,7 @@ async function rollbackSkill(version: SkillVersionRecord) {
 /** 只有当前待发布、由安装得到的入口草稿可以放弃；员工提交的草稿在“待审核”中处理。 */
 function canDiscardSkillDraft(version: SkillVersionRecord) {
   const skill = selectedSkill.value
-  return Boolean(authStore.canManage && skill && version.status === 'draft' && skill.status === 'draft'
+  return Boolean(authStore.canWrite('skill') && skill && version.status === 'draft' && skill.status === 'draft'
     && version.version === skill.version && !skill.submissionDraft && skill.installationRole !== 'dependency')
 }
 
@@ -812,7 +812,6 @@ onUnmounted(() => clearSkillTestPoll())
 <template>
   <div class="ops-page capabilities-page">
     <el-alert v-if="contentStore.error" :title="contentStore.error" type="error" show-icon @close="contentStore.error = ''" />
-    <el-alert v-if="authStore.isAuditor" type="info" show-icon :closable="false" title="当前为安全审计员视图，仅可查看 Skill 与连接器配置。" />
     <el-alert
       v-if="skillActionFeedback && activeTab === 'skills'"
       class="skill-action-feedback"
@@ -833,14 +832,14 @@ onUnmounted(() => clearSkillTestPoll())
         <el-input v-model="query" :prefix-icon="Search" clearable :placeholder="activeTab === 'skills' ? '搜索 Skill 名称、说明或负责人' : '搜索 MCP 名称、标识或 serverName'" />
         <div v-if="activeTab === 'skills'" class="capability-toolbar__legend"><span>版本发布后不可变</span></div>
         <el-button v-if="activeTab === 'skills'" @click="router.push('/assistant?context=skills')">交给管理助手</el-button>
-        <div v-if="authStore.canManage && activeTab === 'connectors'" class="capability-toolbar__actions">
+        <div v-if="authStore.canWrite('connector') && activeTab === 'connectors'" class="capability-toolbar__actions">
           <el-button type="primary" :icon="Plus" data-action="add-mcp-connector" @click="mcpCreateDialogOpen = true">新增 MCP</el-button>
           <el-button :icon="Refresh" :loading="healthRefreshing" data-action="refresh-connectors" @click="refreshHealth">全部检查</el-button>
         </div>
       </div>
     </section>
 
-    <div v-if="authStore.canManage" v-show="activeTab === 'install'" id="capability-panel-install" role="tabpanel" aria-labelledby="capability-tab-install">
+    <div v-if="authStore.canWrite('skill')" v-show="activeTab === 'install'" id="capability-panel-install" role="tabpanel" aria-labelledby="capability-tab-install">
       <SkillInstallationPanel @back="switchTab('skills')" @assistant="router.push('/assistant?context=skills')" @installed="refreshInstalledSkills" />
     </div>
 
@@ -885,7 +884,7 @@ onUnmounted(() => clearSkillTestPoll())
         <el-table-column prop="owner" label="负责人" min-width="140" />
         <el-table-column label="状态" width="108"><template #default="scope"><StatusTag :status="scope.row.status" /></template></el-table-column>
         <el-table-column prop="updatedAt" label="更新时间" width="120" />
-        <el-table-column label="操作" width="210" fixed="right"><template #default="scope"><el-button link type="primary" :icon="View" data-action="view-skill" @click="inspectSkill(scope.row)">查看</el-button><el-button v-if="authStore.canManage && scope.row.submissionDraft" link type="primary" data-action="review-skill-submission" @click="switchTab('review')">去审核</el-button><el-button v-else-if="authStore.canManage" link type="primary" :loading="actionLoading === `skill:${scope.row.id}`" :data-action="scope.row.status === 'published' ? 'disable-skill' : 'publish-skill'" @click="changeSkillStatus(scope.row)">{{ scope.row.status === 'published' ? '停用' : scope.row.status === 'draft' ? (scope.row.packageSha256 ? '试运行并发布' : '校验并发布') : '启用' }}</el-button></template></el-table-column>
+        <el-table-column label="操作" width="210" fixed="right"><template #default="scope"><el-button link type="primary" :icon="View" data-action="view-skill" @click="inspectSkill(scope.row)">查看</el-button><el-button v-if="authStore.canWrite('skill') && scope.row.submissionDraft" link type="primary" data-action="review-skill-submission" @click="switchTab('review')">去审核</el-button><el-button v-else-if="authStore.canWrite('skill')" link type="primary" :loading="actionLoading === `skill:${scope.row.id}`" :data-action="scope.row.status === 'published' ? 'disable-skill' : 'publish-skill'" @click="changeSkillStatus(scope.row)">{{ scope.row.status === 'published' ? '停用' : scope.row.status === 'draft' ? (scope.row.packageSha256 ? '试运行并发布' : '校验并发布') : '启用' }}</el-button></template></el-table-column>
       </el-table>
       <div class="table-footer table-footer--pager"><el-pagination v-model:current-page="skillPage" background layout="prev, pager, next" :total="filteredSkills.length" :page-size="10" /></div>
       <section class="builtin-skills" aria-labelledby="builtin-skills-title">
@@ -917,8 +916,8 @@ onUnmounted(() => clearSkillTestPoll())
           <template #default="scope">
             <div class="mcp-row-actions">
               <el-button link type="primary" :icon="View" data-action="view-connector" @click="inspectConnector(scope.row)">查看</el-button>
-              <el-button v-if="authStore.canManage" link type="primary" :loading="actionLoading === `connector:${scope.row.id}`" data-action="check-connector" @click="checkConnector(scope.row)">检查</el-button>
-              <el-dropdown v-if="authStore.canManage && scope.row.mcp" trigger="click" placement="bottom-end" popper-class="mcp-more-dropdown" @command="handleMcpMoreCommand(String($event), scope.row)">
+              <el-button v-if="authStore.canWrite('connector')" link type="primary" :loading="actionLoading === `connector:${scope.row.id}`" data-action="check-connector" @click="checkConnector(scope.row)">检查</el-button>
+              <el-dropdown v-if="authStore.canWrite('connector') && scope.row.mcp" trigger="click" placement="bottom-end" popper-class="mcp-more-dropdown" @command="handleMcpMoreCommand(String($event), scope.row)">
                 <el-button link type="primary" data-action="mcp-more"><span>更多</span><el-icon><ArrowDown /></el-icon></el-button>
                 <template #dropdown>
                   <el-dropdown-menu>
@@ -956,7 +955,7 @@ onUnmounted(() => clearSkillTestPoll())
         </template>
       </div>
       <template #footer>
-        <el-button v-if="authStore.canManage && selectedMcpToolsConnector?.mcp?.pendingCapabilities.length" type="warning" :loading="actionLoading === `mcp-approve:${selectedMcpToolsConnector.id}`" data-action="approve-mcp-capabilities" @click="approveMcpCapabilities(selectedMcpToolsConnector)">确认生效</el-button>
+        <el-button v-if="authStore.canWrite('connector') && selectedMcpToolsConnector?.mcp?.pendingCapabilities.length" type="warning" :loading="actionLoading === `mcp-approve:${selectedMcpToolsConnector.id}`" data-action="approve-mcp-capabilities" @click="approveMcpCapabilities(selectedMcpToolsConnector)">确认生效</el-button>
         <el-button type="primary" @click="mcpToolsDialogOpen = false">关闭</el-button>
       </template>
     </el-dialog>
@@ -1064,15 +1063,15 @@ onUnmounted(() => clearSkillTestPoll())
       <section v-if="detailType === 'skill' && skillDetailTab === 'config' && selectedSkill && builtinScenarioOptions.length" class="capability-detail__coverage" aria-labelledby="skill-coverage-title">
         <h3 id="skill-coverage-title">覆盖内置场景</h3>
         <p>勾选后，运行中有这个 Skill 时不再提供对应的平台内置 Skill。只对可由模型调用的 Skill 生效，修改立即作用于新运行。</p>
-        <el-checkbox-group v-model="coverageDraft" :disabled="!authStore.canManage" aria-labelledby="skill-coverage-title">
+        <el-checkbox-group v-model="coverageDraft" :disabled="!authStore.canWrite('skill')" aria-labelledby="skill-coverage-title">
           <el-checkbox v-for="scenario in builtinScenarioOptions" :key="scenario.id" :value="scenario.id">{{ scenario.label }}</el-checkbox>
         </el-checkbox-group>
-        <el-button v-if="authStore.canManage" size="small" type="primary" :disabled="!coverageChanged" :loading="actionLoading === `skill-coverage:${selectedSkill.id}`" data-action="save-builtin-coverage" @click="saveSkillCoverage">保存覆盖场景</el-button>
+        <el-button v-if="authStore.canWrite('skill')" size="small" type="primary" :disabled="!coverageChanged" :loading="actionLoading === `skill-coverage:${selectedSkill.id}`" data-action="save-builtin-coverage" @click="saveSkillCoverage">保存覆盖场景</el-button>
       </section>
       <section v-if="detailType === 'skill' && skillDetailTab === 'config' && selectedSkill" class="capability-detail__coverage" aria-labelledby="skill-visibility-title">
         <h3 id="skill-visibility-title">可见范围</h3>
         <p>决定哪些员工能在 Skill 广场选用这个 Skill。把它加入某个 Agent 后，能使用该 Agent 的员工都能间接用到它。</p>
-        <p v-if="!authStore.canManage">{{ selectedSkill.visibleRoleIds ? selectedSkill.visibleRoleIds.map(visibilityRoleName).join('、') : '全员' }}</p>
+        <p v-if="!authStore.canWrite('skill')">{{ selectedSkill.visibleRoleIds ? selectedSkill.visibleRoleIds.map(visibilityRoleName).join('、') : '全员' }}</p>
         <template v-else>
           <el-radio-group v-model="visibilityDraft.scope" aria-labelledby="skill-visibility-title">
             <el-radio value="all">全员</el-radio>
@@ -1090,7 +1089,7 @@ onUnmounted(() => clearSkillTestPoll())
           <el-table-column label="版本" width="95"><template #default="scope"><span class="mono">v{{ scope.row.version }}</span></template></el-table-column>
           <el-table-column label="变更说明" min-width="210"><template #default="scope"><div class="version-summary"><strong>{{ scope.row.summary }}</strong><small>{{ scope.row.createdBy }} · {{ scope.row.createdAt }}</small></div></template></el-table-column>
           <el-table-column label="状态" width="95"><template #default="scope"><StatusTag :status="scope.row.status" /></template></el-table-column>
-          <el-table-column label="操作" width="100" fixed="right"><template #default="scope"><el-button v-if="authStore.canManage && scope.row.status === 'published' && scope.row.version !== selectedSkill?.activeVersion" link type="primary" :loading="actionLoading === `skill-rollback:${scope.row.id}`" @click="rollbackSkill(scope.row)">回滚至此</el-button><el-button v-else-if="canDiscardSkillDraft(scope.row)" link type="danger" :loading="actionLoading === `skill-discard:${scope.row.id}`" @click="discardSkillDraft(scope.row)">放弃草稿</el-button><span v-else class="muted">—</span></template></el-table-column>
+          <el-table-column label="操作" width="100" fixed="right"><template #default="scope"><el-button v-if="authStore.canWrite('skill') && scope.row.status === 'published' && scope.row.version !== selectedSkill?.activeVersion" link type="primary" :loading="actionLoading === `skill-rollback:${scope.row.id}`" @click="rollbackSkill(scope.row)">回滚至此</el-button><el-button v-else-if="canDiscardSkillDraft(scope.row)" link type="danger" :loading="actionLoading === `skill-discard:${scope.row.id}`" @click="discardSkillDraft(scope.row)">放弃草稿</el-button><span v-else class="muted">—</span></template></el-table-column>
         </el-table>
         <el-pagination v-model:current-page="skillVersionPage" class="list-pagination" background hide-on-single-page layout="prev, pager, next" :total="selectedSkillVersions.length" :page-size="10" />
       </section>
@@ -1101,7 +1100,7 @@ onUnmounted(() => clearSkillTestPoll())
           <el-pagination v-model:current-page="skillReleasePage" class="list-pagination" background hide-on-single-page layout="prev, pager, next" :total="selectedSkillReleases.length" :page-size="10" />
         </template>
       </section>
-      <div v-if="authStore.canManage && detailType === 'skill'" class="capability-detail__actions"><template v-if="selectedSkill"><el-button :type="selectedSkill.status === 'published' ? 'danger' : 'primary'" :loading="actionLoading === `skill:${selectedSkill.id}`" @click="changeSkillStatus(selectedSkill)">{{ selectedSkill.status === 'published' ? '停用 Skill' : selectedSkill.status === 'draft' ? (selectedSkill.packageSha256 ? '试运行并发布' : '校验并发布') : '启用 Skill' }}</el-button></template></div>
+      <div v-if="authStore.canWrite('skill') && detailType === 'skill'" class="capability-detail__actions"><template v-if="selectedSkill"><el-button :type="selectedSkill.status === 'published' ? 'danger' : 'primary'" :loading="actionLoading === `skill:${selectedSkill.id}`" @click="changeSkillStatus(selectedSkill)">{{ selectedSkill.status === 'published' ? '停用 Skill' : selectedSkill.status === 'draft' ? (selectedSkill.packageSha256 ? '试运行并发布' : '校验并发布') : '启用 Skill' }}</el-button></template></div>
     </el-drawer>
 
     <el-drawer v-model="builtinDetailOpen" size="min(620px, 100vw)" :title="selectedBuiltinSkill?.name ?? '平台内置 Skill'">

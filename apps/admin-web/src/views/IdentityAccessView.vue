@@ -8,6 +8,8 @@ import { adminApi, AdminApiError } from '@/api/client'
 import { useListPagination } from '@/composables/use-list-pagination'
 import { useAuthStore } from '@/stores/auth'
 import DingTalkBindingPanel from '@/components/dingtalk/DingTalkBindingPanel.vue'
+import RolePermissionEditor from '@/components/RolePermissionEditor.vue'
+import { permissionTags, permissionsBeyond } from '@/utils/admin-modules'
 import { dingtalkBoundBy, dingtalkRevokeReason, dingtalkStatusLabel, dingtalkStatusTag } from '@/utils/dingtalk'
 import type {
   DingTalkBindingStatus,
@@ -78,14 +80,37 @@ const roleForm = reactive({
 const assignableRoles = computed(() => roles.value.filter(role => (
   role.status === 'active'
   && !selectedUser.value?.roles.some(assigned => assigned.id === role.id)
+  // 只列出不超过操作人自身的角色（方案 AP13 ①），服务端同样复核。
+  && (authStore.platformAdmin || permissionsBeyond(role.permissions, authStore.permissions).length === 0)
 )))
-const groupedPermissions = computed(() => {
-  const groups = new Map<string, LocalPermissionDefinition[]>()
-  for (const permission of permissionDefinitions.value) {
-    groups.set(permission.category, [...(groups.get(permission.category) ?? []), permission])
+const permissionNames = computed(() => Object.fromEntries(permissionDefinitions.value.map(permission => [permission.code, permission.name])))
+/**
+ * 防提权（管理端模块权限方案 AP13）的前端提示：服务端逐次复核，这里只决定按钮是否可用与说明文案。
+ * 平台管理员角色只有平台管理员能改；含操作人没有的权限的角色只读。
+ */
+function roleLockReason(role: IdentityRoleSummary) {
+  if (!authStore.canManageIdentity || authStore.platformAdmin) return ''
+  if (role.id === 'role-platform-admin') return '仅平台管理员可改'
+  return permissionsBeyond(role.permissions, authStore.permissions).length ? '含你没有的权限' : ''
+}
+const editingRoleLocked = computed(() => !authStore.canManageIdentity || Boolean(editingRole.value && roleLockReason(editingRole.value)))
+/** 不能操作自己、平台管理员或权限比自己高的账号（AP13 ③④）。 */
+function userLockReason(user: IdentityUserSummary | undefined) {
+  if (!user || authStore.platformAdmin) return ''
+  if (user.id === authStore.user.id) return '不能操作自己的账号'
+  // 与服务端 assertCanManageUser 同一口径：本地授予的任一角色含 admin:* 即为平台管理员；只看启用的角色。
+  // 数据范围的比较只在服务端做，前端放行后仍可能被拒绝并提示原因。
+  const localIds = new Set(user.roles.map(role => role.id))
+  const roleIds = new Set([...localIds, ...(user.departmentRoles ?? []).map(role => role.id)])
+  const heldRoles = roles.value.filter(role => roleIds.has(role.id) && role.status === 'active')
+  if (localIds.has('role-platform-admin') || heldRoles.some(role => localIds.has(role.id) && role.permissions.includes('admin:*'))) {
+    return '平台管理员的账号只有平台管理员可以操作'
   }
-  return [...groups.entries()].map(([category, items]) => ({ category, items }))
-})
+  const held = heldRoles.flatMap(role => role.permissions)
+  return permissionsBeyond(held, authStore.permissions).length ? '对方的权限比你高，不能操作这个账号' : ''
+}
+const selectedUserLockReason = computed(() => userLockReason(selectedUser.value))
+const canManageSelectedUser = computed(() => authStore.canManageIdentity && !selectedUserLockReason.value)
 const { currentPage: rolePage, pagedItems: pagedRoles } = useListPagination(roles)
 
 async function load() {
@@ -376,7 +401,7 @@ function openEditRole(role: IdentityRoleSummary) {
 }
 
 async function saveRole() {
-  if (!authStore.canManageIdentity || !roleForm.name.trim()) return
+  if (editingRoleLocked.value || !roleForm.name.trim()) return
   saving.value = true
   try {
     if (editingRole.value) {
@@ -389,7 +414,6 @@ async function saveRole() {
       })
     } else {
       await adminApi.createIdentityRole({
-        code: roleForm.code,
         name: roleForm.name,
         description: roleForm.description,
         permissions: roleForm.permissions,
@@ -524,7 +548,7 @@ onMounted(() => void load())
       <p v-if="localAccountsEnabled && userSummary.dingtalk" class="overview-strip__hint dingtalk-summary" aria-label="钉钉绑定概况">
         钉钉：已绑定 <strong>{{ userSummary.dingtalk.bound }}</strong>（本人登录 {{ userSummary.dingtalk.selfBound }} · 管理员代绑 {{ userSummary.dingtalk.adminBound }}）
         · 未绑定 <strong>{{ userSummary.dingtalk.unbound + userSummary.dingtalk.invalid }}</strong>
-        <a v-if="authStore.canManageIdentity" href="/dingtalk?tab=unbound">查看名单</a>
+        <a v-if="authStore.canRead('dingtalk')" href="/dingtalk?tab=unbound">查看名单</a>
       </p>
       <p v-if="directoryEnabled && directoryState?.lastError" class="overview-strip__hint sync-error">{{ directoryState.lastError }}</p>
       <p v-else-if="!directoryEnabled" class="overview-strip__hint">账号安全：仅管理员可开通账号。</p>
@@ -627,11 +651,11 @@ onMounted(() => void load())
         <section class="content-panel content-panel--flush">
           <el-table v-loading="loading" class="data-table" :data="pagedRoles" empty-text="暂无角色">
             <el-table-column label="角色" min-width="210"><template #default="scope"><div class="role-cell"><strong>{{ scope.row.name }}</strong><code>{{ scope.row.code }}</code></div></template></el-table-column>
-            <el-table-column label="功能权限" min-width="300"><template #default="scope"><div class="tag-list"><el-tag v-for="permission in scope.row.permissions" :key="permission" effect="plain">{{ permission }}</el-tag><span v-if="!scope.row.permissions.length" class="empty-value">未配置</span></div></template></el-table-column>
+            <el-table-column label="功能权限" min-width="300"><template #default="scope"><div class="tag-list"><el-tag v-for="tag in permissionTags(scope.row.permissions, permissionNames)" :key="tag" effect="plain">{{ tag }}</el-tag><span v-if="!scope.row.permissions.length" class="empty-value">未配置</span></div></template></el-table-column>
             <el-table-column label="数据范围" min-width="230"><template #default="scope"><span class="scope-copy">{{ scope.row.dataScopes.join('、') || '未配置' }}</span></template></el-table-column>
             <el-table-column prop="userCount" label="有效员工" width="100" align="center" />
             <el-table-column label="状态" width="90"><template #default="scope"><el-tag :type="scope.row.status === 'active' ? 'success' : 'info'" effect="plain">{{ scope.row.status === 'active' ? '启用' : '停用' }}</el-tag></template></el-table-column>
-            <el-table-column label="操作" width="95" fixed="right"><template #default="scope"><el-button link type="primary" @click="openEditRole(scope.row)">{{ authStore.canManageIdentity ? '配置' : '查看' }}</el-button></template></el-table-column>
+            <el-table-column label="操作" width="150" fixed="right"><template #default="scope"><div class="role-actions"><el-button link type="primary" @click="openEditRole(scope.row)">{{ authStore.canManageIdentity && !roleLockReason(scope.row) ? '配置' : '查看' }}</el-button><span v-if="roleLockReason(scope.row)" class="role-lock-reason">{{ roleLockReason(scope.row) }}</span></div></template></el-table-column>
           </el-table>
           <div class="table-footer identity-pagination">
             <span>第 {{ rolePage }} 页，共 {{ roles.length }} 个角色</span>
@@ -670,6 +694,7 @@ onMounted(() => void load())
     </el-dialog>
 
     <el-drawer v-model="userDrawerOpen" size="min(680px, 100vw)" title="员工授权配置">
+      <el-alert v-if="authStore.canManageIdentity && selectedUserLockReason" class="drawer-lock-alert" type="info" :closable="false" :title="`${selectedUserLockReason}；可以查看，不能修改。`" />
       <template v-if="selectedUser">
         <section class="user-detail-hero">
           <span class="user-detail-hero__avatar">{{ [...selectedUser.name][0] ?? '用' }}</span>
@@ -690,7 +715,7 @@ onMounted(() => void load())
           </el-descriptions>
         </section>
 
-        <section v-if="localAccountsEnabled && authStore.canManageIdentity && selectedUser.identityProvider === 'local' && selectedUser.username" class="drawer-section">
+        <section v-if="localAccountsEnabled && canManageSelectedUser && selectedUser.identityProvider === 'local' && selectedUser.username" class="drawer-section">
           <div class="drawer-section__heading"><div><strong>独立账号</strong><span>{{ selectedUser.username }}</span></div></div>
           <div class="inline-form">
             <el-button v-if="selectedUser.id !== authStore.user.id" :disabled="saving" @click="openAccount(selectedUser, true)">重置密码</el-button>
@@ -698,10 +723,10 @@ onMounted(() => void load())
           </div>
         </section>
         <DingTalkBindingPanel
-          v-if="localAccountsEnabled && authStore.canManageIdentity && selectedUser.identityProvider === 'local' && selectedUser.username"
+          v-if="localAccountsEnabled && authStore.canRead('dingtalk') && selectedUser.identityProvider === 'local' && selectedUser.username"
           :user-id="selectedUser.id"
           :user-name="selectedUser.name"
-          :can-manage="selectedUser.status === 'active'"
+          :can-manage="selectedUser.status === 'active' && authStore.canWrite('dingtalk') && !selectedUserLockReason"
           @changed="void refreshUsers()"
         />
         <p v-if="selectedUser.identityProvider === 'ai-hub'">AI Hub 账号，登录凭据和账号启停由 AI Hub 管理。</p>
@@ -711,7 +736,7 @@ onMounted(() => void load())
           <div class="assigned-roles">
             <div v-for="role in selectedUser.roles" :key="role.id" class="assigned-role">
               <span><strong>{{ role.name }}</strong><code>{{ role.code }}</code></span>
-              <el-button v-if="authStore.canManageIdentity" link type="danger" :disabled="saving" @click="revokeRole(role)">移除</el-button>
+              <el-button v-if="canManageSelectedUser" link type="danger" :disabled="saving" @click="revokeRole(role)">移除</el-button>
             </div>
             <div v-for="role in selectedUser.departmentRoles ?? []" :key="role.grantId" class="assigned-role">
               <span><strong>{{ role.name }}</strong><code>{{ role.code }}</code></span>
@@ -719,7 +744,7 @@ onMounted(() => void load())
             </div>
             <el-empty v-if="!selectedUser.roles.length && !selectedUser.departmentRoles?.length" :image-size="56" description="尚未分配本地角色" />
           </div>
-          <div v-if="authStore.canManageIdentity" class="inline-form">
+          <div v-if="canManageSelectedUser" class="inline-form">
             <el-select v-model="selectedRoleId" aria-label="选择要分配的角色" filterable placeholder="选择要分配的角色"><el-option v-for="role in assignableRoles" :key="role.id" :label="role.name" :value="role.id" /></el-select>
             <el-button type="primary" :loading="saving" :disabled="!selectedRoleId" @click="grantRole">分配角色</el-button>
           </div>
@@ -727,33 +752,39 @@ onMounted(() => void load())
 
         <section class="drawer-section">
           <div class="drawer-section__heading"><div><strong>用户数据范围</strong><span>与角色数据范围合并，不覆盖角色授权</span></div></div>
-          <el-select v-model="userScopes" multiple filterable allow-create default-first-option :disabled="!authStore.canManageIdentity" placeholder="例如 region:east"><el-option v-for="scope in userScopes" :key="scope" :label="scope" :value="scope" /></el-select>
-          <div v-if="authStore.canManageIdentity" class="drawer-section__actions"><el-button type="primary" :loading="saving" @click="saveUserScopes">保存数据范围</el-button></div>
+          <el-select v-model="userScopes" multiple filterable allow-create default-first-option :disabled="!canManageSelectedUser" placeholder="例如 region:east"><el-option v-for="scope in userScopes" :key="scope" :label="scope" :value="scope" /></el-select>
+          <div v-if="canManageSelectedUser" class="drawer-section__actions"><el-button type="primary" :loading="saving" @click="saveUserScopes">保存数据范围</el-button></div>
         </section>
 
         <section class="drawer-section">
           <div class="drawer-section__heading"><div><strong>登录 Session</strong><span>{{ selectedUser.activeSessionCount }} 个有效 Session · 最近活动 {{ formatDate(selectedUser.lastSeenAt) }}</span></div></div>
-          <el-button v-if="authStore.canManageIdentity" type="danger" plain :disabled="selectedUser.activeSessionCount === 0 || saving" @click="revokeSessions">撤销全部 Session</el-button>
+          <el-button v-if="canManageSelectedUser" type="danger" plain :disabled="selectedUser.activeSessionCount === 0 || saving" @click="revokeSessions">撤销全部 Session</el-button>
         </section>
       </template>
     </el-drawer>
 
-    <el-dialog v-model="roleDialogOpen" :title="editingRole ? `${authStore.canManageIdentity ? '配置' : '查看'}角色：${editingRole.name}` : '新建角色'" width="min(760px, calc(100vw - 32px))">
-      <el-form label-position="top" :disabled="!authStore.canManageIdentity">
+    <el-dialog v-model="roleDialogOpen" :title="editingRole ? `${editingRoleLocked ? '查看' : '配置'}角色：${editingRole.name}` : '新建角色'" width="min(1080px, calc(100vw - 32px))">
+      <el-form label-position="top" :disabled="editingRoleLocked">
+        <el-alert v-if="authStore.canManageIdentity && editingRole && roleLockReason(editingRole)" class="role-lock-alert" type="info" :closable="false" :title="`${roleLockReason(editingRole)}，只能查看。`" />
         <div class="form-grid">
-          <el-form-item label="角色编码" required><el-input v-model="roleForm.code" :disabled="Boolean(editingRole)" placeholder="例如 knowledge_reviewer" /></el-form-item>
-          <el-form-item label="角色名称" required><el-input v-model="roleForm.name" /></el-form-item>
+          <el-form-item label="角色名称" required><el-input v-model="roleForm.name" placeholder="例如 采购部知识库管理员" /></el-form-item>
+          <el-form-item label="角色编码">
+            <div class="role-code"><code>{{ editingRole ? roleForm.code : '保存后生成' }}</code><span>{{ editingRole ? '系统生成，不可修改' : '系统自动生成，不需要填写' }}</span></div>
+          </el-form-item>
         </div>
         <el-form-item label="角色说明"><el-input v-model="roleForm.description" type="textarea" :rows="2" maxlength="500" show-word-limit /></el-form-item>
         <el-form-item label="状态"><el-radio-group v-model="roleForm.status" :disabled="editingRole?.id === 'role-platform-admin'"><el-radio value="active">启用</el-radio><el-radio value="disabled">停用</el-radio></el-radio-group></el-form-item>
         <el-form-item label="功能权限">
-          <div class="permission-groups">
-            <section v-for="group in groupedPermissions" :key="group.category"><strong>{{ group.category }}</strong><el-checkbox-group v-model="roleForm.permissions"><el-checkbox v-for="permission in group.items" :key="permission.code" :value="permission.code" :disabled="editingRole?.id === 'role-platform-admin' && permission.code === 'admin:*'"><span>{{ permission.name }}</span><small>{{ permission.code }}</small></el-checkbox></el-checkbox-group></section>
-          </div>
+          <RolePermissionEditor
+            v-model="roleForm.permissions"
+            :actor-permissions="authStore.permissions"
+            :locked="editingRoleLocked"
+            :platform-role="editingRole?.id === 'role-platform-admin'"
+          />
         </el-form-item>
         <el-form-item label="角色数据范围"><el-select v-model="roleForm.dataScopes" multiple filterable allow-create default-first-option placeholder="例如 department:supply-chain"><el-option v-for="scope in roleForm.dataScopes" :key="scope" :label="scope" :value="scope" /></el-select></el-form-item>
       </el-form>
-      <template #footer><el-button @click="roleDialogOpen = false">{{ authStore.canManageIdentity ? '取消' : '关闭' }}</el-button><el-button v-if="authStore.canManageIdentity" type="primary" :loading="saving" :disabled="!roleForm.name.trim() || (!editingRole && !roleForm.code.trim())" @click="saveRole">{{ editingRole ? '保存角色' : '创建角色' }}</el-button></template>
+      <template #footer><el-button @click="roleDialogOpen = false">{{ editingRoleLocked ? '关闭' : '取消' }}</el-button><el-button v-if="!editingRoleLocked" type="primary" :loading="saving" :disabled="!roleForm.name.trim()" @click="saveRole">{{ editingRole ? '保存角色' : '创建角色' }}</el-button></template>
     </el-dialog>
   </div>
 </template>
@@ -803,6 +834,11 @@ onMounted(() => void load())
 .drawer-section__actions { display: flex; justify-content: flex-end; margin-top: 12px; }
 .account-form :deep(.el-form-item__error) { position: static; width: 100%; }
 .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.role-code { display: flex; height: 32px; align-items: center; gap: 8px; }
+.role-code code { color: var(--color-text-primary); }
+.role-code span, .role-lock-reason { color: var(--color-text-secondary); font-size: var(--font-size-badge); }
+.role-actions { display: flex; flex-direction: column; align-items: flex-start; }
+.role-lock-alert, .drawer-lock-alert { margin-bottom: 12px; }
 .permission-groups { display: grid; width: 100%; gap: 12px; }
 .permission-groups section { padding: 12px; border: 1px solid var(--color-border); border-radius: var(--radius-tag); }
 .permission-groups section > strong { display: block; margin-bottom: 8px; color: var(--color-text-heading); font-size: var(--font-size-caption); }

@@ -31,6 +31,7 @@ import type {
   McpReconciliationPage,
   DirectorySyncState,
   DingTalkBindingView,
+  DingTalkBoundEmployee,
   DingTalkBindPreview,
   DingTalkIntegrationOverview,
   DingTalkSettings,
@@ -480,7 +481,8 @@ export const adminApi = {
   getIdentityRoles: () => request<IdentityRoleSummary[]>('/identity/roles'),
   getLocalPermissions: () => request<LocalPermissionDefinition[]>('/identity/permissions'),
   createIdentityRole: (input: {
-    code: string
+    /** 已废弃：角色编码由系统生成（方案 AP14）。 */
+    code?: string
     name: string
     description: string
     permissions: string[]
@@ -566,6 +568,8 @@ export const adminApi = {
   saveDingTalkSettings: (input: DingTalkSettingsInput) => request<DingTalkSettings>('/dingtalk/settings', { method: 'PUT', body: JSON.stringify(input) }),
   clearDingTalkSettings: () => request<DingTalkSettings>('/dingtalk/settings', { method: 'DELETE' }),
   checkDingTalkConnection: () => request<DingTalkIntegrationOverview>('/dingtalk/connection-check', { method: 'POST' }),
+  getDingTalkBound: (page = 1, search = '') => request<{ items: DingTalkBoundEmployee[]; total: number; page: number; pageSize: number }>(
+    `/dingtalk/bound?page=${page}&page_size=50${search ? `&query=${encodeURIComponent(search)}` : ''}`),
   getDingTalkUnbound: (page = 1) => request<{ items: DingTalkUnboundEmployee[]; total: number; page: number; pageSize: number }>(`/dingtalk/unbound?page=${page}&page_size=50`),
   remindDingTalkBinding: (input: { userIds?: string[]; all?: boolean }) =>
     request<{ reminded: number }>('/dingtalk/reminders', { method: 'POST', body: JSON.stringify(input) }),

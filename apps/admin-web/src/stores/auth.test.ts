@@ -29,7 +29,6 @@ describe('admin auth store', () => {
     expect(store.identityAdministrationAvailable).toBe(false)
     expect(store.user.id).toBe('U00008')
 
-    expect(store.isAuditor).toBe(false)
   })
 
   it('keeps an auditor session read-only', async () => {
@@ -45,7 +44,6 @@ describe('admin auth store', () => {
     const { useAuthStore } = await import('./auth')
     const store = useAuthStore()
     await store.load()
-    expect(store.isAuditor).toBe(true)
     expect(store.canManage).toBe(false)
     expect(store.canManageIdentity).toBe(false)
     expect(store.canReadAdmin).toBe(false)
@@ -53,7 +51,7 @@ describe('admin auth store', () => {
     expect(store.user.id).toBe('U00019')
   })
 
-  it('does not expose identity writes to a regular admin writer', async () => {
+  it('gives a full-module admin writer identity writes (AP11; the server keeps grants within its own)', async () => {
     api.getSession.mockResolvedValueOnce({
       identityProvider: 'ai-hub-oidc',
       apiAudience: 'admin',
@@ -67,7 +65,8 @@ describe('admin auth store', () => {
     const store = useAuthStore()
     await store.load()
     expect(store.canManage).toBe(true)
-    expect(store.canManageIdentity).toBe(false)
+    expect(store.canManageIdentity).toBe(true)
+    expect(store.platformAdmin).toBe(false)
     expect(store.canReadAdmin).toBe(true)
     expect(store.identityAdministrationAvailable).toBe(true)
   })
