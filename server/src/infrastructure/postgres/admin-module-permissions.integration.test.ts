@@ -41,7 +41,12 @@ async function createUser(name: string, roleIds: string[]) {
   const id = `user-amp-${randomUUID()}`
   await database`
     insert into users (id, tenant_id, external_subject, display_name, status, identity_provider, business_user)
-    values (${id}, ${tenantId}, ${`directory:${id}`}, ${name}, 'active', 'ai-hub', true)
+    values (${id}, ${tenantId}, ${`directory:${id}`}, ${name}, 'active', 'local', true)
+  `
+  // 员工与权限列表只列出开通了登录账号的员工；测试不登录，凭据只占位。
+  await database`
+    insert into local_user_credentials (tenant_id, user_id, username, password_hash)
+    values (${tenantId}, ${id}, ${`${id}@example.invalid`}, 'scrypt$test-only-placeholder')
   `
   for (const roleId of roleIds) {
     await database`insert into user_roles (tenant_id, user_id, role_id, source_key) values (${tenantId}, ${id}, ${roleId}, 'local')`
@@ -267,7 +272,7 @@ test('Agent 创建与重新启用：执行授权与开放能力同样不超过�
 })
 
 test('AMP-01 员工与权限模块：授出不超过自身、只读超出自身的角色、不能操作自己与权限更高的账号、编码系统生成', async () => {
-  const administration = new IdentityAdministrationService(database, false)
+  const administration = new IdentityAdministrationService(database)
   const hrRole = `role-amp-hr-${randomUUID().slice(0, 8)}`
   await createRole(hrRole, ['admin:identity:write', 'workbench:use'])
   const hr = await createUser('人事管理员', [hrRole, 'role-employee'])
@@ -329,7 +334,7 @@ test('AMP-01 员工与权限模块：授出不超过自身、只读超出自身�
 
   // 跨模块选择器只按姓名搜索（评审 #127）：不能按账号标识反查员工。
   const marker = `marker-${randomUUID().slice(0, 8)}`
-  await database`update users set external_user_id = ${marker} where tenant_id = ${tenantId} and id = ${plain}`
+  await database`update users set email = ${`${marker}@example.invalid`} where tenant_id = ${tenantId} and id = ${plain}`
   assert.ok((await administration.listUsers({ query: marker })).items.some(item => item.id === plain))
   assert.equal((await administration.listUsers({ query: marker, nameOnly: true })).items.length, 0)
   assert.ok((await administration.listUsers({ query: '普通员工二', nameOnly: true })).items.some(item => item.id === plain))

@@ -2,7 +2,7 @@ import { expect, test } from '@playwright/test'
 
 // P1 项目空间用户旅程（e2e/TEST-CATALOG.md PS-E2E-03/04/06/07）。
 // 专用可丢弃 PostgreSQL + 真实 HTTP API；Runtime 为确定性合成实现，
-// 不证明真实 DSH、模型质量、OIDC 或生产权限。
+// 不证明真实 DSH、模型质量或生产权限。
 type Seed = {
   workspaceId: string
   archivedWorkspaceId: string

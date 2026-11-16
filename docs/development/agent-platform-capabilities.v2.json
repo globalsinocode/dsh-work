@@ -45,7 +45,7 @@
       "capability": "session-neutral-task",
       "scenario": "real-oidc-task",
       "removedAt": "2026-11-09",
-      "reason": "AI Hub/OIDC 登录计划删除，不再作为发布门禁场景；未验证，不代表 OIDC 下通过"
+      "reason": "AI Hub/OIDC 登录已删除（迁移 0129，删除 AI Hub 登录方案），不再作为发布门禁场景；该场景从未验证"
     }
   ],
   "deferred": [

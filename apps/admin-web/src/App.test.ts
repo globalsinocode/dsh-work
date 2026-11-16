@@ -81,9 +81,9 @@ describe('global management conversation history', () => {
     expect(wrapper.find('nav [aria-label="对话记录"]').exists()).toBe(false)
   })
 
-  it('does not expose login mode settings for either provider', async () => {
+  it('does not expose login mode settings for any session source', async () => {
     const { wrapper, auth } = await render()
-    for (const identityProvider of ['local-password', 'ai-hub-oidc', 'prototype-sso'] as const) {
+    for (const identityProvider of ['local-password', 'prototype-sso'] as const) {
       auth.$patch({ identityProvider, permissions: ['admin:*'] })
       await flushPromises()
       expect(wrapper.get('nav').text()).not.toContain('登录设置')

@@ -30,7 +30,7 @@ before(async () => {
   const accounts = new LocalAuthService(configuration, db.client)
   const { userId: adminId } = await accounts.bootstrap({ username: 'c9.admin@example.invalid', name: 'C9 管理员', password })
   employeeId = (await accounts.createAccount({ username: 'c9.employee@example.invalid', name: 'C9 员工', password }, adminId)).userId
-  await new IdentityAdministrationService(db.client, true).grantRole({ userId: employeeId, roleId: 'role-employee', actorId: adminId })
+  await new IdentityAdministrationService(db.client).grantRole({ userId: employeeId, roleId: 'role-employee', actorId: adminId })
   await db.client`update local_user_credentials set must_change_password = false where user_id = ${employeeId}`
 })
 after(async () => { await db?.dispose() })
@@ -43,7 +43,7 @@ async function startApplication(extra: NodeJS.ProcessEnv = {}) {
   const root = await mkdtemp(join(tmpdir(), 'dsh-review-c9-'))
   const port = await freePort()
   const base = `http://localhost:${port}`
-  // Isolate from a developer .env: no AI Hub, no legacy mode switch.
+  // Isolate from a developer .env: no leftover AI Hub variables, no legacy mode switch.
   const inherited = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('AI_HUB_') && key !== 'DSH_WORK_AUTH_MODE'))
   const child = spawn(process.execPath, ['--experimental-strip-types', 'src/main.ts'], {
     cwd: resolve(import.meta.dirname, '../../..'),

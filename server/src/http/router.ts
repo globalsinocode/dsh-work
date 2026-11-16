@@ -192,8 +192,8 @@ export function classifyHttpError(error: unknown, path: string): { status: numbe
       421: '请从已配置的前端入口访问；请管理员检查允许入口及反向代理 Host/协议转发配置。',
       422: '按提示调整输入内容后重新提交。',
       500: `稍后重试；若问题持续，请将链路编号 ${traceId} 提供给管理员。`,
-      502: '稍后重试；若问题持续，请检查 AI Hub 与身份服务健康状态。',
-      503: '稍后重试；若问题持续，请检查 AI Hub 与身份服务健康状态。',
+      502: '稍后重试；若问题持续，请检查服务与数据库健康状态。',
+      503: '稍后重试；若问题持续，请检查服务与数据库健康状态。',
       504: '稍后重试；若持续发生，请管理员检查运行时或连接器健康状态。',
     }
     const explicit = 'suggestion' in error && typeof error.suggestion === 'string' ? error.suggestion : undefined

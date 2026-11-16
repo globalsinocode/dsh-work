@@ -1,7 +1,7 @@
 /**
  * P0 browser smoke API: deterministic in-memory data and test identities.
  * Test-only. The application entry point (main.ts) never imports this module;
- * production always uses PostgreSQL with password or AI Hub sessions.
+ * production always uses PostgreSQL with password or DingTalk sessions.
  */
 import { registerAssistantRoutes } from '../../http/admin/assistant-routes.ts'
 import { registerModelGovernanceRoutes } from '../../http/admin/model-routes.ts'
@@ -44,7 +44,7 @@ export function createSmokeRouter() {
   const router = new Router({ authenticateApi: testApiAuthenticator })
   // The login pages treat this mode as "already signed in with a test identity".
   for (const audience of ['workbench', 'admin']) {
-    router.get(`/auth/${audience}/configuration`, () => ({ mode: 'prototype', localEnabled: false, aiHubEnabled: false }))
+    router.get(`/auth/${audience}/configuration`, () => ({ mode: 'prototype', localEnabled: false }))
   }
   // Same registration order as the former in-memory server mode.
   registerUnavailableWorkbenchCommandRoutes(router)

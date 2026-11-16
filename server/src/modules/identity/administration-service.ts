@@ -30,15 +30,12 @@ export const permissionCatalog = [
 
 interface UserListRow {
   id: string
-  externalUserId: string | null
   username: string | null
   loginAccount: string | null
   name: string
   email: string | null
   department: string
   status: 'active' | 'disabled'
-  identityProvider: 'local' | 'ai-hub'
-  directorySyncedAt: Date | null
   authorizationVersion: number
   roles: Array<{ id: string; code: string; name: string; status: string }>
   /** 来自部门授权的角色（组织架构 ORG-S2），只能在“组织架构”中修改。 */
@@ -47,7 +44,7 @@ interface UserListRow {
   activeSessionCount: number
   lastSeenAt: Date | null
   /**
-   * 钉钉绑定（钉钉接入方案 4.2）：只对独立账号返回；AI Hub 账号为 null（钉钉会话只签发给独立账号）。
+   * 钉钉绑定（钉钉接入方案 4.2）。
    * `status` 取最新记录：有有效记录为 bound，只有失效记录为 invalid，没有记录为 unbound。
    */
   dingtalk: {
@@ -56,7 +53,7 @@ interface UserListRow {
     dingtalkName: string | null
     revokeReason: string | null
     selfRebindLocked: boolean
-  } | null
+  }
 }
 
 interface UserListSummary {
@@ -69,19 +66,15 @@ interface UserListSummary {
 
 /** 最新一条钉钉绑定记录推导出的状态；别名 `u` 为 users。 */
 const dingtalkStatusSql = `(
-  case when u.identity_provider <> 'local' then null
-       when exists (select 1 from external_account_bindings b where b.tenant_id = u.tenant_id and b.user_id = u.id and b.channel = 'dingtalk' and b.status = 'valid') then 'bound'
+  case when exists (select 1 from external_account_bindings b where b.tenant_id = u.tenant_id and b.user_id = u.id and b.channel = 'dingtalk' and b.status = 'valid') then 'bound'
        when exists (select 1 from external_account_bindings b where b.tenant_id = u.tenant_id and b.user_id = u.id and b.channel = 'dingtalk') then 'invalid'
        else 'unbound' end)`
 
 export class IdentityAdministrationService {
   private readonly database: DatabaseClient
 
-  private readonly localAccounts: boolean
-
-  constructor(database: DatabaseClient, localAccounts = false) {
+  constructor(database: DatabaseClient) {
     this.database = database
-    this.localAccounts = localAccounts
   }
 
   /** `nameOnly`：跨模块选择器只按姓名搜索，不能用手机号、邮箱或账号反查员工（方案 5.2）。 */
@@ -106,7 +99,7 @@ export class IdentityAdministrationService {
                     and (ur.valid_until is null or ur.valid_until > now())
                ))::integer as authorized,
                jsonb_build_object(
-                 'activeLocal', count(*) filter (where u.status = 'active' and u.identity_provider = 'local'),
+                 'activeLocal', count(*) filter (where u.status = 'active'),
                  'bound', count(*) filter (where u.status = 'active' and ${dingtalkStatus} = 'bound'),
                  'selfBound', count(*) filter (where u.status = 'active' and exists (select 1 from external_account_bindings b where b.tenant_id = u.tenant_id and b.user_id = u.id and b.channel = 'dingtalk' and b.status = 'valid' and b.bound_by = 'self')),
                  'adminBound', count(*) filter (where u.status = 'active' and exists (select 1 from external_account_bindings b where b.tenant_id = u.tenant_id and b.user_id = u.id and b.channel = 'dingtalk' and b.status = 'valid' and b.bound_by = 'admin')),
@@ -114,13 +107,13 @@ export class IdentityAdministrationService {
                  'invalid', count(*) filter (where u.status = 'active' and ${dingtalkStatus} = 'invalid')
                ) as dingtalk
           from users u
-         where u.tenant_id = ${tenantId} and (u.identity_provider = 'ai-hub' or (${this.localAccounts} and exists (select 1 from local_user_credentials c where c.tenant_id = u.tenant_id and c.user_id = u.id)))
+         where u.tenant_id = ${tenantId} and exists (select 1 from local_user_credentials c where c.tenant_id = u.tenant_id and c.user_id = u.id)
            and u.business_user
       `
       const [count] = await transaction<{ total: number }[]>`
         select count(*)::integer as total
           from users u
-         where u.tenant_id = ${tenantId} and (u.identity_provider = 'ai-hub' or (${this.localAccounts} and exists (select 1 from local_user_credentials c where c.tenant_id = u.tenant_id and c.user_id = u.id)))
+         where u.tenant_id = ${tenantId} and exists (select 1 from local_user_credentials c where c.tenant_id = u.tenant_id and c.user_id = u.id)
            and u.business_user
            and (${status} = '' or u.status = ${status})
            and (${dingtalk} = '' or ${dingtalkStatus} = ${dingtalk})
@@ -129,22 +122,16 @@ export class IdentityAdministrationService {
              or u.display_name ilike ${`%${query}%`}
              or (${!nameOnly}::boolean and (false
              or coalesce(u.email, '') ilike ${`%${query}%`}
-             or (u.identity_provider = 'ai-hub' and u.external_subject ilike ${`%${query}%`})
-             or (${this.localAccounts} and exists (select 1 from local_user_credentials c where c.tenant_id = u.tenant_id and c.user_id = u.id and c.username ilike ${`%${query}%`}))
-             or coalesce(u.external_user_id, '') ilike ${`%${query}%`}
+             or exists (select 1 from local_user_credentials c where c.tenant_id = u.tenant_id and c.user_id = u.id and c.username ilike ${`%${query}%`})
              or coalesce(u.department_id, '') ilike ${`%${query}%`}
              ))
            )
       `
       const items = await transaction<UserListRow[]>`
-        select u.id, u.external_user_id as "externalUserId", u.display_name as name,
-               (select c.username from local_user_credentials c where c.tenant_id = u.tenant_id and c.user_id = u.id and u.identity_provider = 'local') as username,
-               case when u.identity_provider = 'ai-hub' then u.external_subject
-                 else (select c.username from local_user_credentials c where c.tenant_id = u.tenant_id and c.user_id = u.id)
-               end as "loginAccount",
+        select u.id, u.display_name as name,
+               cred.username as username, cred.username as "loginAccount",
                u.email, coalesce(u.department_id, '未分配部门') as department,
-               u.status, u.identity_provider as "identityProvider",
-               u.directory_synced_at as "directorySyncedAt",
+               u.status,
                u.local_authorization_version::integer as "authorizationVersion",
                coalesce((
                  select jsonb_agg(jsonb_build_object(
@@ -177,7 +164,7 @@ export class IdentityAdministrationService {
                    and s.revoked_at is null and s.expires_at > now()) as "activeSessionCount",
                (select max(s.last_seen_at) from authentication_sessions s
                  where s.tenant_id = u.tenant_id and s.user_id = u.id) as "lastSeenAt",
-               case when u.identity_provider = 'local' then (
+               (
                  select jsonb_build_object(
                    'status', ${dingtalkStatus},
                    'boundBy', case when latest.status = 'valid' then latest.bound_by end,
@@ -190,9 +177,10 @@ export class IdentityAdministrationService {
                     where b.tenant_id = u.tenant_id and b.user_id = u.id and b.channel = 'dingtalk'
                     order by (b.status = 'valid') desc, b.bound_at desc limit 1
                  ) latest on true
-               ) end as dingtalk
+               ) as dingtalk
          from users u
-         where u.tenant_id = ${tenantId} and (u.identity_provider = 'ai-hub' or (${this.localAccounts} and exists (select 1 from local_user_credentials c where c.tenant_id = u.tenant_id and c.user_id = u.id)))
+         join local_user_credentials cred on cred.tenant_id = u.tenant_id and cred.user_id = u.id
+         where u.tenant_id = ${tenantId}
            and u.business_user
            and (${status} = '' or u.status = ${status})
            and (${dingtalk} = '' or ${dingtalkStatus} = ${dingtalk})
@@ -201,9 +189,7 @@ export class IdentityAdministrationService {
              or u.display_name ilike ${`%${query}%`}
              or (${!nameOnly}::boolean and (false
              or coalesce(u.email, '') ilike ${`%${query}%`}
-             or (u.identity_provider = 'ai-hub' and u.external_subject ilike ${`%${query}%`})
-             or (${this.localAccounts} and exists (select 1 from local_user_credentials c where c.tenant_id = u.tenant_id and c.user_id = u.id and c.username ilike ${`%${query}%`}))
-             or coalesce(u.external_user_id, '') ilike ${`%${query}%`}
+             or exists (select 1 from local_user_credentials c where c.tenant_id = u.tenant_id and c.user_id = u.id and c.username ilike ${`%${query}%`})
              or coalesce(u.department_id, '') ilike ${`%${query}%`}
              ))
            )
@@ -244,7 +230,7 @@ export class IdentityAdministrationService {
                join users u on u.tenant_id = ur.tenant_id and u.id = ur.user_id
               where ur.tenant_id = r.tenant_id and ur.role_id = r.id
                 and (ur.source_key = 'local' or ur.source_key like 'department:%') and u.status = 'active'
-                and (u.identity_provider = 'ai-hub' or (${this.localAccounts} and exists (select 1 from local_user_credentials c where c.tenant_id = u.tenant_id and c.user_id = u.id)))
+                and exists (select 1 from local_user_credentials c where c.tenant_id = u.tenant_id and c.user_id = u.id)
                 and u.business_user
                 and (ur.valid_until is null or ur.valid_until > now())) as "userCount",
              (r.id in ('role-platform-admin', 'role-employee', 'role-department-manager', 'role-auditor')) as system,
@@ -373,7 +359,7 @@ export class IdentityAdministrationService {
     await this.database.begin(async (transaction) => {
       const [user] = await transaction<{ id: string; status: string }[]>`
         select id, status from users where tenant_id = ${tenantId} and id = ${input.userId}
-          and (identity_provider = 'ai-hub' or (${this.localAccounts} and id in (select user_id from local_user_credentials where tenant_id = 'tenant-dsh-work')))
+          and id in (select user_id from local_user_credentials where tenant_id = 'tenant-dsh-work')
           and business_user
       `
       if (!user) throw notFound(`用户不存在：${input.userId}`)
@@ -418,7 +404,7 @@ export class IdentityAdministrationService {
       await assertCanManageUser(transaction, input.actorId, input.userId)
       const [user] = await transaction<{ id: string; status: string }[]>`
         select id, status from users where tenant_id = ${tenantId} and id = ${input.userId}
-          and (identity_provider = 'ai-hub' or (${this.localAccounts} and id in (select user_id from local_user_credentials where tenant_id = 'tenant-dsh-work')))
+          and id in (select user_id from local_user_credentials where tenant_id = 'tenant-dsh-work')
       `
       if (!user) throw notFound(`员工不存在：${input.userId}`)
       if (input.roleId === 'role-platform-admin') {
@@ -431,7 +417,7 @@ export class IdentityAdministrationService {
           ) as assigned
         `
         if (assigned?.assigned && user.status === 'active') {
-          await requireAnotherPlatformAdmin(transaction, input.userId, this.localAccounts)
+          await requireAnotherPlatformAdmin(transaction, input.userId)
         }
       }
       await transaction`
@@ -455,7 +441,7 @@ export class IdentityAdministrationService {
     await this.database.begin(async (transaction) => {
       const [user] = await transaction<{ id: string }[]>`
         select id from users where tenant_id = ${tenantId} and id = ${input.userId}
-          and (identity_provider = 'ai-hub' or (${this.localAccounts} and id in (select user_id from local_user_credentials where tenant_id = 'tenant-dsh-work')))
+          and id in (select user_id from local_user_credentials where tenant_id = 'tenant-dsh-work')
           and business_user
       `
       if (!user) throw notFound(`用户不存在：${input.userId}`)
@@ -478,7 +464,7 @@ export class IdentityAdministrationService {
     const count = await this.database.begin(async (transaction) => {
       const [user] = await transaction<{ id: string }[]>`
         select id from users where tenant_id = ${tenantId} and id = ${input.userId}
-          and (identity_provider = 'ai-hub' or (${this.localAccounts} and id in (select user_id from local_user_credentials where tenant_id = 'tenant-dsh-work')))
+          and id in (select user_id from local_user_credentials where tenant_id = 'tenant-dsh-work')
       `
       if (!user) throw notFound(`用户不存在：${input.userId}`)
       await requireAdminModuleActor(transaction, input.actorId, 'identity', 'write')
@@ -508,14 +494,10 @@ export class IdentityAdministrationService {
 
   private async requireUser(userId: string) {
     const [user] = await this.database<UserListRow[]>`
-      select u.id, u.external_user_id as "externalUserId", u.display_name as name,
-               (select c.username from local_user_credentials c where c.tenant_id = u.tenant_id and c.user_id = u.id and u.identity_provider = 'local') as username,
-             case when u.identity_provider = 'ai-hub' then u.external_subject
-               else (select c.username from local_user_credentials c where c.tenant_id = u.tenant_id and c.user_id = u.id)
-             end as "loginAccount",
+      select u.id, u.display_name as name,
+             cred.username as username, cred.username as "loginAccount",
              u.email, coalesce(u.department_id, '未分配部门') as department,
-             u.status, u.identity_provider as "identityProvider",
-             u.directory_synced_at as "directorySyncedAt",
+             u.status,
              u.local_authorization_version::integer as "authorizationVersion",
              coalesce((select jsonb_agg(jsonb_build_object('id', r.id, 'code', r.code, 'name', r.name, 'status', r.status) order by r.name)
                from user_roles ur join roles r on r.tenant_id = ur.tenant_id and r.id = ur.role_id
@@ -539,8 +521,9 @@ export class IdentityAdministrationService {
                 and s.user_id = u.id and s.revoked_at is null and s.expires_at > now()) as "activeSessionCount",
              (select max(s.last_seen_at) from authentication_sessions s where s.tenant_id = u.tenant_id
                 and s.user_id = u.id) as "lastSeenAt"
-        from users u where u.tenant_id = ${tenantId} and u.id = ${userId}
-          and (u.identity_provider = 'ai-hub' or (${this.localAccounts} and exists (select 1 from local_user_credentials c where c.tenant_id = u.tenant_id and c.user_id = u.id)))
+        from users u
+        join local_user_credentials cred on cred.tenant_id = u.tenant_id and cred.user_id = u.id
+       where u.tenant_id = ${tenantId} and u.id = ${userId}
     `
     if (!user) throw notFound(`用户不存在：${userId}`)
     return user
@@ -599,19 +582,14 @@ async function replaceScopes(
   }
 }
 
-export async function requireAnotherPlatformAdmin(transaction: DatabaseTransaction, excludedUserId: string, localAccounts = false) {
-  const [excluded] = await transaction<{ identityProvider: string }[]>`
-    select identity_provider as "identityProvider" from users where tenant_id = ${tenantId} and id = ${excludedUserId}
-  `
-  const protectLocal = localAccounts && excluded?.identityProvider === 'local'
-
+export async function requireAnotherPlatformAdmin(transaction: DatabaseTransaction, excludedUserId: string) {
   const [row] = await transaction<{ count: number }[]>`
     select count(distinct u.id)::integer as count
       from users u
       join user_roles ur on ur.tenant_id = u.tenant_id and ur.user_id = u.id
       join roles r on r.tenant_id = ur.tenant_id and r.id = ur.role_id
      where u.tenant_id = ${tenantId} and u.id <> ${excludedUserId} and u.status = 'active'
-       and (case when ${protectLocal} then u.identity_provider = 'local' and exists (select 1 from local_user_credentials c where c.tenant_id = u.tenant_id and c.user_id = u.id) else u.identity_provider = 'ai-hub' or (${localAccounts} and u.identity_provider = 'local' and exists (select 1 from local_user_credentials c where c.tenant_id = u.tenant_id and c.user_id = u.id)) end)
+       and exists (select 1 from local_user_credentials c where c.tenant_id = u.tenant_id and c.user_id = u.id)
        and u.business_user
        and ur.source_key = 'local' and ur.role_id = 'role-platform-admin'
        and (ur.valid_until is null or ur.valid_until > now())

@@ -36,23 +36,20 @@ flowchart LR
 | 表 | 作用 | 关键不变量 |
 | --- | --- | --- |
 | `tenants` | 租户 | 新租户自动创建平台系统 Principal |
-| `users` | 本地用户 | 主键稳定；AI Hub `external_user_id` 是外部稳定键，Subject 只是协议映射；新用户自动获得唯一默认个人空间与人类 Principal |
+| `users` | 本地用户 | 主键稳定；`identity_provider` 只允许 `local`（迁移 0129 删除 AI Hub 登录）；新用户自动获得唯一默认个人空间与人类 Principal |
 | `local_user_credentials` | 独立账号密码 | 用户名全租户唯一；密码以加盐 scrypt 保存；初始密码必须修改 |
 | `local_identity_bootstrap` | 首个独立管理员的一次性初始化 | 每租户只能消费一次 |
 | `local_auth_rate_limits` | 登录限流计数 | 键是 HMAC，不保存用户名或地址；多进程与重启共享 |
-| `authentication_sessions` | 服务端 Session | 浏览器只持有不透明 Cookie，数据库只存摘要；OIDC Token 服务端加密；来源 `ai-hub-oidc` / `local-password` / `dingtalk`（迁移 0117），`dingtalk` 会话必须带 `binding_id`、按该绑定有效性校验并按它撤销，其他来源不得带 |
+| `authentication_sessions` | 服务端 Session | 浏览器只持有不透明 Cookie，数据库只存摘要；来源 `local-password` / `dingtalk`（迁移 0117、0129，必须显式写入），`dingtalk` 会话必须带 `binding_id`、按该绑定有效性校验并按它撤销，密码会话不得带 |
 | `external_account_bindings` | 平台账号与外部渠道账号的绑定（迁移 0117，[钉钉接入方案](dingtalk-integration-plan.md) 4.2；本期 `channel = 'dingtalk'`） | 有效记录中平台账号与外部账号各自唯一（部分唯一索引）；状态只有 `valid` / `invalid`，未绑定即没有有效记录；`self_rebind_locked` 只出现在失效记录上；只存钉钉 userid、姓名与部门，不存手机号 |
 | `external_binding_tickets` | 服务端短时单次凭证：钉钉内待绑定凭证与管理员代绑确认凭证（迁移 0117） | 只存凭证哈希；原子消费，重复使用、过期、来源或目标员工 / 管理员不符一律无效；代绑凭证只存脱敏手机号与 HMAC |
 | `external_channel_status` | 外部渠道连接检查结果（迁移 0118，钉钉集成页） | 每租户每渠道一行；只存检查时间、结论与各接口权限探测结果，不存凭据 |
 | `dingtalk_departure_checks` | 每日钉钉离职检查记录（迁移 0118） | 同一租户至多一条 `running`（部分唯一索引），超过 6 小时未结束的视为中断并标为 `failed` 后再开始新检查；只有明确“用户不存在”才判为离职；判为离职超过有效绑定 10% 时 `paused` 并保存待确认的绑定 ID，管理员确认或忽略后结束 |
 | `dingtalk_app_configurations` | 钉钉企业内部应用配置（迁移 0119，DT30） | 每租户一行；`configured` 时 CorpId、AgentId、AppKey 必填；AppSecret 不存本表，页面保存的以 `credential_ref` 指向 `credential_secrets` 中的加密值，来自部署配置时 `credential_ref` 为空、只在内存使用；`cleared` 后部署配置不再自动生效 |
-| `oidc_login_transactions` | OIDC 登录事务 | state、nonce 与入口绑定，一次性使用 |
-| `application_admin_bootstrap_claims` | AI Hub 初始管理员认领 | 按应用/环境幂等消费 |
-| `identity_directory_sync_state` | AI Hub 员工目录同步游标 | 持久化 opaque cursor；员工停用即撤销其 Session，保留本地角色历史 |
 | `org_departments` | 部门树（迁移 0113，[组织架构方案](org-structure-plan.md) ORG-S1） | 每租户一个根部门（迁移创建）；`path` 为根到本部门的 ID 路径，不能移到自己下级之下；同一上级下有效部门不重名；删除置为 `removed`；写操作按租户串行 |
-| `org_department_members` | 员工所属部门（迁移 0113） | 员工可属于多个部门、至多一个主部门；`users.department_id` 只作显示，等于主部门名称，没有主部门时为空；迁移 0113 清空了独立账号的历史部门文本，迁移 0116 把 AI Hub 账号的旧组织名统一为主部门名称（无主部门则清空） |
+| `org_department_members` | 员工所属部门（迁移 0113） | 员工可属于多个部门、至多一个主部门；`users.department_id` 只作显示，等于主部门名称，没有主部门时为空；迁移 0113 清空了历史部门文本 |
 | `org_department_grants` | 部门授予的角色（迁移 0114，ORG-S2） | 同一部门同一角色至多一条有效授权；展开为 `user_roles`（`source_key = 'department:<grant_id>'`），随成员与部门变化重算；管理类角色（`admin:`、`audit:`、`data-protection:` 前缀）不能授予，非平台管理员授出的角色不能超过本人；部门删除后置为 `invalid` |
-| `roles`、`user_roles`、`data_scope_grants` | 本地角色、用户角色、数据范围授权 | 独立于 AI Hub；过期角色不生效；任何变更由触发器递增本地授权版本，请求按当前版本重新计算；`roles.permissions` 可含管理端模块权限码（`admin:<模块>:read|write`，[管理端模块权限方案](admin-module-permission-plan.md)），管理判定只认 `source_key = 'local'` |
+| `roles`、`user_roles`、`data_scope_grants` | 本地角色、用户角色、数据范围授权 | 过期角色不生效；任何变更由触发器递增本地授权版本，请求按当前版本重新计算；`roles.permissions` 可含管理端模块权限码（`admin:<模块>:read|write`，[管理端模块权限方案](admin-module-permission-plan.md)），管理判定只认 `source_key = 'local'` |
 | `system_settings` | 早期的租户级设置 | 当前代码未读写 |
 | `user_preferences` | 员工端界面偏好（迁移 0094） | 每个账号一行；`ui_mode` 为 `work` 或 `collab`，无记录时为工作模式；只影响界面，不改变权限 |
 
@@ -239,6 +236,7 @@ Run 和 Attempt 的普通状态转换不能从终态回退。只有失败或取�
 - [对象授权](../../server/migrations/0010_m4_authorization.sql)、[个人空间](../../server/migrations/0013_m5_personal_workspaces.sql)、[团队空间授权](../../server/migrations/0022_team_workspace_authorization.sql)。
 - [服务端 Session](../../server/migrations/0014_m6_ai_hub_sso.sql)、[本地授权](../../server/migrations/0016_identity_owned_authorization.sql)、[业务员工](../../server/migrations/0017_business_user_directory.sql)、[升级对账](../../server/migrations/0018_fail_closed_directory_reconciliation.sql)、[独立账号](../../server/migrations/0077_local_identity.sql)。
 - [多入口 OIDC 事务](../../server/migrations/0020_multi_origin_oidc.sql)、[团队共享文件逻辑移除](../../server/migrations/0024_workspace_file_removal.sql)、[逻辑文件与版本](../../server/migrations/0025_workspace_file_versions.sql)。
+- [删除 AI Hub 登录](../../server/migrations/0129_remove_ai_hub_login.sql)：删除 0014～0020、0042 建立的 OIDC 事务、初始管理员认领与目录同步表及会话令牌列。
 - [Agent 发布治理](../../server/migrations/0039_agent_release_governance.sql)、[自动任务](../../server/migrations/0040_agent_automations.sql)、[工具绑定修订](../../server/migrations/0047_tool_binding_revisions.sql)、[MCP 治理](../../server/migrations/0053_mcp_connector_governance.sql)。
 - [PF-01 Task 与外部操作基础](../../server/migrations/0050_task_operation_foundation.sql)、[无 Session 执行与 Task Artifact](../../server/migrations/0051_session_neutral_task_execution.sql)、[累计预算](../../server/migrations/0052_task_cumulative_budgets.sql)。
 - [持久化等待与审批](../../server/migrations/0061_persistent_wait_and_approval.sql)、[受控记忆](../../server/migrations/0062_controlled_memory.sql)、[执行身份](../../server/migrations/0064_execution_principals.sql)。

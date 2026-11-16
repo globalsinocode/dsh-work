@@ -53,7 +53,7 @@ describe('admin auth store', () => {
 
   it('gives a full-module admin writer identity writes (AP11; the server keeps grants within its own)', async () => {
     api.getSession.mockResolvedValueOnce({
-      identityProvider: 'ai-hub-oidc',
+      identityProvider: 'local-password',
       apiAudience: 'admin',
       permissions: ['admin:read', 'admin:write'],
       user: {

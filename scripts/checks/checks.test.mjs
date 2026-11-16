@@ -129,9 +129,9 @@ test('project checks reject duplicate migration numbers and database tests outsi
 
 test('security checks reject external authorization calls and plaintext secret columns', t => {
   const root = fixture(t)
-  appendFileSync(join(root, 'server/src/modules/identity/ai-hub-client.ts'), '\nfetch("/authorization/decisions")\n')
+  appendFileSync(join(root, 'server/src/modules/identity/types.ts'), "\nexport const leaked = 'dsh_work.agent.read'\n")
   appendFileSync(join(root, 'server/migrations/0001_m2_platform.sql'), '\nALTER TABLE x ADD API_KEY TEXT;\n')
-  assert.match(failures(root, 'security'), /不应包含 \/authorization\/decisions/)
+  assert.match(failures(root, 'security'), /不应包含 dsh_work\./)
   assert.match(failures(root, 'security'), /不得包含明文凭据列/)
   appendFileSync(join(root, 'server/src/modules/tool/postgres-tool-connector-service.ts'), "\nthrow Object.assign(new Error('x'), { status: 409, code: 'y' })\n")
   assert.match(failures(root, 'security'), /postgres-tool-connector-service\.ts 不得用 Object\.assign 拼装 HTTP 状态/)

@@ -88,7 +88,7 @@ export interface AdminUserProfile {
 
 export interface AdminSession {
   user: AdminUserProfile
-  identityProvider: 'prototype-sso' | 'ai-hub-oidc' | 'local-password'
+  identityProvider: 'prototype-sso' | 'local-password'
   apiAudience: 'admin'
   permissions: string[]
   /** 各模块的可用级别（管理端模块权限方案 5.6）；旧服务端没有时由前端按权限码推算。 */
@@ -173,15 +173,12 @@ export interface OrganizationSnapshot {
 
 export interface IdentityUserSummary {
   id: string
-  externalUserId: string | null
   username?: string | null
   loginAccount: string | null
   name: string
   email: string | null
   department: string
   status: 'active' | 'disabled'
-  identityProvider: 'local' | 'ai-hub'
-  directorySyncedAt: string | null
   authorizationVersion: number
   roles: Array<Pick<IdentityRoleSummary, 'id' | 'code' | 'name' | 'status'>>
   /** 来自部门授权的角色，只能在“组织架构”中修改。 */
@@ -189,7 +186,7 @@ export interface IdentityUserSummary {
   dataScopes: string[]
   activeSessionCount: number
   lastSeenAt: string | null
-  /** 钉钉绑定（钉钉接入 DT-S1）：只对独立账号返回，AI Hub 账号为 null。 */
+  /** 钉钉绑定（钉钉接入 DT-S1）。 */
   dingtalk?: {
     status: DingTalkBindingStatus
     boundBy: 'self' | 'admin' | null
@@ -296,18 +293,6 @@ export interface LocalPermissionDefinition {
   name: string
   category: string
   description: string
-}
-
-export interface DirectorySyncState {
-  applicationId: string
-  environment: string
-  cursor: string | null
-  status: 'idle' | 'running' | 'failed'
-  lastStartedAt: string | null
-  lastSucceededAt: string | null
-  lastError: string | null
-  synchronizedUsers: number
-  updatedAt: string
 }
 
 export type RunStatus =
@@ -1109,7 +1094,7 @@ export interface ModelRoute {
 export interface PlatformStatus {
   architecture: 'node-modular-monolith'
   persistence: 'prototype-memory' | 'postgres-foundation' | 'postgres'
-  sso: 'mock' | 'ai-hub-oidc' | 'local-password'
+  sso: 'mock' | 'local-password'
   dshRuntime: 'not-connected' | 'poc-validated' | 'connected'
   database: 'not-configured' | 'configured' | Record<string, unknown>
   artifactStorage: 'not-configured' | 'local-mvp'

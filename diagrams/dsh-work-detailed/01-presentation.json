@@ -29,7 +29,7 @@
     {
       "id": "login",
       "label": "登录与会话",
-      "sub": "账号密码 / 可选 AI Hub",
+      "sub": "账号密码 / 钉钉免登",
       "row": 0,
       "col": 1,
       "kind": "input",
@@ -203,7 +203,7 @@
       "id": "login",
       "file": "apps/workbench-web/src/router/index.ts",
       "line": 10,
-      "note": "员工登录、改密和登录失败页面已有路由；独立账号是主要入口，AI Hub 作为可选身份提供方。管理端拥有自己的登录和会话边界。"
+      "note": "员工登录、改密和登录失败页面已有路由；独立账号是唯一登录方式，员工端在钉钉内可免登。管理端拥有自己的登录和会话边界。"
     },
     {
       "id": "workbench",

@@ -1,4 +1,4 @@
-import { IdentityAccessError } from './auth-service.ts'
+import { IdentityAccessError } from './request-security.ts'
 
 const mobilePattern = /^(?:\+86)?1[3-9]\d{9}$/
 const emailLocalPattern = /^[a-z0-9!#$%&'*+/=?^_`{|}~-]+(?:\.[a-z0-9!#$%&'*+/=?^_`{|}~-]+)*$/

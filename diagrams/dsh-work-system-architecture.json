@@ -152,7 +152,7 @@
       "id": "api",
       "file": "docs/development/overview.md",
       "line": 75,
-      "note": "所有 Agent 场景均通过各自 Audience 的 API、平台 Run/Attempt、Runtime Adapter 和 DSH。身份可使用本地账号或 AI Hub OIDC。"
+      "note": "所有 Agent 场景均通过各自 Audience 的 API、平台 Run/Attempt、Runtime Adapter 和 DSH。身份使用本地独立账号。"
     },
     {
       "id": "run",

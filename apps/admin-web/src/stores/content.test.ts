@@ -108,7 +108,7 @@ describe('admin content store Skill version state', () => {
     const { useContentStore } = await import('./content')
     const authStore = useAuthStore()
     api.getSession.mockResolvedValue({
-      identityProvider: 'ai-hub-oidc',
+      identityProvider: 'local-password',
       apiAudience: 'admin',
       permissions: ['audit:read'],
       user: {

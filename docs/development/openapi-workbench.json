@@ -3,7 +3,7 @@
   "info": {
     "title": "dsh-work 员工工作台 API",
     "version": "0.8.0-agent-routine-results",
-    "description": "请求使用独立账号密码或 AI Hub OIDC 登录后由 dsh-work 签发的 HttpOnly 服务端 Session；认证模式由部署配置显式选择，工作台角色、权限和数据范围由 dsh-work 本地配置且不接受浏览器传入。每位用户具有唯一默认个人工作空间，所有 Session、文件与成果均归属个人或团队工作空间。"
+    "description": "请求使用独立账号密码（或钉钉容器内免登）登录后由 dsh-work 签发的 HttpOnly 服务端 Session；工作台角色、权限和数据范围由 dsh-work 本地配置且不接受浏览器传入。每位用户具有唯一默认个人工作空间，所有 Session、文件与成果均归属个人或团队工作空间。"
   },
   "servers": [
     {
@@ -11,9 +11,6 @@
     }
   ],
   "security": [
-    {
-      "enterpriseSession": []
-    },
     {
       "localWorkbenchSession": []
     }
@@ -40,7 +37,7 @@
         }
       }
     },
-    "/me/dingtalk-binding": {"get": {"operationId": "getMyDingTalkBinding", "summary": "用户中心 › 钉钉：本人的钉钉绑定（钉钉接入 DT-S1）。enabled 为部署是否配置了钉钉应用（AI Hub 账号恒为 false）；status 为 bound / unbound / invalid，含钉钉姓名与部门、绑定方式（本人 / 管理员及其姓名）、失效原因与是否被锁定自行绑定", "responses": {"200": {"$ref": "#/components/responses/Ok"}}}, "delete": {"operationId": "unbindMyDingTalk", "summary": "员工自行解除钉钉绑定：绑定失效并在同一事务中按 binding_id 撤销钉钉会话（含当前的钉钉会话），写审计；不锁定自行绑定，之后在钉钉内登录一次可重新绑定。没有有效绑定时返回 404", "responses": {"200": {"$ref": "#/components/responses/Ok"}, "404": {"$ref": "#/components/responses/Error"}}}},
+    "/me/dingtalk-binding": {"get": {"operationId": "getMyDingTalkBinding", "summary": "用户中心 › 钉钉：本人的钉钉绑定（钉钉接入 DT-S1）。enabled 为部署是否配置了钉钉应用；status 为 bound / unbound / invalid，含钉钉姓名与部门、绑定方式（本人 / 管理员及其姓名）、失效原因与是否被锁定自行绑定", "responses": {"200": {"$ref": "#/components/responses/Ok"}}}, "delete": {"operationId": "unbindMyDingTalk", "summary": "员工自行解除钉钉绑定：绑定失效并在同一事务中按 binding_id 撤销钉钉会话（含当前的钉钉会话），写审计；不锁定自行绑定，之后在钉钉内登录一次可重新绑定。没有有效绑定时返回 404", "responses": {"200": {"$ref": "#/components/responses/Ok"}, "404": {"$ref": "#/components/responses/Error"}}}},
     "/me/preferences": {
       "get": {
         "operationId": "getMyPreferences",
@@ -3580,7 +3577,7 @@
       "get": {
         "operationId": "getKnowledgeStatus",
         "summary": "企业知识库可用性与本人权限级别",
-        "description": "enabled 为 false 时员工端不显示“知识库”入口与“添加知识库”（WeKnora 未配置、AI Hub 账号或没有查看级别）。",
+        "description": "enabled 为 false 时员工端不显示“知识库”入口与“添加知识库”（WeKnora 未配置或没有查看级别）。",
         "responses": {
           "200": {
             "description": "成功",
@@ -4746,13 +4743,7 @@
   },
   "components": {
     "securitySchemes": {
-      "localWorkbenchSession": {"type": "apiKey", "in": "cookie", "name": "dsh_work_local_session", "description": "local 模式签发；生产使用 __Host- 前缀，与 OIDC Session 分离。"},
-      "enterpriseSession": {
-        "type": "apiKey",
-        "in": "cookie",
-        "name": "dsh_work_session",
-        "description": "AI Hub OIDC 回调后由 dsh-work 设置的不透明 HttpOnly Session Cookie；生产名称使用 __Host- 前缀。"
-      }
+      "localWorkbenchSession": {"type": "apiKey", "in": "cookie", "name": "dsh_work_local_session", "description": "独立账号或钉钉免登签发；生产使用 __Host- 前缀。"}
     },
     "parameters": {
       "WorkspaceId": {

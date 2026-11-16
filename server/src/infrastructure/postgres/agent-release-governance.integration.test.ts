@@ -85,7 +85,7 @@ after(async () => {
 async function createAdminUser(id: string) {
   await database`
     insert into users (id, tenant_id, external_subject, display_name, department_id, status, identity_provider, business_user)
-    values (${id}, ${tenantId}, ${`directory:${id}`}, '发布管理员', null, 'active', 'ai-hub', true)
+    values (${id}, ${tenantId}, ${`directory:${id}`}, '发布管理员', null, 'active', 'local', true)
   `
   await database`
     insert into user_roles (tenant_id, user_id, role_id, source_key)

@@ -36,7 +36,6 @@ import { registerUserNotificationRoutes } from './http/workbench/user-notificati
 import { registerKnowledgeRoutes } from './http/workbench/knowledge-routes.ts'
 import { registerKnowledgeAdminRoutes } from './http/admin/knowledge-admin-routes.ts'
 import { registerWorkspaceTimelineRoutes } from './http/workbench/workspace-timeline-routes.ts'
-import { registerOidcRoutes } from './http/auth-routes.ts'
 import { registerLocalAuthRoutes } from './http/local-auth-routes.ts'
 import { registerDingTalkAuthRoutes } from './http/dingtalk-auth-routes.ts'
 import { registerDingTalkAdminRoutes } from './http/admin/dingtalk-admin-routes.ts'
@@ -134,11 +133,9 @@ import { registerPersistentApprovalRoutes } from './http/admin/persistent-approv
 import { registerAdminExperienceIterationRoutes } from './http/admin/experience-iteration-routes.ts'
 import { PostgresControlledMemoryService } from './modules/memory/postgres-controlled-memory-service.ts'
 import { PostgresTaskQueryService } from './modules/run/postgres-task-query-service.ts'
-import { loadStartupIdentityConfiguration, localIdentityConfiguration } from './modules/identity/config.ts'
+import { loadStartupIdentityConfiguration } from './modules/identity/config.ts'
 import { portalAuthenticator } from './modules/identity/portal-authenticator.ts'
-import { OidcAuthService } from './modules/identity/auth-service.ts'
 import { IdentityAdministrationService } from './modules/identity/administration-service.ts'
-import { IdentityDirectorySyncService } from './modules/identity/directory-sync-service.ts'
 import { RequestError, invalidRequest } from './domain/request-errors.ts'
 import { LocalObjectStorage } from './infrastructure/storage/local-object-storage.ts'
 
@@ -155,16 +152,10 @@ async function start() {
   const identityConfiguration = loadStartupIdentityConfiguration()
   const database = createDatabase({ url: databaseUrl })
   await runMigrations(database)
-  if (identityConfiguration.mode === 'local' && identityConfiguration.aiHubConfigurationIssue) {
-    console.warn(`AI Hub 登录未启用：${identityConfiguration.aiHubConfigurationIssue}。独立账号登录仍可用。`)
+  if (identityConfiguration.ignoredLegacySettings?.length) {
+    console.warn(`AI Hub 登录已删除，以下旧配置不再读取，可从运行配置中删除：${identityConfiguration.ignoredLegacySettings.join('、')}`)
   }
 
-  const oidcAuthentication = identityConfiguration.mode === 'oidc'
-    ? new OidcAuthService(identityConfiguration, database)
-    : null
-  const directorySync = identityConfiguration.mode === 'oidc'
-    ? new IdentityDirectorySyncService(identityConfiguration, database)
-    : null
   // 平台加密凭据（DSH_CREDENTIAL_MASTER_KEY）：钉钉 AppSecret、MCP Bearer Token 与模型厂商密钥共用一个实例；
   // 未配置主密钥时为 undefined，对应功能明确拒绝保存密钥。
   const credentialSecrets = process.env.DSH_CREDENTIAL_MASTER_KEY
@@ -181,16 +172,15 @@ async function start() {
     ...(credentialSecrets ? { credentials: credentialSecrets } : {}),
   })
   await dingtalkSettings.ensureBootstrap()
-  const localAuthentication = new LocalAuthService(localIdentityConfiguration(identityConfiguration), database, dingtalkSettings)
-  const dingtalkAuthentication = new DingTalkAuthService(localIdentityConfiguration(identityConfiguration), database, dingtalkSettings)
-  const router = new Router({ authenticateApi: portalAuthenticator(localAuthentication, oidcAuthentication) })
-  if (oidcAuthentication) registerOidcRoutes(router, oidcAuthentication, localAuthentication)
-  registerLocalAuthRoutes(router, localAuthentication, oidcAuthentication)
-  registerDingTalkAuthRoutes(router, dingtalkAuthentication, localAuthentication, oidcAuthentication)
+  const localAuthentication = new LocalAuthService(identityConfiguration, database, dingtalkSettings)
+  const dingtalkAuthentication = new DingTalkAuthService(identityConfiguration, database, dingtalkSettings)
+  const router = new Router({ authenticateApi: portalAuthenticator(localAuthentication) })
+  registerLocalAuthRoutes(router, localAuthentication)
+  registerDingTalkAuthRoutes(router, dingtalkAuthentication, localAuthentication)
   const dingtalkAdministration = new DingTalkAdministrationService(database, dingtalkSettings, {
     manager: dingtalkSettings,
     secret: identityConfiguration.sessionSecret,
-    workbenchOrigins: localIdentityConfiguration(identityConfiguration).audiences.workbench.allowedOrigins,
+    workbenchOrigins: identityConfiguration.audiences.workbench.allowedOrigins,
   })
   registerDingTalkAdminRoutes(router, dingtalkAdministration)
   // 每日离职检查（钉钉接入方案 4.2）：每次检查前读取当前配置，未配置时跳过；单进程部署，进行中的检查由唯一索引互斥。
@@ -200,17 +190,15 @@ async function start() {
   registerAuthConfigurationRoutes(router, async audience => {
     const dingtalk = audience === 'workbench' ? await dingtalkSettings.current() : null
     return {
-      mode: identityConfiguration.mode, localEnabled: true, aiHubEnabled: Boolean(oidcAuthentication),
+      mode: identityConfiguration.mode, localEnabled: true,
       ...(dingtalk ? { dingtalk: { corpId: dingtalk.corpId } } : {}),
     }
   })
   registerIdentityAdministrationRoutes(
     router,
-    new IdentityAdministrationService(database, true),
-    directorySync,
+    new IdentityAdministrationService(database),
   )
   registerOrganizationRoutes(router, new PostgresOrganizationService(database))
-  const directorySyncTimer = directorySync?.startScheduler() ?? null
   // 管理端录入的厂商密钥以 DSH_CREDENTIAL_MASTER_KEY 加密保存；未配置主密钥时不能录入，模型网关也无法转发。
   const modelRepository = new PostgresModelGovernanceRepository(database, credentialSecrets)
 
@@ -284,16 +272,6 @@ async function start() {
   const conversations = new PostgresConversationRepository(database)
   const authorization = new PostgresAuthorizationService(database, {
     knownBuiltinSkill: builtinSkills.isKnown,
-    // AI Hub 身份的后台任务必须复核目录；配置降级为 local 时传 null，
-    // 授权服务仍按用户来源拒绝 AI Hub 后台执行，独立账号不受影响。
-    // 信任窗口 = 同步间隔 ×2（interval=0 即关闭同步 → 兜底 60s 后 fail-closed）。
-    automationDirectory: identityConfiguration.mode === 'oidc'
-      ? {
-          applicationId: identityConfiguration.applicationId,
-          environment: identityConfiguration.environment,
-          maxSyncAgeMs: Math.max(identityConfiguration.directorySyncIntervalSeconds * 2, 60) * 1000,
-        }
-      : null,
   })
   const content = new PostgresContentService(database, new LocalObjectStorage(resolve(dataRoot, 'storage')), authorization, undefined, undefined, {
     artifactTextExtractor: extractionExecutor && attemptContainers
@@ -478,7 +456,7 @@ async function start() {
     database,
     runtime,
     authorization,
-    identityConfiguration.mode === 'oidc' ? 'ai-hub-oidc' : identityConfiguration.mode === 'local' ? 'local-password' : 'mock',
+    'local-password',
     builtinSkills,
   )
   const runtimePolicy = await operations.getRuntimePolicy('runtime-local-01')
@@ -783,7 +761,6 @@ async function start() {
   const shutdown = () => {
     server.close(() => {
       void (async () => {
-        if (directorySyncTimer) clearInterval(directorySyncTimer)
         if (dingtalkDepartureTimer) clearInterval(dingtalkDepartureTimer)
         if (memoryProposalSweep) clearInterval(memoryProposalSweep)
         if (notificationRetentionSweep) clearInterval(notificationRetentionSweep)

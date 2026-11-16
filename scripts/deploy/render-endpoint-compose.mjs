@@ -25,13 +25,13 @@ if (process.env.DSH_WORK_BIND_ADDRESSES && process.env.DSH_WORK_BIND_ADDRESS) {
 const workbenchPort = port(process.env.DSH_WORK_WORKBENCH_PORT ?? '4174', 'DSH_WORK_WORKBENCH_PORT')
 const adminPort = port(process.env.DSH_WORK_ADMIN_PORT ?? '4180', 'DSH_WORK_ADMIN_PORT')
 const workbenchOrigins = origins(
-  process.env.DSH_WORK_WORKBENCH_ORIGINS ?? process.env.AI_HUB_WORKBENCH_PORTAL_URL,
-  process.env.DSH_WORK_WORKBENCH_ORIGINS ? 'DSH_WORK_WORKBENCH_ORIGINS' : 'AI_HUB_WORKBENCH_PORTAL_URL',
+  process.env.DSH_WORK_WORKBENCH_ORIGINS,
+  'DSH_WORK_WORKBENCH_ORIGINS',
   workbenchPort,
 )
 const adminOrigins = origins(
-  process.env.DSH_WORK_ADMIN_ORIGINS ?? process.env.AI_HUB_ADMIN_PORTAL_URL,
-  process.env.DSH_WORK_ADMIN_ORIGINS ? 'DSH_WORK_ADMIN_ORIGINS' : 'AI_HUB_ADMIN_PORTAL_URL',
+  process.env.DSH_WORK_ADMIN_ORIGINS,
+  'DSH_WORK_ADMIN_ORIGINS',
   adminPort,
 )
 

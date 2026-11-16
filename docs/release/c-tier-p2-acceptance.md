@@ -1,6 +1,6 @@
 # C 档 P2 验收清单（Mac mini）
 
-本文是[执行隔离方案第 9 节](../design/execution-isolation-plan.md#9-验证)“P2 真实验收”的操作清单，配合脚本 [`scripts/acceptance/c-tier-p2.mjs`](../../scripts/acceptance/c-tier-p2.mjs) 使用。脚本只经员工端公开接口驱动真实 DSH，不读写数据库、不代办 AI Hub 登录；它给出自动核对结果与证据文件，结论由验收人复核后填写。本文不代表已经在 Mac mini 上执行或验收。
+本文是[执行隔离方案第 9 节](../design/execution-isolation-plan.md#9-验证)“P2 真实验收”的操作清单，配合脚本 [`scripts/acceptance/c-tier-p2.mjs`](../../scripts/acceptance/c-tier-p2.mjs) 使用。脚本只经员工端公开接口驱动真实 DSH，不读写数据库、不代办登录；它给出自动核对结果与证据文件，结论由验收人复核后填写。本文不代表已经在 Mac mini 上执行或验收。
 
 本机预演（本地认证、本机 Docker、开发库）只能发现脚本与环境问题，不能代替本清单在 Mac mini 上的执行（AGENTS.md：不得用预演或 Mock 的绿灯宣称真实链路通过）。
 

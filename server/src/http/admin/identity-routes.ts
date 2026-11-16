@@ -1,5 +1,4 @@
 import type { IdentityAdministrationService } from '../../modules/identity/administration-service.ts'
-import type { IdentityDirectorySyncService } from '../../modules/identity/directory-sync-service.ts'
 import { envelope, readJsonBody, requireRequestIdentity, type Router } from '../router.ts'
 
 const basePath = '/api/admin/v1/identity'
@@ -7,7 +6,6 @@ const basePath = '/api/admin/v1/identity'
 export function registerIdentityAdministrationRoutes(
   router: Router,
   administration: IdentityAdministrationService,
-  directory?: IdentityDirectorySyncService | null,
 ) {
   router.get(`${basePath}/users`, async (_request, context) => {
     const page = await administration.listUsers({
@@ -98,20 +96,6 @@ export function registerIdentityAdministrationRoutes(
     return envelope('admin', await administration.revokeSessions({
       userId: context.params.userId ?? '',
       actorId,
-    }), 'postgres')
-  })
-  if (!directory) return
-  router.get(`${basePath}/directory-sync`, async () => envelope(
-    'admin',
-    await directory.state(),
-    'postgres',
-  ))
-  router.post(`${basePath}/directory-sync`, async (_request, context) => {
-    const actorId = requireRequestIdentity(context, 'admin').userId
-    await administration.requireIdentityWriter(actorId)
-    return envelope('admin', await directory.synchronize({
-      actorId,
-      full: context.url.searchParams.get('full') === 'true',
     }), 'postgres')
   })
 }

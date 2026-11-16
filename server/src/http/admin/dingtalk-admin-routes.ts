@@ -1,6 +1,6 @@
 import type { IncomingMessage } from 'node:http'
 
-import { IdentityAccessError } from '../../modules/identity/auth-service.ts'
+import { IdentityAccessError } from '../../modules/identity/request-security.ts'
 import type { DingTalkAdministrationService } from '../../modules/identity/dingtalk/dingtalk-admin-service.ts'
 import { envelope, readJsonBody, requireRequestIdentity, type Router } from '../router.ts'
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // C 档 P2 验收（执行隔离方案第 9 节）：只经员工端公开接口驱动真实 DSH，逐场景留证。
-// 不读写数据库，不代办 OIDC 登录；结论由验收人复核 evidence.json 后填写。
+// 不读写数据库，不代办登录；结论由验收人复核 evidence.json 后填写。
 import { execFileSync } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
 import { get as httpGet } from 'node:http'
@@ -125,7 +125,7 @@ class Client {
     }
   }
 
-  /** Local-auth rehearsal only: deployments sign in through AI Hub, so they pass --cookie-file. */
+  /** Signs in with a test account file; deployments may pass --cookie-file instead. */
   async login(file) {
     const { username, password } = JSON.parse(readFileSync(file, 'utf8'))
     const response = await fetch(`${this.base}/auth/workbench/login`, {

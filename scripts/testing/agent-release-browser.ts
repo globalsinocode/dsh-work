@@ -5,7 +5,7 @@
  * authorization and Run orchestration services behind the admin routes. Validation
  * cases still go through Run/Attempt → Runtime port (background lane); the Runtime is a
  * deterministic synthetic responder, so this harness proves page and governance
- * behaviour only. It does not contact OIDC, a model, MCP services or real DSH.
+ * behaviour only. It does not contact a model, MCP services or real DSH.
  */
 import { randomUUID } from 'node:crypto'
 import { createServer } from 'node:http'
@@ -188,7 +188,7 @@ await new Promise<void>((resolve, reject) => {
   server.once('error', reject)
   server.listen(port, '127.0.0.1', resolve)
 })
-console.log(`Agent validation browser harness ready on ${port}; throwaway PostgreSQL and synthetic validation Runtime, no OIDC/model/MCP/DSH.`)
+console.log(`Agent validation browser harness ready on ${port}; throwaway PostgreSQL and synthetic validation Runtime, no model/MCP/DSH.`)
 
 let closing = false
 async function close() {

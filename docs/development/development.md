@@ -25,7 +25,7 @@ pnpm test:e2e
 1. 准备独立的开发 PostgreSQL 数据库。
 2. 若没有 `.env`，从 [配置模板](../../.env.example) 创建；已有配置只修改所需字段。设置实际 `DSH_WORK_DATABASE_URL`。
 3. 按 [Runtime 指南](../release/dsh-runtime-delivery.md) 配置独立 DSH checkout、精确版本与模型凭据；模板里的开发电脑路径需替换。
-4. 不设置 `DSH_WORK_AUTH_MODE`。按 [独立登录指南](../release/local-authentication.md) 初始化首个管理员账号；AI Hub 按 [接入指南](../release/ai-hub-sso-integration.md) 配置后自动可用。
+4. 不设置 `DSH_WORK_AUTH_MODE`。按 [独立登录指南](../release/local-authentication.md) 初始化首个管理员账号。
 5. 执行 `pnpm dev:all`，默认入口为员工端 `http://localhost:4174/workbench`、管理端 `http://localhost:4180/overview`、后端 `http://localhost:4190/health`。服务启动会自动运行 SQL 迁移并预检 DSH/Python；执行能力故障隔离见 [内部契约](internal-ports.md#执行能力故障隔离c9)；也可单独执行 `pnpm --filter @dsh-work/server db:migrate`。
 
 使用 Bearer 认证的 MCP Connector 前，开发和生产都必须配置 `DSH_CREDENTIAL_MASTER_KEY`。执行 `openssl rand -base64 32` 生成 32 字节 Base64 密钥，并设置 `DSH_CREDENTIAL_MASTER_KEY_ID`（默认 `v1`）。密钥不进入 PostgreSQL 或 Git；数据库只保存 AES-256-GCM 密文、随机 nonce、认证标签和密钥版本。备份或恢复数据库时必须同时通过独立安全渠道备份或恢复对应主密钥，否则已有 Token 无法解密。
@@ -37,7 +37,7 @@ pnpm test:e2e
 
 不要把生产 `runtime.env` 直接复制到本地，也不要把本地 `.env` 当作生产模板。两者的 DSH 路径、版本锁、认证入口和端口约束都不同。
 
-只做业务功能升级无需启动或修改 AI Hub。SSO、目录、Bootstrap、凭据及身份映射修改必须另外联调；冒烟测试身份不能证明生产权限正确。
+冒烟测试身份不能证明生产权限正确。
 
 ## 自动化验证
 
@@ -58,7 +58,7 @@ pnpm test:e2e
 | 类型、UI 与代码规范 | `pnpm typecheck`（含 `scripts/` 下的 TypeScript 脚本，见 `server/tsconfig.scripts.json`）、`pnpm lint` |
 | 前端组件、Store 和 API 体验 | `pnpm test:m5:frontend`、`pnpm test:m5:api` |
 | Runtime 与模型治理 | `pnpm test:m1`、`pnpm test:m2` |
-| 身份 | `pnpm test:sso`、`pnpm test:sso:integration`、`pnpm test:local-auth`、`pnpm test:local-auth:integration`；独立账号浏览器旅程运行 `pnpm test:e2e:local-auth`，登录能力与账号来源运行 `pnpm test:e2e:login-options` |
+| 身份 | `pnpm test:identity`、`pnpm test:local-auth`、`pnpm test:local-auth:integration`；独立账号浏览器旅程运行 `pnpm test:e2e:local-auth`，登录入口与员工授权列表运行 `pnpm test:e2e:login-options` |
 | 权限与安全 | `pnpm test:m5:security`、`pnpm test:m5:security:integration` |
 | 故障与恢复 | `pnpm test:m5:faults`、`pnpm test:m5:faults:integration` |
 | 容量 | `pnpm test:m5:capacity:integration` |
@@ -78,7 +78,7 @@ pnpm test:e2e
 - `runtime`：版本锁、环境模板、生产兼容限制与探针入口。
 - `security`：身份与授权边界、子进程凭据隔离及安全迁移约束。
 
-历史 `verify:m*` 命令已替换为这个入口；函数名、页面文案等重复字符串校验由对应行为测试覆盖。原有 `test:m*` 等具名测试命令继续保留，便于针对性运行；CI 统一使用按文件名归类的 `test:unit` 与 `test:integration`，不再逐个登记。静态检查不代表行为测试成功；`pnpm test:scripts` 验证检查器的拒绝场景和探针流程，不连接 AI Hub、数据库或真实模型。
+历史 `verify:m*` 命令已替换为这个入口；函数名、页面文案等重复字符串校验由对应行为测试覆盖。原有 `test:m*` 等具名测试命令继续保留，便于针对性运行；CI 统一使用按文件名归类的 `test:unit` 与 `test:integration`，不再逐个登记。静态检查不代表行为测试成功；`pnpm test:scripts` 验证检查器的拒绝场景和探针流程，不连接数据库或真实模型。
 
 ### scripts 目录约定
 
@@ -96,7 +96,7 @@ pnpm test:e2e
 PostgreSQL 集成测试必须使用专用可丢弃测试库，禁止使用开发业务库或生产库。测试脚本统一经 `--env-file-if-exists=../.env` 读取 `.env` 中的 `DSH_WORK_TEST_DATABASE_URL`（本地指向 `dsh-work-postgres-local` 的 `postgres` 维护库即可，各套件自建一次性库）；也可在命令行显式覆盖：
 
 ```bash
-DSH_WORK_TEST_DATABASE_URL='postgres://<test-user>:<test-password>@127.0.0.1:5432/dsh_work_test' pnpm test:sso:integration
+DSH_WORK_TEST_DATABASE_URL='postgres://<test-user>:<test-password>@127.0.0.1:5432/dsh_work_test' pnpm test:local-auth:integration
 ```
 
 `pnpm test:integration [目录...]` 与其他 `test:*:integration` 使用同一测试变量，按修改模块选择；集成测试逐个文件串行执行。`pnpm ci:check` 不包含 PostgreSQL 集成测试和浏览器 E2E；GitHub Actions 在 `integration` 与 `browser` 两个 Job 中各自启动 PostgreSQL Service 运行它们。
@@ -106,7 +106,7 @@ PF-03 MCP Connector 治理使用 `pnpm test:mcp:integration`，在一次性数�
 
 PF-07 使用 `pnpm test:pf07:matrix` 校验版本化能力矩阵，`pnpm test:pf07:p1` 执行 PF-01～PF-05 的隔离 PostgreSQL 服务回归；真实环境证据与门禁按 [PF-07 验收手册](pf07-platform-acceptance.md) 单独记录。矩阵静态检查或 P1 绿灯不表示 P2 通过，PF-07 通过也不代表任何目标环境已验收；其中 PF-04 的 P1 套件只作代码回归，不是持久化等待的发布依据。
 
-默认 `pnpm test:e2e` 始终新建上述 P0 冒烟服务，不连接开发数据库，也不复用已登录的开发实例。数据库和真实权限旅程使用各自的 `test:e2e:*` P1 配置与专用可丢弃测试库；P0 通过不表示真实 DSH/OIDC 验收通过。HTTP/SSO 测试需要临时监听本机端口；`listen EPERM` 表示执行环境限制，应在允许本地监听的环境重跑。
+默认 `pnpm test:e2e` 始终新建上述 P0 冒烟服务，不连接开发数据库，也不复用已登录的开发实例。数据库和真实权限旅程使用各自的 `test:e2e:*` P1 配置与专用可丢弃测试库；P0 通过不表示真实 DSH 验收通过。HTTP/登录测试需要临时监听本机端口；`listen EPERM` 表示执行环境限制，应在允许本地监听的环境重跑。
 
 ## 必测场景与数据
 
@@ -132,12 +132,12 @@ PF-07 使用 `pnpm test:pf07:matrix` 校验版本化能力矩阵，`pnpm test:pf
 
 | 领域 | 必须验证 |
 | --- | --- |
-| 企业 SSO | 真实员工首登、Bootstrap 幂等、目录停用、至少两名管理员、本地收权、Token 刷新、Platform API 与 OIDC 分别停机后的恢复 |
+| 账号与登录 | 首位管理员初始化、至少两名管理员、员工首次改密、停用与本地收权立即生效、钉钉容器内免登与绑定 |
 | 企业连接器与知识 | 真实只读接口、Owner、Schema、权限过滤、版本/生效时间、来源引用；合成知识不能替代 |
 | 文件与数据出口 | 企业级恶意文件扫描、正式存储、数据分级、模型出口、保留和清理规则 |
 | 生产容量 | 目标硬件上的真实模型、20 MB 文件并发、长对话、真实 Connector 延迟；重新确定并发和超时 |
 | 网络与运行故障 | 真实断网、代理/Provider 故障、Worker 与服务重启、宿主机恢复；故障注入单测不替代现场演练 |
-| 运维 | TLS、密钥、磁盘/证书/身份依赖告警、异机备份与恢复、应用回滚兼容性、RTO/RPO 和维护窗口 |
+| 运维 | TLS、密钥、磁盘/证书告警、异机备份与恢复、应用回滚兼容性、RTO/RPO 和维护窗口 |
 
 主分支要求 CI 的四个 Job（Static checks and build、Unit tests、PostgreSQL integration tests、Browser tests）全部成功，人工发布按同一组检查放行。普通 push 只运行 CI；人工发布、Release watcher、首次安装及回滚统一按 [部署手册](../release/mac-mini-deployment-runbook.md) 执行。已发布 Release、主分支 CI 成功和远端部署完成是三个独立事实。
 

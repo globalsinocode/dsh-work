@@ -117,7 +117,7 @@ test('identity administration routes follow the identity module; escalation is r
     permissions: ['admin:read', 'admin:write'],
     dataScopes: [],
     authorizationVersion: 1,
-    identityProvider: 'ai-hub-oidc',
+    identityProvider: 'local-password',
   }
 
   assert.doesNotThrow(() => assertApiRouteAccess(identity, '/api/admin/v1/identity/users', 'GET'))

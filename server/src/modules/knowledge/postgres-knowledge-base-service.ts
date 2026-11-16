@@ -399,7 +399,7 @@ export class PostgresKnowledgeBaseService implements KnowledgeBaseService {
       select d.id, d.name, m.is_primary as primary, d.parent_id is null as root
         from org_department_members m
         join org_departments d on d.tenant_id = m.tenant_id and d.id = m.department_id and d.status = 'active'
-        join users u on u.tenant_id = m.tenant_id and u.id = m.user_id and u.status = 'active' and u.identity_provider <> 'ai-hub'
+        join users u on u.tenant_id = m.tenant_id and u.id = m.user_id and u.status = 'active'
        where m.tenant_id = ${tenantId} and m.user_id = ${userId}
        order by m.is_primary desc, d.path
     `

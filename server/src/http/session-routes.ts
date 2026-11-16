@@ -29,9 +29,9 @@ export function registerSessionRoutes(router: Router) {
   })
 }
 
-interface AuthConfiguration { mode: string; localEnabled: boolean; aiHubEnabled: boolean; dingtalk?: { corpId: string } }
+interface AuthConfiguration { mode: string; localEnabled: boolean; dingtalk?: { corpId: string } }
 
-/** Login options for both portals; the login pages read it before showing the AI Hub entry. */
+/** Login options for both portals: password login and, on the workbench, the DingTalk corpId. */
 export function registerAuthConfigurationRoutes(
   router: Router,
   describe: (audience: 'workbench' | 'admin') => Promise<AuthConfiguration> | AuthConfiguration,

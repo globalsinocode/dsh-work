@@ -123,7 +123,7 @@ try {
 
   await database`
     insert into users (id, tenant_id, external_subject, display_name, department_id, status, identity_provider, business_user)
-    values (${actorId}, ${tenantId}, ${`directory:${actorId}`}, 'PF-07 一次性测试用户', null, 'active', 'ai-hub', true)
+    values (${actorId}, ${tenantId}, ${`directory:${actorId}`}, 'PF-07 一次性测试用户', null, 'active', 'local', true)
   `
   await database`
     insert into user_roles (tenant_id, user_id, role_id, source_key)

@@ -74,7 +74,7 @@ before(async () => {
   // 另一位在职员工，用来确认看不到、不能操作他人的草稿。
   await database`
     insert into users (id, tenant_id, external_subject, display_name, status, identity_provider, business_user)
-    values (${OTHER}, ${tenantId}, ${`directory:skill-submission-${OTHER}`}, '另一位员工', 'active', 'ai-hub', true)
+    values (${OTHER}, ${tenantId}, ${`directory:skill-submission-${OTHER}`}, '另一位员工', 'active', 'local', true)
   `
   await database`insert into user_roles (tenant_id, user_id, role_id, source_key) values (${tenantId}, ${OTHER}, 'role-employee', 'local')`
   // 替身 Runtime 的运行不会结束；放宽 Runtime 容量，避免后续用例排在占满的容量后面。

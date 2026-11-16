@@ -3,7 +3,7 @@
   "info": {
     "title": "dsh-work 管理平台 API",
     "version": "0.13.0-agent-validation",
-    "description": "管理面请求使用独立账号密码或 AI Hub OIDC 登录后由 dsh-work 签发的 HttpOnly 服务端 Session。认证模式由部署配置显式选择；admin:read、admin:write、audit:read、角色与数据范围全部由 dsh-work 本地授权。身份同步、账号管理、角色、员工授权和 Session 撤销仅允许本地平台管理员（admin:*）修改。操作人由服务端 Session 注入，请求体不接受 actor。"
+    "description": "管理面请求使用独立账号密码登录后由 dsh-work 签发的 HttpOnly 服务端 Session；admin:read、admin:write、audit:read、角色与数据范围全部由 dsh-work 本地授权。身份同步、账号管理、角色、员工授权和 Session 撤销仅允许本地平台管理员（admin:*）修改。操作人由服务端 Session 注入，请求体不接受 actor。"
   },
   "servers": [
     {
@@ -11,9 +11,6 @@
     }
   ],
   "security": [
-    {
-      "adminSession": []
-    },
     {
       "localAdminSession": []
     }
@@ -2548,7 +2545,7 @@
     "/identity/login-account/check": {
       "post": {
         "operationId": "checkLocalLoginAccount",
-        "summary": "检查新登录账号格式及是否被独立账号或已同步 AI Hub 账号占用",
+        "summary": "检查新登录账号格式及是否已被占用",
         "requestBody": {
           "required": true,
           "content": {
@@ -3451,7 +3448,7 @@
     "/identity/users": {
       "get": {
         "operationId": "listIdentityUsers",
-        "summary": "分页查询员工及本地角色、数据范围和会话摘要；loginAccount 展示登录账号（独立用户名或 AI Hub subject），identityProvider 表示来源 local/ai-hub，username 仅用于独立凭据管理；不提供账号绑定；departmentRoles 列出来自部门授权的角色（含 departmentName、grantId），只能在组织架构中修改，roles 只含直接授予的角色；dingtalk 为独立账号的钉钉绑定状态（bound/unbound/invalid、绑定方式、钉钉姓名、失效原因、是否锁定自行绑定），AI Hub 账号为 null；summary.dingtalk 为有效独立账号的绑定概况",
+        "summary": "分页查询员工及本地角色、数据范围和会话摘要；loginAccount 展示登录账号（凭据用户名），只列出开通了登录账号的员工；不提供账号绑定；departmentRoles 列出来自部门授权的角色（含 departmentName、grantId），只能在组织架构中修改，roles 只含直接授予的角色；dingtalk 为独立账号的钉钉绑定状态（bound/unbound/invalid、绑定方式、钉钉姓名、失效原因、是否锁定自行绑定）；summary.dingtalk 为有效独立账号的绑定概况",
         "parameters": [
           {
             "name": "dingtalk",
@@ -3532,7 +3529,7 @@
                     "type": "string",
                     "minLength": 5,
                     "maxLength": 254,
-                    "description": "中国大陆 11 位手机号（可带 +86）或邮箱；忽略邮箱大小写，创建时检查独立及已同步 AI Hub 登录账号占用"
+                    "description": "中国大陆 11 位手机号（可带 +86）或邮箱；忽略邮箱大小写，创建时检查登录账号占用"
                   },
                   "password": {
                     "type": "string",
@@ -3818,32 +3815,6 @@
         "responses": {
           "200": {
             "$ref": "#/components/responses/Ok"
-          }
-        }
-      }
-    },
-    "/identity/directory-sync": {
-      "get": {
-        "operationId": "getIdentityDirectorySyncState",
-        "summary": "查询 AI Hub 员工目录同步状态",
-        "responses": {
-          "200": {
-            "$ref": "#/components/responses/Ok"
-          }
-        }
-      },
-      "post": {
-        "operationId": "synchronizeIdentityDirectory",
-        "summary": "需要员工与权限的修改权限：使用应用服务凭据增量或全量同步 AI Hub 员工资料，不修改本地授权",
-        "responses": {
-          "200": {
-            "$ref": "#/components/responses/Ok"
-          },
-          "403": {
-            "$ref": "#/components/responses/Error"
-          },
-          "409": {
-            "$ref": "#/components/responses/Error"
           }
         }
       }
@@ -5762,13 +5733,7 @@
         "type": "apiKey",
         "in": "cookie",
         "name": "dsh_work_local_admin_session",
-        "description": "独立账号登录签发；生产使用 __Host- 前缀，与 OIDC Session 分离。"
-      },
-      "adminSession": {
-        "type": "apiKey",
-        "in": "cookie",
-        "name": "dsh_work_admin_session",
-        "description": "AI Hub OIDC 回调后由 dsh-work 设置的不透明 HttpOnly Session Cookie；生产名称使用 __Host- 前缀。"
+        "description": "独立账号登录签发；生产使用 __Host- 前缀。"
       }
     },
     "parameters": {

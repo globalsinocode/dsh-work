@@ -3,7 +3,7 @@ import { once } from 'node:events'
 import { createServer, request as httpRequest } from 'node:http'
 import { test, type TestContext } from 'node:test'
 
-import { IdentityAccessError } from '../modules/identity/auth-service.ts'
+import { IdentityAccessError } from '../modules/identity/request-security.ts'
 import { skillConflict } from '../modules/skill/skill-errors.ts'
 import { httpResult, readJsonBody, Router } from './router.ts'
 

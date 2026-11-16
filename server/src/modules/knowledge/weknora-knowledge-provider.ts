@@ -54,21 +54,16 @@ export class WeKnoraKnowledgeProvider implements KnowledgeProvider {
   }
 
   /**
-   * 执行前检索与知识检索工具共用的复核（5.1、5.3、5.7，WK14）：连接、身份模式、员工与 Agent 的查看级别，
+   * 执行前检索与知识检索工具共用的复核（5.1、5.3、5.7，WK14）：连接、员工与 Agent 的查看级别，
    * 以及会话所选知识库当前是否可见。每次调用都实时读取，不使用 Manifest 中冻结的结果。
    */
   private async evaluate(input: { sessionId: string; userId: string; agentVersionId: string }) {
-    const [levels] = await this.database<{ connection: boolean; localIdentity: boolean; employee: boolean; agent: boolean }[]>`
+    const [levels] = await this.database<{ connection: boolean; employee: boolean; agent: boolean }[]>`
       select
         exists (
           select 1 from external_knowledge_connections c
            where c.tenant_id = ${tenantId} and c.id = ${this.connectionId} and c.status = 'active'
         ) as connection,
-        -- 按部门授权只在本地身份模式下提供；AI Hub（OIDC）账号没有部门，也没有添加入口（第 3 节）。
-        exists (
-          select 1 from users u
-           where u.tenant_id = ${tenantId} and u.id = ${input.userId} and u.identity_provider <> 'ai-hub'
-        ) as "localIdentity",
         exists (
           select 1 from users u
             join user_roles ur on ur.tenant_id = u.tenant_id and ur.user_id = u.id
@@ -88,7 +83,7 @@ export class WeKnoraKnowledgeProvider implements KnowledgeProvider {
              and r.permissions ?| ${knowledgeViewLevel}::text[]
         ) as agent
     `
-    const selected: SelectedBaseRow[] = levels?.localIdentity ? await this.database<SelectedBaseRow[]>`
+    const selected: SelectedBaseRow[] = await this.database<SelectedBaseRow[]>`
       select kb.id, kb.external_id as "externalId", kb.name,
              (kb.status = 'active' and kb.id in (${visibleBaseIdsSql(this.database, input.userId)})) as visible,
              kb.status = 'unavailable' as moved
@@ -97,9 +92,9 @@ export class WeKnoraKnowledgeProvider implements KnowledgeProvider {
        where skb.tenant_id = ${tenantId} and skb.session_id = ${input.sessionId}
          and kb.connection_id = ${this.connectionId}
        order by skb.added_at, kb.id
-    ` : []
+    `
     return {
-      levels: levels ?? { connection: false, localIdentity: false, employee: false, agent: false },
+      levels: levels ?? { connection: false, employee: false, agent: false },
       selected,
     }
   }
@@ -113,7 +108,6 @@ export class WeKnoraKnowledgeProvider implements KnowledgeProvider {
   }): Promise<KnowledgeResolution> {
     const empty = { documents: [], citations: [], skippedBases: [] }
     const { levels, selected } = await this.evaluate(input)
-    if (!levels.localIdentity) return { status: 'not_applicable', ...empty }
 
     // Manifest 最多记 20 个名称；会话所选知识库没有数量上限，超出的不再逐一提示。
     const names = (bases: SelectedBaseRow[]) => bases.map(base => base.name.trim()).filter(Boolean).slice(0, maxSkippedBases)
@@ -188,7 +182,7 @@ export class WeKnoraKnowledgeProvider implements KnowledgeProvider {
     const query = input.query.trim()
     if (!query) throw toolPreconditionFailed('检索词不能为空')
     const { levels, selected } = await this.evaluate(input)
-    if (!levels.localIdentity || !levels.employee || !levels.agent) {
+    if (!levels.employee || !levels.agent) {
       throw toolPreconditionFailed('当前不能检索企业知识库：员工或 AI 同事已没有知识库查看权限')
     }
     const client = levels.connection ? await this.connection.client() : null

@@ -225,8 +225,7 @@ export class PostgresOrganizationService {
       const valid = await transaction<{ id: string }[]>`
         select u.id from users u
          where u.tenant_id = ${tenantId} and u.id in ${transaction(userIds)} and u.status = 'active' and u.business_user
-           and (u.identity_provider = 'ai-hub'
-                or exists (select 1 from local_user_credentials c where c.tenant_id = u.tenant_id and c.user_id = u.id))
+           and exists (select 1 from local_user_credentials c where c.tenant_id = u.tenant_id and c.user_id = u.id)
       `
       if (valid.length !== userIds.length) throw invalidRequest('包含不存在或已停用的员工')
       await assertNotSelfMembership(transaction, input.actorId, userIds)
@@ -469,14 +468,10 @@ async function readSnapshot(sql: DatabaseClient | DatabaseTransaction): Promise<
   `
   const employees = await sql<OrganizationEmployee[]>`
     select u.id, u.display_name as name, u.email, u.status,
-           coalesce(
-             (select c.username from local_user_credentials c where c.tenant_id = u.tenant_id and c.user_id = u.id),
-             case when u.identity_provider = 'ai-hub' then u.external_subject end
-           ) as "loginAccount"
+           (select c.username from local_user_credentials c where c.tenant_id = u.tenant_id and c.user_id = u.id) as "loginAccount"
       from users u
      where u.tenant_id = ${tenantId} and u.business_user
-       and (u.identity_provider = 'ai-hub'
-            or exists (select 1 from local_user_credentials c where c.tenant_id = u.tenant_id and c.user_id = u.id))
+       and exists (select 1 from local_user_credentials c where c.tenant_id = u.tenant_id and c.user_id = u.id)
      order by u.display_name, u.id
   `
   const grants = await sql<OrganizationGrant[]>`

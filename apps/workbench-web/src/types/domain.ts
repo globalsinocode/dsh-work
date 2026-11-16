@@ -959,7 +959,7 @@ export type ConversationLocation =
 
 export interface WorkbenchSession {
   user: UserProfile
-  identityProvider: 'prototype-sso' | 'ai-hub-oidc' | 'local-password' | 'dingtalk'
+  identityProvider: 'prototype-sso' | 'local-password' | 'dingtalk'
   apiAudience: 'workbench'
 }
 
@@ -1159,7 +1159,7 @@ export interface MentionSummary {
   latestAt: string
 }
 
-/** 用户中心 › 钉钉（钉钉接入 DT-S1）。`enabled` 为部署是否配置了钉钉应用；AI Hub 账号恒为 false。 */
+/** 用户中心 › 钉钉（钉钉接入 DT-S1）。`enabled` 为部署是否配置了钉钉应用。 */
 export interface DingTalkSelfBinding {
   enabled: boolean
   status: 'bound' | 'unbound' | 'invalid'

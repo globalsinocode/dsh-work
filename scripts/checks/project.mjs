@@ -20,7 +20,7 @@ export function checkProject(check) {
   check.files([
     'README.md', 'docs/index/README.md', 'docs/development/overview.md', 'docs/design/data-model.md',
     'docs/development/internal-ports.md', 'docs/development/development.md',
-    'docs/release/ai-hub-sso-integration.md', 'docs/release/dsh-runtime-delivery.md',
+    'docs/release/local-authentication.md', 'docs/release/dsh-runtime-delivery.md',
     'docs/release/mac-mini-deployment-runbook.md',
     'apps/workbench-web/vitest.config.ts', 'apps/admin-web/vitest.config.ts',
     'playwright.config.ts', 'e2e/mvp-smoke.spec.ts',

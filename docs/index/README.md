@@ -18,7 +18,7 @@
 | 决策已确认、未实施：模型网关与发往模型的数据防护（敏感值遮盖与还原、密钥拦截、按 Provider 信任级别分策略） | [发往模型的数据防护方案](../design/model-data-protection-plan.md) |
 | 待评审：钉钉工作通知、工作台免登与机器人对话 | [钉钉接入方案](../design/dingtalk-integration-plan.md) |
 | 决策已确认（AP1～AP10）、AMP-S1 服务端已实施、AMP-S2 前端未实施：管理端按模块授予查看与修改权限，授出不超过自身与管理助手按模块校验 | [管理端模块权限方案](../design/admin-module-permission-plan.md) |
-| 决策已确认（AH1～AH7）、未实施：彻底删除 AI Hub 登录、员工目录同步与初始管理员认领，只保留独立账号与钉钉免登 | [删除 AI Hub 登录方案](../design/ai-hub-login-removal-plan.md) |
+| 已实施（AH-S1）：彻底删除 AI Hub 登录、员工目录同步与初始管理员认领，只保留独立账号与钉钉免登 | [删除 AI Hub 登录方案](../design/ai-hub-login-removal-plan.md) |
 | 决策已确认（SP1～SP16）、未实施：场景包（独立于 Skill 的平台对象，由工作规则固定版本）+ 共享数据服务 + 主动任务的程序编排，按人交付的跟进项；首个场景欠料风险预警 | [场景包与跟进项方案](../design/scene-package-plan.md) |
 | 一期已实施（WK-S1～S4；生产切换前按发布流程复核）：企业知识库改用 WeKnora，员工端管理知识库与文档，按角色与部门授权 | [企业知识库接入 WeKnora 方案](../design/weknora-knowledge-plan.md) |
 | 部分实施（O1～O3、O5～O12、KO9 与 KO10 已完成；KO8、O4 经对比后不实施，篇数上限未检验；O8 校验按钮未做）：知识库检索提示、连接更换、授权修正与后续方向 | [企业知识库优化方案](../design/weknora-knowledge-optimization-plan.md) |
@@ -29,9 +29,8 @@
 | dsh-work 助手推荐 AI 同事（代码级已实施，P2 待验收） | [推荐 AI 同事方案](../design/agent-recommendation-plan.md) |
 | 平台基线真实验收（PF-07） | [PF-07 验收手册](../development/pf07-platform-acceptance.md) |
 | 进行中：执行观测、上下文延续与性能 | [Runtime 执行架构渐进优化方案](../design/runtime-execution-optimization-plan.md) |
-| 项目空间产品决策与切片背景（S0～S6 已实现；现行规则以功能规则为准，P2/OIDC 与部分 P1 旅程仍开放） | [项目空间方案](../design/project-space-plan.md) |
+| 项目空间产品决策与切片背景（S0～S6 已实现；现行规则以功能规则为准，P2 与部分 P1 旅程仍开放） | [项目空间方案](../design/project-space-plan.md) |
 | 独立账号登录 | [独立登录](../release/local-authentication.md) |
-| 配置 AI Hub 登录、员工目录和首位管理员 | [AI Hub 身份接入](../release/ai-hub-sso-integration.md) |
 | 安装、验证与升级执行内核 | [DSH Runtime](../release/dsh-runtime-delivery.md) |
 | 发布、首次安装、升级、备份、恢复及地址变更 | [Mac mini 部署手册](../release/mac-mini-deployment-runbook.md) |
 

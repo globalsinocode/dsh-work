@@ -325,15 +325,8 @@ test('单篇文档元数据缺失只丢弃该篇，由后面的候选补上（4.
     ['weknora:doc-safety', 'weknora:doc-a', 'weknora:doc-b'])
 })
 
-test('AI Hub 账号不检索也不提示；停用的连接在会话添加了知识库时按不可用提示（第 3 节，优化方案 O2）', async () => {
+test('停用的连接在会话添加了知识库时按不可用提示（优化方案 O2）', async () => {
   const sessionId = await session(['kb-supply'])
-  await database`update users set identity_provider = 'ai-hub' where tenant_id = ${tenantId} and id = ${EMPLOYEE}`
-  try {
-    const oidc = await ask(sessionId, '安全库存？')
-    assert.equal(oidc.manifest.knowledge_status, undefined)
-  } finally {
-    await database`update users set identity_provider = 'local' where tenant_id = ${tenantId} and id = ${EMPLOYEE}`
-  }
   const [before] = await database<{ reason: string | null; at: Date | null }[]>`
     select last_failure_reason as reason, last_failure_at as at from external_knowledge_connections where tenant_id = ${tenantId}
   `

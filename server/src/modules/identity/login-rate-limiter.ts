@@ -1,7 +1,7 @@
 import { createHmac } from 'node:crypto'
 
 import type { DatabaseClient } from '../../infrastructure/postgres/database.ts'
-import { IdentityAccessError } from './auth-service.ts'
+import { IdentityAccessError } from './request-security.ts'
 
 /**
  * 登录尝试窗口（跨进程与重启共享，键为 HMAC，不保存账号或钉钉 userid 原文）。

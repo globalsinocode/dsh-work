@@ -198,14 +198,14 @@ test('LOCAL-AUTH-P1 login is accessible at phone width and configuration failure
 })
 
 for (const portal of [{ audience: 'admin', url: adminUrl, heading: '登录运营平台' }, { audience: 'workbench', url: workbenchUrl, heading: '登录员工工作台' }]) {
-  test(`LOGIN-ENTRY-P1 ${portal.audience} defaults to password and hides unconfigured AI Hub`, async ({ page }, testInfo) => {
+  test(`LOGIN-ENTRY-P1 ${portal.audience} offers only password login`, async ({ page }, testInfo) => {
     const upstreamRequests: string[] = []
     page.on('request', request => { if (request.url().includes('/oidc/login')) upstreamRequests.push(request.url()) })
     await page.goto(`${portal.url}/login?return_to=${encodeURIComponent('/settings?view=profile#details')}`)
     await expect(page.getByRole('heading', { name: portal.heading, exact: true })).toBeVisible()
     await expect(page.getByLabel('登录账号', { exact: true })).toBeVisible()
     await expect(page.getByRole('link', { name: /注册/ })).toHaveCount(0)
-    await expect(page.getByRole('button', { name: '使用 AI Hub 账号登录', exact: true })).toHaveCount(0)
+    await expect(page.getByRole('button', { name: /AI Hub/ })).toHaveCount(0)
     await expect(page.getByText('其他登录方式', { exact: true })).toHaveCount(0)
     expect(new URL(page.url()).searchParams.get('return_to')).toBe('/settings?view=profile#details')
     expect(upstreamRequests).toEqual([])
@@ -213,33 +213,6 @@ for (const portal of [{ audience: 'admin', url: adminUrl, heading: '登录运营
     await page.setViewportSize({ width: 320, height: 740 })
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
     await expect(page.getByRole('button', { name: '登录', exact: true })).toBeInViewport()
-  })
-
-  // Controlled browser response verifies navigation wiring, not a real OIDC provider.
-  test(`LOGIN-ENTRY-P1 ${portal.audience} starts AI Hub with one click and retains the return target`, async ({ page }) => {
-    await page.route(`**/auth/${portal.audience}/configuration`, route => route.fulfill({ json: { mode: 'oidc', localEnabled: true, aiHubEnabled: true } }))
-    let destination: URL | undefined
-    await page.route(`**/auth/${portal.audience}/oidc/login?*`, route => {
-      destination = new URL(route.request().url())
-      return route.fulfill({ contentType: 'text/html; charset=utf-8', body: '<h1>受控 AI Hub 登录入口</h1>' })
-    })
-    await page.goto(`${portal.url}/login?return_to=${encodeURIComponent('/settings?view=profile#details')}`)
-    await expect(page.getByLabel('登录账号', { exact: true })).toBeVisible()
-    expect(destination).toBeUndefined()
-    await page.getByRole('button', { name: '使用 AI Hub 账号登录', exact: true }).click()
-    await expect(page.getByRole('heading', { name: '受控 AI Hub 登录入口' })).toBeVisible()
-    expect(destination?.pathname).toBe(`/auth/${portal.audience}/oidc/login`)
-    expect(destination?.searchParams.get('return_to')).toBe('/settings?view=profile#details')
-  })
-
-  test(`LOGIN-ENTRY-P1 ${portal.audience} returns upstream errors directly to the password form`, async ({ page }) => {
-    await page.goto(`${portal.url}/login?provider=ai-hub&auth_error=ai_hub_unavailable&return_to=%2Fsettings`)
-    await expect(page.getByRole('alert')).toContainText('AI Hub 暂不可用')
-    await expect(page.getByLabel('登录账号', { exact: true })).toBeVisible()
-    await expect(page.getByLabel('密码', { exact: true })).toBeVisible()
-    await expect(page.getByRole('button', { name: '登录', exact: true })).toBeEnabled()
-    await expect(page.getByRole('heading', { name: 'AI Hub 企业登录', exact: true })).toHaveCount(0)
-    expect(new URL(page.url()).searchParams.get('return_to')).toBe('/settings')
   })
 }
 

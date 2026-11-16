@@ -2,7 +2,7 @@ import { createHmac, randomUUID } from 'node:crypto'
 
 import type { DatabaseClient, DatabaseTransaction } from '../../../infrastructure/postgres/database.ts'
 import { recordUserNotification } from '../../notification/user-notification-writer.ts'
-import { IdentityAccessError } from '../auth-service.ts'
+import { IdentityAccessError } from '../request-security.ts'
 import { hashOpaque, randomOpaque } from '../secure-values.ts'
 import { IdentitySessionRepository } from '../session-repository.ts'
 import { assertCanManageUser, manageableUserIds, requireAdminModuleActor, requirePlatformAdminOnly } from '../../authorization/admin-actor.ts'

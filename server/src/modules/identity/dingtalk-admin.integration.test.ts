@@ -44,7 +44,7 @@ before(async () => {
   })
   await settings.ensureBootstrap()
   local = new LocalAuthService(config, database.client, settings)
-  administration = new IdentityAdministrationService(database.client, true)
+  administration = new IdentityAdministrationService(database.client)
   service = new DingTalkAdministrationService(database.client, settings, { manager: settings, secret: config.sessionSecret, workbenchOrigins: config.audiences.workbench.allowedOrigins })
   adminId = (await local.bootstrap({ username: 'dt.admin@example.invalid', name: '陈默', password })).userId
   const second = await local.createAccount({ username: 'dt.admin2@example.invalid', name: '第二管理员', password }, adminId)

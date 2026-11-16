@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 
 import type { DatabaseClient, DatabaseTransaction } from '../../../infrastructure/postgres/database.ts'
 import type { PostgresEncryptedCredentialStore } from '../../tool/postgres-encrypted-credential-store.ts'
-import { IdentityAccessError } from '../auth-service.ts'
+import { IdentityAccessError } from '../request-security.ts'
 import { DINGTALK_DEFAULTS, type DingTalkConfiguration, type DingTalkDeploymentSettings } from './dingtalk-config.ts'
 import { DingTalkDirectoryError, type DingTalkDirectory } from './dingtalk-directory.ts'
 import { DingTalkOpenApiDirectory } from './dingtalk-open-api.ts'

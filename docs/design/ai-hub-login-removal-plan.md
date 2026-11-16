@@ -1,6 +1,6 @@
 # 删除 AI Hub 登录方案
 
-**状态：** AH1～AH7 均已确认；未实施。
+**状态：** AH1～AH7 均已确认；AH-S1 已实施（2026-11-16），Mac mini 升级待第 5 节检查后执行。
 **更新日期：** 2026-11-16<br>
 **依据：** [组织架构方案](org-structure-plan.md) OD1（“AI Hub 账号登录计划删除”）；现有身份实现（`server/src/modules/identity/`，迁移 0014、0016～0018、0020、0042、0077、0078、0117）；[独立账号登录](../release/local-authentication.md)。
 
@@ -71,7 +71,7 @@
 - **修改：** 架构总览（身份来源、外部依赖表、上游不可用规则、登录流程、限制与风险、第 11 节生产演进中的“AI Hub 联调”与“治理迁入 AI Hub”（AH7）、第 12 节相关文档中的 AI Hub 接入链接）、内部端口与契约（认证注册、定时任务后台身份、`configuration` 契约、`loginAccount`）、功能规则（项目空间选成员、定时任务后台身份、组织架构范围、钉钉绑定中的 AI Hub 说明）、数据模型、移动端接入规范、开发与测试、独立账号登录、Mac mini 部署手册（按 AH5：开头说明与第 1 节端口表去掉 AI Hub 与 authentik、第 2 节去掉 AI Hub 根目录参数、第 4.2 节去掉 AI Hub 健康检查并改写证书来源、删除第 5 节“在现有 AI Hub 登记应用”、第 7 节去掉 `AI_HUB_*` 配置、第 8 节去掉 OIDC Discovery 预检、第 9 节首位管理员改为 `local-bootstrap.js` 初始化并按独立账号验收，第 10～13 节去掉与 AI Hub 备份回执、登录排错、多入口回调登记的对照，其余章节编号顺延）、三份 OpenAPI（auth、admin、workbench；mobile-h5 中的描述）、Agent 设计规范与生命周期模板中的 OIDC 措辞、相关设计方案中的 AI Hub 说明。
 - **项目规范：** `AGENTS.md` P0/P2 说明中的“OIDC”改为“钉钉免登”或删除（需评审时一并确认）。
 - **验收矩阵：** `agent-platform-capabilities.v2.json` 中 `real-oidc-task` 已为 `removed`，补充删除原因；`pf07-platform-acceptance.md` 去掉“真实 OIDC”要求。
-- **E2E：** 删除 `e2e/login-options.integration.spec.ts` 与 `playwright.login-options.config.ts`，`playwright.config.ts` 去掉对应项目，同时删除 `package.json` 的 `test:e2e:login-options` 脚本和 `.github/workflows/ci.yml` 中运行它的步骤（否则 CI 失败）；`scripts/testing/playwright-p0-config.test.mjs` 与管理端相关单测同步调整；`local-auth.integration.spec.ts` 与 `project-space.integration.spec.ts` 去掉 AI Hub 场景；验收目录 `admin-platform.md`、`agents.md`、`organization.md`、`dingtalk.md`、`workbench.md` 与 `TEST-CATALOG.md` 中的 AI Hub 旅程删除或改写。
+- **E2E：** `e2e/login-options.integration.spec.ts` 保留并改写（实施时调整：它的只读管理员、搜索、窄屏与新建账号校验用例仍有价值），夹具改为本地账号，AI Hub 相关断言改为“没有 AI Hub 入口、OIDC 入口返回 404”；`scripts/testing/playwright-p0-config.test.mjs` 与管理端相关单测同步调整；`local-auth.integration.spec.ts` 与 `project-space.integration.spec.ts` 去掉 AI Hub 场景；验收目录 `admin-platform.md`、`agents.md`、`organization.md`、`dingtalk.md`、`workbench.md` 与 `TEST-CATALOG.md` 中的 AI Hub 旅程删除或改写。
 - **架构图：** `diagrams/` 中的 AI Hub OIDC 节点删除；README 的登录说明同步。
 - **其他：** `docs/release/c-tier-p2-acceptance.md` 与 `scripts/acceptance/c-tier-p2.mjs` 中“通过 AI Hub 登录”的说法，`docs/index/README.md` 项目空间一行中的“P2/OIDC”。
 

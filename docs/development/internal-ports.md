@@ -76,7 +76,7 @@ PF-04 使用 `waiting` 作为 Run 的非终态等待状态和来源 Attempt 的�
 - Token、Tool 和计量信息来自受控 Session 日志/Telemetry 投影，不从回答文本猜测，不直接导出未经脱敏的运行轨迹；PF-02 缺少完整 Token 回报时明确返回 unavailable。
 - 取消和重启须收敛到确定终态；重试新增 Attempt，旧事件不得覆盖当前 Attempt。
 - 文件路径使用受控存储键；输入只读、成果显式收集，下载重新鉴权。
-- 业务角色与数据范围留在本地；AI Hub 专用协议仅进入身份模块，外部身份变化不覆盖本地授权历史。
+- 业务角色与数据范围只在本地维护。
 
 具体运行环境见 [Runtime 指南](../release/dsh-runtime-delivery.md)，验证命令见 [开发与测试](development.md)。
 
@@ -88,15 +88,13 @@ Agent 的额外模型要求通过 `assertModelRequirements(requirements, target)
 
 `RuntimeAgentSnapshot.modelRequirements` 来自版本定义；员工/自动任务/发布试运行将其写入 `RuntimeManifest.model_requirements`，并将 `modelCapabilities` 固定到 `ModelRouteSnapshot`。Schema 与编译器只接受不重复的 `long-context`/`structured-output` 名称；省略字段仅表示没有额外要求。准备失败不创建 Attempt，并收敛无 Attempt 的 Run；恢复队列复核固定目标失败时终止既有 Attempt，记录稳定错误码。
 
-`/health/live` 表示进程存活；`/health/ready` 验证核心数据库可达，并报告启动时校验的身份配置与各执行能力状态。DSH/Python 预检失败不否定核心就绪；DB/身份初始化失败仍不监听。就绪不代表实时 OIDC/模型业务联调通过。修复执行配置后需重启重探，不提供自动回退。`/health` 新增 `executionCapabilities`；其 `dshRuntime` 使用 RuntimeHealth 的状态，不再把未连接写成 connected。
+`/health/live` 表示进程存活；`/health/ready` 验证核心数据库可达，并报告启动时校验的身份配置与各执行能力状态。DSH/Python 预检失败不否定核心就绪；DB/身份初始化失败仍不监听。就绪不代表模型业务联调通过。修复执行配置后需重启重探，不提供自动回退。`/health` 新增 `executionCapabilities`；其 `dshRuntime` 使用 RuntimeHealth 的状态，不再把未连接写成 connected。
 
 执行容器为必需（执行隔离 4.9），只在启动时检查：DSH 预检通过后在一次性容器（执行容器姿态）中检查执行镜像（`DSH_WORK_EXECUTION_IMAGE`）的工具链（[execution-toolchain](../../server/src/modules/runtime/execution-toolchain.ts)：`bash`、`rg`、`soffice`、`pdftoppm` 必需，`pdftotext`、`pandoc`、`python3` 及 pandas、openpyxl、python-docx、python-pptx 与 Noto CJK SC 字体可选；只取工具标识与版本号，Runtime 说明中的“运行命令”一节据此列出平台撰写的工具说明）、按 label 清扫遗留容器、生成执行容器叠加层并以叠加后的组合重跑 DSH 预检，再读取工具目录核对 DSH 的实际调度（`dshScheduling`）：注册表工具与 `bash` 中只有 `read`、`read_image`、`web_search` 可并行，其余必须独占，未报告也按不满足处理；任一步失败时不构建 DSH Adapter：Runtime 为 `UnavailableRuntime('execution-container')`，所有 Agent 运行在创建 Run/Attempt 前以 `EXECUTION_CONTAINER_UNAVAILABLE` 失败，DSH 子进程不在宿主执行；`executionCapabilities.executionContainer` 报告 `unavailable`，原因只写服务日志。DSH 本身不可用时同样报告 `unavailable`。旧开关 `DSH_WORK_EXECUTION_CONTAINER` 与 `DSH_WORK_PYTHON_*`、`DSH_WORK_EXECUTION_MAX_CONTAINERS` 已删除，设置时只在启动日志中提示被忽略。运行中途不切换。叠加层停用 `subprocess`、`bash-sandbox`、`permission` 与 `tool-jobs`，插入 remote subprocess 与 `dsh-bash-local`；平台只接受 DSH 自带 ripgrep 与 `bash -c <命令>` 两种 argv，分别在镜像内的 `rg`、`bash` 中执行。管理端内置工具状态（`/runtimes/builtin-tools`）带 `executionContainer.status`（`available`/`unavailable`），Runtime 页面据此说明运行是否可用。
 
 发布脚本的严格 DSH 预检保持不变；核心就绪不能替代上线前的真实执行验收。
 
 ## 首次管理员认领意图（C10）
-
-`GET /auth/admin/bootstrap` 是显式首次认领入口，默认关闭，仅全新安装临时开放。普通登录与刷新仅要求基础身份 Scope；认领 Scope 从不成为持续登录条件。`oidc_login_transactions.login_purpose` 由服务端写入并在回调时消费，不能从回调参数读取。初始化是否已消费只查询应用/环境账本，不计数当前管理员。新迁移为 `0042_oidc_login_bootstrap_intent.sql`，保留全部旧认领和身份数据。
 
 ## 场景试运行契约
 
@@ -120,16 +118,16 @@ Agent 的额外模型要求通过 `assertModelRequirements(requirements, target)
 
 ## 独立账号认证
 
-正式部署始终注册账号密码认证，AI Hub 配置完整且有效时另外注册 OIDC 与目录同步。未配置或配置无效的可选 AI Hub 不阻塞独立认证；配置错误记入启动日志，公开接口不暴露细节或密钥。基础身份配置、可信入口、Session Secret 和生产 HTTPS 校验仍必须通过。
+正式部署只注册账号密码认证与钉钉容器内免登。AI Hub 登录已删除（迁移 0129）：残留的 `AI_HUB_*`、`DSH_WORK_OIDC_*` 等变量与 `DSH_WORK_AUTH_MODE=local/oidc` 不再读取，启动时只记一条警告；可信入口只来自 `DSH_WORK_*_ORIGINS`。基础身份配置、可信入口、Session Secret 和生产 HTTPS 校验必须通过。
 
-个人自动任务按持久化用户的 `identity_provider` 复核后台身份：AI Hub 用户必须具有可用配置和信任窗口内的成功目录同步，配置缺失、无效或目录过期时拒绝启用、触发及执行期复核；独立账号不依赖 AI Hub，但仍检查账号、租户和当前授权。
+个人自动任务在启用、触发及执行期复核后台身份：检查账号状态、租户和当前授权。
 
-`RequestIdentity.identityProvider=local-password`（钉钉容器内免登为 `dingtalk`，同一独立账号、按 `binding_id` 校验）由服务端产生，后续角色、数据范围、Run/Attempt 和 DSH 授权保持原路径。独立账号和 AI Hub 账号分别创建、分别授权，不进行绑定或姓名/邮箱匹配。旧绑定凭据不删除，但不能用于 AI Hub 用户的密码登录、改密或重置。新账号和管理员重置的密码必须先通过 `/auth/{audience}/password` 修改，否则业务 API 返回 `password_change_required`；改密、撤销所有旧会话和签发当前门户的新会话在同一事务内完成；响应设置新的 HttpOnly Session Cookie，并返回原同源访问地址，前端直接进入系统，无需再次登录。改密失败不签发会话、不跳转。
+`RequestIdentity.identityProvider=local-password`（钉钉容器内免登为 `dingtalk`，同一独立账号、按 `binding_id` 校验）由服务端产生，后续角色、数据范围、Run/Attempt 和 DSH 授权保持原路径。新建独立账号不按姓名或邮箱与已有员工合并。新账号和管理员重置的密码必须先通过 `/auth/{audience}/password` 修改，否则业务 API 返回 `password_change_required`；改密、撤销所有旧会话和签发当前门户的新会话在同一事务内完成；响应设置新的 HttpOnly Session Cookie，并返回原同源访问地址，前端直接进入系统，无需再次登录。改密失败不签发会话、不跳转。
 
-新建独立账号统一使用手机号或邮箱；`POST /api/admin/v1/identity/login-account/check` 仅允许平台管理员检查格式和占用情况，创建事务仍会重新检查独立账号与已同步 AI Hub 的登录账号，重复返回 `local_account_exists`。手机号兼容 `+86` 并统一为大陆 11 位，邮箱忽略大小写；已有用户名继续兼容登录，不按资料邮箱绑定身份。
+新建独立账号统一使用手机号或邮箱；`POST /api/admin/v1/identity/login-account/check` 仅允许平台管理员检查格式和占用情况，创建事务仍会重新检查登录账号，重复返回 `local_account_exists`。手机号兼容 `+86` 并统一为大陆 11 位，邮箱忽略大小写；已有用户名继续兼容登录，不按资料邮箱绑定身份。
 
 认证接口见 [认证 OpenAPI](openapi-auth.json)，管理接口见 [Admin OpenAPI](openapi-admin.json)。`/auth/{audience}/configuration` 返回当前能力 `mode`、`localEnabled`、`aiHubEnabled`；`mode` 表示已加载的提供方能力，不是管理端可选设置。API 按提供方 Cookie 分流，双 Cookie 拒绝；登录完成撤销当前门户另一提供方旧会话，过期凭据不跨提供方降级。
 
-管理端登录设置页面、`GET/PATCH /api/admin/v1/identity/login-settings` 和 `POST /api/admin/v1/identity/users/:userId/local-account` 已移除。旧 `system_settings.identity.login` 记录保留但不再读取，不触发启动切换或会话撤销。部署默认自动启用独立认证，旧 `DSH_WORK_AUTH_MODE=local/oidc` 仅兼容、不改变能力选择；原 `prototype` 模式已移除，设置后服务拒绝启动。详见 [独立登录指南](../release/local-authentication.md)。
+管理端登录设置页面、`GET/PATCH /api/admin/v1/identity/login-settings` 和 `POST /api/admin/v1/identity/users/:userId/local-account` 已移除。旧 `system_settings.identity.login` 记录保留但不再读取，不触发启动切换或会话撤销。部署默认自动启用独立认证，旧 `DSH_WORK_AUTH_MODE=local/oidc` 被忽略并记警告；原 `prototype` 模式已移除，设置后服务拒绝启动。详见 [独立登录指南](../release/local-authentication.md)。
 
-员工授权列表和授权变更响应返回只读 `loginAccount`：独立账号取凭据用户名，AI Hub 取已同步的 subject（当前上游以登录账号作为 subject）。列表搜索同时匹配两类账号；`username` 保持仅用于独立凭据管理，账号展示不改变身份归属。邮箱、最近活跃和活动会话来自既有资料与会话记录，AI Hub 用户标识和目录同步时间在详情查看。
+员工授权列表和授权变更响应返回只读 `loginAccount`（凭据用户名），只列出开通了登录账号的员工，搜索匹配姓名、邮箱、登录账号与部门。邮箱、最近活跃和活动会话来自既有资料与会话记录。

@@ -35,8 +35,7 @@
     "test:m5:security": "node --env-file-if-exists=../.env --experimental-strip-types --test src/security/safe-observability.test.ts config/dsh/dsh-work-tool-policy.test.js",
     "test:m5:security:integration": "node --env-file-if-exists=../.env --experimental-strip-types --test src/infrastructure/postgres/m5-security-regression.integration.test.ts",
     "test:m5:faults": "node --env-file-if-exists=../.env --experimental-strip-types --test src/http/sse-reconnect.test.ts",
-    "test:sso": "node --env-file-if-exists=../.env --experimental-strip-types --test src/modules/identity/identity.test.ts",
-    "test:sso:integration": "node --env-file-if-exists=../.env --experimental-strip-types --test src/modules/identity/identity.integration.test.ts",
+    "test:identity": "node --env-file-if-exists=../.env --experimental-strip-types --test src/modules/identity/identity.test.ts",
     "test:m5:faults:integration": "node --env-file-if-exists=../.env --experimental-strip-types --test src/infrastructure/postgres/m5-runtime-faults.integration.test.ts",
     "test:m5:capacity:integration": "node --env-file-if-exists=../.env --experimental-strip-types --test src/infrastructure/postgres/m5-capacity.integration.test.ts",
     "test:m5:workspace:integration": "node --env-file-if-exists=../.env --experimental-strip-types --test src/infrastructure/postgres/team-workspace-migration.integration.test.ts",
@@ -63,8 +62,8 @@
     "test:skill-install:integration": "node --env-file-if-exists=../.env --experimental-strip-types --test src/infrastructure/postgres/admin-skill-installation.integration.test.ts",
     "test:review:unit": "node --env-file-if-exists=../.env --experimental-strip-types --test src/modules/run/run-state-machine.test.ts src/modules/run/current-execution-authorization.test.ts src/modules/run/run-orchestration-authorization.test.ts src/modules/runtime/runtime-adapter.test.ts config/dsh/dsh-work-tool-policy.test.js src/http/sse-reconnect.test.ts src/modules/skill/skill-test-evidence.test.ts",
     "test:review:integration": "node --env-file-if-exists=../.env --experimental-strip-types --test src/infrastructure/postgres/m4-file-analysis.integration.test.ts src/infrastructure/postgres/review-a1.integration.test.ts src/infrastructure/postgres/review-a2.integration.test.ts src/infrastructure/postgres/review-8a.integration.test.ts",
-    "test:review:batch02:integration": "node --env-file-if-exists=../.env --experimental-strip-types --test src/infrastructure/postgres/review-admin-session.integration.test.ts src/infrastructure/postgres/review-c9-startup.integration.test.ts src/infrastructure/postgres/review-c10-bootstrap.integration.test.ts",
-    "test:review:batch02:unit": "node --env-file-if-exists=../.env --experimental-strip-types --test src/modules/runtime/execution-capabilities.test.ts src/modules/identity/bootstrap-scope.test.ts",
+    "test:review:batch02:integration": "node --env-file-if-exists=../.env --experimental-strip-types --test src/infrastructure/postgres/review-admin-session.integration.test.ts src/infrastructure/postgres/review-c9-startup.integration.test.ts",
+    "test:review:batch02:unit": "node --env-file-if-exists=../.env --experimental-strip-types --test src/modules/runtime/execution-capabilities.test.ts",
     "test:review:8b:unit": "node --env-file-if-exists=../.env --experimental-strip-types --test src/modules/skill/skill-test-scenario.test.ts src/modules/skill/skill-test-evidence.test.ts",
     "test:review:8b:integration": "node --env-file-if-exists=../.env --experimental-strip-types --test src/infrastructure/postgres/review-8b.integration.test.ts",
     "test:review:b3:integration": "node --env-file-if-exists=../.env --experimental-strip-types --test src/infrastructure/postgres/review-b3-history.integration.test.ts",
@@ -84,7 +83,7 @@
     "test:model-gateway:e2e": "DSH_WORK_MODEL_GATEWAY_E2E=1 node --env-file-if-exists=../.env --experimental-strip-types --test src/modules/runtime/model-gateway-dsh.e2e.test.ts",
     "test:execution-container:e2e": "node --env-file-if-exists=../.env --experimental-strip-types --test src/modules/runtime/execution-container.e2e.test.ts src/infrastructure/postgres/execution-container-startup.integration.test.ts",
     "test:local-auth": "node --experimental-strip-types --test src/modules/identity/local-auth.test.ts src/modules/identity/dingtalk/dingtalk.test.ts",
-    "test:local-auth:integration": "node --env-file-if-exists=../.env --experimental-strip-types --test src/modules/identity/local-auth.integration.test.ts src/modules/identity/dingtalk-auth.integration.test.ts src/modules/identity/dingtalk-admin.integration.test.ts src/modules/identity/dingtalk-settings.integration.test.ts src/modules/identity/authentication-startup.integration.test.ts src/modules/identity/portal-auth.integration.test.ts"
+    "test:local-auth:integration": "node --env-file-if-exists=../.env --experimental-strip-types --test src/modules/identity/local-auth.integration.test.ts src/modules/identity/dingtalk-auth.integration.test.ts src/modules/identity/dingtalk-admin.integration.test.ts src/modules/identity/dingtalk-settings.integration.test.ts src/modules/identity/authentication-startup.integration.test.ts src/infrastructure/postgres/ai-hub-removal-migration.integration.test.ts"
   },
   "devDependencies": {
     "@types/node": "^24.7.2",

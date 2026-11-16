@@ -5,7 +5,7 @@
 **适用范围：** 员工 Agent、管理助手、发布前验证及自动任务中的 Agent 执行，不绑定具体业务场景。<br>
 **实现状态：** 未完成与未验收事项见[架构总览第 10 节](overview.md#10-当前边界与独立开发)。
 
-**本轮已确认方案：** [第 6 节：Agent 管理与能力装配统一更新方案](#6-agent-管理与能力装配统一更新方案)汇总独立 AI 员工结构、可选 `AGENTS.md`、平台工具自动装配、MCP 使用范围及新版编辑界面。核心功能已达到代码级，真实 OIDC 与目标环境验收仍待完成；具体状态见[架构总览第 10 节](overview.md#10-当前边界与独立开发)。
+**本轮已确认方案：** [第 6 节：Agent 管理与能力装配统一更新方案](#6-agent-管理与能力装配统一更新方案)汇总独立 AI 员工结构、可选 `AGENTS.md`、平台工具自动装配、MCP 使用范围及新版编辑界面。核心功能已达到代码级，目标环境验收仍待完成；具体状态见[架构总览第 10 节](overview.md#10-当前边界与独立开发)。
 
 ## 1. 定义与使用方式
 
@@ -107,17 +107,17 @@ AI 员工 = 稳定身份 + 已发布 Soul + 可检索的受控 Memory
 
 | 对象 | 目标语义 | 当前差异 |
 | --- | --- | --- |
-| Agent 身份 | `agents` 保留稳定目录身份；增加独立的 `agent` Principal、状态和授权，负责人另记为治理关系 | AE-02 已将 human/agent/system Principal、独立角色/数据授权及 Task/Manifest/动作与审计归因接入统一执行链（代码级）；真实 DSH/OIDC 验收仍需单独留证 |
+| Agent 身份 | `agents` 保留稳定目录身份；增加独立的 `agent` Principal、状态和授权，负责人另记为治理关系 | AE-02 已将 human/agent/system Principal、独立角色/数据授权及 Task/Manifest/动作与审计归因接入统一执行链（代码级）；真实 DSH 验收仍需单独留证 |
 | Soul | Agent 定义版本根目录的唯一可信指令文件 `SOUL.md`；结构化标识、目标、边界和评测仍由 AgentSpec/发布记录管理 | AE-01 已把包 Schema、解析器及配置入口切换至根目录 `SOUL.md`（代码级）；AE-05 主动任务已另行代码级实施 |
 | Experience | Agent 稳定身份下的受控经验申请及不可变版本；`memory.md` 只是 Attempt 内的只读运行投影 | 员工端记忆提交、授权和撤回功能已移除。管理端按稳定 `agent_id` 查看 Agent 从成功 Run/Attempt 提出的申请并人工审核；已发布经验可停用、启用或回滚到任一可用版本，不能宣称 Agent 自动学习 |
 | Skill 与内置 Tool | Agent Version 固定所需的精确依赖，按当前状态和权限复核；没有需求时允许空集合 | AE-01 已使界面配置允许空集合（代码级）；业务能力仍须按需显式声明 |
 | MCP Tool | 保留 Connector 整体发现、Agent Version 显式选定 Connector、能力变更须确认及每 Attempt 生效摘要复核；调用归因到 Agent Principal、Task 和 Attempt | 当前共享 Connector 凭据不能证明上游区分各 Agent 身份 |
 | 工作数据 | 跨运行的工作记录放在权威业务系统（经 MCP 或领域 Tool）或 Artifact | AE-03 Agent 数据平面因无实际使用场景已于 2026-10-16 删除（迁移 0087）；确有平台内台账需求时按具体场景重新设计；首个这样的场景是跟进项（第 3.3 节，待实施） |
-| 主动任务 | Agent 拥有的版本化 routine，受触发条件、Workspace、身份、授权上限和预算约束 | AE-05 新增 `agent_routines` 与独立执行账本（代码级）；原 `agent_automations` 仍由员工本人拥有，不能当作 AI 员工心跳。真实 DSH/OIDC 与外部事件源仍需另验 |
+| 主动任务 | Agent 拥有的版本化 routine，受触发条件、Workspace、身份、授权上限和预算约束 | AE-05 新增 `agent_routines` 与独立执行账本（代码级）；原 `agent_automations` 仍由员工本人拥有，不能当作 AI 员工心跳。真实 DSH 与外部事件源仍需另验 |
 
 ### 3.1 独立身份与授权
 
-目标 Principal 类型统一为 `human`、`agent`、`system`。人类仍经 OIDC 登录；Agent Principal 由平台创建并绑定稳定 Agent ID，不借用真人会话、员工 OIDC Token、默认员工角色或管理负责人 Cookie。外部系统接受工作负载身份时可签发或交换短期凭据；只接受共享服务凭据时，平台仍记录真实 Agent 调用者，并明确上游无法区分各 Agent 的限制。
+目标 Principal 类型统一为 `human`、`agent`、`system`。人类经账号登录；Agent Principal 由平台创建并绑定稳定 Agent ID，不借用真人会话、员工登录凭据、默认员工角色或管理负责人 Cookie。外部系统接受工作负载身份时可签发或交换短期凭据；只接受共享服务凭据时，平台仍记录真实 Agent 调用者，并明确上游无法区分各 Agent 的限制。
 
 Task 分别记录 `initiated_by`、`executed_as`、`approved_by`（可空）和治理负责人引用。员工请求由 `human` 发起、`agent` 执行；定时/事件任务可由 `system` 发起、Agent 执行。高风险动作仍由有权的人类批准。当前人类外键、Run Manifest、审计及结果读取须作为一个契约变更同步处理，不能将 `agent_id` 偷写入 `user_id` 或静默混用两类身份。
 
@@ -171,7 +171,7 @@ Agent-owned routine 是经批准的工作规则，不是无限模型循环。规
 
 管理端按“身份与 Soul → 能力 → 数据集 → 记忆策略 → 主动任务 → 评测与发布 → 运行和审计”呈现 AI 员工。基础 Agent 仅要求身份、目标、Soul、负责人及最小授权；Skill、工具、记忆和主动任务按需启用。数据写入和主动任务各自经过治理，不因 Soul 发布自动授权。
 
-实施依赖顺序为：独立 Principal 与 Task/审计身份契约 → 按需分别建设 Agent Data 与 Agent-owned Memory → Agent-owned routine → 管理端、评测及 P1/P2 验收。Agent Data 与 Agent-owned routine 已完成代码级接线；业务台账可使用受治理的轻量集合，真实 DSH/OIDC 与多账号场景仍须单独验收。每项须同步现有消费者和数据库约束；文档、Prototype 或合成 Runtime 测试均不能宣称目标能力上线。
+实施依赖顺序为：独立 Principal 与 Task/审计身份契约 → 按需分别建设 Agent Data 与 Agent-owned Memory → Agent-owned routine → 管理端、评测及 P1/P2 验收。Agent Data 与 Agent-owned routine 已完成代码级接线；业务台账可使用受治理的轻量集合，真实 DSH 与多账号场景仍须单独验收。每项须同步现有消费者和数据库约束；文档、Prototype 或合成 Runtime 测试均不能宣称目标能力上线。
 
 至少验证：Agent 身份与负责人不混淆；员工不能借 Agent 越权读取；停用或收权阻止主动任务；Soul 升级不改写已固定 Attempt；记忆撤回阻止新使用；无 Skill/Tool Agent 可发布；结构化记录经 Schema、并发和幂等校验并追溯真实 Attempt；未知外部回执不标记完成；共享 MCP 凭据不被误称为上游独立 Agent 身份。
 
@@ -459,10 +459,10 @@ Agent 版本不保存工具引用，只保存联网搜索开关（`web_search_en
 | 对话、验证运行和主动任务使用同一 Agent | 工具装配规则一致，各自身份及披露限制保持有效 |
 | 页面切换模式、编辑已有 Agent、保存再打开 | 状态与选择准确回显，未展示的权限与数据需求不被清空 |
 
-实现期间按影响运行包解析、相关 Runtime/策略、发布/Connector 集成、组件及浏览器测试，并执行类型和静态检查；已通过检查只在改动或新风险需要时重跑。P1 使用可丢弃 PostgreSQL 和受控 Runtime；P2 使用真实 DSH/OIDC 及获准 MCP，记录版本、身份、Run/Attempt、结果和限制。当前代码级与 P0/P1 证据不构成 P2 通过证据。
+实现期间按影响运行包解析、相关 Runtime/策略、发布/Connector 集成、组件及浏览器测试，并执行类型和静态检查；已通过检查只在改动或新风险需要时重跑。P1 使用可丢弃 PostgreSQL 和受控 Runtime；P2 使用真实 DSH、真实账号及获准 MCP，记录版本、身份、Run/Attempt、结果和限制。当前代码级与 P0/P1 证据不构成 P2 通过证据。
 
 ### 6.8 关联待办与范围边界
 
 本轮主交付为 AGENTS、默认工具装配、MCP 使用范围及管理端简化。以下事项继续独立跟踪：
 
-- **发布真实验收：** PF-07 平台能力门禁已在受控参考环境通过（范围见 [PF-07 验收手册](pf07-platform-acceptance.md)）；各目标环境的部署验收未完成，OIDC 只在实际使用它的环境按清单验收；真实外部事件入口仍待验收，这与 `external-action` 场景无关。
+- **发布真实验收：** PF-07 平台能力门禁已在受控参考环境通过（范围见 [PF-07 验收手册](pf07-platform-acceptance.md)）；各目标环境的部署验收未完成；真实外部事件入口仍待验收，这与 `external-action` 场景无关。

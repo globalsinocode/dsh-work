@@ -140,7 +140,7 @@ fixture.router.post('/api/workbench/v1/test/agents/:agentId/disable', async (_re
   await fixture.db.client`update agents set status = 'disabled' where tenant_id = ${testTenant} and id = ${context.params['agentId'] ?? ''}`
   return envelope('workbench', { disabled: true })
 })
-console.log('P1 personal workbench ready; throwaway PostgreSQL, synthetic Runtime, no OIDC/model.')
+console.log('P1 personal workbench ready; throwaway PostgreSQL, synthetic Runtime, no model.')
 let closing = false
 async function close() { if (closing) return; closing = true; await fixture.close(); process.exit(0) }
 process.on('SIGINT', () => { void close() }); process.on('SIGTERM', () => { void close() })

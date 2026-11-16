@@ -27,7 +27,7 @@ async function openAccount() {
 }
 
 beforeEach(() => {
-  vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ localEnabled: true, aiHubEnabled: false }) }))
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ localEnabled: true }) }))
   vi.spyOn(adminApi, 'getIdentityUsers').mockResolvedValue({ items: [], total: 0, page: 1, pageSize: 20, summary: { synchronized: 0, active: 0, authorized: 0 } })
   vi.spyOn(adminApi, 'getIdentityRoles').mockResolvedValue([])
   vi.spyOn(adminApi, 'getLocalPermissions').mockResolvedValue([])

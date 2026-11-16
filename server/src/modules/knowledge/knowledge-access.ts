@@ -25,8 +25,7 @@ export function visibleBaseIdsSql(database: DatabaseClient, userId: string) {
 }
 
 /**
- * 员工的知识库权限级别：有效角色（直接授予与来自部门的）权限并集中的最高级别。AI Hub（OIDC）
- * 账号没有部门，按部门授权不适用，视为 none（第 3 节）。
+ * 员工的知识库权限级别：有效角色（直接授予与来自部门的）权限并集中的最高级别。
  */
 export async function knowledgeLevelOf(database: DatabaseClient, userId: string): Promise<KnowledgeLevel> {
   const [row] = await database<{ permissions: string[] | null }[]>`
@@ -38,7 +37,6 @@ export async function knowledgeLevelOf(database: DatabaseClient, userId: string)
       join roles r on r.tenant_id = ur.tenant_id and r.id = ur.role_id and r.status = 'active'
       cross join lateral jsonb_array_elements_text(coalesce(r.permissions, '[]')) permission(value)
      where u.tenant_id = ${tenantId} and u.id = ${userId} and u.status = 'active'
-       and u.identity_provider <> 'ai-hub'
   `
   const permissions = new Set(row?.permissions ?? [])
   if (permissions.has('knowledge:bases')) return 'bases'

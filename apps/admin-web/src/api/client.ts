@@ -29,7 +29,6 @@ import type {
   McpConnectorDeletionResult,
   McpInvocationAudit,
   McpReconciliationPage,
-  DirectorySyncState,
   DingTalkBindingView,
   DingTalkBoundEmployee,
   DingTalkBindPreview,
@@ -552,7 +551,6 @@ export const adminApi = {
     `/organization/departments/${encodeURIComponent(departmentId)}/members/${encodeURIComponent(userId)}/primary`,
     { method: 'PUT' },
   ),
-  getDirectorySyncState: () => request<DirectorySyncState>('/identity/directory-sync'),
   // 钉钉接入 DT-S1：管理员代绑、解绑与“钉钉集成”页。
   getDingTalkBinding: (userId: string) => request<DingTalkBindingView>(`/identity/users/${encodeURIComponent(userId)}/dingtalk-binding`),
   previewDingTalkBinding: (userId: string, mobile: string) =>
@@ -575,8 +573,4 @@ export const adminApi = {
     request<{ reminded: number }>('/dingtalk/reminders', { method: 'POST', body: JSON.stringify(input) }),
   decideDingTalkDepartureCheck: (runId: string, decision: 'confirm' | 'dismiss') =>
     request<{ invalidated: number }>(`/dingtalk/departure-checks/${encodeURIComponent(runId)}/decision`, { method: 'POST', body: JSON.stringify({ decision }) }),
-  synchronizeDirectory: (full = false) => request<DirectorySyncState>(
-    `/identity/directory-sync${full ? '?full=true' : ''}`,
-    { method: 'POST' },
-  ),
 }

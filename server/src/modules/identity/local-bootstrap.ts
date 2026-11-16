@@ -3,7 +3,7 @@ import { Writable } from 'node:stream'
 
 import { createDatabase } from '../../infrastructure/postgres/database.ts'
 import { runMigrations } from '../../infrastructure/postgres/migration-runner.ts'
-import { loadStartupIdentityConfiguration, localIdentityConfiguration } from './config.ts'
+import { loadStartupIdentityConfiguration } from './config.ts'
 import { LocalAuthService, type LocalAccountInput } from './local-auth-service.ts'
 import { invalidRequest } from '../../domain/request-errors.ts'
 
@@ -13,7 +13,7 @@ const input = await readInput()
 const database = createDatabase({ url: process.env.DSH_WORK_DATABASE_URL })
 try {
   await runMigrations(database)
-  const result = await new LocalAuthService(localIdentityConfiguration(configuration), database).bootstrap(input)
+  const result = await new LocalAuthService(configuration, database).bootstrap(input)
   console.log(`独立管理员已初始化：${result.username}（${result.userId}）。后续账号请在“员工与权限”创建。`)
 } finally {
   await database.end()

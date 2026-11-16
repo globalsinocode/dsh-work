@@ -42,14 +42,14 @@ export class PostgresOperationsService {
   private readonly database: DatabaseClient
   private readonly runtime?: AgentRuntimePort
   private readonly authorization?: PostgresAuthorizationService
-  private readonly sso: 'mock' | 'ai-hub-oidc' | 'local-password'
+  private readonly sso: 'mock' | 'local-password'
   private readonly builtinSkills?: BuiltinSkillCatalog
 
   constructor(
     database: DatabaseClient,
     runtime?: AgentRuntimePort,
     authorization?: PostgresAuthorizationService,
-    sso: 'mock' | 'ai-hub-oidc' | 'local-password' = 'mock',
+    sso: 'mock' | 'local-password' = 'mock',
     builtinSkills?: BuiltinSkillCatalog,
   ) {
     this.database = database

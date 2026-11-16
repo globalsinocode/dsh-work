@@ -4,7 +4,7 @@
  * This process creates a disposable PostgreSQL database and exposes the real
  * Connector governance service behind the admin routes. Capability discovery
  * is deterministic and synthetic; it does not contact an enterprise MCP
- * service, OIDC, a model, or production DSH.
+ * service, a model, or production DSH.
  */
 import assert from 'node:assert/strict'
 import { createServer } from 'node:http'
@@ -199,7 +199,7 @@ await new Promise<void>((resolve, reject) => {
   server.once('error', reject)
   server.listen(port, '127.0.0.1', resolve)
 })
-console.log('PF-03 admin browser ready; throwaway PostgreSQL and synthetic MCP inspection, no enterprise MCP/OIDC/DSH/model.')
+console.log('PF-03 admin browser ready; throwaway PostgreSQL and synthetic MCP inspection, no enterprise MCP/DSH/model.')
 
 let closing = false
 async function close() {

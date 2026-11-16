@@ -23,7 +23,7 @@ dsh-work 是面向企业员工的统一 AI Agent 工作台，同时提供独立�
 - **定时任务：** 员工创建固定 Agent 版本的轻量自动任务，支持立即运行、启停与执行历史；不补跑停机遗漏、不自动重试。
 - **Agent 与能力治理：** 管理端草稿 → 验证 → 发布；Skill、联网搜索、项目任务开关、MCP（`selected` / `none`）与模型路由版本化。
 - **经验迭代：** Agent 经 `propose_memory` 提出经验申请，管理员审核后发布；员工端不再提供受控记忆入口。
-- **身份与权限：** 独立账号密码登录；配置 AI Hub 后也可 OIDC 统一登录并同步员工目录；应用内配置角色、功能权限与数据范围。
+- **身份与权限：** 独立账号密码登录，员工端在钉钉客户端内可免登；应用内配置角色、功能权限与数据范围。
 - **审计与运营：** 运行、模型、MCP、成果与管理操作可追溯；提供用量、健康与异常追踪。
 
 ## 产品边界
@@ -54,8 +54,7 @@ flowchart TB
   Admin --> AdminAPI[Admin API]
   Local[独立账号密码] --> API
   Local --> AdminAPI
-  AIHub[AI Hub（可选）<br/>OIDC 身份与员工目录] --> API
-  AIHub --> AdminAPI
+  DingTalk[钉钉容器内免登（可选）] --> API
 
   subgraph App[dsh-work Node.js 模块化单体]
     API --> Authz[本地角色 / 权限 / 数据范围]
@@ -96,7 +95,7 @@ e2e/                       # Playwright 冒烟与验收目录
 pnpm install --frozen-lockfile
 ```
 
-服务端始终使用 PostgreSQL 和账号登录（独立账号密码；配置 AI Hub 后也可统一登录），没有免数据库的内存模式。按 [开发与测试](docs/development/development.md) 准备数据库、`.env` 和首个管理员账号后执行：
+服务端始终使用 PostgreSQL 和独立账号登录，没有免数据库的内存模式。按 [开发与测试](docs/development/development.md) 准备数据库、`.env` 和首个管理员账号后执行：
 
 ```bash
 pnpm dev:all
@@ -128,7 +127,7 @@ pnpm dev:admin
 | Agent 设计与生命周期 | [设计规范](docs/development/agent-design-standard.md)、[生命周期模板](docs/development/agent-lifecycle-template.md) |
 | 本地开发与测试 | [开发与测试](docs/development/development.md) |
 | 数据模型 / 内部契约 | [数据模型](docs/design/data-model.md)、[内部端口](docs/development/internal-ports.md) |
-| 身份与部署 | [独立登录](docs/release/local-authentication.md)、[AI Hub](docs/release/ai-hub-sso-integration.md)、[Mac mini 部署](docs/release/mac-mini-deployment-runbook.md)、[DSH Runtime](docs/release/dsh-runtime-delivery.md) |
+| 身份与部署 | [独立登录](docs/release/local-authentication.md)、[Mac mini 部署](docs/release/mac-mini-deployment-runbook.md)、[DSH Runtime](docs/release/dsh-runtime-delivery.md) |
 | 平台 P2 验收 | [PF-07 手册](docs/development/pf07-platform-acceptance.md) |
 
 日常协作约束见根目录 [AGENTS.md](AGENTS.md)。接口、配置及部署操作统一在 `docs/` 维护；过期方案与一次性验收记录不进工作树，从 Git 历史查阅。

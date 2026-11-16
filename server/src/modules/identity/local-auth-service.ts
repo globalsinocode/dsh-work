@@ -5,7 +5,7 @@ import type { DatabaseClient, DatabaseTransaction } from '../../infrastructure/p
 import {
   assertAudienceAccess, clearCookie, IdentityAccessError, normalizeReturnTo,
   parseCookies, resolveRequestOrigin, serializeCookie, validateRequestOrigin,
-} from './auth-service.ts'
+} from './request-security.ts'
 import { assignNewAccountDepartment } from '../organization/postgres-organization-service.ts'
 import { assertCanGrant, assertCanManageUser, loadGrantCeiling, requireAdminModuleActor } from '../authorization/admin-actor.ts'
 import { isAuthorizationDenial } from '../../domain/authorization-errors.ts'
@@ -191,7 +191,7 @@ export class LocalAuthService {
     return { status: 'bound' }
   }
 
-  /** 密码登录只撤销此前的密码与 AI Hub 会话，不撤销钉钉会话（按来源撤销，4.3）。 */
+  /** 密码登录只撤销此前的密码会话，不撤销钉钉会话（按来源撤销，4.3）。 */
   private async insertPasswordSession(transaction: DatabaseTransaction, userId: string, audience: ApiAudience, sessionHash: string, authorizationVersion: number) {
     const expiresAt = new Date(Date.now() + this.configuration.sessionTtlSeconds * 1000)
     await transaction`
@@ -428,21 +428,18 @@ export class LocalAuthService {
       await lockPlatformAdminInvariant(transaction)
       await assertIdentityWriter(transaction, actorId)
       await mapDenial(assertCanManageUser(transaction, actorId, userId))
-      const [user] = await transaction<{ identityProvider: string }[]>`
-        select u.identity_provider as "identityProvider" from users u join local_user_credentials c on c.tenant_id = u.tenant_id and c.user_id = u.id
+      const [user] = await transaction`
+        select 1 from users u join local_user_credentials c on c.tenant_id = u.tenant_id and c.user_id = u.id
          where u.tenant_id = ${tenantId} and u.id = ${userId} for update of u
       `
       if (!user) throw new IdentityAccessError(404, 'local_account_missing', '该员工尚未开通独立登录')
-      if (user.identityProvider !== 'local') {
-        throw new IdentityAccessError(422, 'upstream_managed_status', 'AI Hub 账号状态请在企业身份平台中管理')
-      }
       if (status === 'disabled') {
         const [admin] = await transaction`
           select ur.user_id from user_roles ur join roles r on r.id = ur.role_id and r.tenant_id = ur.tenant_id
            where ur.tenant_id = ${tenantId} and ur.user_id = ${userId} and r.id = 'role-platform-admin'
              and r.status = 'active' and (ur.valid_until is null or ur.valid_until > now())
         `
-        if (admin) await requireAnotherPlatformAdmin(transaction, userId, true)
+        if (admin) await requireAnotherPlatformAdmin(transaction, userId)
       }
       await transaction`update users set status = ${status}, local_authorization_version = local_authorization_version + 1, updated_at = now() where tenant_id = ${tenantId} and id = ${userId}`
       if (status === 'disabled') {
@@ -477,9 +474,6 @@ async function loginAccountExists(transaction: DatabaseTransaction, username: st
   const candidates = loginAccountCandidates(username)
   const [existing] = await transaction`
     select 1 from local_user_credentials where tenant_id = ${tenantId} and username = any(${candidates}::text[])
-    union all
-    select 1 from users where tenant_id = ${tenantId} and identity_provider = 'ai-hub'
-      and lower(btrim(external_subject)) = any(${candidates}::text[])
     limit 1
   `
   return Boolean(existing)

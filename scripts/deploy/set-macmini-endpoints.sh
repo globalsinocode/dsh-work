@@ -40,7 +40,7 @@ previous_compose="${deploy_root}/generated/compose.endpoints.before-endpoints.ya
 [[ -d "${current_release}" ]] || fail "active release not found: ${current_release}"
 
 show_values() {
-  grep -E '^(DSH_WORK_BIND_ADDRESS|DSH_WORK_BIND_ADDRESSES|DSH_WORK_WORKBENCH_ORIGINS|DSH_WORK_ADMIN_ORIGINS|DSH_WORK_WORKBENCH_DEFAULT_ORIGIN|DSH_WORK_ADMIN_DEFAULT_ORIGIN|AI_HUB_(WORKBENCH|ADMIN)_(PORTAL_URL|REDIRECT_URI))=' "$1" || true
+  grep -E '^(DSH_WORK_BIND_ADDRESS|DSH_WORK_BIND_ADDRESSES|DSH_WORK_WORKBENCH_ORIGINS|DSH_WORK_ADMIN_ORIGINS|DSH_WORK_WORKBENCH_DEFAULT_ORIGIN|DSH_WORK_ADMIN_DEFAULT_ORIGIN)=' "$1" || true
 }
 restart_active() {
   # This function is called from a conditional, where Bash disables errexit.

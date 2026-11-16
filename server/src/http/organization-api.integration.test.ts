@@ -1,12 +1,10 @@
 import assert from 'node:assert/strict'
-import { readFile } from 'node:fs/promises'
 import { createServer, type Server } from 'node:http'
 import { after, before, test } from 'node:test'
 
 import type { ApiAudience, RequestIdentity } from '../modules/identity/types.ts'
 import { loadIdentityConfiguration } from '../modules/identity/config.ts'
 import { LocalAuthService } from '../modules/identity/local-auth-service.ts'
-import { IdentitySessionRepository } from '../modules/identity/session-repository.ts'
 import { IdentityAdministrationService } from '../modules/identity/administration-service.ts'
 import { PostgresAuthorizationService } from '../modules/authorization/postgres-authorization-service.ts'
 import { PostgresOrganizationService, type OrganizationSnapshot } from '../modules/organization/postgres-organization-service.ts'
@@ -15,7 +13,7 @@ import { registerOrganizationRoutes } from './admin/organization-routes.ts'
 import { Router } from './router.ts'
 
 // ORG-01～ORG-04（e2e/catalog/organization.md，企业组织架构方案 ORG-S1）：部门树维护与约束、
-// 成员与主部门、新建账号选择部门、上线清空历史部门文本、AI Hub 登录与目录同步不覆盖部门。
+// 成员与主部门、新建账号选择部门、上线清空历史部门文本。
 // ORG-05～ORG-07（ORG-S2）：按部门授予角色、展开与重算、管理类角色限制、来源显示。
 
 const tenantId = 'tenant-dsh-work'
@@ -295,35 +293,6 @@ test('ORG-03 新建账号从部门树选择部门；不接受自由填写的部�
   assert.equal(orphan, undefined, '部门无效时不创建账号')
 })
 
-test('ORG-04 AI Hub 账号登录与目录同步不覆盖组织架构维护的部门', async () => {
-  const rootId = root(await snapshot()).id
-  const department = await createDepartment(rootId, 'AI Hub 员工所在部门')
-  const identities = new IdentitySessionRepository(database.client)
-  const external = {
-    externalUserId: 'org-aihub-user', subject: 'org-aihub-subject', displayName: 'AI Hub 员工',
-    email: 'org.aihub@example.invalid', businessUser: true, status: 'ACTIVE',
-  }
-  const { userId } = await identities.synchronizeIdentity(external)
-  assert.equal(await displayDepartment(userId), null, '首次同步不写入 AI Hub 的组织名')
-  await ok('POST', `${base}/departments/${department.id}/members`, { userIds: [userId] })
-  assert.equal(await displayDepartment(userId), 'AI Hub 员工所在部门')
-
-  await identities.synchronizeIdentity({ ...external, displayName: 'AI Hub 员工（改名）' })
-  assert.equal(await displayDepartment(userId), 'AI Hub 员工所在部门', '再次同步不覆盖组织架构维护的部门')
-  const view = await snapshot()
-  assert.deepEqual(membershipsOf(view, userId), [{ departmentId: department.id, userId, primary: true }])
-
-  // 迁移 0116：以前同步写进来的旧组织名统一为主部门名称，没有主部门的清空。
-  const stale = await identities.synchronizeIdentity({ ...external, externalUserId: 'org-aihub-stale', subject: 'org-aihub-stale', displayName: '旧同步员工' })
-  await database.client`update users set department_id = 'AI Hub 平台团队' where tenant_id = ${tenantId} and id in ${database.client([stale.userId, userId])}`
-  const migration = await readFile(new URL('../../migrations/0116_org_department_display_resync.sql', import.meta.url), 'utf8')
-  await database.client.unsafe(migration)
-  assert.equal(await displayDepartment(stale.userId), null, '没有主部门的 AI Hub 老账号清空旧组织名')
-  assert.equal(await displayDepartment(userId), 'AI Hub 员工所在部门', '有主部门的显示主部门名称')
-  await database.client.unsafe(migration)
-  assert.equal(await displayDepartment(userId), 'AI Hub 员工所在部门', '迁移可重复执行')
-})
-
 async function departmentRoleRows(userId: string) {
   const rows = await database.client<{ roleId: string; sourceKey: string }[]>`
     select role_id as "roleId", source_key as "sourceKey" from user_roles
@@ -399,7 +368,7 @@ test('ORG-06 管理类角色不能授给部门；已授给部门的角色不能�
   assert.equal(view.roles.find(role => role.id === 'role-platform-admin')!.assignable, false)
   assert.equal(view.roles.find(role => role.id === 'role-employee')!.assignable, true)
 
-  const administration = new IdentityAdministrationService(database.client, true)
+  const administration = new IdentityAdministrationService(database.client)
   const role = await administration.createRole({ code: 'org_grant_probe', name: '部门授权探针', permissions: ['workbench:use'], actorId: adminId })
   const roleId = (role as { id: string }).id
   await ok('POST', `${base}/departments/${team.id}/grants`, { roleId })
@@ -437,7 +406,7 @@ test('ORG-07 员工列表区分直接授予与来自部门的角色；撤销直�
   const employee = await createEmployee('来源测试员工')
   await ok('POST', `${base}/departments/${ops.id}/members`, { userIds: [employee] })
   await ok('POST', `${base}/departments/${ops.id}/grants`, { roleId: 'role-employee' })
-  const administration = new IdentityAdministrationService(database.client, true)
+  const administration = new IdentityAdministrationService(database.client)
   await administration.grantRole({ userId: employee, roleId: 'role-employee', actorId: adminId })
 
   const page = await administration.listUsers({ query: '来源测试员工' })

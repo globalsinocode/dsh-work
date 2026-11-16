@@ -3,7 +3,7 @@ import type { ApiAuthenticator } from '../modules/identity/types.ts'
 /**
  * Test-only identities for integration tests and the P0 browser smoke server.
  * Never imported by the application entry point: production always authenticates
- * with password or AI Hub sessions. The users U00001 and U00008 come from the
+ * with password or DingTalk sessions. The users U00001 and U00008 come from the
  * PostgreSQL seed migrations.
  */
 

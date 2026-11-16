@@ -471,7 +471,7 @@ function pick(value: unknown, keys: string[]) {
 async function createDirectoryUser(id: string, displayName: string) {
   await database`
     insert into users (id, tenant_id, external_subject, display_name, department_id, status, identity_provider, business_user)
-    values (${id}, ${tenantId}, ${`directory:${id}`}, ${displayName}, null, 'active', 'ai-hub', true)
+    values (${id}, ${tenantId}, ${`directory:${id}`}, ${displayName}, null, 'active', 'local', true)
   `
   await database`
     insert into user_roles (tenant_id, user_id, role_id, source_key)
@@ -494,7 +494,7 @@ function testApiAuthenticator(request: import('node:http').IncomingMessage): Pro
     subject: `directory:${userId}`,
     profile: { id: userId, name: userId, title: '员工', department: '测试部门', avatarText: '测', role: 'employee', dataScopes: [] },
     roleIds: ['role-employee'], permissions: ['workbench:use'], dataScopes: [], authorizationVersion: 1,
-    identityProvider: 'ai-hub-oidc',
+    identityProvider: 'local-password',
   })
 }
 

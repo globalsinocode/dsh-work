@@ -54,9 +54,7 @@ export const useAuthStore = defineStore('admin-auth', () => {
   const canManage = computed(() => ADMIN_MODULES.every(module => module === 'ops' || moduleLevels.value[module] === 'write'))
   const canManageIdentity = computed(() => canWrite('identity'))
   const canAccessDataProtectionTerms = computed(() => hasPermission(permissions.value, 'data-protection:terms'))
-  const identityAdministrationAvailable = computed(() => (
-    identityProvider.value === 'ai-hub-oidc' || identityProvider.value === 'local-password'
-  ))
+  const identityAdministrationAvailable = computed(() => identityProvider.value === 'local-password')
   const canAccessAdmin = computed(() =>
     sessionUser.value !== null && (canReadAdmin.value || canReadAudit.value || canManage.value),
   )
@@ -117,21 +115,13 @@ export const useAuthStore = defineStore('admin-auth', () => {
   }
 
   async function logout() {
-    if (identityProvider.value === 'local-password') {
-      try {
-        const response = await fetch('/auth/admin/logout', { method: 'POST', credentials: 'same-origin' })
-        if (!response.ok) throw new Error('退出登录失败，请重试')
-        window.location.assign('/login')
-      } catch (cause) {
-        ElMessage.error(cause instanceof Error ? cause.message : '退出登录失败')
-      }
-      return
+    try {
+      const response = await fetch('/auth/admin/logout', { method: 'POST', credentials: 'same-origin' })
+      if (!response.ok) throw new Error('退出登录失败，请重试')
+      window.location.assign('/login')
+    } catch (cause) {
+      ElMessage.error(cause instanceof Error ? cause.message : '退出登录失败')
     }
-    sessionUser.value = null
-    identityProvider.value = null
-    permissions.value = []
-    initialized.value = false
-    window.location.assign('/auth/admin/logout')
   }
 
   return {

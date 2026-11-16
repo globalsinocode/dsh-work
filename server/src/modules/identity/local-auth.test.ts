@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import { loadIdentityConfiguration, loadStartupIdentityConfiguration, localIdentityConfiguration } from './config.ts'
+import { loadIdentityConfiguration, loadStartupIdentityConfiguration } from './config.ts'
 import { createConcurrencyLimiter, hashPassword, normalizeUsername, validatePassword, verifyPassword } from './password.ts'
 import { normalizeLoginAccount } from './login-account.ts'
 
@@ -20,7 +20,7 @@ test('new login accounts require phone or email and normalize equivalent spellin
   assert.equal(normalizeUsername('Legacy.Admin'), 'legacy.admin')
 })
 
-test('local production authentication needs no AI Hub configuration but requires TLS and a session secret', () => {
+test('production authentication requires TLS and a session secret', () => {
   const environment = {
     NODE_ENV: 'production', DSH_WORK_AUTH_MODE: 'local',
     DSH_WORK_SESSION_SECRET: '7b5f1e8cab732da68d345daffd5eb76acb12dc23',
@@ -96,80 +96,48 @@ const startupEnvironment = {
   DSH_WORK_SESSION_SECRET: 'test-startup-session-secret-at-least-32',
   DSH_WORK_ADMIN_ORIGINS: 'http://localhost:4180', DSH_WORK_WORKBENCH_ORIGINS: 'http://localhost:4174',
 }
-const startupHub = {
+const leftoverHub = {
   AI_HUB_PLATFORM_URL: 'http://localhost:9', AI_HUB_OIDC_ISSUER: 'http://localhost:9/fixture',
   AI_HUB_APPLICATION_ID: 'fixture', AI_HUB_CLIENT_ID: 'fixture', AI_HUB_CLIENT_SECRET: 'fixture-secret',
+  AI_HUB_WORKBENCH_PORTAL_URL: 'http://localhost:4174', AI_HUB_WORKBENCH_REDIRECT_URI: 'http://localhost:4190/auth/workbench/callback',
 }
-test('startup selects available providers automatically and ignores legacy local/oidc selection', () => {
-  for (const DSH_WORK_AUTH_MODE of [undefined, 'local', 'oidc']) {
-    assert.equal(loadStartupIdentityConfiguration({ ...startupEnvironment, DSH_WORK_AUTH_MODE }).mode, 'local')
-    assert.equal(loadStartupIdentityConfiguration({ ...startupEnvironment, ...startupHub, DSH_WORK_AUTH_MODE }).mode, 'oidc')
-  }
-})
-const legacyStartupEnvironment = {
-  ...startupHub, DSH_WORK_SESSION_SECRET: startupEnvironment.DSH_WORK_SESSION_SECRET,
-  AI_HUB_WORKBENCH_PORTAL_URL: 'http://localhost:4174', AI_HUB_ADMIN_PORTAL_URL: 'http://localhost:4180',
-  AI_HUB_WORKBENCH_REDIRECT_URI: 'http://localhost:4190/auth/workbench/callback',
-  AI_HUB_ADMIN_REDIRECT_URI: 'http://localhost:4190/auth/admin/callback',
-}
-test('startup retains legacy backend callbacks without treating inferred local origins as explicit OIDC origins', () => {
-  for (const DSH_WORK_AUTH_MODE of [undefined, 'local', 'oidc']) {
-    const config = loadStartupIdentityConfiguration({ ...legacyStartupEnvironment, DSH_WORK_AUTH_MODE })
-    assert.equal(config.mode, 'oidc')
-    assert.equal(config.audiences.workbench.redirectUriByOrigin['http://localhost:4174'], 'http://localhost:4190/auth/workbench/callback')
-    assert.equal(config.audiences.admin.redirectUriByOrigin['http://localhost:4180'], 'http://localhost:4190/auth/admin/callback')
-    const local = localIdentityConfiguration(config)
-    assert.deepEqual(local.audiences.workbench.allowedOrigins, ['http://localhost:4174'])
-    assert.deepEqual(local.audiences.admin.allowedOrigins, ['http://localhost:4180'])
-    assert.ok(!local.audiences.workbench.allowedOrigins.includes('http://localhost:4190'))
-  }
-})
-test('explicitly conflicting new and legacy origins still disable AI Hub without disabling local login', () => {
-  for (const origins of [{ DSH_WORK_WORKBENCH_ORIGINS: 'http://localhost:4174' }, { DSH_WORK_ADMIN_ORIGINS: 'http://localhost:4180' }]) {
-    const config = loadStartupIdentityConfiguration({ ...legacyStartupEnvironment, ...origins })
+
+// 删除 AI Hub 登录方案 AH3：残留的 AI_HUB_* 与旧认证模式只记警告，不阻止启动，也不再参与任何配置。
+test('leftover AI Hub variables and legacy auth modes are ignored and reported without blocking startup', () => {
+  const plain = loadStartupIdentityConfiguration(startupEnvironment)
+  assert.equal(plain.mode, 'local')
+  assert.equal(plain.ignoredLegacySettings, undefined)
+
+  for (const DSH_WORK_AUTH_MODE of ['local', 'oidc']) {
+    const config = loadStartupIdentityConfiguration({ ...startupEnvironment, ...leftoverHub, DSH_WORK_AUTH_MODE, DSH_WORK_DIRECTORY_SYNC_INTERVAL_SECONDS: '900' })
     assert.equal(config.mode, 'local')
-    assert.match(config.aiHubConfigurationIssue!, /含义不一致/)
-    assert.equal(config.audiences.workbench.defaultOrigin, 'http://localhost:4174')
-    assert.equal(config.audiences.admin.defaultOrigin, 'http://localhost:4180')
+    assert.deepEqual(config.ignoredLegacySettings, [
+      'AI_HUB_APPLICATION_ID', 'AI_HUB_CLIENT_ID', 'AI_HUB_CLIENT_SECRET', 'AI_HUB_OIDC_ISSUER', 'AI_HUB_PLATFORM_URL',
+      'AI_HUB_WORKBENCH_PORTAL_URL', 'AI_HUB_WORKBENCH_REDIRECT_URI', 'DSH_WORK_AUTH_MODE', 'DSH_WORK_DIRECTORY_SYNC_INTERVAL_SECONDS',
+    ])
+    assert.deepEqual(config.audiences.workbench.allowedOrigins, ['http://localhost:4174'])
   }
 })
-test('invalid optional AI Hub configuration preserves password authentication with an actionable issue', () => {
-  for (const extra of [{ AI_HUB_CLIENT_SECRET: '' }, { AI_HUB_OIDC_ISSUER: 'not-a-url' }]) {
-    const config = loadStartupIdentityConfiguration({ ...startupEnvironment, ...startupHub, ...extra })
-    assert.equal(config.mode, 'local')
-    assert.ok(config.aiHubConfigurationIssue)
-  }
+
+test('origins come only from DSH_WORK_*_ORIGINS; AI Hub portal URLs are no longer a fallback', () => {
+  const { DSH_WORK_WORKBENCH_ORIGINS: _unused, ...withoutWorkbench } = startupEnvironment
+  assert.throws(() => loadStartupIdentityConfiguration({ ...withoutWorkbench, ...leftoverHub }), /DSH_WORK_WORKBENCH_ORIGINS 未配置/)
   assert.throws(() => loadStartupIdentityConfiguration({ ...startupEnvironment, DSH_WORK_SESSION_SECRET: '' }))
   assert.throws(() => loadStartupIdentityConfiguration({ ...startupEnvironment, DSH_WORK_ADMIN_ORIGINS: 'not-a-url' }))
 })
 
-// 钉钉接入方案 4.3 与部署手册第 14 节：公网 443 员工端入口在配置了 AI Hub 时静默回退为本地模式。
-test('a public 443 workbench origin silently disables AI Hub while every origin stays allowed for local login', () => {
+// 钉钉接入方案 4.3：公网 443 员工端入口与内网入口同时允许，账号密码登录不校验端口。
+test('a public 443 workbench origin is allowed next to the intranet origin', () => {
   const origins = { DSH_WORK_WORKBENCH_ORIGINS: 'https://192.168.1.99:4174,https://m.example.com', DSH_WORK_ADMIN_ORIGINS: 'https://192.168.1.99:4180' }
-  const withHub = loadStartupIdentityConfiguration({ ...startupEnvironment, ...startupHub, ...origins })
-  assert.equal(withHub.mode, 'local', '不报错、不阻止启动')
-  assert.match(withHub.aiHubConfigurationIssue!, /https:\/\/m\.example\.com 必须使用端口 4174/)
-  assert.deepEqual(withHub.audiences.workbench.allowedOrigins, ['https://192.168.1.99:4174', 'https://m.example.com'])
-
-  const withoutHub = loadStartupIdentityConfiguration({ ...startupEnvironment, ...origins })
-  assert.equal(withoutHub.mode, 'local')
-  assert.equal(withoutHub.aiHubConfigurationIssue, undefined, '不配置 AI Hub 时账号密码模式不校验端口')
-  assert.deepEqual(withoutHub.audiences.workbench.allowedOrigins, ['https://192.168.1.99:4174', 'https://m.example.com'])
-
-  const samePort = loadStartupIdentityConfiguration({ ...startupEnvironment, ...startupHub, ...origins, DSH_WORK_WORKBENCH_ORIGINS: 'https://192.168.1.99:4174,https://m.example.com:4174' })
-  assert.equal(samePort.mode, 'oidc', '公网入口改用 4174 时 AI Hub 保持可用')
+  const config = loadStartupIdentityConfiguration({ ...startupEnvironment, ...origins })
+  assert.deepEqual(config.audiences.workbench.allowedOrigins, ['https://192.168.1.99:4174', 'https://m.example.com'])
 })
 
-test('the removed prototype mode is rejected with a migration hint and legacy portal origins remain compatible', () => {
+test('the removed prototype mode is rejected with a migration hint', () => {
   for (const NODE_ENV of ['development', 'production']) {
     assert.throws(() => loadStartupIdentityConfiguration({ NODE_ENV, DSH_WORK_AUTH_MODE: 'prototype' }), /原型模式已移除/)
     assert.throws(() => loadIdentityConfiguration({ NODE_ENV, DSH_WORK_AUTH_MODE: 'prototype' }), /原型模式已移除/)
   }
   assert.throws(() => loadIdentityConfiguration({}), /未配置/, 'an empty environment no longer falls back to an unauthenticated mode')
   assert.throws(() => loadStartupIdentityConfiguration({ ...startupEnvironment, DSH_WORK_AUTH_MODE: 'unknown' }))
-  const config = loadStartupIdentityConfiguration({ ...startupHub, DSH_WORK_SESSION_SECRET: startupEnvironment.DSH_WORK_SESSION_SECRET,
-    AI_HUB_ADMIN_PORTAL_URL: 'http://localhost:4180', AI_HUB_WORKBENCH_PORTAL_URL: 'http://localhost:4174',
-    AI_HUB_ADMIN_REDIRECT_URI: 'http://localhost:4180/auth/admin/callback', AI_HUB_WORKBENCH_REDIRECT_URI: 'http://localhost:4174/auth/workbench/callback' })
-  assert.equal(config.mode, 'oidc')
-  assert.equal(config.audiences.admin.defaultOrigin, 'http://localhost:4180')
 })

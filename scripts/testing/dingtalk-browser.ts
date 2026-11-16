@@ -134,7 +134,7 @@ try {
   const configuration = loadIdentityConfiguration({ ...environment, DSH_WORK_AUTH_MODE: 'local' })
   if (configuration.mode !== 'local') throw new Error('DingTalk browser fixture configuration mismatch')
   const authentication = new LocalAuthService(configuration, database.client)
-  const administration = new IdentityAdministrationService(database.client, true)
+  const administration = new IdentityAdministrationService(database.client)
   const admin = await authentication.bootstrap({ username: 'dingtalk.admin@example.invalid', name: '陈默', password: 'AdminPass123' })
   const accounts: Array<{ username: string; name: string; mustChangePassword?: boolean; dingtalk?: string; boundBy?: 'self' | 'admin'; locked?: boolean }> = [
     { username: 'zhaoning@example.invalid', name: '赵宁' },

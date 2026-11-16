@@ -3,7 +3,7 @@
 **文档状态：** 当前架构基线<br>
 **更新日期：** 2026-10-15<br>
 **技术形态：** 两个独立 Vue 应用 + 一个 Node.js 模块化单体 + PostgreSQL + 独立 DSH Worker 进程<br>
-**身份来源：** 独立账号密码（`local`）、AI Hub OIDC（`oidc`）；测试身份只存在于测试代码中
+**身份来源：** 独立账号密码（`local`），员工端在钉钉客户端内可免登（绑定在独立账号上）；测试身份只存在于测试代码中
 
 本文统一描述 dsh-work 的产品范围、系统边界和长期架构。接口字段、物理表和验证命令不在本文重复维护，分别以可执行契约、SQL 迁移和开发测试指南为准。
 
@@ -33,7 +33,6 @@ MVP 明确不包含：
 |---|---|---|
 | dsh-work | 员工体验、Workspace、产品 Session、Run/Attempt、文件、成果、对象权限、运行编排、审计和运营 | 模型内部推理、企业身份主数据、企业系统业务规则 |
 | DSH | 单次 Attempt 内的 Agent Loop、Skill 执行、模型/Tool 调用编排、取消和运行事件 | 产品数据库、长期身份、对象权限、业务凭据和企业系统直连 |
-| AI Hub | OIDC 身份、环境初始管理员一次性 Bootstrap、基础员工资料与增量员工目录 | dsh-work 的角色、功能权限、数据范围、Session、业务对象和运行状态 |
 | 企业系统/模型/存储 | 权威业务数据、模型能力、文件与备份基础设施 | dsh-work 的交互、编排和审计语义 |
 
 关键边界：
@@ -44,7 +43,6 @@ MVP 明确不包含：
 - 企业身份由服务端建立，浏览器传入的用户、角色或操作人字段不能作为授权事实；
 - DSH 只能通过受控适配器和平台能力调用模型、Tool 与成果存储；
 - MCP 复用 Connector 控制面，Agent Version 按整个 Connector 显式选择（`selected`，默认 `none`）；新增或输入 Schema 变化的 MCP Tool 须管理员确认后才生效；实际 Tool 调用由 DSH 完成并逐调用审计，不复制为平台 Tool Version/Binding；
-- 使用 AI Hub 账号时，上游不可用不得绕过登录、Token 刷新或员工目录同步；已有 Session 只在 Access Token 尚未进入刷新窗口时独立使用本地授权，不能把 Session 有效期等同于离线可用时长。
 
 ## 3. 架构原则
 
@@ -56,7 +54,7 @@ MVP 明确不包含：
 
 - 员工工作台与管理后台分别构建静态资源；
 - 每个 Attempt 默认启动独立 DSH ACP Worker 子进程；
-- PostgreSQL、模型 Provider、企业系统和文件存储是外部依赖；AI Hub 仅用于其账号的登录与目录同步。
+- PostgreSQL、模型 Provider、企业系统和文件存储是外部依赖。
 
 ### 3.2 版本不可变、运行可追溯
 
@@ -107,7 +105,7 @@ flowchart TB
     WAPI[Workbench API / SSE]
     AAPI[Admin API]
     Local[独立账号密码<br/>默认启用]
-    Auth[AI Hub OIDC / 员工目录<br/>配置后启用]
+    DingTalk[钉钉容器内免登<br/>配置钉钉应用后启用]
   end
 
   subgraph App[dsh-work 模块化单体]
@@ -135,8 +133,9 @@ flowchart TB
   Admin --> AAPI
   Local --> WAPI
   Local --> AAPI
-  Auth --> WAPI
-  Auth --> AAPI
+  Local --> WAPI
+  Local --> AAPI
+  DingTalk --> WAPI
   WAPI --> Authorization
   AAPI --> Authorization
   WAPI --> Workspace
@@ -201,19 +200,18 @@ flowchart LR
   Node --> Files[受控文件目录或企业存储]
   Node --> Worker1[DSH Worker A]
   Node --> WorkerN[DSH Worker N]
-  Node --> AIHub[AI Hub]
   Worker1 --> Approved[批准的模型与只读 Tool]
   WorkerN --> Approved
 ```
 
 目标 MVP 以公司内网 Mac mini 为单节点部署基线：Reverse Proxy 终止 HTTPS，两个前端作为独立静态资源发布，Node.js 模块化单体连接 PostgreSQL，并按活动 Attempt 启动 DSH Worker。每个目标环境都需验证硬件、存储、备份、监控和网络；部署模板不能证明线上状态。
 
-本地开发与生产使用同一条链路：PostgreSQL、账号登录（独立账号或 AI Hub OIDC）和固定版本 DSH ACP，没有免数据库的内存模式。确定性的 P0 浏览器冒烟由测试专用服务提供内存数据与测试身份（`server/src/testing/`），应用入口不引用这些代码。
+本地开发与生产使用同一条链路：PostgreSQL、独立账号登录和固定版本 DSH ACP，没有免数据库的内存模式。确定性的 P0 浏览器冒烟由测试专用服务提供内存数据与测试身份（`server/src/testing/`），应用入口不引用这些代码。
 
 ## 6. 核心运行流程
 
-1. 用户通过对应 Portal 使用独立账号密码登录，或在 AI Hub 接入配置有效时发起 Authorization Code + PKCE 登录；
-2. 服务端校验 `state`、`nonce`、Issuer、Audience、签名和 Scope，建立加密的服务端 Session；
+1. 用户通过对应 Portal 使用独立账号密码登录；员工端在钉钉客户端内可凭已绑定的钉钉账号免登；
+2. 服务端校验请求来源、账号状态与限流，建立只保存摘要的服务端 Session，浏览器只持有不透明 HttpOnly Cookie；
 3. 员工选择个人或团队 Workspace，并创建或继续产品 Session；API/event 也可在 Workspace 中直接受理无 Session Task。需要时从员工端 Skill 广场选择一个已发布 Skill；个人空间未显式指定 Agent 时，服务端优先使用平台默认 Agent，并跳过无法满足所选 Skill 工具依赖的候选；
 4. 服务端在创建 Session 前校验应用权限、Workspace 成员关系、Agent 可见性、有效数据范围及 Agent/Skill 工具闭包；`activate_skill`、`python_execute` 由 Attempt Manifest 内建授权，其余工具必须由 Agent 显式授权；
 5. 幂等创建 Task、Run 和不可变 Attempt，固定 Task、Agent/Skill/Tool/Model、文件、知识来源与权限快照；
@@ -249,7 +247,7 @@ flowchart LR
 | 管理体验 | `apps/admin-web`、`packages/admin-components` |
 | 共享视觉基础 | `packages/design-tokens`、`packages/ui-core` |
 | Workbench/Admin/Auth API | `server/src/http` |
-| 独立身份与 AI Hub 适配 | `server/src/modules/identity` |
+| 独立账号、钉钉免登与会话 | `server/src/modules/identity` |
 | Run 与状态机 | `server/src/modules/run` |
 | Runtime Adapter | `server/src/modules/runtime` |
 | Agent/Skill/Tool/Model 治理 | `server/src/modules/agent`、`skill`、`tool`、`model` |
@@ -261,9 +259,9 @@ flowchart LR
 
 ## 9. 身份、安全与数据边界
 
-- 正式认证始终支持独立账号密码，AI Hub 接入配置有效时自动提供附加登录入口，不提供管理端登录模式设置；两类账号不绑定或合并。独立密码以加盐 scrypt 保存，OIDC Token 加密保存在服务端 Session。两类账号复用本地授权机制，Cookie 与 Session 按提供方隔离，生产均要求 HTTPS 和 Secure Cookie；
+- 正式认证只有独立账号密码，员工端在钉钉客户端内可凭已绑定的钉钉账号免登，不提供管理端登录模式设置。独立密码以加盐 scrypt 保存；密码会话与钉钉会话共用本地授权机制，按来源分别撤销，生产要求 HTTPS 和 Secure Cookie；
 - Workbench 与 Admin 分别校验 Audience；每次 API 请求从 PostgreSQL 解析当前本地角色、权限、数据范围和授权版本；管理端按模块校验查看与修改权限，路由入口对照表默认拒绝、服务层只认本地授予，非平台管理员授出的权限不能超过本人（[功能规则第 13 节](feature-rules.md#13-管理端模块权限amp-s1)）；
-- AI Hub 环境中明确指定的初始管理员只可一次性初始化首位本地平台管理员；应用负责人和平台登记人不因此获权，之后所有授权在 dsh-work 管理端维护；
+- 首位平台管理员只能通过受控命令 `auth:bootstrap`（发布包为 `local-bootstrap.js`）一次性初始化，之后所有授权在 dsh-work 管理端维护；
 - API 不信任浏览器提交的 `actor`、用户 ID、角色或数据范围；
 - Workspace、Agent、Skill、Tool、Connector、文件和 Artifact 都在服务端执行对象级授权；
 - DSH 子进程使用环境白名单，应用数据库变量和敏感覆盖项不传入；DSH 会话遥测由平台强制关闭，不允许覆盖（见 [Runtime 交付 3.1 节](../release/dsh-runtime-delivery.md#31-会话遥测强制关闭)）；
@@ -275,14 +273,12 @@ flowchart LR
 
 ## 10. 当前边界与独立开发
 
-- Agent、Skill、文件、知识、运行、审计和本地授权属于 dsh-work，可独立开发和发布；独立账号登录无需启动 AI Hub。
+- Agent、Skill、文件、知识、运行、审计和本地授权属于 dsh-work，可独立开发和发布。
 - Skill 已有版本、配置校验、发布和 Agent 固定引用能力；管理端已将手工创建/编辑表单替换为独立「新增 Skill」页签，该页签仅提供 ZIP 上传，链接、明确自然语言和命令格式安装迁入独立「管理助手」页面。管理助手通过 `admin-assistant` DSH Run 处理普通问答和意图提案，管理员第一次确认后才调度 `admin-skill-install`、`admin-agent-manage` 或 `admin-platform-operations` 专用 Run。Agent 与 Runtime 专用助手只生成绑定摘要的精确操作计划，第二次确认且目标状态未变化时才复用既有领域服务写入。Skill 安装继续生成结构化包计划并以一个事务保存根 Skill、同源依赖和依赖图；严格试运行要求所有 Skill 留下真实激活证据，管理员随后发布。资源随版本存储，新的 Attempt 先获得渐进式目录，再通过 `activate_skill` 获取锁定正文和只读资源路径。规则见[功能规则](feature-rules.md#4-管理助手)。
-- 管理端 Agent 查看与编辑分离：详情页只读展示概览并管理岗位权限、主动任务、经验、版本历史和运行记录；职责与人格、能力（及首次发布前的角色与权限）在独立的草稿编辑流程中按步骤修改并自动保存，最后一步“验证与发布”：验证时冻结待发布版本，示例问题、主动任务与自定义问题在后台并行运行，逐项判定通过后发布，回滚只移动版本指针（[功能规则](feature-rules.md#9-agent-验证与发布)）；自动任务已有本人身份、固定 Agent Version、独立 Session 的实现及回归用例。代码和用例存在不代表目标环境真实 DSH、OIDC 或完整 E2E 验收通过，未完成事项见本节末尾。员工自助贡献、按对象负责人审核、新工具完整准入和受控经验积累仍属后续范围；当前 Agent/Tool 上传配置由管理员负责，不建设外部开发者生态。未来经验提炼仅生成候选，经确认后发布，不自动修改 Prompt、Skill、脚本、工具或权限，也不共享私人数据与凭据。
+- 管理端 Agent 查看与编辑分离：详情页只读展示概览并管理岗位权限、主动任务、经验、版本历史和运行记录；职责与人格、能力（及首次发布前的角色与权限）在独立的草稿编辑流程中按步骤修改并自动保存，最后一步“验证与发布”：验证时冻结待发布版本，示例问题、主动任务与自定义问题在后台并行运行，逐项判定通过后发布，回滚只移动版本指针（[功能规则](feature-rules.md#9-agent-验证与发布)）；自动任务已有本人身份、固定 Agent Version、独立 Session 的实现及回归用例。代码和用例存在不代表目标环境真实 DSH 或完整 E2E 验收通过，未完成事项见本节末尾。员工自助贡献、按对象负责人审核、新工具完整准入和受控经验积累仍属后续范围；当前 Agent/Tool 上传配置由管理员负责，不建设外部开发者生态。未来经验提炼仅生成候选，经确认后发布，不自动修改 Prompt、Skill、脚本、工具或权限，也不共享私人数据与凭据。
 - 已有 Skill 的 Python 脚本执行遵守[功能规则第 6 节](feature-rules.md#6-skill-python-执行)：DSH 调用平台 `python_execute`，每次调用使用摘要锁定、无网络、只读根文件系统、非 root 用户和资源受限的临时容器；取消或超时会停止并删除该容器。容器统一经服务内执行器模块启动，并受本实例全局并发槽位约束；执行器与业务服务同进程、同账号，是代码边界而非账号隔离。未配置合规镜像时安装计划标记不兼容，不存在宿主机 Python 或直接模型调用回退。
 - Runtime 以单机执行为基线；多节点租约、失联回收和跨节点调度需要另行实现，不能只增加实例就认定已经支持。
-- 使用 AI Hub 账号时依赖其 OIDC、`/me`、员工目录和一次性 Bootstrap；专用 Scope、`actor_type`、`business_user` 及数据库提供方标记意味着替换身份平台需要适配和映射迁移。
-- AI Hub 账号的业务角色在本地，但上游账号停用或转为平台账号仍会影响访问资格；默认每 900 秒同步，失败会延迟状态传播。
-- 普通 OIDC 登录不要求 Bootstrap Scope；仅显式首次认领入口申请。独立账号使用受控命令和持久化一次性账本初始化首位管理员，不访问上游。
+- AI Hub 登录、员工目录同步与初始管理员认领已删除（[删除方案](../design/ai-hub-login-removal-plan.md)，迁移 0129）；接入企业身份平台需另行设计。首位管理员由受控命令和持久化一次性账本初始化。
 - `/health` 的 SSO 字段表示解析后的登录能力配置，不是身份服务可用性检测；接口契约与真实双系统故障行为需独立验证。
 - 企业只读 Connector、真实知识源、恶意文件扫描、数据出口、目标容量和备份恢复，均需针对部署环境提供证据。合成数据、历史测试与发布成功不能代替业务验收。
 
@@ -290,33 +286,32 @@ flowchart LR
 
 代码和测试存在不等于目标环境已验收。以下事项仍开放，按对应文档跟踪：
 
-- **平台基线 P2（PF-07）：** 平台能力门禁已在受控参考环境（本机）通过，不代表任何目标环境；Mac mini、生产、企业 MCP 须按手册的“目标环境部署验收”逐环境留证，目前均未完成，OIDC 未验证。2026-11-09 在本机专用一次性库（`115888e`，真实 DSH，本地账号，非 OIDC）P0、P1 通过，门禁内 P2 的 19 个场景均经验收人确认，证据记录已标记 `verified`；`115888e` 之后的 MCP 中断审计修复已在 `46951ba` 对应代码上重跑 `mcp-connector` 的 5 个场景并经确认，管理端调用对账上线后又在 `66c3f69` 重跑这 5 个场景并经确认（对账页按文字记录确认，只读管理员与并发冲突未测），其余场景未重跑；`real-oidc-task` 随 AI Hub 登录计划删除而移出矩阵，未验证。持久化等待的 4 个场景及依赖它的记忆撤回场景（共 5 个）因真实 Agent 审批固定为 `never` 已移出门禁，未通过且不得开放给 Agent 发布，首个需要审批的动作准入时恢复。详见 [PF-07 验收手册](pf07-platform-acceptance.md)。
+- **平台基线 P2（PF-07）：** 平台能力门禁已在受控参考环境（本机）通过，不代表任何目标环境；Mac mini、生产、企业 MCP 须按手册的“目标环境部署验收”逐环境留证，目前均未完成。2026-11-09 在本机专用一次性库（`115888e`，真实 DSH，本地账号）P0、P1 通过，门禁内 P2 的 19 个场景均经验收人确认，证据记录已标记 `verified`；`115888e` 之后的 MCP 中断审计修复已在 `46951ba` 对应代码上重跑 `mcp-connector` 的 5 个场景并经确认，管理端调用对账上线后又在 `66c3f69` 重跑这 5 个场景并经确认（对账页按文字记录确认，只读管理员与并发冲突未测），其余场景未重跑；`real-oidc-task` 随 AI Hub 登录删除而移出矩阵。持久化等待的 4 个场景及依赖它的记忆撤回场景（共 5 个）因真实 Agent 审批固定为 `never` 已移出门禁，未通过且不得开放给 Agent 发布，首个需要审批的动作准入时恢复。详见 [PF-07 验收手册](pf07-platform-acceptance.md)。
 - **Agent 程序步骤与场景包：** 2026-11-10 确认原则（[Agent 设计规范 1.1](agent-design-standard.md#11-核心原则)）：场景包（独立于 Skill 的平台对象，版本由工作规则直接固定）声明“取数 → 计算 → 条件判断 → 交付 → Agent 执行”（交付先于 Agent 执行，Agent 只为已交付的跟进项补充说明与排序），工作规则只保留部署信息；平台直接调用标记为“可供程序步骤调用”的只读 MCP 工具，在一次性断网容器中运行计算脚本，交付数据直通；数据服务（面向一个业务系统的只读 MCP Server）由多个场景共用；跟进项（按去重键对账、自动关闭、接收反馈）是新的平台对象，须单独设计后启用；第一版只在管理员配置的主动任务中提供。尚未设计接口，也未实现：定时任务仍按日程或手动触发，主动任务仍按日程、手动或受信事件触发，结果留在该次 Session 或 Task；功能规则第 5.2、5.3、6、7 节未变，实施前须先写明带取数与计算阶段的受理、重叠与中断规则，场景包的审核、发布与可见范围规则，以及跟进项的存储、权限与保留期。首个候选场景是欠料风险预警（ERP/SRM 只读数据服务）。落地设计见[场景包与跟进项方案](../design/scene-package-plan.md)，决策 SP1～SP16 已于 2026-11-10 确认。
 - **Agent 配置与发布：** 规则见[功能规则](feature-rules.md)第 8、9 节；验证中的 MCP 与平台写入隔离尚未真实验收，需审批工具待首个准入时补测。
 - **Runtime 执行：** 见 [Runtime 优化方案](../design/runtime-execution-optimization-plan.md)。
 - **执行隔离与受控 Shell：** 阶段 1a（容器统一经执行器模块启动）、1b 的 subprocess 部分、1c（“静止”保证：命令后清扫、清理期间工具等待、无法恢复时 Attempt 失败、`output/` 本身检查、工具独占性准入）与 2a（C 档单次 `bash`：执行容器内运行、平台装配、单文件大小上限、安全回归）已实现：`glob`/`grep`/`bash` 在每 Attempt 的执行容器内运行。DSH Worker 的文件工具仍是应用层边界。2b-2 已实现：`output/` 另收 xlsx、docx、pptx、pdf、png、jpg，不合规文件跳过并在回答下方说明，不再令整轮失败（功能规则第 1 节“成果登记”）。2b-4 已实现：装配 `bash` 时附件与引用成果另挂原始文件，二进制成果可跨轮修改为下一版（功能规则第 1 节“原始文件输入”）。2b-1 已实现：执行镜像由仓库内 Dockerfile 经 CI 构建并推送 GHCR（附来源证明），启动检查要求镜像含 `bash`、`rg`、LibreOffice 与 `pdftoppm`，检查到的工具链写入 Runtime 说明。2b-3 已实现：PDF、DOCX、XLSX、PPTX 成果的解析文本在一次性容器中生成，不在服务进程内解析。2b-5 已实现：Office/PDF 成果可在对话中“查看正文”（解析文本）、图片成果直接显示缩略图，“我的文件”与项目空间成果卡可预览。4.7 已实现：每个 Attempt 工作区上限 2 GiB（平台计量，超出终止命令），数据卷剩余空间不足时不运行命令，Attempt 结束删除工作区（失败的保留 3 天）。1b② 已实现：`python_execute` 在本 Attempt 的执行容器内运行（路径经环境变量给出，输出登记为成果）。C 档 P2 已于 2026-10-28 在 Mac mini（v2026.10.28-01）验收通过。阶段 3 已实现：执行容器为必需，删除开关、宿主执行回退与每次调用一个容器的 Python 路径，执行容器不可用时所有 Agent 运行在创建前明确失败。见[执行隔离方案](../design/execution-isolation-plan.md)。
-- **项目空间：** S0～S6 已实现（含双模式与 Agent 项目任务工具）；服务端/组件/P0 与部分 P1、本地真实 DSH 证据见验收目录与发布/PR 留证。OIDC/生产 P2 与部分 P1 旅程仍开放，决策背景见 [项目空间方案](../design/project-space-plan.md)。项目档案员是 `project-archive` 系统运行，经 Run/Attempt → Runtime Adapter → DSH 执行。
+- **项目空间：** S0～S6 已实现（含双模式与 Agent 项目任务工具）；服务端/组件/P0 与部分 P1、本地真实 DSH 证据见验收目录与发布/PR 留证。生产 P2 与部分 P1 旅程仍开放，决策背景见 [项目空间方案](../design/project-space-plan.md)。项目档案员是 `project-archive` 系统运行，经 Run/Attempt → Runtime Adapter → DSH 执行。
 - **平台内置 Skill：** 文件分析、HTML 页面、Office 文档三个内置 Skill 已达到代码级（P0 管理端冒烟与 P1 装配、覆盖、停用、团队空间复核）；真实 DSH 下的产出质量（验收目录 `BSK-P2`）与有无内置 Skill 的对比评测尚未执行。规则见[功能规则 5.5](feature-rules.md#55-平台内置-skill)，设计见[平台内置 Skill 方案](../design/builtin-skills-plan.md)。
 - **Skill 创建专家：** 可创建 Skill 开关、草稿保存与员工提交、管理员审核与发布、经 dsh-work 助手推荐进入与 Skill 广场“创建 Skill”入口已达到代码级（`SKC-01`～`SKC-04`，P0/P1）；2026-11-02 已在本机开发环境由平台管理员经管理端创建、验证（真实 Run/Attempt，8 个案例人工判定通过）并发布该专家，并在真实 DSH 上走通 `SKC-P2` 五个场景（助手推荐、纯指令与带脚本两例从需求到发布、相符时引导、越权拒绝；工作区可新建 `drafts/`），审核结论显示在草稿卡片并发站内通知。带脚本的 Skill 在严格试运行中不提供业务输入，脚本须在无输入时以内置样例自检并以退出码 0 结束（方案 4.7）；试运行证据只证明脚本能跑通，业务正确性由管理员审核判断。服务启动时预置未发布的专家草稿（`SKC-05`），各环境仍由平台管理员选角色、真实验证后发布；2026-11-09 在 Mac mini 内网部署 v2026.11.09-01（115888e）由人工逐项验收通过（专家发布、带脚本 Skill 创建到审核发布、对话使用与成果生成）；其他受控环境的发布尚未执行。规则见[功能规则 5.6](feature-rules.md#56-员工经-skill-创建专家新建-skill)，设计见 [Skill 创建专家方案](../design/skill-creator-plan.md)。
 - **组织架构：** 第一期 ORG-S1（本地维护的部门树、成员与主部门、新建账号选择部门）已达到代码级（`ORG-P0-01`、`ORG-01`～`ORG-04`，P0/P1）；ORG-S2（按部门授予角色、管理类角色限制与角色来源显示）已达到代码级（`ORG-P0-02`、`ORG-05`～`ORG-07`）；钉钉通讯录同步为后续阶段。规则见[功能规则第 10 节](feature-rules.md#10-组织架构org-s1org-s2)，设计见[组织架构方案](../design/org-structure-plan.md)。
 - **企业知识库（WeKnora）：** WK-S1 后端检索链路、WK-S2 员工端“知识库”页与对话中添加知识库、WK-S3 管理端“企业知识库”（连接配置与加密 API Key、全部知识库与跨部门授权）已达到代码级（基于 WeKnora v0.9.0 测试替身的 P0、P1 用例），原有本地知识库已删除。WK-S4 已于 2026-11-02 在本机 WeKnora v0.9.0（在线嵌入模型、未配置重排序）完成真实环境验收：契约测试与最低相关度校准（0.5）、员工端建库上传与对话引用（经 DSH 链路）、撤销授权后不可见与不检索、删除、WeKnora 停机降级；受控生产环境的重排序配置、并发压测与门槛复核在切换前按发布流程执行。[知识库优化方案](../design/weknora-knowledge-optimization-plan.md)的 O1～O3、O5（重排序结果记录与提示）、O6～O12 已达到代码级（P0、P1 替身用例）：查了没结果与添加了知识库却未检索时都提示、查询词先本次提问再带上一条、更换地址后原有知识库标为原连接已更换并可恢复、摘要模型与重排序降级标记、授权撤销与管理员授权归属修正。KO10 已于 2026-11-11 在本机完成：重排序生效，用最小能力 Key（`retrieve`、`ingest`、`manage_kbs`）跑通契约测试，启用重排序后门槛复核保持 0.5；受控生产环境的复核按发布流程执行。KO9 给 Agent 的只读检索工具已实施（KS-S1）并在本机真实 DSH 验收（KS-S2）；2026-11-12 用 5 份长制度文档对比，装配工具后要点得分由 39/51 升至 50/51，在已装配工具的前提下放宽每篇段数（O4/KO8）没有增量收益，决定不实施（篇数上限未检验，出现跨多篇问题后再评估）（[优化方案第 11 节](../design/weknora-knowledge-optimization-plan.md#11-ko8-与-ko9-对比记录2026-11-12)）。对比中发现的问题已处理：追问轮重复页脚已修复（历史发给模型前去掉页脚）；检索超时由 5 秒放宽为 10 秒；WeKnora v0.9.0 关键词检索失败（混合检索只剩向量检索）是上游回归，记录并跟踪上游修复（Tencent/WeKnora#4899）。未完成：O8“校验嵌入模型”按钮、两个嵌入模型的混合检索实跑、在平台实际对话后确认管理端健康状态的“最近重排序”（本次复核以 WeKnora 日志代替）。规则见[功能规则 11](feature-rules.md#11-企业知识库weknorawk-s1-起)，设计见[接入方案](../design/weknora-knowledge-plan.md)。
 - **钉钉接入（DT-S1）：** 账号绑定（钉钉内登录即绑定、管理员代绑、解绑与锁定、改绑、每日离职检查）、`dingtalk` 会话来源（按 `binding_id` 校验、按来源撤销）、管理端“钉钉集成”页（含在页面配置钉钉应用，AppSecret 加密入库，DT30）、员工端钉钉内登录页与用户中心 › 钉钉、钉钉容器内固定协作模式已达到代码级（验收目录 `DT-ID-01`、`DT-ADM-01`～`03`、`DT-EMP-01`、`02`、`DT-EMP-P0`，钉钉开放平台为测试替身或假 HTTP 服务）。未验收：真实钉钉企业内部应用、公网入口与安全基线、真实错误码（含离职员工）、iOS/Android 钉钉内的免登与容器适配（返回键、软键盘、上传下载、安全区）（`DT-P2`）。钉钉工作通知与群组提醒（DT-S2）尚未实现。规则见[功能规则第 12 节](feature-rules.md#12-钉钉账号绑定dt-s1)，设计见[钉钉接入方案](../design/dingtalk-integration-plan.md)，部署见 [Mac mini 部署手册第 14 节](../release/mac-mini-deployment-runbook.md)。
-- **模型路由、模型网关与数据防护：** 方案已评审（2026-11-06）。MR-S1 与 MR-S2 + DLP-S1（路由快照随 Manifest 固定、统一每 Attempt patch、Attempt 令牌、模型网关校验转发与计量、联网搜索经网关、模型错误细分）已达到代码级（单元、PostgreSQL 集成、Worker 替身用例，以及本机受控 DSH + 假上游的 P1 主要场景）；外部厂商已于 2026-11-08 在本机真实验收（阿里百炼 qwen3.8-flash、DeepSeek v4-pro：遮盖、回答与工具参数还原、思考内容往返、联网搜索遮盖、密钥拦截、文件/历史/工具结果中的密钥只遮盖、审计与用量）；2026-11-09 在 Mac mini 内网部署 v2026.11.09-01（115888e）由人工逐项验收通过（对话、遮盖、密钥拦截、保密词表、用量、定时任务保存拦截，未按 PF-07 手册留证，不计入 P2）；该次升级的备份落在本地 exFAT 盘，不满足部署手册的异机备份前置条件，待迁到 NAS 或另一台机器；**内部部署模型和受控生产环境未验收，真实 OIDC/多账号收权等 PF-07 场景不在该次范围**（模型路由方案第 8 节 P1 余项未执行）。上线前须在管理端为默认路由的 Provider 录入厂商密钥并配置 `DSH_CREDENTIAL_MASTER_KEY`，否则运行以 `MODEL_CREDENTIAL_INVALID` 失败。管理端添加模型时，可用已录入的密钥从厂商 `{base_url}/models` 拉取模型 id 供下拉选择（只作输入建议，密钥不出后端；厂商不支持时手动填写）。运行结束时按网关记录写入用量（实际模型、请求次数、缓存读写，对话与联网搜索各一行，预算结算用同一组数字）已达到代码级（MR-S3，受控 DSH 用例未执行）；管理端“模型用量”页统计全部运行（含定时任务、主动任务与系统运行），按今天/近 7 天/近 30 天（平台时区）查看概况与按模型堆叠的趋势，可按模型、Agent、员工、部门、来源统计并下钻到执行明细，估算数据（网关上线前）单独标出，不提供导出；外部厂商的请求由网关按内置规则与保密词表遮盖、回复还原、思考内容原样透传并逐请求写审计（DLP-S2 网关部分，外部厂商已于 2026-11-08 本机、2026-11-09 Mac mini 真实验收，内部部署模型未验收；无 `DSH_CREDENTIAL_MASTER_KEY` 时失败即关闭）；员工消息含密钥时在创建 Run 前拦截（对话入口、定时任务与主动任务），消息标记“未发送给模型”并排除出历史；管理端“数据防护”页可查看命中明细（只有类别和次数，不含原值）、维护保密词表与白名单（需要 `data-protection:terms` 权限）并检测试用（DLP-S3，P0/P1 代码级；保密词表已包含在 2026-11-09 Mac mini 人工验收中）。见[模型路由方案](../design/model-routing-plan.md)第 9 节与[发往模型的数据防护方案](../design/model-data-protection-plan.md)。
+- **模型路由、模型网关与数据防护：** 方案已评审（2026-11-06）。MR-S1 与 MR-S2 + DLP-S1（路由快照随 Manifest 固定、统一每 Attempt patch、Attempt 令牌、模型网关校验转发与计量、联网搜索经网关、模型错误细分）已达到代码级（单元、PostgreSQL 集成、Worker 替身用例，以及本机受控 DSH + 假上游的 P1 主要场景）；外部厂商已于 2026-11-08 在本机真实验收（阿里百炼 qwen3.8-flash、DeepSeek v4-pro：遮盖、回答与工具参数还原、思考内容往返、联网搜索遮盖、密钥拦截、文件/历史/工具结果中的密钥只遮盖、审计与用量）；2026-11-09 在 Mac mini 内网部署 v2026.11.09-01（115888e）由人工逐项验收通过（对话、遮盖、密钥拦截、保密词表、用量、定时任务保存拦截，未按 PF-07 手册留证，不计入 P2）；该次升级的备份落在本地 exFAT 盘，不满足部署手册的异机备份前置条件，待迁到 NAS 或另一台机器；**内部部署模型和受控生产环境未验收，多账号收权等 PF-07 场景不在该次范围**（模型路由方案第 8 节 P1 余项未执行）。上线前须在管理端为默认路由的 Provider 录入厂商密钥并配置 `DSH_CREDENTIAL_MASTER_KEY`，否则运行以 `MODEL_CREDENTIAL_INVALID` 失败。管理端添加模型时，可用已录入的密钥从厂商 `{base_url}/models` 拉取模型 id 供下拉选择（只作输入建议，密钥不出后端；厂商不支持时手动填写）。运行结束时按网关记录写入用量（实际模型、请求次数、缓存读写，对话与联网搜索各一行，预算结算用同一组数字）已达到代码级（MR-S3，受控 DSH 用例未执行）；管理端“模型用量”页统计全部运行（含定时任务、主动任务与系统运行），按今天/近 7 天/近 30 天（平台时区）查看概况与按模型堆叠的趋势，可按模型、Agent、员工、部门、来源统计并下钻到执行明细，估算数据（网关上线前）单独标出，不提供导出；外部厂商的请求由网关按内置规则与保密词表遮盖、回复还原、思考内容原样透传并逐请求写审计（DLP-S2 网关部分，外部厂商已于 2026-11-08 本机、2026-11-09 Mac mini 真实验收，内部部署模型未验收；无 `DSH_CREDENTIAL_MASTER_KEY` 时失败即关闭）；员工消息含密钥时在创建 Run 前拦截（对话入口、定时任务与主动任务），消息标记“未发送给模型”并排除出历史；管理端“数据防护”页可查看命中明细（只有类别和次数，不含原值）、维护保密词表与白名单（需要 `data-protection:terms` 权限）并检测试用（DLP-S3，P0/P1 代码级；保密词表已包含在 2026-11-09 Mac mini 人工验收中）。见[模型路由方案](../design/model-routing-plan.md)第 9 节与[发往模型的数据防护方案](../design/model-data-protection-plan.md)。
 - **已交付功能的遗留项：** 团队空间、管理助手、Skill 安装、Python 执行和自动任务的未完成部分列在[功能规则](feature-rules.md)各节末尾。
 
-开发模式、自动化和上线前验证入口见 [开发与测试](development.md)；身份协议与生命周期见 [独立登录](../release/local-authentication.md) 或 [AI Hub 接入](../release/ai-hub-sso-integration.md)。
+开发模式、自动化和上线前验证入口见 [开发与测试](development.md)；身份协议与生命周期见 [独立登录](../release/local-authentication.md)。
 
 ## 11. 生产演进原则
 
 生产化按证据扩展，不预设微服务拆分：
 
-1. 先完成 AI Hub 联调、企业 Connector/知识源、目标主机、存储、备份、监控和 UAT；
+1. 先完成企业 Connector/知识源、目标主机、存储、备份、监控和 UAT；
 2. 容量不足时先测量瓶颈；增加 Node.js 实例或多主机 Worker 前实现并验证租约、抢占、事件归属和失联恢复；
 3. 上传文件、解析文本、成果与 Skill 文件经 `ObjectStorage` 端口（`server/src/domain/object-storage.ts`）读写，当前实现为本地目录 `LocalObjectStorage`；文件规模增长时新增 NAS/对象存储实现即可，不改变业务对象；Attempt 工作目录属于 Runtime 主机本地，不经此端口；
 4. 企业知识由外部 WeKnora 负责解析、分段、向量化与检索（[接入方案](../design/weknora-knowledge-plan.md)，WK-S1 起，原有本地知识库已由迁移 0115 删除）；平台按部门授权计算员工可见的知识库，只在员工于个人对话中添加知识库后检索，结果写入引用快照，WeKnora 的问答与 Agent 不使用；
-5. 跨应用治理复用达到门槛后，通过稳定治理端口把 Agent、Skill、Tool、Model、发布和汇总治理迁入 AI Hub；
-6. Workspace、产品 Session、Run/Attempt、审批实例、文件、成果和高频运行状态继续由 dsh-work 持有；
-7. 只有独立扩缩容、故障域、团队所有权和数据边界同时成立时，才评审拆分部署单元。
+5. Agent、Skill、Tool、Model、发布与汇总治理，以及 Workspace、产品 Session、Run/Attempt、审批实例、文件、成果和高频运行状态都由 dsh-work 持有；
+6. 只有独立扩缩容、故障域、团队所有权和数据边界同时成立时，才评审拆分部署单元。
 
 ## 12. 相关文档
 
@@ -327,6 +322,5 @@ flowchart LR
 - [开发与测试](development.md)
 - [数据模型](../design/data-model.md)
 - [内部端口与契约](internal-ports.md)
-- [AI Hub 身份接入](../release/ai-hub-sso-integration.md)
 - [DSH Runtime](../release/dsh-runtime-delivery.md)
 - [Mac mini 部署手册](../release/mac-mini-deployment-runbook.md)

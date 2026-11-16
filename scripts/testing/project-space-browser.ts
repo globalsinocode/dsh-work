@@ -2,7 +2,7 @@
  * P1 项目空间浏览器夹具（PS-E2E-03/04/06/07/08）。
  *
  * 专用可丢弃 PostgreSQL + 真实 HTTP API；Runtime 是确定性合成实现，
- * 不连接 OIDC、模型、MCP 或真实 DSH。档案整理运行返回固定的 JSON 整理结果，
+ * 不连接模型、MCP 或真实 DSH。档案整理运行返回固定的 JSON 整理结果，
  * 用于验证“任务完成 → 档案员整理 → 档案版本更新”的平台链路，不证明真实模型质量。
  */
 import { randomUUID } from 'node:crypto'
@@ -259,7 +259,7 @@ fixture.router.post('/api/workbench/v1/test/project-tasks/:taskId/fire-schedule'
   return envelope('workbench', { fired: true })
 })
 
-console.log('P1 project space ready; throwaway PostgreSQL, synthetic Runtime, no OIDC/model.')
+console.log('P1 project space ready; throwaway PostgreSQL, synthetic Runtime, no model.')
 let closing = false
 async function close() {
   if (closing) return

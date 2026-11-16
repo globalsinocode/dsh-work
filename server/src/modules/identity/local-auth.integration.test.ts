@@ -33,7 +33,7 @@ before(async () => {
   const config = loadIdentityConfiguration({ DSH_WORK_AUTH_MODE: 'local', DSH_WORK_SESSION_SECRET: 'local-integration-secret-with-32-characters', DSH_WORK_WORKBENCH_ORIGINS: origin, DSH_WORK_ADMIN_ORIGINS: origin })
   assert.equal(config.mode, 'local')
   auth = new LocalAuthService(config, database.client)
-  administration = new IdentityAdministrationService(database.client, true)
+  administration = new IdentityAdministrationService(database.client)
   adminId = (await auth.bootstrap({ username: 'local.admin@example.invalid', name: '独立管理员', password })).userId
   registerLocalAuthRoutes(router, auth)
   registerIdentityAdministrationRoutes(router, administration)
@@ -82,9 +82,8 @@ test('local login creates only opaque provider-separated cookies and persists ha
   assert.match(credential!.password_hash, /^scrypt\$/)
   assert.equal(credential!.password_hash.includes(password), false)
   const [stored] = await database.client`select * from authentication_sessions where user_id = ${adminId} and revoked_at is null`
-  assert.equal(stored!.access_token_encrypted, null)
-  assert.equal(stored!.token_expires_at, null)
-  assert.equal(await new IdentitySessionRepository(database.client).findSession(stored!.session_hash, 'admin'), null)
+  assert.equal(stored!.authentication_provider, 'local-password')
+  assert.equal(stored!.binding_id, null)
   assert.equal((await call('/api/workbench/v1/session', { cookie: result.cookie })).response.status, 401)
 })
 
@@ -254,17 +253,12 @@ test('disabling, re-enabling, expiring and logging out a local account preserve 
 
 test('same-name and same-email accounts remain separate and binding is unavailable', async () => {
   const repository = new IdentitySessionRepository(database.client)
-  const existing = await repository.synchronizeIdentity({ externalUserId: 'legacy-local-switch', subject: 'legacy-local-subject', displayName: '原有员工', email: 'legacy@example.invalid', businessUser: true, status: 'ACTIVE' })
-  await administration.grantRole({ userId: existing.userId, roleId: 'role-employee', actorId: adminId })
-  const independent = await auth.createAccount({ username: 'separate.employee@example.invalid', name: '原有员工', email: 'legacy@example.invalid', password }, adminId)
+  // 种子员工 U00001 没有登录凭据：新建同名同邮箱的独立账号是另一个员工，不能借此绑定或接管它。
+  const existing = { userId: 'U00001' }
+  const [seed] = await database.client`select display_name, email from users where id = ${existing.userId}`
+  const independent = await auth.createAccount({ username: 'separate.employee@example.invalid', name: seed!.display_name, email: 'legacy@example.invalid', password }, adminId)
   assert.notEqual(independent.userId, existing.userId)
   assert.deepEqual((await repository.resolveAuthorization(independent.userId)).roleIds, [])
-  assert.ok((await repository.resolveAuthorization(existing.userId)).roleIds.includes('role-employee'))
-  const [localIdentity] = await database.client`select external_subject from users where id = ${independent.userId}`
-  await assert.rejects(repository.synchronizeIdentity({ externalUserId: 'conflicting-upstream-subject', subject: localIdentity!.external_subject, displayName: '不应覆盖', email: 'legacy@example.invalid', businessUser: true, status: 'ACTIVE' }), /不能绑定或转换独立账号/)
-  const [unchanged] = await database.client`select identity_provider, display_name from users where id = ${independent.userId}`
-  assert.equal(unchanged!.identity_provider, 'local')
-  assert.equal(unchanged!.display_name, '原有员工')
   const session = await login()
   const bound = await call(`/api/admin/v1/identity/users/${existing.userId}/local-account`, { cookie: session.cookie, body: { username: 'legacy.employee@example.invalid', password } })
   assert.equal(bound.response.status, 404)
@@ -275,46 +269,29 @@ test('same-name and same-email accounts remain separate and binding is unavailab
   assert.equal(count!.n, 0)
 })
 
-test('an AI Hub administrator cannot replace the final independent administrator', async () => {
-  const repository = new IdentitySessionRepository(database.client)
-  const upstream = await repository.synchronizeIdentity({ externalUserId: 'upstream-admin-invariant', subject: 'upstream-admin-invariant', displayName: '上游管理员', email: 'upstream-admin@example.invalid', businessUser: true, status: 'ACTIVE' })
-  await administration.grantRole({ userId: upstream.userId, roleId: 'role-platform-admin', actorId: adminId })
-  await assert.rejects(administration.revokeRole({ userId: adminId, roleId: 'role-platform-admin', actorId: upstream.userId }), /最后一个有效的平台管理员/)
-  await assert.rejects(auth.setStatus(adminId, 'disabled', upstream.userId), /最后一个有效的平台管理员/)
-  assert.ok((await repository.resolveAuthorization(adminId)).roleIds.includes('role-platform-admin'))
-  // The independent administrator keeps the platform accessible when removing upstream access.
-  await administration.revokeRole({ userId: upstream.userId, roleId: 'role-platform-admin', actorId: adminId })
-  assert.equal((await repository.resolveAuthorization(upstream.userId)).roleIds.includes('role-platform-admin'), false)
-})
-
-test('employee login accounts are searchable for both sources without exposing upstream local credentials', async () => {
-  const repository = new IdentitySessionRepository(database.client)
-  const independent = await auth.createAccount({ username: 'shared.login@example.invalid', name: '独立展示用户', password }, adminId)
-  const upstream = await repository.synchronizeIdentity({ externalUserId: 'display-only-upstream-id', subject: 'shared.login@example.invalid', displayName: '企业展示用户', email: 'profile@example.invalid', businessUser: true, status: 'ACTIVE', updatedAt: '2026-10-12T01:00:00Z' })
+test('employee login accounts are searchable and stay visible in mutation responses', async () => {
+  const independent = await auth.createAccount({ username: 'shared.login@example.invalid', name: '独立展示用户', email: 'profile@example.invalid', password }, adminId)
   const result = await administration.listUsers({ query: 'SHARED.LOGIN@EXAMPLE.INVALID' })
-  assert.equal(result.total, 2)
-  assert.equal(result.items.find(user => user.id === independent.userId)?.loginAccount, 'shared.login@example.invalid')
-  const displayed = result.items.find(user => user.id === upstream.userId)!
+  assert.equal(result.total, 1)
+  const displayed = result.items[0]!
+  assert.equal(displayed.id, independent.userId)
   assert.equal(displayed.loginAccount, 'shared.login@example.invalid')
-  assert.equal(displayed.username, null)
-  assert.equal(displayed.externalUserId, 'display-only-upstream-id')
+  assert.equal(displayed.username, 'shared.login@example.invalid')
   assert.equal(displayed.email, 'profile@example.invalid')
-  assert.ok(displayed.directorySyncedAt)
   assert.equal(displayed.lastSeenAt, null)
   assert.equal(displayed.activeSessionCount, 0)
-  const updated = await administration.grantRole({ userId: upstream.userId, roleId: 'role-employee', actorId: adminId })
+  const updated = await administration.grantRole({ userId: independent.userId, roleId: 'role-employee', actorId: adminId })
   assert.equal(updated.loginAccount, 'shared.login@example.invalid', 'mutation responses keep account details in the open drawer')
-  assert.equal(updated.username, null)
   assert.equal((await administration.listUsers({ query: 'missing.login.account' })).total, 0)
   const session = await login()
   const response = await call('/api/admin/v1/identity/users?query=shared.login', { cookie: session.cookie })
   assert.equal(response.response.status, 200)
-  assert.equal(response.body.data.items.length, 2)
-  assert.equal(response.body.data.total, 2)
-  assert.ok(response.body.data.items.every((user: { loginAccount: string }) => user.loginAccount === 'shared.login@example.invalid'))
+  assert.equal(response.body.data.total, 1)
+  assert.equal(response.body.data.items[0].loginAccount, 'shared.login@example.invalid')
+  assert.equal('identityProvider' in response.body.data.items[0], false)
 })
 
-test('creation and availability checks reject duplicate local and synchronized AI Hub login accounts', async () => {
+test('creation and availability checks reject duplicate login accounts, including disabled and phone variants', async () => {
   const admin = await login()
   const check = (username: unknown, cookie = admin.cookie) => call('/api/admin/v1/identity/login-account/check', { cookie, body: { username } })
   assert.equal((await call('/api/admin/v1/identity/login-account/check', { body: { username: 'new@example.invalid' } })).response.status, 401)
@@ -326,22 +303,16 @@ test('creation and availability checks reject duplicate local and synchronized A
   assert.equal(created.response.status, 200)
   assert.equal(created.body.data.username, 'new+account@example.invalid')
   await auth.setStatus(created.body.data.userId, 'disabled', adminId)
-  const repository = new IdentitySessionRepository(database.client)
-  const upstream = await repository.synchronizeIdentity({ externalUserId: 'duplicate-hub-email', subject: 'HUB.LOGIN@EXAMPLE.INVALID', displayName: '已停用企业账号', email: 'contact-only@example.invalid', businessUser: true, status: 'DISABLED' })
-  await repository.synchronizeIdentity({ externalUserId: 'duplicate-hub-phone', subject: '+8613800138000', displayName: '企业手机账号', email: null, businessUser: true, status: 'ACTIVE' })
-  for (const username of ['NEW+ACCOUNT@EXAMPLE.INVALID', ' hub.login@example.invalid ', '13800138000', '+8613800138000']) {
+  const phone = await call('/api/admin/v1/identity/users', { cookie: admin.cookie, body: { username: '13800138000', name: '手机账号', email: 'contact-only@example.invalid', password } })
+  assert.equal(phone.response.status, 200)
+  for (const username of ['NEW+ACCOUNT@EXAMPLE.INVALID', '13800138000', '+8613800138000']) {
     assert.equal((await check(username)).body.data.available, false)
     const duplicate = await call('/api/admin/v1/identity/users', { cookie: admin.cookie, body: { username, name: '不应创建', password } })
     assert.equal(duplicate.response.status, 409)
     assert.equal(duplicate.body.error.code, 'local_account_exists')
     assert.match(duplicate.body.error.message, /登录账号已存在/)
   }
-  const [unchanged] = await database.client`select identity_provider, display_name from users where id = ${upstream.userId}`
-  assert.equal(unchanged!.identity_provider, 'ai-hub')
-  assert.equal(unchanged!.display_name, '已停用企业账号')
-  const [credentials] = await database.client`select count(*)::int as n from local_user_credentials where user_id = ${upstream.userId}`
-  assert.equal(credentials!.n, 0)
-  assert.equal((await check('contact-only@example.invalid')).body.data.available, true, 'profile email is not the upstream login account')
+  assert.equal((await check('contact-only@example.invalid')).body.data.available, true, 'a profile email is not a login account')
 })
 
 test('phone accounts log in with or without +86 and old usernames remain usable', async () => {
