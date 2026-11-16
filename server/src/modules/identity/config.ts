@@ -255,11 +255,24 @@ function audienceOrigins(
   if (!/^\d+$/.test(expectedPort) || Number(expectedPort) < 1 || Number(expectedPort) > 65535) {
     throw invalidRequest(`${audience === 'workbench' ? 'DSH_WORK_WORKBENCH_PORT' : 'DSH_WORK_ADMIN_PORT'} 必须是有效端口`)
   }
+  // 员工端可额外放行一个入口端口（站点用 DSH_WORK_MOBILE_PORT=443 接入独立移动端 H5）；
+  // 未配置时行为与之前一致，只允许 DSH_WORK_WORKBENCH_PORT。
+  const allowedPorts = new Set([expectedPort])
+  if (audience === 'workbench') {
+    const mobilePort = environment.DSH_WORK_MOBILE_PORT?.trim()
+    if (mobilePort) {
+      if (!/^\d+$/.test(mobilePort) || Number(mobilePort) < 1 || Number(mobilePort) > 65535) {
+        throw invalidRequest('DSH_WORK_MOBILE_PORT 必须是有效端口')
+      }
+      allowedPorts.add(mobilePort)
+    }
+  }
   for (const origin of allowedOrigins) {
     const parsed = new URL(origin)
     const actualPort = parsed.port || (parsed.protocol === 'https:' ? '443' : '80')
-    if (actualPort !== expectedPort) {
-      throw invalidRequest(`${originsName} 中的 ${origin} 必须使用端口 ${expectedPort}`)
+    if (!allowedPorts.has(actualPort)) {
+      const portList = [...allowedPorts].sort((left, right) => Number(left) - Number(right)).join('、')
+      throw invalidRequest(`${originsName} 中的 ${origin} 必须使用端口 ${portList} 之一`)
     }
   }
 
