@@ -9,14 +9,14 @@ const basePath = '/api/admin/v1'
 export function registerToolRoutes(router: Router, mcp: PostgresMcpConnectorService, builtinToolStatus: () => Promise<BuiltinToolStatus>) {
   router.get(`${basePath}/runtimes/builtin-tools`, async (_request, context) => {
     const status = await builtinToolStatus()
-    // 选择器视图只返回工具清单与停用项，不含目录检查与执行容器状态（管理端模块权限方案 5.2）。
+    // 选择器视图只返回工具清单与停用项，不含目录检查与执行容器状态（功能规则第 13 节）。
     return envelope('admin', context.adminView === 'selector'
       ? { tools: status.tools, disabledTools: status.disabledTools, catalog: null, executionContainer: { status: status.executionContainer.status } }
       : status, 'postgres')
   })
   router.get(`${basePath}/connectors`, async (_request, context) => {
     const connectors = await mcp.getMcpConnectors()
-    // 只凭 Agent 修改权限读取时（管理端模块权限方案 5.2）不返回地址、凭据引用与待确认能力。
+    // 只凭 Agent 修改权限读取时（功能规则第 13 节）不返回地址、凭据引用与待确认能力。
     return envelope('admin', context.adminView === 'selector' ? connectors.map(connectorSelectorView) : connectors, 'postgres')
   })
   router.get(`${basePath}/connectors/mcp/invocations`, async (_request, context) => envelope(

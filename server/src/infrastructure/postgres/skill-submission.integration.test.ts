@@ -144,7 +144,7 @@ test('只有开启开关的 Agent 在个人对话中装配两个工具', async (
   assert.equal(tools(without.manifest).some(id => id === 'list_available_skills' || id === 'skill_draft_save'), false)
 })
 
-test('员工 AI 同事列表标出开启“可创建 Skill”的 Agent（Skill 广场入口，方案 4.8）', async () => {
+test('员工 AI 同事列表标出开启“可创建 Skill”的 Agent（Skill 广场入口，功能规则 5.6）', async () => {
   const withSwitch = await publishedAgent(true)
   const without = await publishedAgent(false)
   const listed = await agents.listWorkbenchAgents(EMPLOYEE)

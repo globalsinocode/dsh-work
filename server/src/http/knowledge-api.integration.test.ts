@@ -12,7 +12,7 @@ import { WeKnoraDouble } from '../testing/weknora-double.ts'
 import { registerKnowledgeRoutes } from './workbench/knowledge-routes.ts'
 import { Router } from './router.ts'
 
-// KB-01～KB-06（e2e/catalog/knowledge.md，weknora-knowledge-plan WK-S2）：员工端知识库与文档管理、
+// KB-01～KB-06（e2e/catalog/knowledge.md，功能规则第 11 节，WK-S2）：员工端知识库与文档管理、
 // 可见部门调整、会话所选知识库与服务不可用。WeKnora 用按 v0.9.0 接口实现的测试 HTTP 服务。
 
 const tenantId = 'tenant-dsh-work'
@@ -276,7 +276,7 @@ test('KB-03 可见部门：只能授给本人所属的非根部门，不能撤�
   assert.equal((await api(users.bases, 'DELETE', `${base}/knowledge-bases/${planBase}/grants/grant-admin-plan`)).status, 403)
   assert.deepEqual((await ok(users.outsider, 'GET', `${base}/knowledge-bases`)).map((item: any) => item.name).sort(), ['全员制度汇编', '计划组工作手册'].sort())
 
-  // 优化方案 O11：所在部门已删除的授权不算剩余的可见部门，不能借它撤到实际无人可见。
+  // 功能规则第 11 节：所在部门已删除的授权不算剩余的可见部门，不能借它撤到实际无人可见。
   await database`
     insert into org_departments (id, tenant_id, parent_id, name, path, status)
     values ('dept-old', ${tenantId}, ${root}, '已撤并部门', ${`/${root}/dept-old/`}, 'removed')

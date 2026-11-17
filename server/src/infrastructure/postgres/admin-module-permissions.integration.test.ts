@@ -12,7 +12,7 @@ import { PostgresOrganizationService, type OrganizationSnapshot } from '../../mo
 import type { DatabaseClient } from './database.ts'
 import { createThrowawayDatabase, type ThrowawayDatabase } from './test-database.ts'
 
-// 管理端模块权限方案（docs/design/admin-module-permission-plan.md）AMP-S1 的 P1 证据：
+// 功能规则第 13 节 AMP-S1 的 P1 证据：
 // 服务层按模块复核、只认本地授予；授出不超过自身（组织架构与 Agent 岗位权限）；管理 Run 用途按模块判定。
 
 if (!process.env.DSH_WORK_TEST_DATABASE_URL) throw new Error('DSH_WORK_TEST_DATABASE_URL 未配置')

@@ -287,7 +287,7 @@ router.beforeEach(async (to) => {
     return { name: 'overview' }
   }
   if (to.meta.requiresAdmin && !authStore.canAccessAdmin) return { name: 'forbidden' }
-  // 管理端模块权限方案 AP15：根地址与 /overview 落到有权限的第一个页面；直接打开无权页面显示“无权访问”。
+  // 功能规则第 13 节：根地址与 /overview 落到有权限的第一个页面；直接打开无权页面显示“无权访问”。
   if (to.name === 'overview' && !authStore.canRead('ops')) {
     const landing = authStore.landingRoute()
     if (landing !== '/overview') return landing

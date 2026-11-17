@@ -29,7 +29,7 @@ export function registerDataProtectionRoutes(
   adapter: 'postgres' | 'prototype-memory' = 'postgres',
   authorization?: Pick<PostgresAuthorizationService, 'requireAdminModule'>,
 ) {
-  // 服务层复核（管理端模块权限方案 5.1）：写操作按本地授予的 `admin:dlp:write` 再判定一次；冒烟服务不传入。
+  // 服务层复核（功能规则第 13 节）：写操作按本地授予的 `admin:dlp:write` 再判定一次；冒烟服务不传入。
   const recheckWrite = async (userId: string) => { await authorization?.requireAdminModule(userId, 'dlp', 'write') }
   router.get(`${basePath}/overview`, async (_request, context) =>
     envelope('admin', await service.getOverview(parseDataProtectionFilter(context.url.searchParams)), adapter))

@@ -19,7 +19,7 @@ export class IdentityAccessError extends Error {
 
 /**
  * 会话层只判断能否进入管理端：读请求需要任一管理端准入权限（模块管理、全模块或审计读取），
- * 写请求需要任一模块管理权限。具体模块与级别由路由对照表判定（管理端模块权限方案第 6 节）。
+ * 写请求需要任一模块管理权限。具体模块与级别由路由对照表判定（功能规则第 13 节）。
  */
 export function assertAudienceAccess(audience: ApiAudience, permissions: string[], unsafe: boolean) {
   const granted = new Set(permissions)

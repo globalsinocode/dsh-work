@@ -159,9 +159,9 @@ export interface TaskRun {
    * 不随新一轮消失。只有一轮或团队 Run 详情时省略。
    */
   threadRuns?: Array<{ runId: string; status: TaskRun['status']; stoppedBy: string | null }>
-  /** 推荐方案 4.2：个人会话中各 Run 当前 Attempt 的推荐卡片，前端按 runId 挂到该 Run 的回复下。 */
+  /** 功能规则 2.4：个人会话中各 Run 当前 Attempt 的推荐卡片，前端按 runId 挂到该 Run 的回复下。 */
   recommendations?: AgentRecommendationView[]
-  /** Skill 创建专家方案 4.3：各 Run 当前 Attempt 保存的 Skill 草稿，只给提交人本人看。 */
+  /** 功能规则 5.6：各 Run 当前 Attempt 保存的 Skill 草稿，只给提交人本人看。 */
   skillDrafts?: SkillDraftView[]
   attachments: string[]
   skill?: {
@@ -324,9 +324,9 @@ export interface AgentDefinition {
   webSearchEnabled: boolean
   /** 是否允许项目任务管理（project_task_*）；仅团队空间运行装配，见项目空间方案 S6。 */
   projectTasksEnabled: boolean
-  /** 是否可推荐其他 AI 同事；仅个人对话的员工交互运行装配（推荐方案 R1/R3）。 */
+  /** 是否可推荐其他 AI 同事；仅个人对话的员工交互运行装配（功能规则 2.4）。 */
   agentRecommendationEnabled: boolean
-  /** 是否可创建 Skill（Skill 创建专家方案 4.2）；仅个人对话的员工交互运行装配。 */
+  /** 是否可创建 Skill（功能规则 5.6）；仅个人对话的员工交互运行装配。 */
   skillCreationEnabled: boolean
   mcpScope?: AgentMcpScope
   updatedAt: string
@@ -434,7 +434,7 @@ export interface SkillDefinition {
 /** 管理员审核时看到的严格试运行状态：未开始、进行中、已结束待查看结果、通过、未通过。 */
 export type SkillSubmissionTrialStatus = 'not_started' | 'running' | 'unconfirmed' | 'passed' | 'failed'
 
-/** 管理端“待审核”列表中的一条员工 Skill 提交（Skill 创建专家方案 4.4）。 */
+/** 管理端“待审核”列表中的一条员工 Skill 提交（功能规则 5.6）。 */
 export interface SkillSubmissionReviewItem {
   id: string
   name: string
@@ -461,7 +461,7 @@ export interface SkillSubmissionReviewDetail extends SkillSubmissionReviewItem {
 }
 
 /**
- * 会话详情中的一张 Skill 草稿卡片（Skill 创建专家方案 4.3）：某个 Run 当前 Attempt 保存的草稿版本，
+ * 会话详情中的一张 Skill 草稿卡片（功能规则 5.6）：某个 Run 当前 Attempt 保存的草稿版本，
  * 带所属提交的当前状态。只给提交人本人看。
  */
 export interface SkillDraftView {

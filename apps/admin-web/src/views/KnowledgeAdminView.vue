@@ -8,7 +8,7 @@ import { useAuthStore } from '@/stores/auth'
 import type { KnowledgeAdminBase, KnowledgeAdminBaseList, KnowledgeAdminDepartment, KnowledgeAdminOverview } from '@/types/knowledge'
 
 /**
- * 管理端“企业知识库”（weknora-knowledge-plan 第 9 节，WK-S3）：连接配置与健康状态、全部知识库与跨部门授权、
+ * 管理端“企业知识库”（功能规则第 11 节，WK-S3）：连接配置与健康状态、全部知识库与跨部门授权、
  * 归属部门、新建与删除。平台管理员可以授给任意部门（含全公司）并撤销任何授权；文档由归属部门的员工在员工端维护。
  */
 const authStore = useAuthStore()
@@ -30,14 +30,14 @@ const failureLabels: Record<string, string> = {
   api_key_required: '更换地址须重新填写 API Key',
 }
 
-/** WeKnora 重排序结果（meta.rerank.outcome，优化方案 O5）；模型不可用与调用失败表示检索已降级为不重排。 */
+/** WeKnora 重排序结果（meta.rerank.outcome，功能规则第 11 节）；模型不可用与调用失败表示检索已降级为不重排。 */
 const rerankLabels: Record<string, string> = {
   ok: '正常', threshold_degraded: '正常（已放宽门槛）', fallback_top1: '正常（只保留首条）', all_below_threshold: '正常（全部低于门槛）',
   no_candidates: '正常（没有候选）', no_model: '未配置重排序模型', disabled: '未启用',
   model_unavailable: '模型不可用，已降级为不重排', model_error: '调用失败，已降级为不重排',
 }
 const rerankDegraded = (outcome: string | null | undefined) => outcome === 'model_unavailable' || outcome === 'model_error'
-/** WeKnora 的模型 ID 是 UUID；不是这个形状时多半填成了模型名称（优化方案 O8）。 */
+/** WeKnora 的模型 ID 是 UUID；不是这个形状时多半填成了模型名称（功能规则第 11 节）。 */
 const modelIdPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 const connection = computed(() => overview.value?.connection)
@@ -175,7 +175,7 @@ async function confirmCreate() {
   }
 }
 
-// —— 恢复（优化方案 O9） ——
+// —— 恢复（功能规则第 11 节） ——
 async function restoreBase(base: KnowledgeAdminBase) {
   const result = await run(() => adminApi.restoreKnowledgeBase(base.id), `已恢复“${base.name}”`)
   if (result) baseList.value = result

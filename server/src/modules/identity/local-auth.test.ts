@@ -102,7 +102,7 @@ const leftoverHub = {
   AI_HUB_WORKBENCH_PORTAL_URL: 'http://localhost:4174', AI_HUB_WORKBENCH_REDIRECT_URI: 'http://localhost:4190/auth/workbench/callback',
 }
 
-// 删除 AI Hub 登录方案 AH3：残留的 AI_HUB_* 与旧认证模式只记警告，不阻止启动，也不再参与任何配置。
+// 迁移 0129：残留的 AI_HUB_* 与旧认证模式只记警告，不阻止启动，也不再参与任何配置。
 test('leftover AI Hub variables and legacy auth modes are ignored and reported without blocking startup', () => {
   const plain = loadStartupIdentityConfiguration(startupEnvironment)
   assert.equal(plain.mode, 'local')

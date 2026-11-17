@@ -78,7 +78,7 @@ export function registerAdminRoutes(router: Router, service: AdminQueryService) 
       actor: requireRequestIdentity(context, 'admin').userId,
     }))
   })
-  // 冒烟只提供待审核的只读展示（Skill 创建专家方案 4.4）：试运行、通过与拒绝走真实服务，由 P1 覆盖。
+  // 冒烟只提供待审核的只读展示（功能规则 5.6）：试运行、通过与拒绝走真实服务，由 P1 覆盖。
   router.get(`${basePath}/skill-submissions`, async () => envelope('admin', [smokeSkillSubmission()]))
   router.get(`${basePath}/skill-submissions/:submissionId`, async (_request, context) => {
     if (context.params['submissionId'] !== SMOKE_SUBMISSION_ID) throw notFound('提交不存在或已撤回')

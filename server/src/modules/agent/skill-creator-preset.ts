@@ -21,7 +21,7 @@ export interface SkillCreatorPreset {
 }
 
 /**
- * 定义随代码发布（Skill 创建专家方案 5.1、5.2）：`preset.json` 与 `SOUL.md`。
+ * 定义随代码发布（功能规则 5.6）：`preset.json` 与 `SOUL.md`。
  * 文件缺失或字段不完整属于发布缺陷：抛错，由启动流程拒绝启动，不能静默少一个预置 Agent。
  */
 export function loadSkillCreatorPreset(root: string): SkillCreatorPreset {
@@ -63,7 +63,7 @@ export type SkillCreatorSeedResult =
   | { status: 'skipped'; reason: 'exists' | 'no_admin' }
 
 /**
- * Skill 创建专家方案 5.1（SKC-05）：环境中还没有开启“可创建 Skill”的 Agent 时，预置一个未发布草稿。
+ * 功能规则 5.6（SKC-05）：环境中还没有开启“可创建 Skill”的 Agent 时，预置一个未发布草稿。
  * 可见角色与岗位角色留空（不可验证、员工不可见），由管理员选定后验证并发布；不预置已发布版本。
  * Agent 不能删除，已有任一开启该开关的版本（含停用、未发布）即视为已有专家，重复启动不会再建。
  * 建草稿与写测试问题分两步：上次只建成草稿时，本次为仍未发布、没有测试问题的预置草稿补写。

@@ -1,5 +1,5 @@
 /**
- * 管理端模块权限（管理端模块权限方案 AP1、5.1）的唯一定义。
+ * 管理端模块权限（功能规则第 13 节）的唯一定义。
  *
  * 路由入口、会话层、服务层 SQL 判定与授权子集校验都从这里取模块清单与“哪些权限码满足某模块的某级别”，
  * 不再各自写 `admin:*` / `admin:write` 的组合。纯函数，不访问数据库。
@@ -91,7 +91,7 @@ export function hasAuditAccess(permissions: Iterable<string>) {
   return granted.has(PLATFORM_ADMIN_PERMISSION) || granted.has(AUDIT_READ_PERMISSION)
 }
 
-/** 管理类权限码（方案 5.3）：不能经部门授予，非平台管理员不能授给 Agent。 */
+/** 管理类权限码（功能规则第 13 节）：不能经部门授予，非平台管理员不能授给 Agent。 */
 export function isManagementPermission(code: string) {
   return code.startsWith('admin:') || code.startsWith('audit:') || code.startsWith('data-protection:')
 }
@@ -110,7 +110,7 @@ export function adminModuleSummary(permissions: Iterable<string>): Record<AdminM
 }
 
 /**
- * 权限码之间的包含关系（方案第 10 节“子集判定的粒度”）：持有左侧即视为持有右侧全部。
+ * 权限码之间的包含关系（功能规则第 13 节“子集判定的粒度”）：持有左侧即视为持有右侧全部。
  * `admin:*` 覆盖全部管理权限，由 `expandPermissions` 单独处理。
  */
 const IMPLIED_PERMISSIONS: Record<string, string[]> = {
@@ -136,7 +136,7 @@ export function expandPermissions(permissions: Iterable<string>): Set<string> {
 }
 
 /**
- * 授出不超过自身（方案 AP5、5.3）：`granted` 中展开后仍不被 `held` 覆盖的权限码。
+ * 授出不超过自身（功能规则第 13 节）：`granted` 中展开后仍不被 `held` 覆盖的权限码。
  * `held` 含 `admin:*` 时视为全部覆盖（平台管理员不受子集约束，调用方通常已提前放行）。
  */
 export function missingPermissions(granted: Iterable<string>, held: Iterable<string>): string[] {
@@ -152,7 +152,7 @@ export function missingDataScopes(granted: Iterable<string>, held: Iterable<stri
   return [...new Set(granted)].filter(scope => !heldSet.has(scope)).sort()
 }
 
-/** 管理端专用 Run 的用途与所需模块写权限（方案 5.5）。`admin-assistant` 只需能使用管理助手。 */
+/** 管理端专用 Run 的用途与所需模块写权限（功能规则第 13 节）。`admin-assistant` 只需能使用管理助手。 */
 export const ADMIN_RUN_PURPOSE_MODULES = {
   'admin-skill-install': 'skill',
   'admin-skill-test': 'skill',
@@ -179,11 +179,11 @@ export function adminModuleForAction(actionType: string): AdminModule | null {
 }
 
 /**
- * 管理端路由对照表（方案 5.1）。按 `/api/admin/v1/` 之后的第一段路径匹配；
+ * 管理端路由对照表（功能规则第 13 节）。按 `/api/admin/v1/` 之后的第一段路径匹配；
  * 未登记的路径一律拒绝（默认拒绝）。
  */
 export type AdminRouteRule =
-  /** `writePlatformOnly`：查看按模块，修改只限平台管理员（钉钉应用配置，方案 AP12）。 */
+  /** `writePlatformOnly`：查看按模块，修改只限平台管理员（钉钉应用配置，功能规则第 13 节）。 */
   | { kind: 'module'; module: AdminModule; writePlatformOnly?: boolean }
   | { kind: 'session' }
   | { kind: 'any-admin-read' }
@@ -237,9 +237,9 @@ export function adminRouteRule(path: string): AdminRouteRule | null {
   if (segment === 'data-protection' && (second === 'terms' || second === 'allowlist')) {
     return { kind: 'data-protection-terms' }
   }
-  // 钉钉应用配置（CorpId、AppKey、AppSecret）：查看为钉钉集成查看级，保存与清除只限平台管理员（方案 AP12）。
+  // 钉钉应用配置（CorpId、AppKey、AppSecret）：查看为钉钉集成查看级，保存与清除只限平台管理员（功能规则第 13 节）。
   if (segment === 'dingtalk' && second === 'settings') return { kind: 'module', module: 'dingtalk', writePlatformOnly: true }
-  // 员工的钉钉绑定（查看、代绑、解绑、解锁）属于钉钉集成模块（方案 AP12）。
+  // 员工的钉钉绑定（查看、代绑、解绑、解锁）属于钉钉集成模块（功能规则第 13 节）。
   if (segment === 'identity' && /^identity\/users\/[^/]+\/dingtalk-binding(\/|$)/.test(rest)) {
     return { kind: 'module', module: 'dingtalk' }
   }
@@ -252,7 +252,7 @@ export function registeredAdminRouteSegments(): string[] {
 }
 
 /**
- * 跨模块选择器（方案 AP3、5.2）：持有下列模块权限时，可读取表单需要的其他模块候选列表，
+ * 跨模块选择器（功能规则第 13 节）：持有下列模块权限时，可读取表单需要的其他模块候选列表，
  * 不需另授对方模块的查看权限；处理函数按 `view: 'selector'` 只返回精简字段。
  */
 const SELECTOR_PATHS: ReadonlyMap<string, ReadonlyArray<readonly [AdminModule, AdminLevel]>> = new Map([
@@ -276,7 +276,7 @@ const ALLOW: AdminRouteDecision = { allowed: true, view: 'full' }
 
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS'])
 
-/** 任一管理权限都可以对自己的管理助手对话执行的命令（方案 5.5）；确认类命令由服务层按模块复核。 */
+/** 任一管理权限都可以对自己的管理助手对话执行的命令（功能规则第 13 节）；确认类命令由服务层按模块复核。 */
 function isAssistantConversationCommand(path: string) {
   const rest = path.slice(`${ADMIN_API_PREFIX}assistant`.length)
   return rest === '/messages'
@@ -284,7 +284,7 @@ function isAssistantConversationCommand(path: string) {
     || /^\/(task-proposals|action-plans)\/[^/]+\/(cancel|confirm)$/.test(rest)
 }
 
-/** 路由入口的模块权限判定（方案 5.1、第 6 节）。 */
+/** 路由入口的模块权限判定（功能规则第 13 节）。 */
 export function decideAdminRouteAccess(permissions: Iterable<string>, path: string, method: string | undefined): AdminRouteDecision {
   const granted = toSet(permissions)
   const rule = adminRouteRule(path)

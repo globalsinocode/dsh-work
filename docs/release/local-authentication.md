@@ -2,7 +2,7 @@
 
 正式部署只提供 dsh-work 自己的账号密码认证（员工端在钉钉客户端内另可免登，见下文），没有管理端登录模式选择。员工端与管理端共用独立账号，分别签发 Session Cookie，访问资格来自既有本地角色、数据范围和用户状态。
 
-账号仅由平台管理员创建，不开放自助注册。两端只展示账号密码登录。AI Hub 登录已于迁移 0129 删除（[删除方案](../design/ai-hub-login-removal-plan.md)）。Agent 执行继续使用既有 Run/Attempt、Runtime Adapter 与 DSH。
+账号仅由平台管理员创建，不开放自助注册。两端只展示账号密码登录。AI Hub 登录已于迁移 0129 删除。Agent 执行继续使用既有 Run/Attempt、Runtime Adapter 与 DSH。
 
 ## 初始化与部署
 

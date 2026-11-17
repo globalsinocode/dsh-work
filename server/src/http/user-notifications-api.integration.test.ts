@@ -37,7 +37,7 @@ import { registerWorkspaceActivityRoutes } from './workbench/workspace-activity-
 import { registerWorkspaceMemberRoutes } from './workbench/workspace-member-routes.ts'
 import { registerWorkspaceAgentMemberRoutes } from './workbench/workspace-agent-member-routes.ts'
 
-// NC-01、NC-02（e2e/catalog/notifications.md，站内通知方案 NC-S1）：与本人相关的四类事件各产生一条通知，
+// NC-01、NC-02（e2e/catalog/notifications.md，功能规则 3.7）：与本人相关的四类事件各产生一条通知，
 // 读取时按当前权限解析名称；未读、已读、静音与打开群组时 @ 通知一并已读。
 
 const tenantId = 'tenant-dsh-work'

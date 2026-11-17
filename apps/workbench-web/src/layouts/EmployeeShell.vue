@@ -299,7 +299,7 @@ useWorkbenchBootstrap()
         aria-label="打开导航"
         @click="mobileOpen = true"
       />
-      <!-- 窄屏通知铃铛随侧栏收进菜单，菜单按钮以圆点提示有未读通知（方案 NC2）。 -->
+      <!-- 窄屏通知铃铛随侧栏收进菜单，菜单按钮以圆点提示有未读通知（功能规则 3.7）。 -->
       <span v-if="notificationStore.unread > 0" class="employee-mobile-menu__dot" aria-hidden="true" data-testid="mobile-menu-notification-dot"></span>
       <main class="employee-main"><router-view :key="authStore.user.id" /></main>
     </div>
@@ -458,7 +458,7 @@ useWorkbenchBootstrap()
 .recent-conversation:focus-within .recent-conversation__menu { opacity: 1; pointer-events: auto; }
 
 .employee-sidebar__footer { padding: 9px 9px 11px; border-top: 1px solid #e3e3e0; }
-/* 站内通知（方案 NC2）：铃铛在头像上方，与协作模式位置一致。 */
+/* 站内通知（功能规则 3.7）：铃铛在头像上方，与协作模式位置一致。 */
 .employee-sidebar__notifications { margin: 0 0 4px 6px; }
 .profile-button { display: flex; align-items: center; width: 100%; min-height: 48px; gap: 10px; padding: 6px 8px; border: 0; border-radius: 9px; color: #272825; background: transparent; cursor: pointer; text-align: left; }
 .profile-button:hover { background: #e7e7e4; }

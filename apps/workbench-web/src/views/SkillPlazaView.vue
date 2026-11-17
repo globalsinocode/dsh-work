@@ -21,7 +21,7 @@ const categories = computed(() => [
 ])
 
 /**
- * “创建 Skill”入口（Skill 创建专家方案 4.8）：员工可用的 AI 同事中第一个开启“可创建 Skill”的；
+ * “创建 Skill”入口（功能规则 5.6）：员工可用的 AI 同事中第一个开启“可创建 Skill”的；
  * 没有时不显示。AI 同事列表读取失败只是不显示入口，不影响 Skill 列表。
  */
 const skillCreator = computed(() => contentStore.agents.find(agent => agent.canCreateSkills))

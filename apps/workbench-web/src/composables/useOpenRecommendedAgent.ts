@@ -20,7 +20,7 @@ export function useOpenAgentChat() {
   }
 }
 
-/** 推荐卡片“去聊天”（推荐方案 4.3）：进入与被推荐同事的新对话，预填推荐的问题。 */
+/** 推荐卡片“去聊天”（功能规则 2.4）：进入与被推荐同事的新对话，预填推荐的问题。 */
 export function useOpenRecommendedAgent() {
   const openAgentChat = useOpenAgentChat()
   return (recommendation: AgentRecommendation, prompt: string) => openAgentChat(recommendation.agentId, prompt)

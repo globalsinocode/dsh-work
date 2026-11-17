@@ -161,7 +161,7 @@ function primaryRole(roleCodes: string[], permissions: string[]): UserRole {
     return 'auditor'
   }
   if (granted.has('admin:write') || granted.has('admin:read')) return 'business_admin'
-  // 只持有模块权限码（管理端模块权限方案 5.1）的管理员同样归入业务管理员，标题显示“模块管理员”。
+  // 只持有模块权限码（功能规则第 13 节）的管理员同样归入业务管理员，标题显示“模块管理员”。
   if (hasModuleAdministrationAccess(granted)) return 'business_admin'
   if (granted.has('audit:read')) return 'auditor'
   if (roles.has('department_manager') || granted.has('workbench:manage')) {

@@ -3,7 +3,7 @@
 **状态：** 决策已确认。DLP-S1（网关最小链路）已达到代码级（2026-11-07，与模型路由方案 MR-S2 同批）；DLP-S2 的识别引擎与网关遮盖、还原、审计已达到代码级；输入预检与员工端“未发送给模型”标记已达到代码级（个人对话保留被拦截的消息；团队会话其他成员可见，被拦截的正文不落库，只提示；新对话的第一条被拦截时不留空对话），主动任务也在保存和触发时预检；DLP-S3 管理端（“数据防护”页：命中记录、识别规则、保密词表、白名单、检测试用，词表与白名单需要 `data-protection:terms` 权限）已达到代码级。本文其余能力在实施并通过第 9 节验收前均不可用。<br>
 **更新日期：** 2026-11-06（DLP-S0 探针结论写入 4.1；新增 D12：联网搜索经网关并遮盖）；2026-11-06（简化 D11：不做策略版本、第一期不做自定义规则、去掉 Run 内已识别值集合、输入预检只查消息正文、租户密钥不分版本；DeepSeek 统一经 pi-ai 接入）；2026-11-06（按 PR 评审修订：新增 D10，密钥只拦截本轮新输入、其余位置遮盖；思考内容原样透传；补充前置条件、拒绝传递、JSON 转义与短码碰撞）<br>
 **依据：** 当前 Model 模块、Runtime Adapter 与 [模型路由方案](model-routing-plan.md)；参考开源项目 [yetone/magpie](https://github.com/yetone/magpie)（MIT）的网关脱敏设计（`internal/redact`、`internal/gateway/masked.go`），只借鉴设计，不复制代码。<br>
-**关联：** [模型路由方案](model-routing-plan.md) 第 7 节（本方案将其提前立项）、[执行隔离方案](execution-isolation-plan.md) 第 10 节、[WeKnora 接入方案](weknora-knowledge-plan.md)。
+**关联：** [模型路由方案](model-routing-plan.md) 第 7 节（本方案将其提前立项）、[执行隔离方案](execution-isolation-plan.md) 第 10 节、[功能规则第 11 节](../development/feature-rules.md#11-企业知识库weknorawk-s1-起)。
 
 ## 1. 背景与目标
 
@@ -21,7 +21,7 @@
 | 编号 | 决策 |
 | --- | --- |
 | D1 | 模型网关从模型路由方案第 7 节**提前立项**，作为数据防护的前提。网关只做认证、转发、计量与数据防护，不承担任何 Agent 执行逻辑 |
-| D2 | WeKnora 改用**内网部署的嵌入模型**，知识库文档不出内网，不经网关脱敏（另立事项，见 6.3）。2026-11-11 起范围扩大到 WeKnora 中登记的**全部模型**：平台建库不设摘要模型，但有人在 WeKnora 中为知识库设置摘要模型后，入库时文档会发给该对话模型（[知识库优化方案](weknora-knowledge-optimization-plan.md) O7） |
+| D2 | WeKnora 改用**内网部署的嵌入模型**，知识库文档不出内网，不经网关脱敏（另立事项，见 6.3）。2026-11-11 起范围扩大到 WeKnora 中登记的**全部模型**：平台建库不设摘要模型，但有人在 WeKnora 中为知识库设置摘要模型后，入库时文档会发给该对话模型（知识库优化 O7） |
 | D3 | 保密词表第一期由**管理员手工维护**（CSV 导入、检测试用、单独授权查看与编辑），不做自动同步 |
 | D4 | Provider 信任级别只分两级：**内部部署 / 外部厂商**，不区分境内与境外 |
 | D5 | 外部厂商：**密钥拦截**（拦截范围见 D10），个人信息与保密词表**遮盖**；内部部署：不处理 |
@@ -51,7 +51,7 @@ D10 的理由：平台每一轮都会把会话历史随 Manifest 重新发给模
 | --- | --- | --- |
 | DSH → `deepseek-official`（`dsh-llm-deepseek` 适配器） | DSH 直连厂商，凭据在 `DSH_HOME` | 改为 `openai-completions` 经 pi-ai 指向网关（D9） |
 | DSH → pi-ai 路由（模型路由方案 4.3） | 方案未实施 | `baseURL` 指向网关，`apiKeyEnv` 为 Attempt 短期令牌 |
-| WeKnora → 嵌入模型 | 本地开发使用在线嵌入服务：入库时文档全文、检索时员工提问都会发往在线服务 | 改内网嵌入模型（D2）。重排序模型按 [WeKnora 方案](weknora-knowledge-plan.md) 4.1 的生产要求同样使用内网服务；WeKnora 中登记的摘要等对话模型同样须在内网，管理端标出被设置了摘要模型的知识库（[知识库优化方案](weknora-knowledge-optimization-plan.md) O7）；dsh-work 不调用 WeKnora 的问答、对话等由 WeKnora 调用大模型的接口（WeKnora 方案 WK5） |
+| WeKnora → 嵌入模型 | 本地开发使用在线嵌入服务：入库时文档全文、检索时员工提问都会发往在线服务 | 改内网嵌入模型（D2）。重排序模型按生产要求同样使用内网服务；WeKnora 中登记的摘要等对话模型同样须在内网，管理端标出被设置了摘要模型的知识库（知识库优化 O7）；dsh-work 不调用 WeKnora 的问答、对话等由 WeKnora 调用大模型的接口 |
 | DSH 内置 `web_search`（`dsh-web-search-deepseek`） | Agent 勾选“联网搜索”后，DSH 以**一次模型调用**完成搜索：向 DeepSeek 的 Anthropic 兼容接口 `/anthropic/v1/messages` 发送 `Perform a web search for the query: <搜索词>`，模型 `deepseek-v4-flash`，凭据取 `DSH_HOME` 中的 `DEEPSEEK_API_KEY`，**不经网关**；插件的 `baseURL` 与 `apiKeyEnv` 可配置 | 经网关并遮盖（D12），随 DLP-S1 实施 |
 | dsh-work 服务端与前端 | DLP-S0 盘点：没有直接调用模型 API 的代码 | 无需处理 |
 
@@ -212,7 +212,7 @@ DSH Worker ──请求──> 模型网关
 
 ### 6.3 WeKnora
 
-切换为内网嵌入模型并重建索引，与本方案无代码依赖，可单独推进，在 [WeKnora 接入方案](weknora-knowledge-plan.md) 中另行记录。部署验收覆盖 WeKnora 中登记的全部模型（嵌入、重排序与摘要等对话模型），见[知识库优化方案](weknora-knowledge-optimization-plan.md) O7 与部署手册第 15 节。
+切换为内网嵌入模型并重建索引，与本方案无代码依赖，可单独推进，在部署手册第 15 节记录。部署验收覆盖 WeKnora 中登记的全部模型（嵌入、重排序与摘要等对话模型），见部署手册第 15 节。
 
 ## 7. 分期
 

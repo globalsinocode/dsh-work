@@ -91,7 +91,7 @@ export interface AdminSession {
   identityProvider: 'prototype-sso' | 'local-password'
   apiAudience: 'admin'
   permissions: string[]
-  /** 各模块的可用级别（管理端模块权限方案 5.6）；旧服务端没有时由前端按权限码推算。 */
+  /** 各模块的可用级别（功能规则第 13 节）；旧服务端没有时由前端按权限码推算。 */
   adminModules?: Partial<Record<'agent' | 'skill' | 'connector' | 'model' | 'dlp' | 'knowledge' | 'org' | 'identity' | 'dingtalk' | 'ops', 'none' | 'read' | 'write'>>
   platformAdmin?: boolean
 }
@@ -660,7 +660,7 @@ export interface SkillDefinition {
   updatedAt: string
 }
 
-/** 员工 Skill 提交的严格试运行状态（Skill 创建专家方案 4.4）。 */
+/** 员工 Skill 提交的严格试运行状态（功能规则 5.6）。 */
 export type SkillSubmissionTrialStatus = 'not_started' | 'running' | 'unconfirmed' | 'passed' | 'failed'
 
 export interface SkillSubmissionReviewItem {

@@ -16,7 +16,7 @@ import type { DingTalkSettingsInput, DingTalkSettingsManager, DingTalkSettingsPr
 const tenantId = 'tenant-dsh-work'
 /** 代绑确认凭证有效期（4.2 方式二：单次有效、短时过期）。 */
 const confirmationTtlSeconds = 5 * 60
-/** 离职检查：判为离职的比例超过该值时整批暂停（与组织架构方案附录 A 一致）。 */
+/** 离职检查：判为离职的比例超过该值时整批暂停。 */
 const departurePauseRatio = 0.1
 /** 离职检查异常：连续 3 次检查失败比例超过 5%。 */
 const departureWarningRatio = 0.05
@@ -539,7 +539,7 @@ export class DingTalkAdministrationService {
       `
       if (!run) throw new IdentityAccessError(409, 'departure_check_not_paused', '该次检查不在待确认状态')
       if (decision === 'confirmed') {
-        // 确认会让这批绑定失效（方案 AP13 ④）：批次里有自己、平台管理员或权限比自己高的员工时需要平台管理员确认。
+        // 确认会让这批绑定失效（功能规则第 13 节）：批次里有自己、平台管理员或权限比自己高的员工时需要平台管理员确认。
         const owners = await transaction<{ userId: string }[]>`
           select distinct user_id as "userId" from external_account_bindings
            where tenant_id = ${tenantId} and id = any(${run.pending}::text[])
@@ -745,7 +745,7 @@ async function requireLocalUser(transaction: DatabaseTransaction, userId: string
   return user
 }
 
-/** 钉钉应用配置的保存与清除仍只限平台管理员（管理端模块权限方案 AP12）：换成他人控制的应用可以冒充已绑定员工登录。 */
+/** 钉钉应用配置的保存与清除仍只限平台管理员（功能规则第 13 节）：换成他人控制的应用可以冒充已绑定员工登录。 */
 async function assertPlatformAdmin(transaction: DatabaseTransaction, userId: string) {
   try {
     await requirePlatformAdminOnly(transaction, userId)
@@ -756,7 +756,7 @@ async function assertPlatformAdmin(transaction: DatabaseTransaction, userId: str
 }
 
 /**
- * 钉钉集成模块（方案 AP12）：查看为查看级，其余为修改级；操作某员工的绑定时还要满足
+ * 钉钉集成模块（功能规则第 13 节）：查看为查看级，其余为修改级；操作某员工的绑定时还要满足
  * 员工与权限的对象约束（AP13 ③④：不能操作自己、平台管理员或权限比自己高的账号）。
  */
 async function assertDingTalkAdmin(transaction: DatabaseTransaction, actorId: string, level: 'read' | 'write', targetUserId?: string) {

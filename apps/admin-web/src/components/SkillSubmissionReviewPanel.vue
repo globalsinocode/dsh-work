@@ -9,7 +9,7 @@ import { useAuthStore } from '@/stores/auth'
 import type { IdentityRoleSummary, SkillSubmissionReviewDetail, SkillSubmissionReviewItem, SkillTestRunProgress } from '@/types/domain'
 
 /**
- * 管理员审核员工 Skill 提交（Skill 创建专家方案 4.4）：看提交内容与严格试运行结果，
+ * 管理员审核员工 Skill 提交（功能规则 5.6）：看提交内容与严格试运行结果，
  * 通过时选择可见范围并发布，或填写原因拒绝。试运行由管理员在详情中发起，记在本人名下。
  */
 const emit = defineEmits<{ count: [value: number]; published: [] }>()

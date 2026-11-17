@@ -22,7 +22,7 @@ import { installationKey } from './skill-identity.ts'
 
 const tenantId = 'tenant-dsh-work'
 const MAX_LISTED_SKILLS = 50
-/** 每位员工同时待审核的提交上限（skill-creator-plan 7 待定项，原型确认为 5）。 */
+/** 每位员工同时待审核的提交上限（功能规则 5.6，原型确认为 5）。 */
 export const MAX_PENDING_SUBMISSIONS = 5
 /** 草稿目录不能放在这些工作区目录下：output/ 是成果、input/ 是员工文件、skills/ 是已激活 Skill 的只读副本。 */
 const RESERVED_WORKSPACE_ROOTS = new Set(['output', 'input', 'skills'])
@@ -38,7 +38,7 @@ interface SubmissionRow {
 }
 
 /**
- * Skill 创建专家（docs/design/skill-creator-plan.md 4.2～4.3）。
+ * Skill 创建专家（功能规则 5.6）。
  *
  * - `list_available_skills`：发起员工当前可选用的已发布 Skill（同 Skill 广场口径）与平台内置 Skill，供先查重。
  * - `skill_draft_save`：读取本 Attempt 工作区中的一个 Skill 目录，按与 ZIP 安装相同的包规则与兼容性检查

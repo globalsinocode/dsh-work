@@ -844,7 +844,7 @@ export const mockAgents: AgentDefinition[] = [
     allowWorkspaceJoin: true,
   },
   {
-    // Skill 创建专家（方案 5.1）：开启“可创建 Skill”，供 Skill 广场“创建 Skill”入口的冒烟（SKC-04）。
+    // Skill 创建专家（功能规则 5.6）：开启“可创建 Skill”，供 Skill 广场“创建 Skill”入口的冒烟（SKC-04）。
     // 默认停用，以免改变其他用例“只有一位 AI 同事”的前提；SKC-04 经管理端接口启用。
     id: 'skill-creator',
     name: 'Skill 创建专家',

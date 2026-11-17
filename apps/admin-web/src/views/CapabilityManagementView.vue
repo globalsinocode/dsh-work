@@ -28,7 +28,7 @@ const activeTab = computed<CapabilityTab>(() => {
 const managedSkills = computed(() => contentStore.skills.filter(skill => skill.installationRole !== 'dependency'))
 const tabs = computed<Array<{ id: CapabilityTab; label: string; count?: number }>>(() => [
   { id: 'skills', label: 'Skill 列表', count: managedSkills.value.length },
-  // 员工经 Skill 创建专家提交的 Skill（skill-creator-plan 4.4）。
+  // 员工经 Skill 创建专家提交的 Skill（功能规则 5.6）。
   { id: 'review', label: '待审核', ...(pendingSubmissionCount.value === undefined ? {} : { count: pendingSubmissionCount.value }) },
   ...(authStore.canWrite('skill') ? [{ id: 'install' as const, label: '新增 Skill' }] : []),
 ])
@@ -155,7 +155,7 @@ async function saveSkillCoverage() {
   }
 }
 
-// Skill 可见范围（skill-creator-plan 4.5）：只限制员工在 Skill 广场选用，Agent 固定引用不受限。
+// Skill 可见范围（功能规则 5.3）：只限制员工在 Skill 广场选用，Agent 固定引用不受限。
 const roleOptions = ref<IdentityRoleSummary[]>([])
 const visibilityDraft = reactive({ scope: 'all' as 'all' | 'roles', roleIds: [] as string[], reason: '' })
 const visibilityChanged = computed(() => {

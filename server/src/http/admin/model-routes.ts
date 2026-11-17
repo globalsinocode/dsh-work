@@ -7,7 +7,7 @@ const basePath = '/api/admin/v1'
 type WithoutActor<T extends (input: never) => unknown> = Omit<Parameters<T>[0], 'actor'>
 
 /**
- * 服务层复核（管理端模块权限方案 5.1）：模型模块的写操作在数据库中按本地授予的
+ * 服务层复核（功能规则第 13 节）：模型模块的写操作在数据库中按本地授予的
  * `admin:model:write` 再判定一次。冒烟服务没有数据库，不传入。
  */
 type ModelAdminCheck = Pick<PostgresAuthorizationService, 'requireAdminModule'>

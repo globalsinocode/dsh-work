@@ -79,7 +79,7 @@ test('every registered API route is documented in OpenAPI and every documented o
   assert.deepEqual([...documented('mobile-h5')].filter(route => !code.workbench.has(route)), [], 'operations in openapi-mobile-h5.json without a route')
 })
 
-test('every registered admin-audience route has a permission owner (管理端模块权限方案：未登记路径默认拒绝)', async () => {
+test('every registered admin-audience route has a permission owner (功能规则第 13 节：未登记路径默认拒绝)', async () => {
   const unowned = (await applicationRoutes())
     .filter(({ path }) => path.startsWith('/api/admin/v1/'))
     .filter(({ method, path }) => !decideAdminRouteAccess(['admin:*'], path.replace(/:[A-Za-z_]\w*/g, 'x'), method).allowed)

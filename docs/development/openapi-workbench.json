@@ -371,7 +371,7 @@
       "get": {
         "operationId": "listMyNotifications",
         "summary": "本人的站内通知",
-        "description": "站内通知方案 NC-S1：与本人相关的事件（@ 我、任务指派给我、我创建的任务完成、被加入项目、定时执行暂停或停止、定时任务没成功、Skill 审核结论），按时间倒序，只含最近 90 天。每条读取时按本人当前权限重新判断：不可见时 visible=false，且不返回名称与跳转目标。",
+        "description": "功能规则 3.7：与本人相关的事件（@ 我、任务指派给我、我创建的任务完成、被加入项目、定时执行暂停或停止、定时任务没成功、Skill 审核结论），按时间倒序，只含最近 90 天。每条读取时按本人当前权限重新判断：不可见时 visible=false，且不返回名称与跳转目标。",
         "parameters": [
           { "name": "status", "in": "query", "required": false, "schema": { "type": "string", "enum": ["all", "unread"], "default": "all" } },
           { "name": "cursor", "in": "query", "required": false, "schema": { "type": "string" } },
@@ -594,7 +594,7 @@
       "get": {
         "operationId": "listAvailableAgents",
         "summary": "按当前员工角色查询可用的已发布 Agent",
-        "description": "每项含 id、name、description、welcomeMessage、version、examplePrompts 与 canCreateSkills；canCreateSkills 为当前启用版本是否开启“可创建 Skill”，供 Skill 广场的“创建 Skill”入口找到 Skill 创建专家（Skill 创建专家方案 4.8）。",
+        "description": "每项含 id、name、description、welcomeMessage、version、examplePrompts 与 canCreateSkills；canCreateSkills 为当前启用版本是否开启“可创建 Skill”，供 Skill 广场的“创建 Skill”入口找到 Skill 创建专家（功能规则 5.6）。",
         "responses": {
           "200": {
             "$ref": "#/components/responses/Ok"
@@ -620,7 +620,7 @@
       "parameters": [{ "name": "submissionId", "in": "path", "required": true, "schema": { "type": "string" } }],
       "post": {
         "operationId": "submitSkillDraft",
-        "summary": "员工在草稿卡片上把本人的 Skill 草稿提交平台管理员审核（Skill 创建专家方案 4.3）",
+        "summary": "员工在草稿卡片上把本人的 Skill 草稿提交平台管理员审核（功能规则 5.6）",
         "description": "只能提交本人的、当前版本的、非不兼容的草稿；已待审核时重复提交不改变状态。同一员工同时待审核不超过 5 条，超出返回 409。模型没有对应工具，提交只能由员工发起。",
         "requestBody": {
           "required": true,
@@ -3667,7 +3667,7 @@
         "operationId": "listKnowledgeBases",
         "parameters": [{ "name": "stats", "in": "query", "description": "false 时不读取 WeKnora 统计（documentCount、processingCount 为 0）。", "schema": { "enum": ["true", "false"] } }],
         "summary": "可见知识库",
-        "description": "授给本人所属部门、或上级部门勾选“包含下级”授给的知识库（weknora-knowledge-plan 5.3）。",
+        "description": "授给本人所属部门、或上级部门勾选“包含下级”授给的知识库（功能规则第 11 节）。",
         "responses": {
           "200": {
             "description": "成功",

@@ -42,7 +42,7 @@ interface ReviewRow {
 }
 
 /**
- * 管理员审核员工 Skill 提交（docs/design/skill-creator-plan.md 4.4，SC3/SC4）。
+ * 管理员审核员工 Skill 提交（功能规则 5.6，SC3/SC4）。
  *
  * - 管理员在详情点“开始试运行”：平台以该管理员身份把提交的当前版本存为 Skill 的待发布版本（新 Skill
  *   或已通过 Skill 的新版本，安装来源 submission），再走现有严格试运行；运行与证据记在该管理员名下。

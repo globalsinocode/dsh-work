@@ -5,7 +5,7 @@ import { Right, User } from '@element-plus/icons-vue'
 import type { AgentRecommendation } from '@/types/domain'
 
 /**
- * 推荐 AI 同事卡片（推荐方案 4.2）：名称与说明取同事当前启用版本，推荐理由按纯文本显示。
+ * 推荐 AI 同事卡片（功能规则 2.4）：名称与说明取同事当前启用版本，推荐理由按纯文本显示。
  * “去聊天”只发事件，跳转由调用方按当前模式决定；同事已不可用时就地提示，不跳转。
  */
 defineProps<{ recommendations: AgentRecommendation[] }>()

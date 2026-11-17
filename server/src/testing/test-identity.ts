@@ -8,7 +8,7 @@ import type { ApiAuthenticator } from '../modules/identity/types.ts'
  */
 
 /**
- * P0 冒烟的管理端模块权限测试身份（管理端模块权限方案 AMP-S2）：浏览器带 `dsh_test_admin_identity`
+ * P0 冒烟的管理端模块权限测试身份（功能规则第 13 节）：浏览器带 `dsh_test_admin_identity`
  * Cookie 时切换为模块管理员或只读管理员，用于验证菜单、落地页与只读提示。只存在于测试代码。
  */
 const TEST_ADMIN_VARIANTS: Record<string, { name: string; avatarText: string; title: string; role: 'business_admin' | 'auditor'; permissions: string[] }> = {

@@ -80,7 +80,7 @@ export interface CreateAttemptInput {
   manifest: JsonObject
   manifestSha256: string
   modelRouteSnapshot: JsonObject
-  /** 企业知识引用快照（weknora-knowledge-plan 第 6 节第 3 条）。 */
+  /** 企业知识引用快照（功能规则第 11 节）。 */
   knowledgeCitations?: KnowledgeCitation[]
   memorySources?: Array<{
     memoryVersionId: string

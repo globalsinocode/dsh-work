@@ -40,7 +40,7 @@ const updates = new Map([
   ['DSH_WORK_WORKBENCH_DEFAULT_ORIGIN', workbenchDefault],
   ['DSH_WORK_ADMIN_DEFAULT_ORIGIN', adminDefault],
 ])
-// AI Hub 登录已删除：以前写入的 AI Hub 入口与回调变量顺带删除（删除 AI Hub 登录方案 3.4）。
+// AI Hub 登录已删除：以前写入的 AI Hub 入口与回调变量顺带删除（迁移 0129）。
 const removed = new Set(['AI_HUB_WORKBENCH_PORTAL_URL', 'AI_HUB_ADMIN_PORTAL_URL', 'AI_HUB_WORKBENCH_REDIRECT_URI', 'AI_HUB_ADMIN_REDIRECT_URI'])
 const seen = new Set()
 const result = source.split('\n').filter((line) => !removed.has(/^([A-Z][A-Z0-9_]*)=/.exec(line)?.[1] ?? '')).map((line) => {

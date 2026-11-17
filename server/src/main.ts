@@ -217,9 +217,9 @@ async function start() {
   let executionContainerCapability: CapabilityState = { status: 'unavailable', code: 'EXECUTION_CONTAINER_UNAVAILABLE' }
   const projectRoot = fileURLToPath(new URL('../..', import.meta.url))
   const dataRoot = resolve(projectRoot, process.env.DSH_WORK_DATA_ROOT ?? '.runtime')
-  // 平台内置 Skill 随代码发布；内容与版本锁不一致属于发布缺陷，服务不启动（builtin-skills-plan 5.1）。
+  // 平台内置 Skill 随代码发布；内容与版本锁不一致属于发布缺陷，服务不启动（功能规则 5.5）。
   const builtinSkills = loadBuiltinSkillCatalog(resolve(projectRoot, 'server/config/builtin-skills'))
-  // Agent 预置定义同样随代码发布，缺失或格式错误属于发布缺陷，服务不启动（Skill 创建专家方案 5.1）。
+  // Agent 预置定义同样随代码发布，缺失或格式错误属于发布缺陷，服务不启动（功能规则 5.6）。
   const skillCreatorPreset = loadSkillCreatorPreset(resolve(projectRoot, 'server/config/agent-presets'))
   const skillArtifacts = new SkillArtifactStore(new LocalObjectStorage(resolve(dataRoot, 'skills'), { fileMode: 0o400 }))
   await migrateSkillFilesToFileSystem(database, skillArtifacts)
@@ -498,7 +498,7 @@ async function start() {
   }
   skills.setPublicationAvailabilityChecker(checkInstallationRuntime)
   const agents = new PostgresAgentService(database, operations, skills, mcpService)
-  // 企业知识库（weknora-knowledge-plan）：连接由管理端配置（WK-S3），API Key 加密保存；部署配置 WEKNORA_*
+  // 企业知识库（功能规则第 11 节）：连接由管理端配置（WK-S3），API Key 加密保存；部署配置 WEKNORA_*
   // 只在管理员保存 API Key 之前提供初始连接。执行前检索、员工端与管理端共用同一连接，保存后立即生效。
   const knowledgeConnection = new PostgresKnowledgeConnection(database, {
     credentials: credentialSecrets,
@@ -574,7 +574,7 @@ async function start() {
   // 依赖登记（2026-11-04）：按当前执行镜像复查已发布 Skill 的 Python 依赖；缺包的在管理端标出并在运行前被拒绝。
   skills.setPythonEnvironment(containerPythonRunner && attemptContainers ? { image: attemptContainers.image, packages: pythonPackages, modules: pythonModules } : null)
   await skills.recheckPublishedPythonDependencies().catch(error => console.error('skill python dependency recheck failed', error))
-  // Skill 创建专家：草稿用与安装相同的包规则与 Python 环境核对（skill-creator-plan 4.2）。
+  // Skill 创建专家：草稿用与安装相同的包规则与 Python 环境核对（功能规则 5.6）。
   skillSubmissionsRef.current = new SkillSubmissionService({
     database, skills, authorization, artifactStore: skillArtifacts, builtinSkills,
     pythonSandboxAvailable: Boolean(containerPythonRunner), pythonPackages, pythonModules,
@@ -700,7 +700,7 @@ async function start() {
   // 已在运行的案例 Run 由重启恢复收敛，读取验证时折叠为同一状态。
   const validationRecovery = await agentValidation.recoverInterruptedValidations()
   if (validationRecovery.interrupted > 0) console.warn('agent validation recovery completed', validationRecovery)
-  // Skill 创建专家方案 5.1（SKC-05）：环境中还没有专家时预置未发布草稿；写库失败只记录，不阻止启动。
+  // 功能规则 5.6（SKC-05）：环境中还没有专家时预置未发布草稿；写库失败只记录，不阻止启动。
   try {
     const seeded = await seedSkillCreatorDraft(database, agents, agentValidation, skillCreatorPreset)
     if (seeded.status !== 'skipped') console.info('skill creator preset', seeded)

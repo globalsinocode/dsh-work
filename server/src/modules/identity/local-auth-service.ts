@@ -386,7 +386,7 @@ export class LocalAuthService {
       await assertIdentityWriter(transaction, actorId)
       const userId = await insertAccount(transaction, input, username, passwordHash, true)
       if (input.departmentId) await assignNewAccountDepartment(transaction, { userId, departmentId: input.departmentId, actorId })
-      // 新账号经部门授权得到的角色同样不能超过建号人（方案 AP13 ①）。
+      // 新账号经部门授权得到的角色同样不能超过建号人（功能规则第 13 节）。
       await mapDenial(assertCanGrant(transaction, actorId, await loadGrantCeiling(transaction, userId), '新账号经所选部门获得的权限'))
       await revokeUserSessions(transaction, userId)
       await localAudit(transaction, actorId, 'identity.local.create', 'success', { userId })
@@ -479,7 +479,7 @@ async function loginAccountExists(transaction: DatabaseTransaction, username: st
   return Boolean(existing)
 }
 
-/** 修改员工与权限（管理端模块权限方案 AP11）：只认本地授予的模块权限。 */
+/** 修改员工与权限（功能规则第 13 节）：只认本地授予的模块权限。 */
 async function assertIdentityWriter(transaction: DatabaseTransaction, userId: string) {
   try {
     await requireAdminModuleActor(transaction, userId, 'identity', 'write')
@@ -489,7 +489,7 @@ async function assertIdentityWriter(transaction: DatabaseTransaction, userId: st
   }
 }
 
-/** 防提权拒绝（方案 AP13）以身份模块的错误类型返回，保留原因文案。 */
+/** 防提权拒绝（功能规则第 13 节）以身份模块的错误类型返回，保留原因文案。 */
 async function mapDenial(check: Promise<unknown>) {
   try {
     await check

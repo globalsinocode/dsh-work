@@ -1,6 +1,6 @@
 # 管理端模块权限
 
-设计见[管理端模块权限方案](../../docs/design/admin-module-permission-plan.md)（AMP-S1 服务端、AMP-S2 员工与权限 / 钉钉模块与管理端前端）。证据层级与写法见[验收目录索引](../TEST-CATALOG.md)。
+规则见[功能规则第 13 节](../../docs/development/feature-rules.md#13-管理端模块权限amp-s1amp-s2)（AMP-S1 服务端、AMP-S2 员工与权限 / 钉钉模块与管理端前端）。证据层级与写法见[验收目录索引](../TEST-CATALOG.md)。
 
 ### AMP-P0-01 模块管理员只看到有权限的菜单并直接进入自己的模块
 

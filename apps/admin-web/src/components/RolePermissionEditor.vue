@@ -15,7 +15,7 @@ import {
 } from '@/utils/admin-modules'
 
 /**
- * 角色的功能权限按模块编辑（管理端模块权限方案 AP11～AP15）。旧的 `admin:read` / `admin:write`
+ * 角色的功能权限按模块编辑（功能规则第 13 节）。旧的 `admin:read` / `admin:write`
  * 显示为各模块全部查看 / 修改，修改任一模块后改存为逐个模块的权限码。超出操作人自身的选项不可勾选。
  */
 const props = defineProps<{
@@ -102,7 +102,7 @@ function applyTemplate(permissions: string[]) {
 }
 
 const legacyAll = computed(() => props.modelValue.some(code => LEGACY_ALL.has(code)))
-/** 平台级权限 `admin:*`（方案 AP13 ①）：只有平台管理员能授出，因此只对平台管理员显示；已含该权限的角色也显示。 */
+/** 平台级权限 `admin:*`（功能规则第 13 节）：只有平台管理员能授出，因此只对平台管理员显示；已含该权限的角色也显示。 */
 const showPlatformOption = computed(() => !props.platformRole && (props.actorPermissions.includes('admin:*') || granted.value.has('admin:*')))
 
 const sections = computed(() => ADMIN_MODULES.map((module) => {

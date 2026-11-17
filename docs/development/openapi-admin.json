@@ -3205,7 +3205,7 @@
       },
       "put": {
         "operationId": "saveDingTalkSettings",
-        "summary": "保存钉钉应用配置：先用这组凭据向钉钉换取 access_token，失败返回 422 dingtalk_credentials_rejected 或 503 dingtalk_unavailable 且不保存；AppSecret 留空沿用已保存的值，更换 CorpId 或 AppKey 时必须填写（422 dingtalk_secret_required）；服务未配置凭据主密钥时不能保存 AppSecret（409 credential_master_key_missing）。AppSecret 加密保存，立即生效，写审计（不含密钥）。只限平台管理员（管理端模块权限方案 AP12：换成他人控制的应用可以冒充已绑定员工登录）",
+        "summary": "保存钉钉应用配置：先用这组凭据向钉钉换取 access_token，失败返回 422 dingtalk_credentials_rejected 或 503 dingtalk_unavailable 且不保存；AppSecret 留空沿用已保存的值，更换 CorpId 或 AppKey 时必须填写（422 dingtalk_secret_required）；服务未配置凭据主密钥时不能保存 AppSecret（409 credential_master_key_missing）。AppSecret 加密保存，立即生效，写审计（不含密钥）。只限平台管理员（功能规则第 13 节：换成他人控制的应用可以冒充已绑定员工登录）",
         "requestBody": {
           "required": true,
           "content": {
@@ -3269,7 +3269,7 @@
       },
       "delete": {
         "operationId": "clearDingTalkSettings",
-        "summary": "清除钉钉应用配置：删除已加密的 AppSecret，免登、代绑与离职检查立即停用；已有绑定记录保留；部署配置不会自动重新生效。只限平台管理员（管理端模块权限方案 AP12：换成他人控制的应用可以冒充已绑定员工登录）",
+        "summary": "清除钉钉应用配置：删除已加密的 AppSecret，免登、代绑与离职检查立即停用；已有绑定记录保留；部署配置不会自动重新生效。只限平台管理员（功能规则第 13 节：换成他人控制的应用可以冒充已绑定员工登录）",
         "responses": {
           "200": {
             "$ref": "#/components/responses/Ok"
@@ -3833,7 +3833,7 @@
     "/skill-submissions": {
       "get": {
         "operationId": "listSkillSubmissions",
-        "summary": "待审核的员工 Skill 提交（Skill 创建专家方案 4.4）：提交人、来源、当前版本、脚本数量与最近一次严格试运行状态（not_started / running / unconfirmed / passed / failed），按提交时间先后",
+        "summary": "待审核的员工 Skill 提交（功能规则 5.6）：提交人、来源、当前版本、脚本数量与最近一次严格试运行状态（not_started / running / unconfirmed / passed / failed），按提交时间先后",
         "responses": {
           "200": {
             "$ref": "#/components/responses/Ok"

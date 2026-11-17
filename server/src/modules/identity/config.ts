@@ -5,7 +5,7 @@ import type {
 } from './types.ts'
 import { invalidRequest, stateConflict } from '../../domain/request-errors.ts'
 
-/** AI Hub 登录已删除（删除 AI Hub 登录方案 AH3）：这些旧变量不再读取，启动时只记警告。 */
+/** AI Hub 登录已删除（迁移 0129）：这些旧变量不再读取，启动时只记警告。 */
 const ignoredLegacyVariable = /^(?:AI_HUB_[A-Z0-9_]+|DSH_WORK_OIDC_[A-Z0-9_]+|DSH_WORK_DIRECTORY_SYNC_INTERVAL_SECONDS|DSH_WORK_ADMIN_BOOTSTRAP_ENABLED)$/
 
 /** 启动配置：账号密码登录始终可用；残留的 AI Hub 变量与旧认证模式只记入 ignoredLegacySettings。 */

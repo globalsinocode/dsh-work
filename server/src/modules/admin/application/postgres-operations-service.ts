@@ -672,7 +672,7 @@ export class PostgresOperationsService {
     `.then(() => undefined)
   }
 
-  /** Runtime 配置与检查属于“工具与连接”模块（管理端模块权限方案 5.1）。 */
+  /** Runtime 配置与检查属于“工具与连接”模块（功能规则第 13 节）。 */
   private async requireConnectorAdmin(userId: string) {
     if (this.authorization) return this.authorization.requireAdminModule(userId, 'connector', 'write')
     return requireAdminModuleActor(this.database, userId, 'connector', 'write')

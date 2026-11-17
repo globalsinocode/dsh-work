@@ -64,7 +64,7 @@ const continueSessionId = computed(() => conversation.value?.continueSessionId ?
 const canSend = computed(() => agent.value?.available === true)
 
 /**
- * 企业知识库（weknora-knowledge-plan 5.7）：单聊是个人空间的对话。续写最近一段会话时，添加、移除直接
+ * 企业知识库（功能规则第 11 节）：单聊是个人空间的对话。续写最近一段会话时，添加、移除直接
  * 保存到该会话；开启新会话时先在本地记下，随首条提问写入会话。
  */
 const knowledge = useKnowledgeStore()

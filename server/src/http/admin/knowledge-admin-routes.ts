@@ -10,7 +10,7 @@ type KnowledgeAdminStore = Pick<
 >
 
 /**
- * 管理端“企业知识库”（weknora-knowledge-plan 第 9 节，WK-S3）。读取需要管理读权限，写入由服务层再按平台管理员
+ * 管理端“企业知识库”（功能规则第 11 节，WK-S3）。读取需要管理读权限，写入由服务层再按平台管理员
  * 校验。API Key 只写不读：读取接口只返回末四位与到期时间。
  */
 export function registerKnowledgeAdminRoutes(
@@ -67,7 +67,7 @@ export function registerKnowledgeAdminRoutes(
   router.delete(`${basePath}/bases/:knowledgeBaseId`, async (_request, context) =>
     ok(await knowledge.deleteBase(actor(context), context.params['knowledgeBaseId'] ?? '')))
 
-  // 优化方案 O9：恢复“原连接已更换”的知识库，服务层先确认当前连接中存在该知识库。
+  // 功能规则第 11 节：恢复“原连接已更换”的知识库，服务层先确认当前连接中存在该知识库。
   router.post(`${basePath}/bases/:knowledgeBaseId/restore`, async (_request, context) =>
     ok(await knowledge.restoreBase(actor(context), context.params['knowledgeBaseId'] ?? '')))
 

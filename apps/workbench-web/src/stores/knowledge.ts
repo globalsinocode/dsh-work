@@ -5,7 +5,7 @@ import { workbenchApi } from '../api/client'
 import type { KnowledgeLevel } from '../types/knowledge'
 
 /**
- * 企业知识库的可用性与本人权限级别（weknora-knowledge-plan 第 8 节）。未配置 WeKnora 或不具备查看级别时
+ * 企业知识库的可用性与本人权限级别（功能规则第 11 节）。未配置 WeKnora 或不具备查看级别时
  * enabled 为 false：主导航不显示“知识库”，输入框不显示“添加知识库”。读取失败按
  * 不可用处理，不影响其他页面。
  */

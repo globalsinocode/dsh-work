@@ -16,7 +16,7 @@ import { registerKnowledgeAdminRoutes } from './admin/knowledge-admin-routes.ts'
 import { registerKnowledgeRoutes } from './workbench/knowledge-routes.ts'
 import { Router } from './router.ts'
 
-// KB-ADM-01、KB-ADM-02（e2e/catalog/knowledge.md，weknora-knowledge-plan WK-S3）：管理端连接配置与加密凭据、
+// KB-ADM-01、KB-ADM-02（e2e/catalog/knowledge.md，功能规则第 11 节，WK-S3）：管理端连接配置与加密凭据、
 // 全部知识库与跨部门授权。WeKnora 用按 v0.9.0 接口实现的测试 HTTP 服务。
 
 const tenantId = 'tenant-dsh-work'
@@ -264,7 +264,7 @@ test('KB-ADM-02 全部知识库：跨部门授权、归属部门、需重建与�
   }
 })
 
-test('KB-ADM-05 配置提示：摘要模型标记、重排序结果，管理员再次授予的授权归管理员（优化方案 O5、O7、O12）', async () => {
+test('KB-ADM-05 配置提示：摘要模型标记、重排序结果，管理员再次授予的授权归管理员（功能规则第 11 节）', async () => {
   let list = await ok('POST', `${adminBase}/bases`, { name: '摘要检查库', ownerDepartmentId: 'dept-finance' })
   const created = list.items.find((item: any) => item.name === '摘要检查库')
   const externalId = [...double.knowledgeBases.keys()].at(-1)!
@@ -300,7 +300,7 @@ test('KB-ADM-05 配置提示：摘要模型标记、重排序结果，管理员�
   await ok('DELETE', `${adminBase}/bases/${created.id}`)
 })
 
-test('KB-ADM-04 更换连接地址：原有知识库标为原连接已更换，确认新地址中存在后才能恢复（优化方案 O9）', async () => {
+test('KB-ADM-04 更换连接地址：原有知识库标为原连接已更换，确认新地址中存在后才能恢复（功能规则第 11 节）', async () => {
   let list = await ok('POST', `${adminBase}/bases`, { name: '迁移验证库', ownerDepartmentId: 'dept-finance' })
   const created = list.items.find((item: any) => item.name === '迁移验证库')
   const externalId = [...double.knowledgeBases.keys()].at(-1)!

@@ -76,12 +76,12 @@ const roleForm = reactive({
 const assignableRoles = computed(() => roles.value.filter(role => (
   role.status === 'active'
   && !selectedUser.value?.roles.some(assigned => assigned.id === role.id)
-  // 只列出不超过操作人自身的角色（方案 AP13 ①），服务端同样复核。
+  // 只列出不超过操作人自身的角色（功能规则第 13 节），服务端同样复核。
   && (authStore.platformAdmin || permissionsBeyond(role.permissions, authStore.permissions).length === 0)
 )))
 const permissionNames = computed(() => Object.fromEntries(permissionDefinitions.value.map(permission => [permission.code, permission.name])))
 /**
- * 防提权（管理端模块权限方案 AP13）的前端提示：服务端逐次复核，这里只决定按钮是否可用与说明文案。
+ * 防提权（功能规则第 13 节）的前端提示：服务端逐次复核，这里只决定按钮是否可用与说明文案。
  * 平台管理员角色只有平台管理员能改；含操作人没有的权限的角色只读。
  */
 function roleLockReason(role: IdentityRoleSummary) {

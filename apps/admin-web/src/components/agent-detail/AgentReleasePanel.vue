@@ -335,7 +335,7 @@ watch(() => props.active, (isActive) => {
   if (isActive) void loadAll()
   else stopPolling()
 })
-/** 企业知识库（weknora-knowledge-plan 2.1）：一期验证运行不检索企业知识，启用时提示，只提示不阻断。 */
+/** 企业知识库（功能规则第 11 节）：一期验证运行不检索企业知识，启用时提示，只提示不阻断。 */
 const knowledgeEnabled = ref(false)
 onMounted(() => {
   void adminApi.getKnowledgeOverview()

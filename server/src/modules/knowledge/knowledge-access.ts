@@ -2,7 +2,7 @@ import type { DatabaseClient } from '../../infrastructure/postgres/database.ts'
 
 const tenantId = 'tenant-dsh-work'
 
-/** 三级权限码按级别包含（weknora-knowledge-plan 5.1）：具备任意一个即“具备查看级别”。 */
+/** 三级权限码按级别包含（功能规则第 11 节）：具备任意一个即“具备查看级别”。 */
 export const knowledgeViewLevel = ['knowledge:view', 'knowledge:docs', 'knowledge:bases']
 export const knowledgeDocsLevel = ['knowledge:docs', 'knowledge:bases']
 

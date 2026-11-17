@@ -210,7 +210,7 @@ const projectTask = ref<ProjectTask | null>(null)
 const currentSessionId = computed(() => task.value?.sessionId ?? sessionThread.value?.sessionId ?? null)
 
 /**
- * 企业知识库（weknora-knowledge-plan 5.7，WK17）：个人空间对话中添加的知识库在整个会话内有效，
+ * 企业知识库（功能规则第 11 节，WK17）：个人空间对话中添加的知识库在整个会话内有效，
  * 添加、移除只影响之后的提问。一期团队空间不显示入口；只有发起人能修改自己的会话。
  */
 const knowledge = useKnowledgeStore()

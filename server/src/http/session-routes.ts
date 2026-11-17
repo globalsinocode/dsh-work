@@ -22,7 +22,7 @@ export function registerSessionRoutes(router: Router) {
       identityProvider: identity.identityProvider,
       apiAudience: 'admin' as const,
       permissions: [...identity.permissions],
-      // 各模块的可用级别（管理端模块权限方案 5.6）：前端只用于展示菜单与按钮，服务端仍逐请求校验。
+      // 各模块的可用级别（功能规则第 13 节）：前端只用于展示菜单与按钮，服务端仍逐请求校验。
       adminModules: adminModuleSummary(identity.permissions),
       platformAdmin: isPlatformAdmin(identity.permissions),
     }, 'postgres')

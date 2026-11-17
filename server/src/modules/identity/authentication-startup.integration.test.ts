@@ -71,7 +71,7 @@ async function start(extra: NodeJS.ProcessEnv) {
   }
 }
 
-// 删除 AI Hub 登录方案 AH3：残留的 AI_HUB_* 与旧认证模式只记警告，账号密码登录不受影响，OIDC 入口已不存在。
+// 迁移 0129：残留的 AI_HUB_* 与旧认证模式只记警告，账号密码登录不受影响，OIDC 入口已不存在。
 const leftover = { AI_HUB_PLATFORM_URL: 'http://localhost:9', AI_HUB_OIDC_ISSUER: 'http://localhost:9/fixture', AI_HUB_APPLICATION_ID: 'startup-fixture', AI_HUB_CLIENT_ID: 'startup-fixture', AI_HUB_CLIENT_SECRET: 'fixture-not-a-real-secret' }
 for (const scenario of [
   { name: 'no leftover configuration', environment: {}, leftover: false },

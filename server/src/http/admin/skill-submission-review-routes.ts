@@ -4,7 +4,7 @@ import { envelope, httpResult, readJsonBody, requireRequestIdentity, routeValida
 const basePath = '/api/admin/v1'
 
 /**
- * Skill 创建专家方案 4.4：平台管理员审核员工 Skill 提交。读接口要求管理读权限，写接口由服务再核对平台管理员；
+ * 功能规则 5.6：平台管理员审核员工 Skill 提交。读接口要求管理读权限，写接口由服务再核对平台管理员；
  * 试运行由管理员在详情中发起并记在其名下，通过时沿用现有发布门禁。
  */
 export function registerSkillSubmissionReviewRoutes(router: Router, reviews: SkillSubmissionReviewService) {

@@ -56,7 +56,7 @@ export class MemoryKnowledgeAdminStore {
   async updateConnection(_actorId: string, input: { baseUrl: string; apiKey?: string; credentialExpiresAt?: string | null; embeddingModelId?: string | null; enabled: boolean }) {
     if (!/^https?:\/\//.test(input.baseUrl.trim())) throw invalidRequest('WeKnora 地址必须以 http 或 https 开头')
     const baseUrl = input.baseUrl.trim().replace(/\/+$/, '')
-    // 优化方案 O9：更换地址后原有知识库标为“原连接已更换”。
+    // 功能规则第 11 节：更换地址后原有知识库标为“原连接已更换”。
     if (baseUrl !== this.connection.baseUrl) {
       for (const base of this.bases) if ((base.status ?? 'active') === 'active') base.status = 'unavailable'
     }

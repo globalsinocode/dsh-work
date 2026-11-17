@@ -77,7 +77,7 @@ export class IdentityAdministrationService {
     this.database = database
   }
 
-  /** `nameOnly`：跨模块选择器只按姓名搜索，不能用手机号、邮箱或账号反查员工（方案 5.2）。 */
+  /** `nameOnly`：跨模块选择器只按姓名搜索，不能用手机号、邮箱或账号反查员工（功能规则第 13 节）。 */
   async listUsers(input: { query?: string; status?: string; dingtalk?: string; page?: number; pageSize?: number; nameOnly?: boolean }) {
     const nameOnly = input.nameOnly === true
     const query = input.query?.trim().slice(0, 100) ?? ''
@@ -245,13 +245,13 @@ export class IdentityAdministrationService {
     return permissionCatalog.map(item => ({ ...item }))
   }
 
-  /** 修改员工与权限的服务层复核（方案 AP11），供目录同步等没有目标账号的写操作使用。 */
+  /** 修改员工与权限的服务层复核（功能规则第 13 节），供目录同步等没有目标账号的写操作使用。 */
   async requireIdentityWriter(actorId: string) {
     return requireAdminModuleActor(this.database, actorId, 'identity', 'write')
   }
 
   async createRole(input: {
-    /** 已废弃：角色编码由系统生成（方案 AP14），传入的值被忽略。 */
+    /** 已废弃：角色编码由系统生成（功能规则第 13 节），传入的值被忽略。 */
     code?: string
     name: string
     description?: string
@@ -310,7 +310,7 @@ export class IdentityAdministrationService {
       // 更新之前有人把这个角色授给部门，绕过“管理类角色不能授给部门”（OD8）。
       const [current] = await transaction<{ status: string }[]>`select status from roles where tenant_id = ${tenantId} and id = ${input.roleId} for update`
       await requireAdminModuleActor(transaction, input.actorId, 'identity', 'write')
-      // 防提权（方案 AP13 ②）：平台管理员角色只有平台管理员能改；含操作人没有的权限的角色对其只读。
+      // 防提权（功能规则第 13 节）：平台管理员角色只有平台管理员能改；含操作人没有的权限的角色对其只读。
       if (input.roleId === 'role-platform-admin' && !(await isPlatformAdminActor(transaction, input.actorId))) {
         throw authorizationDenied('平台管理员角色只有平台管理员可以修改')
       }
@@ -318,7 +318,7 @@ export class IdentityAdministrationService {
       const existing = await loadRoleGrants(transaction, [input.roleId], { includeDisabled: true })
       await assertCanGrant(transaction, input.actorId, existing, '这个角色现有的权限')
       await assertCanGrant(transaction, input.actorId, { permissions, dataScopes }, '修改后的角色权限')
-      // 减权会让持有人降权（方案 AP13 ④）：持有人里有操作人不能操作的账号时不允许。
+      // 减权会让持有人降权（功能规则第 13 节）：持有人里有操作人不能操作的账号时不允许。
       // 按包含关系比较：读改成写（只存写码）等升级不算减权。
       const reduced = (current?.status === 'active' && input.status !== 'active')
         || missingPermissions(existing.permissions, permissions).length > 0
@@ -612,7 +612,7 @@ function normalizeRoleInput(input: {
   permissions?: string[]
   dataScopes?: string[]
 }) {
-  // 角色编码由系统生成（方案 AP14）：创建后不变，用于审计与接口引用。
+  // 角色编码由系统生成（功能规则第 13 节）：创建后不变，用于审计与接口引用。
   const code = `role_${randomUUID().replaceAll('-', '').slice(0, 8)}`
   return {
     code,

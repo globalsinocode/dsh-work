@@ -124,7 +124,7 @@ export interface WorkbenchAgentDefinition {
   welcomeMessage: string
   version: string
   examplePrompts: string[]
-  /** 当前启用版本开启了“可创建 Skill”：Skill 广场的“创建 Skill”入口据此找到 Skill 创建专家（方案 4.8）。 */
+  /** 当前启用版本开启了“可创建 Skill”：Skill 广场的“创建 Skill”入口据此找到 Skill 创建专家（功能规则 5.6）。 */
   canCreateSkills: boolean
 }
 
@@ -169,7 +169,7 @@ export interface RuntimeAgentSnapshot {
   projectTasksEnabled: boolean
   /** Agent 版本是否可推荐其他 AI 同事；实际工具由派发时按运行场景装配。 */
   agentRecommendationEnabled: boolean
-  /** Agent 版本是否可创建 Skill（Skill 创建专家方案 4.2）；实际工具由派发时按运行场景装配。 */
+  /** Agent 版本是否可创建 Skill（功能规则 5.6）；实际工具由派发时按运行场景装配。 */
   skillCreationEnabled: boolean
   /** PF-03 currently usable tenant MCP Connectors, fixed in the Attempt snapshot. */
   mcpConnections: McpConnectionSnapshot[]
@@ -289,7 +289,7 @@ export class PostgresAgentService {
     const executionRoleIds = unique(input.executionRoleIds ?? [])
     const executionDataScopes = unique(input.executionDataScopes ?? [])
     await this.assertInitialAgentGrants(unique([...visibleRoleIds, ...executionRoleIds]))
-    // 授出不超过自身（管理端模块权限方案 5.3）：创建时的执行授权同样受约束。
+    // 授出不超过自身（功能规则第 13 节）：创建时的执行授权同样受约束。
     await assertAgentAccessWithinActor(this.database, actor.id, {
       roleIds: executionRoleIds, dataScopes: executionDataScopes,
       widened: executionRoleIds.length > 0 || executionDataScopes.length > 0,
@@ -476,7 +476,7 @@ export class PostgresAgentService {
     const actor = await this.requireActor(input.actor)
     const [current] = await this.readAgentRows(input.agentId)
     if (!current) throw notFound(`Agent 不存在：${input.agentId}`)
-    // 重新启用等于把 Agent 的能力重新开放给可见角色：能力不能超过操作人（管理端模块权限方案 5.3）。
+    // 重新启用等于把 Agent 的能力重新开放给可见角色：能力不能超过操作人（功能规则第 13 节）。
     if (input.status === 'published') await assertAgentCapabilityWithinActor(this.database, actor.id, input.agentId)
 
     if (input.status === 'disabled') {

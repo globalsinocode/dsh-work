@@ -197,7 +197,7 @@ export class AdminAssistantService {
     await this.requireActiveAttempt(manifest)
     const domain = readEnum(input, 'domain', ['overview', 'skills', 'agents', 'operations'] as const)
     const query = readOptionalString(input, 'query', 200)
-    // 管理端模块权限方案 5.5：只返回操作人有查看权限的模块，无权分区注明“无权查看”。
+    // 功能规则第 13 节：只返回操作人有查看权限的模块，无权分区注明“无权查看”。
     const permissions = await this.authorization.localAdminPermissions(manifest.user_context.user_id)
     const canRead = (module: AdminModule) => hasAdminModuleAccess(permissions, module, 'read')
     const denied = (module: AdminModule) => ({ unavailable: `无权查看${ADMIN_MODULE_LABELS[module]}` })
@@ -265,7 +265,7 @@ export class AdminAssistantService {
   async confirmProposal(userId: string, proposalId: string, proposalSha256: string) {
     await this.authorization.requireAdminAccess(userId)
     const proposal = await this.requireProposal(userId, proposalId)
-    // 管理端模块权限方案 5.5：按提案的目标专用 Run 检查所属模块的修改权限。
+    // 功能规则第 13 节：按提案的目标专用 Run 检查所属模块的修改权限。
     await this.authorization.requireAdminRunPurpose(userId, proposal.purpose)
     if (proposal.proposalSha256 !== proposalSha256) throw notFound('任务提案不存在或已变化，请重新查看')
     if (proposal.status === 'cancelled') throw stateConflict('任务提案已取消，请重新发起')
@@ -297,7 +297,7 @@ export class AdminAssistantService {
   }
 
   async cancelProposal(userId: string, proposalId: string) {
-    // 取消只会减少操作：发起人本人持有任一管理权限即可（方案 AP9）。
+    // 取消只会减少操作：发起人本人持有任一管理权限即可（功能规则第 13 节）。
     await this.authorization.requireAdminAccess(userId)
     const proposal = await this.requireProposal(userId, proposalId)
     if (proposal.status === 'confirmed') throw stateConflict('专用助手已经启动，不能再取消任务提案')
@@ -604,7 +604,7 @@ export class AdminAssistantService {
     throw authorizationDenied('当前 Run 不能查询管理状态')
   }
 
-  /** 操作计划按目标模块复核修改权限（方案 5.5），生成与确认共用。 */
+  /** 操作计划按目标模块复核修改权限（功能规则第 13 节），生成与确认共用。 */
   private async requireActionModule(userId: string, actionType: string) {
     const module = adminModuleForAction(actionType)
     if (!module) throw authorizationDenied(`未登记权限归属的管理操作：${actionType}`)

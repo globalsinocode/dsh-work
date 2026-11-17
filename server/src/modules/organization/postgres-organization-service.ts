@@ -13,8 +13,8 @@ const maxNameLength = 60
 const maxMembersPerRequest = 200
 
 /**
- * 管理类权限（`admin:`、`audit:`、`data-protection:` 前缀）的角色不能授给部门（方案 OD8；
- * 管理端模块权限方案 5.3），只能单独授给个人。按前缀判定，新增的模块权限码自动覆盖。
+ * 管理类权限（`admin:`、`audit:`、`data-protection:` 前缀）的角色不能授给部门（功能规则第 10 节；
+ * 功能规则第 13 节），只能单独授给个人。按前缀判定，新增的模块权限码自动覆盖。
  */
 
 export interface OrganizationDepartment {
@@ -81,7 +81,7 @@ interface DepartmentRow {
 }
 
 /**
- * 企业组织架构 ORG-S1（docs/design/org-structure-plan.md）：本地维护的部门树、成员与主部门。
+ * 企业组织架构 ORG-S1（功能规则第 10 节）：本地维护的部门树、成员与主部门。
  * 部门本身不带权限；按部门授权是第二期（ORG-S2）。所有写操作只有平台管理员可以执行，按企业
  * 串行（事务级咨询锁），在同一事务中同步员工的显示部门（users.department_id = 主部门名称）并写审计。
  */
@@ -205,7 +205,7 @@ export class PostgresOrganizationService {
         update org_departments set status = 'removed', updated_at = now(), updated_by = ${input.actorId}
          where tenant_id = ${tenantId} and id = ${department.id}
       `
-      // 部门授权保留但失效，不转移给上级部门（方案 6.3）。
+      // 部门授权保留但失效，不转移给上级部门（功能规则第 10 节）。
       await transaction`
         update org_department_grants set status = 'invalid', invalidated_at = now()
          where tenant_id = ${tenantId} and department_id = ${department.id} and status = 'active'
@@ -305,7 +305,7 @@ export class PostgresOrganizationService {
       if (hasForbiddenPermission(role.permissions)) {
         throw stateConflict(`角色“${role.name}”含管理类权限，只能在“员工与权限”中单独授给个人`)
       }
-      // 授出不超过自身（管理端模块权限方案 5.3）：授权时就判定角色本身，部门当前为空也一样，
+      // 授出不超过自身（功能规则第 13 节）：授权时就判定角色本身，部门当前为空也一样，
       // 否则之后有人加入部门就会拿到超出授予人权限的角色。
       assertWithinGrantCeiling(await loadGrantCeiling(transaction, input.actorId), await loadRoleGrants(transaction, [roleId]), `授给部门的角色“${role.name}”`)
       const [existing] = await transaction`
@@ -355,7 +355,7 @@ export class PostgresOrganizationService {
 }
 
 /**
- * 新建账号时把员工放入一个部门并设为主部门（方案第 5 节“员工账号”），与建号同一事务。
+ * 新建账号时把员工放入一个部门并设为主部门（功能规则第 10 节“员工账号”），与建号同一事务。
  * 只校验部门有效；操作人是否为平台管理员由建号流程负责。
  */
 export async function assignNewAccountDepartment(
@@ -370,7 +370,7 @@ export async function assignNewAccountDepartment(
 }
 
 /**
- * 角色在已授给部门时不能加入管理类权限（方案 OD8），否则调整部门成员就会间接授予管理权限。
+ * 角色在已授给部门时不能加入管理类权限（功能规则第 10 节），否则调整部门成员就会间接授予管理权限。
  * 由“员工与权限”修改角色时在同一事务中调用。
  */
 export async function assertRoleDepartmentGrantable(transaction: DatabaseTransaction, roleId: string, permissions: string[]) {
@@ -396,7 +396,7 @@ async function effectiveRolePairs(transaction: DatabaseTransaction) {
 }
 
 /**
- * 授出不超过自身（管理端模块权限方案 AP5、5.3）：本次组织变更（部门授权、成员变更、部门移动）
+ * 授出不超过自身（功能规则第 13 节）：本次组织变更（部门授权、成员变更、部门移动）
  * 让员工新获得的角色，其权限与数据范围须是操作人自身的子集。平台管理员不受约束。
  */
 async function assertNoRoleEscalation(transaction: DatabaseTransaction, before: Set<string>, ceiling: Awaited<ReturnType<typeof loadGrantCeiling>>) {
@@ -407,7 +407,7 @@ async function assertNoRoleEscalation(transaction: DatabaseTransaction, before: 
   assertWithinGrantCeiling(ceiling, grants, '本次组织变更让员工获得的角色')
 }
 
-/** 非平台管理员不能变更自己的部门归属（方案 5.3），避免借部门授权给自己加权限。 */
+/** 非平台管理员不能变更自己的部门归属（功能规则第 10 节），避免借部门授权给自己加权限。 */
 async function assertNotSelfMembership(transaction: DatabaseTransaction, actorId: string, userIds: string[]) {
   if (!userIds.includes(actorId)) return
   if (await isPlatformAdminActor(transaction, actorId)) return
@@ -417,7 +417,7 @@ async function assertNotSelfMembership(transaction: DatabaseTransaction, actorId
 /**
  * 把有效的部门授权展开为 user_roles（source_key = 'department:<grant_id>'），与期望集合对比后
  * 只增删差异行：授权、成员关系、部门移动或删除后都调用。权限版本由 user_roles 触发器按行递增
- * （方案 6.2）。停用的角色仍展开，由读取端按角色状态忽略，重新启用即恢复。
+ * （功能规则第 10 节）。停用的角色仍展开，由读取端按角色状态忽略，重新启用即恢复。
  */
 async function syncDepartmentRoles(transaction: DatabaseTransaction) {
   await transaction`

@@ -338,7 +338,7 @@ P1/P2 的执行结果须单独记录数据库、身份、Runtime/DSH 版本和�
 
 ## 推荐 AI 同事
 
-设计见 [dsh-work 助手推荐 AI 同事方案](../../docs/design/agent-recommendation-plan.md)，规则见[功能规则 2.4](../../docs/development/feature-rules.md#24-推荐-ai-同事)。
+规则见[功能规则 2.4](../../docs/development/feature-rules.md#24-推荐-ai-同事)。
 
 ### REC-01 推荐卡片“去聊天”进入该 AI 同事的新对话，问题预填不发送
 
@@ -411,7 +411,7 @@ P1/P2 的执行结果须单独记录数据库、身份、Runtime/DSH 版本和�
 **前置数据：** 真实外部厂商与内部部署模型各一<br>
 **spec：** 手工执行并留证
 
-1. 核对上游请求、员工端回答与工具调用结果、审计记录与用量（方案第 9 节）。
+1. 核对上游请求、员工端回答与工具调用结果、审计记录与用量（[数据防护方案](../../docs/design/model-data-protection-plan.md)第 9 节）。
 
 **验收：** P0、P1 绿灯不能代替本项。
 

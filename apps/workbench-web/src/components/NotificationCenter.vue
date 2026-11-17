@@ -87,7 +87,7 @@ function switchTab(next: NotificationTab) {
   if (next !== notifications.tab) void notifications.load(next)
 }
 
-/** 读过 @ 通知后，B 的对话列表（“[有人@我]”与导航圆点）随之更新（方案 NC4）。 */
+/** 读过 @ 通知后，B 的对话列表（“[有人@我]”与导航圆点）随之更新（功能规则 3.7）。 */
 function syncConversationMentions() {
   if (conversations.loaded) void conversations.refresh()
 }

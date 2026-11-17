@@ -1,6 +1,6 @@
 # Skill 创建专家与 Skill 可见范围
 
-设计见 [Skill 创建专家方案](../../docs/design/skill-creator-plan.md)，原型见方案页首链接。规则落地前仍以[功能规则第 5 节](../../docs/development/feature-rules.md#5-skill-安装与发布)为准。标注“待建”的 spec 文件随对应实施切片创建。
+规则见[功能规则 5.6](../../docs/development/feature-rules.md#56-员工经-skill-创建专家新建-skill)、[功能规则第 5 节](../../docs/development/feature-rules.md#5-skill-安装与发布)。标注“待建”的 spec 文件随对应实施切片创建。
 
 ## Skill 可见范围（SC4）
 
@@ -83,7 +83,7 @@
 **前置数据：** 已迁移、尚无开启“可创建 Skill”的 Agent 的数据库；平台管理员账号<br>
 **spec：** `server/src/infrastructure/postgres/skill-creator-preset.integration.test.ts`
 
-1. 服务启动后，Agent 列表出现“Skill 创建专家”，状态为未发布草稿：说明、欢迎语、示例问题、SOUL.md 与方案 5.1 一致，开启“可创建 Skill”，其余能力关闭，MCP 不使用；可见角色与岗位角色为空；自定义测试问题为方案 5.2 的五条。
+1. 服务启动后，Agent 列表出现“Skill 创建专家”，状态为未发布草稿：说明、欢迎语、示例问题、SOUL.md 与 `server/config/agent-presets/skill-creator/` 中的预置定义一致，开启“可创建 Skill”，其余能力关闭，MCP 不使用；可见角色与岗位角色为空；自定义测试问题为预置定义中的五条。
 2. 发布前员工看不到它：AI 同事列表中没有它（Skill 广场“创建 Skill”入口与推荐都取自这一列表，入口行为由 `SKC-04` 覆盖）。
 3. 管理员在“角色与权限”选定可见角色与岗位角色后，验证前检查全部通过；之后的验证、判定与发布沿用 Agent 发布流程，真实环境由 `SKC-P2` 留证。
 4. 再次启动服务不会重复预置；数据库中已有开启“可创建 Skill”的 Agent（不论是否发布、是否停用）时不预置；同标识但未开启该开关的 Agent 不被改动。

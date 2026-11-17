@@ -12,7 +12,7 @@ import { createThrowawayDatabase, type ThrowawayDatabase } from '../infrastructu
 import { registerOrganizationRoutes } from './admin/organization-routes.ts'
 import { Router } from './router.ts'
 
-// ORG-01～ORG-04（e2e/catalog/organization.md，企业组织架构方案 ORG-S1）：部门树维护与约束、
+// ORG-01～ORG-04（e2e/catalog/organization.md，功能规则第 10 节）：部门树维护与约束、
 // 成员与主部门、新建账号选择部门、上线清空历史部门文本。
 // ORG-05～ORG-07（ORG-S2）：按部门授予角色、展开与重算、管理类角色限制、来源显示。
 

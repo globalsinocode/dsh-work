@@ -1,5 +1,5 @@
 /**
- * 管理端模块（管理端模块权限方案 5.1、AP11、AP12）的前端展示用清单。
+ * 管理端模块（功能规则第 13 节）的前端展示用清单。
  * 服务端逐请求校验权限；这里只决定菜单、路由入口、按钮是否可用和提示文案。
  */
 export const ADMIN_MODULES = ['agent', 'skill', 'connector', 'model', 'dlp', 'knowledge', 'org', 'identity', 'dingtalk', 'ops'] as const
@@ -81,7 +81,7 @@ function expand(permissions: readonly string[]) {
   return result
 }
 
-/** 授出不超过自身（方案 AP13 ①）：`granted` 中操作人没有的权限码；操作人是平台管理员时为空。 */
+/** 授出不超过自身（功能规则第 13 节）：`granted` 中操作人没有的权限码；操作人是平台管理员时为空。 */
 export function permissionsBeyond(granted: readonly string[], held: readonly string[]) {
   if (held.includes('admin:*')) return []
   const heldExpanded = expand(held)

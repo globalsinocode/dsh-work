@@ -420,7 +420,7 @@ export class PostgresAgentValidationService {
    */
   async publish(agentId: string, userId: string, input: { validationId: unknown; note?: unknown }): Promise<AgentReleaseOverview> {
     const actor = await requireAdminModuleActor(this.database, userId, 'agent', 'write')
-    // 发布把 Agent 的能力开放给可见角色：能力不能超过操作人（管理端模块权限方案 5.3）。
+    // 发布把 Agent 的能力开放给可见角色：能力不能超过操作人（功能规则第 13 节）。
     await assertAgentCapabilityWithinActor(this.database, actor.id, agentId)
     if (typeof input.validationId !== 'string' || !input.validationId) throw invalidRequest('缺少验证标识')
     const note = typeof input.note === 'string' ? input.note.trim().slice(0, 2000) : ''

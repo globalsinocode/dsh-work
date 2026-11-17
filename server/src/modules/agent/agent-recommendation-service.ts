@@ -15,7 +15,7 @@ const MAX_SUGGESTED_PROMPT_LENGTH = 500
 export type { AgentRecommendationView }
 
 /**
- * dsh-work 助手推荐 AI 同事（docs/design/agent-recommendation-plan.md）。
+ * dsh-work 助手推荐 AI 同事（功能规则 2.4）。
  *
  * 可见性与运行授权的执行前复核同一口径：发起员工在平台中的当前角色（authorizeWorkbench，
  * 无会话角色时读 user_roles），再按 Agent 已发布、执行身份启用、可见角色求交

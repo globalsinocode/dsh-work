@@ -225,7 +225,7 @@ export class PostgresGrantReconciliationService {
     }
   }
 
-  /** 授权来源对账属于“工具与连接”模块（管理端模块权限方案 5.1）。 */
+  /** 授权来源对账属于“工具与连接”模块（功能规则第 13 节）。 */
   private async requireConnectorAdmin(userId: string) {
     return (await requireAdminModuleActor(this.database, userId, 'connector', 'write')).id
   }

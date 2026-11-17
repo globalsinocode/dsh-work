@@ -41,7 +41,7 @@ const props = defineProps<{
   canReadAudit: boolean
   identityAdministrationAvailable: boolean
   /**
-   * 菜单归属是否可见（管理端模块权限方案 AP15）：参数为模块名、`any`（任一管理员）或 `audit`。
+   * 菜单归属是否可见（功能规则第 13 节）：参数为模块名、`any`（任一管理员）或 `audit`。
    * 未传入时按旧口径：`audit` 看 canReadAudit，其余看 canReadAdmin。
    */
   canSee?: (owner: string) => boolean
@@ -94,7 +94,7 @@ const navigationGroups: Array<{ label: string; items: NavigationItem[] }> = [
     ],
   },
   {
-    // 企业知识库（weknora-knowledge-plan WK-S3）：独立分组，不放在组织与权限下。
+    // 企业知识库（功能规则第 11 节，WK-S3）：独立分组，不放在组织与权限下。
     label: '知识库',
     items: [
       { label: '企业知识库', path: '/knowledge', icon: Reading, permission: 'knowledge' },

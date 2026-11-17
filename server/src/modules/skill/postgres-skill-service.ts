@@ -54,7 +54,7 @@ interface SkillRow {
   testPrompt: string
   coveredBuiltinScenarios: string[]
   visibleRoleIds: string[] | null
-  /** 待发布版本来自员工提交（skill-creator-plan 4.4）：只能经“待审核”通过发布。 */
+  /** 待发布版本来自员工提交（功能规则 5.6）：只能经“待审核”通过发布。 */
   submissionDraft: boolean
   updatedAt: Date
 }
@@ -283,7 +283,7 @@ export class PostgresSkillService {
   }
 
   /**
-   * 管理员设置 Skill 可见范围（skill-creator-plan 4.5）：Skill 级配置，不随版本固定，立即作用于
+   * 管理员设置 Skill 可见范围（功能规则 5.3）：Skill 级配置，不随版本固定，立即作用于
    * Skill 广场与之后的执行前复核。`roleIds` 为 null 表示全员；否则须为非空、现存且启用的角色。
    * 只约束员工选用，Agent 固定引用不受限。
    */
@@ -874,7 +874,7 @@ export class PostgresSkillService {
   }
 
   /**
-   * 管理员设置已安装 Skill 的“覆盖内置场景”（builtin-skills-plan 5.4）。Skill 级配置，不随版本固定，
+   * 管理员设置已安装 Skill 的“覆盖内置场景”（功能规则 5.5）。Skill 级配置，不随版本固定，
    * 立即作用于新运行；不改变 Skill 版本、试运行证据或 Agent 验证结果。
    */
   async setCoveredBuiltinScenarios(input: { skillId: string; scenarios: unknown; actor: string }) {
@@ -1079,7 +1079,7 @@ export class PostgresSkillService {
   }
 
   /**
-   * 审核通过员工提交（skill-creator-plan 4.4）：沿用发布门禁，`apply` 在同一发布事务中、激活版本前执行，
+   * 审核通过员工提交（功能规则 5.6）：沿用发布门禁，`apply` 在同一发布事务中、激活版本前执行，
    * 用于锁定提交、写入可见范围与审核结论，避免先以全员可见发布再收窄。
    */
   async publishSubmissionDraft(input: {
@@ -1312,7 +1312,7 @@ export class PostgresSkillService {
     return this.artifactStore
   }
 
-  /** Skill 模块修改权限校验（管理端模块权限方案 5.1），供审核员工提交复用同一口径。 */
+  /** Skill 模块修改权限校验（功能规则第 13 节），供审核员工提交复用同一口径。 */
   requireSkillAdmin(userId: string) {
     return this.requireActor(userId)
   }

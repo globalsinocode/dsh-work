@@ -19,7 +19,7 @@ const routeTitle = computed(() => String(route.meta.title ?? '管理后台'))
 const routeSubtitle = computed(() => typeof route.meta.subtitle === 'string' ? route.meta.subtitle : undefined)
 const publicRoute = computed(() => Boolean(route.meta.public))
 const shellRoute = computed(() => route.matched.length > 0 && !publicRoute.value)
-/** 只读模块的页面说明（管理端模块权限方案 AP15）：修改类操作已停用。 */
+/** 只读模块的页面说明（功能规则第 13 节）：修改类操作已停用。 */
 const readOnlyModule = computed(() => {
   const owner = route.meta.module as string | undefined
   if (!owner || !(ADMIN_MODULES as readonly string[]).includes(owner)) return null

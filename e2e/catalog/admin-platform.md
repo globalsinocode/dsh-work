@@ -65,7 +65,7 @@
 2. 窄屏下登录按钮可见、页面无横向滚动。
 3. 不在允许列表的入口返回 421，跨站请求返回 403。
 
-**验收：** 页面、HTTP 路由与会话均有回归证据；AI Hub 登录已删除（[删除方案](../../docs/design/ai-hub-login-removal-plan.md)），原 OIDC 入口返回 404。
+**验收：** 页面、HTTP 路由与会话均有回归证据；AI Hub 登录已删除（迁移 0129），原 OIDC 入口返回 404。
 
 ### LOGIN-OPTIONS-P1 登录配置与员工授权列表
 
@@ -284,7 +284,7 @@
 
 ## 平台内置 Skill
 
-设计见[平台内置 Skill 方案](../../docs/design/builtin-skills-plan.md)，规则见[功能规则 5.5](../../docs/development/feature-rules.md#55-平台内置-skill)。
+规则见[功能规则 5.5](../../docs/development/feature-rules.md#55-平台内置-skill)。
 
 ### BSK-01 管理端查看内置 Skill、设置覆盖场景与紧急停用
 

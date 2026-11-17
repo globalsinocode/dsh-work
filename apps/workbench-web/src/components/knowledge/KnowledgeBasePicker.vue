@@ -6,7 +6,7 @@ import { workbenchApi } from '@/api/client'
 import type { KnowledgeBase, SessionKnowledgeBase } from '@/types/knowledge'
 
 /**
- * 对话输入框旁的“添加知识库”（weknora-knowledge-plan 5.7）：只列出本人当前可见的知识库，多选后
+ * 对话输入框旁的“添加知识库”（功能规则第 11 节）：只列出本人当前可见的知识库，多选后
  * 整体交给调用方保存。已选但已不可见的知识库保留在结果中，由调用方决定是否移除。
  */
 const props = defineProps<{ selected: SessionKnowledgeBase[] }>()

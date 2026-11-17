@@ -86,7 +86,7 @@ for (const path of await sourceFiles('packages/')) {
 }
 
 /**
- * 管理端模块权限方案第 6 节：管理判定只在判定模块中实现（模块清单、路由对照表、服务层只认本地授予），
+ * 功能规则第 13 节：管理判定只在判定模块中实现（模块清单、路由对照表、服务层只认本地授予），
  * 其他服务端代码不得再直接写 `admin:*` / `admin:read|write` 判定或调用已删除的旧函数。
  */
 const adminPermissionOwners = new Set([
@@ -100,7 +100,7 @@ const adminPermissionOwners = new Set([
 for (const path of await sourceFiles('server/src/')) {
   if (/\.test\.ts$/.test(path) || path.startsWith('server/src/testing/') || adminPermissionOwners.has(path)) continue
   const content = await readFile(new URL(path, projectRoot), 'utf8')
-  reject(path, content, /permissions\s*\?\|?\s*'admin|'admin:(\*|read|write)'/, '管理权限判定必须经 domain/admin-permissions.ts 或 authorization/admin-actor.ts（管理端模块权限方案第 6 节）')
+  reject(path, content, /permissions\s*\?\|?\s*'admin|'admin:(\*|read|write)'/, '管理权限判定必须经 domain/admin-permissions.ts 或 authorization/admin-actor.ts（功能规则第 13 节）')
   reject(path, content, /\b(requirePlatformAdminActor|requirePlatformAdmin|requireAdminReader)\b/, '已改为按模块判定，请使用 requireAdminModule / requireAdminModuleActor')
   if (path !== 'server/src/http/router.ts') reject(path, content, /testOnlyAdminPaths/, '测试夹具专用的管理端放行选项不得出现在生产代码中')
 }

@@ -23,7 +23,7 @@ export interface AdminActor {
 type Sql = DatabaseClient | DatabaseTransaction
 
 /**
- * 服务层管理判定的唯一实现（管理端模块权限方案 5.1、第 6 节）：用户与租户均有效，并持有
+ * 服务层管理判定的唯一实现（功能规则第 13 节）：用户与租户均有效，并持有
  * **本地授予**（`source_key = 'local'`）、有效期内的启用角色，且角色含 `codes` 之一。
  * 部门授予与外部目录同步的角色不能构成管理权限。
  */
@@ -83,7 +83,7 @@ export async function isPlatformAdminActor(sql: Sql, userId: string): Promise<bo
 
 /**
  * 按全模块修改口径取一位管理员（平台预置等无请求身份的后台场景），优先 `preferredUserId`；没有时返回 undefined。
- * 不属于请求授权，不按模块收窄（方案第 6 节）。
+ * 不属于请求授权，不按模块收窄（功能规则第 13 节）。
  */
 export async function findPlatformAdminActor(sql: Sql, preferredUserId: string): Promise<AdminActor | undefined> {
   const [actor] = await adminActors(sql, [PLATFORM_ADMIN_PERMISSION, ALL_MODULES_WRITE_PERMISSION], { preferredUserId })
@@ -112,7 +112,7 @@ export interface GrantCeiling {
 }
 
 /**
- * 操作人自身的授权上限（方案 AP5、5.3）：当前全部有效角色（本地与部门授予）的权限码并集，
+ * 操作人自身的授权上限（功能规则第 13 节）：当前全部有效角色（本地与部门授予）的权限码并集，
  * 以及授予本人或这些角色的数据范围。与会话层 `resolveAuthorization` 同一口径，在调用方事务内计算。
  */
 export async function loadGrantCeiling(sql: Sql, userId: string): Promise<GrantCeiling> {
@@ -155,7 +155,7 @@ export async function loadRoleGrants(sql: Sql, roleIds: string[], options: { inc
 }
 
 /**
- * 授出不超过自身（方案 AP5）：非平台管理员授出的权限码与数据范围须是自身子集，否则拒绝并列出缺少的部分。
+ * 授出不超过自身（功能规则第 13 节）：非平台管理员授出的权限码与数据范围须是自身子集，否则拒绝并列出缺少的部分。
  * 平台管理员直接放行。
  */
 export function assertWithinGrantCeiling(
@@ -176,7 +176,7 @@ export function assertWithinGrantCeiling(
 
 /**
  * 某员工持有的权限与数据范围，**不看账号是否停用**：停用的平台管理员被重新启用后会立即恢复权限，
- * 判断能否操作这个账号时必须按它持有的授权算（管理端模块权限方案 AP13 ④）。
+ * 判断能否操作这个账号时必须按它持有的授权算（功能规则第 13 节）。
  */
 async function loadHeldGrants(sql: Sql, userId: string): Promise<HeldGrants> {
   return (await loadHeldGrantsForUsers(sql, [userId])).get(userId) ?? { platformAdmin: false, permissions: [], dataScopes: [] }
@@ -225,7 +225,7 @@ export async function manageableUserIds(sql: Sql, actorId: string, userIds: stri
 }
 
 /**
- * 减少角色的权限、数据范围或停用角色（方案 AP13 ④，2026-11-15 补充）：会让持有这个角色的人降权，
+ * 减少角色的权限、数据范围或停用角色（功能规则第 13 节，2026-11-15 补充）：会让持有这个角色的人降权，
  * 等于在操作这些账号。非平台管理员只有在全部持有人都是自己能操作的账号时才能减权；
  * 增加权限、改名称与说明不受此限（仍受“授出不超过自身”约束）。
  */
@@ -252,7 +252,7 @@ export async function assertCanReduceRole(sql: Sql, actorId: string, roleId: str
 
 /**
  * 员工与权限、钉钉对某个账号的操作（分配或移除角色、数据范围、停用、重置密码、撤销会话、钉钉绑定）
- * 的对象约束（方案 AP13 ③④）：非平台管理员不能操作自己的账号，不能操作平台管理员，
+ * 的对象约束（功能规则第 13 节）：非平台管理员不能操作自己的账号，不能操作平台管理员，
  * 也不能操作持有自己没有的权限或数据范围的账号。
  */
 export async function assertCanManageUser(sql: Sql, actorId: string, targetUserId: string) {
@@ -267,7 +267,7 @@ export async function assertCanManageUser(sql: Sql, actorId: string, targetUserI
 }
 
 /**
- * 授出权限与数据范围的上限（方案 AP13 ①）：非平台管理员授出的不超过本人；`admin:*` 只有平台管理员能授出。
+ * 授出权限与数据范围的上限（功能规则第 13 节）：非平台管理员授出的不超过本人；`admin:*` 只有平台管理员能授出。
  */
 export async function assertCanGrant(sql: Sql, actorId: string, granted: { permissions?: string[]; dataScopes?: string[] }, subject: string) {
   const ceiling = await loadGrantCeiling(sql, actorId)

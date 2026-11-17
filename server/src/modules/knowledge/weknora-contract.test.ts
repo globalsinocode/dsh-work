@@ -6,7 +6,7 @@ import { WeKnoraClient } from './weknora-client.ts'
 import { minimumRelevanceScore } from './weknora-knowledge-provider.ts'
 
 /**
- * 真实 WeKnora 接口契约（weknora-knowledge-plan 4.1、第 12 节 P2）：确认 4.3～4.6 依赖的接口和字段在
+ * 真实 WeKnora 接口契约（功能规则第 11 节，P2）：确认平台依赖的接口和字段在
  * 部署的版本中存在。只在配置了以下变量时运行，CI 中跳过；升级 WeKnora 前必须跑一遍。
  *
  *   WEKNORA_CONTRACT_URL、WEKNORA_CONTRACT_API_KEY、WEKNORA_CONTRACT_EMBEDDING_MODEL_ID
@@ -28,10 +28,10 @@ test('WeKnora 新建知识库、检索、文档元数据与删除接口符合平
     // 新知识库没有文档：检索与元数据接口仍须返回 data 列表（客户端会校验结构）。
     const emptySearch = await client.search({ query: '契约测试', knowledgeBaseIds: [created.id], matchCount: 10 })
     assert.deepEqual(emptySearch.results, [])
-    // 优化方案 O5：检索响应带重排序结果（meta.rerank.outcome），平台记录到管理端健康状态。
+    // 功能规则第 11 节：检索响应带重排序结果（meta.rerank.outcome），平台记录到管理端健康状态。
     // 未配置重排序时 WeKnora 也返回 no_model 或 disabled，因此字段必须存在。
     assert.equal(typeof emptySearch.rerankOutcome, 'string', '检索响应应带 meta.rerank.outcome')
-    // 优化方案 O7：平台新建的知识库没有摘要模型，入库不会调用对话模型。
+    // 功能规则第 11 节：平台新建的知识库没有摘要模型，入库不会调用对话模型。
     const stats = (await client.listKnowledgeBases()).find(item => item.id === created.id)
     assert.ok(stats, '知识库列表包含新建的知识库')
     assert.equal(stats.summaryModelId, null, '平台新建的知识库不应带摘要模型')
@@ -81,7 +81,7 @@ test('最低相关度：命中文档高于门槛，无关提问低于门槛', { 
       await new Promise(resolve => setTimeout(resolve, 1000))
     }
     const search = async (query: string) => (await client.search({ query, knowledgeBaseIds: [created.id], matchCount: 10 })).results
-    // 相关提问：最高分须来自目标文档且不低于门槛，同一提问中的非目标文档须低于门槛（优化方案第 10 节的 12 个提问）。
+    // 相关提问：最高分须来自目标文档且不低于门槛，同一提问中的非目标文档须低于门槛（KO10 校准用的 12 个提问）。
     const relevant: Array<[string, string]> = [
       ['安全库存怎么定', '库存管理规范.txt'], ['出差住宿可以报多少钱', '差旅报销制度.txt'], ['请假超过三天谁审批', '请假与考勤.txt'],
       ['呆滞物料多久清理', '库存管理规范.txt'], ['报销要附什么材料', '差旅报销制度.txt'], ['年假几天', '请假与考勤.txt'],

@@ -185,7 +185,7 @@ export class AgentRoutineService {
     name: string; schedule: AgentRoutineSchedule; inputTemplate: { prompt: string; budget?: AutomationBudget; fileIds?: string[] }
   }): Promise<AgentRoutine> {
     await this.authorization.requireAdminModule(actorUserId, 'agent', 'write')
-    // 接收人获得 Agent 的交付：Agent 能力不能超过设置接收人的操作人（管理端模块权限方案 5.3）。
+    // 接收人获得 Agent 的交付：Agent 能力不能超过设置接收人的操作人（功能规则第 13 节）。
     await assertAgentCapabilityWithinActor(this.database, actorUserId, input.agentId)
     const schedule = normalizeRoutineSchedule(input.schedule)
     const template = normalizeInput(input.inputTemplate)
@@ -253,7 +253,7 @@ export class AgentRoutineService {
     await this.authorization.requireAdminModule(actorUserId, 'agent', 'write')
     const routine = await this.get(id)
     if (routine.agentId !== agentId) throw missing()
-    // 启用与执行把 Agent 的能力交付给接收人：能力不能超过操作人（管理端模块权限方案 5.3）。
+    // 启用与执行把 Agent 的能力交付给接收人：能力不能超过操作人（功能规则第 13 节）。
     await assertAgentCapabilityWithinActor(this.database, actorUserId, agentId)
     if (!['draft', 'paused'].includes(routine.status) || routine.revision !== approved.expectedRevision) {
       throw conflict('任务修订或状态已变化')
@@ -364,7 +364,7 @@ export class AgentRoutineService {
     await this.authorization.requireAdminModule(actorUserId, 'agent', 'write')
     const routine = await this.get(id)
     if (routine.agentId !== agentId) throw missing()
-    // 启用与执行把 Agent 的能力交付给接收人：能力不能超过操作人（管理端模块权限方案 5.3）。
+    // 启用与执行把 Agent 的能力交付给接收人：能力不能超过操作人（功能规则第 13 节）。
     await assertAgentCapabilityWithinActor(this.database, actorUserId, agentId)
     if (routine.status !== 'enabled') throw conflict('Agent 主动任务未启用')
     if (typeof idempotencyKey !== 'string' || !idempotencyKey.trim() || idempotencyKey.length > 128) {
@@ -381,7 +381,7 @@ export class AgentRoutineService {
     await this.authorization.requireAdminModule(actorUserId, 'agent', 'write')
     const routine = await this.get(id)
     if (routine.agentId !== agentId) throw missing()
-    // 启用与执行把 Agent 的能力交付给接收人：能力不能超过操作人（管理端模块权限方案 5.3）。
+    // 启用与执行把 Agent 的能力交付给接收人：能力不能超过操作人（功能规则第 13 节）。
     await assertAgentCapabilityWithinActor(this.database, actorUserId, agentId)
     if (routine.status !== 'enabled') throw conflict('Agent 主动任务未启用')
     if (routine.schedule.kind !== 'event' || routine.schedule.eventType !== input.eventType) {

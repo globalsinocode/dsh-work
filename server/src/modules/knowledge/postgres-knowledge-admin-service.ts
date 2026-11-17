@@ -22,7 +22,7 @@ export interface KnowledgeAdminConnection {
   lastSuccessAt: string | null
   lastFailureAt: string | null
   lastFailureReason: string | null
-  /** 最近一次检索响应中的重排序结果（WeKnora meta.rerank.outcome，优化方案 O5）与时间。 */
+  /** 最近一次检索响应中的重排序结果（WeKnora meta.rerank.outcome，功能规则第 11 节）与时间。 */
   lastRerankOutcome: string | null
   lastRerankAt: string | null
 }
@@ -58,12 +58,12 @@ export interface KnowledgeAdminBase {
   embeddingModelId: string | null
   /**
    * 建库时的嵌入模型与当前连接配置不同（4.6）。WeKnora 按各知识库自己的嵌入模型检索，旧模型仍登记在 WeKnora 中时
-   * 照常可用；旧模型被删除后才失效（优化方案 O10）。
+   * 照常可用；旧模型被删除后才失效（功能规则第 11 节）。
    */
   needsRebuild: boolean
-  /** active：有效；unavailable：原连接已更换，不参与检索、员工端不显示，可恢复（优化方案 O9）。 */
+  /** active：有效；unavailable：原连接已更换，不参与检索、员工端不显示，可恢复（功能规则第 11 节）。 */
   status: 'active' | 'unavailable'
-  /** WeKnora 中为该知识库配置了摘要模型（优化方案 O7）；WeKnora 不可用时为 null。 */
+  /** WeKnora 中为该知识库配置了摘要模型（功能规则第 11 节）；WeKnora 不可用时为 null。 */
   summaryModelConfigured: boolean | null
 }
 
@@ -95,7 +95,7 @@ interface ConnectionRow {
 }
 
 /**
- * 管理端“企业知识库”（weknora-knowledge-plan 第 9 节，WK-S3）：连接配置、全部知识库与跨部门授权、
+ * 管理端“企业知识库”（功能规则第 11 节，WK-S3）：连接配置、全部知识库与跨部门授权、
  * 归属部门、新建与删除、健康状态。读取需要管理读权限（路由层），写入只有平台管理员可以执行；
  * 平台管理员可以授给任意有效部门（含根部门）并撤销任何授权（5.4）。文档不在管理端维护。
  */
@@ -120,7 +120,7 @@ export class PostgresKnowledgeAdminService {
   async overview(): Promise<KnowledgeAdminOverview> {
     const row = await this.row()
     // 不可用次数按失败审计统计：连接被停用或 Key 读不出（not_configured）时执行也记为 unavailable，但不是检索故障，
-    // 不写审计，也不计入检索与不可用次数（优化方案 O2）。
+    // 不写审计，也不计入检索与不可用次数（功能规则第 11 节）。
     const [health] = await this.database<{ retrievals: number; unavailable: number }[]>`
       with unavailable as (
         select count(*)::int as count from audit_events
@@ -194,7 +194,7 @@ export class PostgresKnowledgeAdminService {
       const credentialExpiresAt = input.credentialExpiresAt === undefined ? (apiKey ? null : existing?.credentialExpiresAt ?? null) : expiresAt
       // 换了 Key 或地址后，旧连接的失败记录不再代表当前状态。
       const connectionChanged = Boolean(apiKey) || !existing || !sameBaseUrl(baseUrl, existing.baseUrl)
-      // 优化方案 O9：更换地址后，现有知识库的外部 ID 属于原实例，标为“原连接已更换”，不再参与检索，由管理员逐个恢复。
+      // 功能规则第 11 节：更换地址后，现有知识库的外部 ID 属于原实例，标为“原连接已更换”，不再参与检索，由管理员逐个恢复。
       if (existing && !sameBaseUrl(baseUrl, existing.baseUrl)) {
         const moved = await transaction`
           update external_knowledge_bases set status = 'unavailable', updated_by = ${actorId}, updated_at = now()
@@ -366,7 +366,7 @@ export class PostgresKnowledgeAdminService {
       values (${`knowledge-grant-${randomUUID()}`}, ${tenantId}, ${base.id}, ${department.id}, ${includeDescendants}, ${actorId}, 'admin')
       on conflict (tenant_id, knowledge_base_id, department_id) where status = 'active'
       do update set include_descendants = excluded.include_descendants, granted_by = excluded.granted_by, granted_via = 'admin'
-       -- 优化方案 O12：管理员再次授予或调整过的授权归管理员，员工不能再撤销。
+       -- 功能规则第 11 节：管理员再次授予或调整过的授权归管理员，员工不能再撤销。
        where external_knowledge_base_grants.include_descendants is distinct from excluded.include_descendants
           or external_knowledge_base_grants.granted_via <> 'admin'
     `
@@ -414,7 +414,7 @@ export class PostgresKnowledgeAdminService {
   }
 
   /**
-   * 恢复“原连接已更换”的知识库（优化方案 O9）：先确认当前连接的 WeKnora 中存在该知识库，存在才恢复为有效。
+   * 恢复“原连接已更换”的知识库（功能规则第 11 节）：先确认当前连接的 WeKnora 中存在该知识库，存在才恢复为有效。
    * 用于把地址改回原实例，或新地址只是同一实例的另一个访问地址。
    */
   async restoreBase(actorId: string, knowledgeBaseId: string): Promise<KnowledgeAdminBaseList> {

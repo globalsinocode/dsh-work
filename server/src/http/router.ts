@@ -26,7 +26,7 @@ export interface RouteContext {
   params: Record<string, string>
   url: URL
   identity?: RequestIdentity
-  /** 管理端读取的数据视图（管理端模块权限方案 5.2）；未设置等同 `full`。 */
+  /** 管理端读取的数据视图（功能规则第 13 节）；未设置等同 `full`。 */
   adminView?: AdminRouteView
 }
 
@@ -63,7 +63,7 @@ export class Router {
   private readonly authenticateApi?: ApiAuthenticator
 
   /**
-   * 只供浏览器测试夹具使用：放行夹具自建的 `/api/admin/v1/test/...` 取证接口（管理端模块权限方案第 6 节的
+   * 只供浏览器测试夹具使用：放行夹具自建的 `/api/admin/v1/test/...` 取证接口（功能规则第 13 节的
    * 默认拒绝不认识这些路径）。生产入口不得传入，架构检查会拦截。
    */
   private readonly testOnlyAdminPaths?: (path: string) => boolean
@@ -277,7 +277,7 @@ export function sessionAuthorizationContext(identity: RequestIdentity) {
 }
 
 /**
- * 管理端路由入口的模块权限判定（管理端模块权限方案 5.1）。对照表与判定在
+ * 管理端路由入口的模块权限判定（功能规则第 13 节）。对照表与判定在
  * `domain/admin-permissions.ts`；未登记的管理端路径一律拒绝。返回本次请求的数据视图：
  * 只凭 Agent 修改权限读取跨模块候选列表时为 `selector`，处理函数只返回精简字段。
  */

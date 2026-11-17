@@ -7,7 +7,7 @@ import { after, test } from 'node:test'
 import { runMigrations } from './migration-runner.ts'
 import { createThrowawayDatabase, type ThrowawayDatabase } from './test-database.ts'
 
-// 删除 AI Hub 登录方案 3.2（迁移 0129）：先迁到 0128，再分别验证“没有 AI Hub 用户”与“仍有 AI Hub 用户”两种库。
+// 迁移 0129：先迁到 0128，再分别验证“没有 AI Hub 用户”与“仍有 AI Hub 用户”两种库。
 const migrations = resolve(import.meta.dirname, '../../../migrations')
 const tenantId = 'tenant-dsh-work'
 const opened: ThrowawayDatabase[] = []

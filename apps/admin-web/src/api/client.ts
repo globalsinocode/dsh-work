@@ -158,7 +158,7 @@ function redirectToLogin() {
 }
 
 export const adminApi = {
-  // 企业知识库（weknora-knowledge-plan 第 9 节，WK-S3）。
+  // 企业知识库（功能规则第 11 节，WK-S3）。
   getKnowledgeOverview: () => request<KnowledgeAdminOverview>('/knowledge'),
   updateKnowledgeConnection: (input: KnowledgeConnectionInput) =>
     request<KnowledgeAdminOverview>('/knowledge/connection', { method: 'PUT', body: JSON.stringify(input) }),
@@ -480,7 +480,7 @@ export const adminApi = {
   getIdentityRoles: () => request<IdentityRoleSummary[]>('/identity/roles'),
   getLocalPermissions: () => request<LocalPermissionDefinition[]>('/identity/permissions'),
   createIdentityRole: (input: {
-    /** 已废弃：角色编码由系统生成（方案 AP14）。 */
+    /** 已废弃：角色编码由系统生成（功能规则第 13 节）。 */
     code?: string
     name: string
     description: string

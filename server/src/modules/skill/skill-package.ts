@@ -123,7 +123,7 @@ export function parseSkillPackage(bytes: Uint8Array, selected?: string, director
 }
 
 /**
- * Skill 创建专家（skill-creator-plan 4.2）：工作区中一个 Skill 目录的文件（相对路径 → 字节），
+ * Skill 创建专家（功能规则 5.6）：工作区中一个 Skill 目录的文件（相对路径 → 字节），
  * 按与 ZIP 安装相同的包规则校验。调用方负责只收集普通文件（不含符号链接与特殊文件）。
  */
 export function parseSkillDirectoryFiles(files: Record<string, Uint8Array>): SkillPackage {
