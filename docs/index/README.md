@@ -17,7 +17,6 @@
 | 代码级已实施（MR-S1～S3），本机与 Mac mini 人工验收通过，受控 DSH 余项与 P2 未完成：平台路由决定实际模型、模型网关与用量 | [模型路由方案](../design/model-routing-plan.md) |
 | 代码级已实施（DLP-S1～S3），外部厂商已在本机与 Mac mini 验收，内部部署模型未验收：发往模型的敏感值遮盖与还原、密钥拦截 | [发往模型的数据防护方案](../design/model-data-protection-plan.md) |
 | DT-S1 账号绑定与钉钉内免登已实施到代码级，真实钉钉验收（P2）未做；DT-S2 工作通知与群组提醒未实施 | [钉钉接入方案](../design/dingtalk-integration-plan.md) |
-| 决策已确认（SP1～SP16）、未实施：场景包（独立于 Skill 的平台对象，由工作规则固定版本）+ 共享数据服务 + 主动任务的程序编排，按人交付的跟进项；首个场景欠料风险预警 | [场景包与跟进项方案](../design/scene-package-plan.md) |
 | 平台基线真实验收（PF-07） | [PF-07 验收手册](../development/pf07-platform-acceptance.md) |
 | 已实施（阶段 1～3，C 档 P2 已于 2026-10-28 在 Mac mini 通过）：执行容器、受控 Shell 与 Office 工具链的设计依据 | [执行隔离方案](../design/execution-isolation-plan.md) |
 | 进行中：执行观测、上下文延续与性能 | [Runtime 执行架构渐进优化方案](../design/runtime-execution-optimization-plan.md) |
