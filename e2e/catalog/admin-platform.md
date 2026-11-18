@@ -306,14 +306,14 @@
 **角色：** 员工、平台管理员
 **运行层级：** 专用可丢弃 PostgreSQL、受控测试身份与 Mock ACP Worker
 **前置数据：** 未固定任何 Skill 的已发布 Agent；一个已发布并标记覆盖 `html-page` 的 Skill；一个团队空间（只授权该 Agent，不授权额外 Skill）
-**spec：** `server/src/infrastructure/postgres/builtin-skills.integration.test.ts`、`server/src/modules/skill/builtin-skills.test.ts`、`server/src/modules/run/current-execution-authorization.test.ts`、`server/src/modules/runtime/runtime-adapter.test.ts`
+**spec：** `server/src/infrastructure/postgres/builtin-skills.integration.test.ts`、`server/src/infrastructure/postgres/admin-skill-installation.integration.test.ts`、`server/src/modules/skill/builtin-skills.test.ts`、`server/src/modules/run/current-execution-authorization.test.ts`、`server/src/modules/runtime/runtime-adapter.test.ts`
 
 1. 员工在个人空间与该 Agent 对话：Manifest 含三个内置 Skill（内联正文、`id@version`），装配 `activate_skill`；目录中内置 Skill 排在最后。
 2. 在团队空间与该 Agent 对话并让运行排队后再执行：派发授权与执行前复核都不因内置 Skill 报“工作空间未授权 Skill”。
 3. 为 Agent 固定标记覆盖 `html-page` 的 Skill 并发布，再对话：Manifest 中没有 HTML 页面内置 Skill，并记录被覆盖的内置 Skill 与覆盖者；另两个内置 Skill 仍在。员工从 Skill 广场选择该 Skill 时同样生效。
 4. 管理员在 Runtime 中紧急停用“文件分析”内置 Skill：新运行不再装配，Manifest 记录停用；执行中的运行再激活它时只拒绝这一次并告知模型，运行继续。
 5. 管理助手、Skill 安装与试运行、会话摘要、项目档案员运行的 Manifest 中没有内置 Skill。
-6. 以“（平台内置）”结尾的名称上传、链接安装或经旧文本接口创建 Skill，被拒绝并说明原因。
+6. 以“（平台内置）”结尾的名称上传或经链接安装 Skill，被拒绝并说明原因。
 
 **验收：** 内置 Skill 不需要 Skill 授权或空间授权，不进入依赖闭包；覆盖与停用确定性生效并可从 Manifest 追溯；系统与管理运行不受影响。
 
@@ -349,6 +349,21 @@
 6. 来自员工提交的草稿被拒绝放弃，仍在“待审核”中处理。
 
 **验收：** 被放弃的版本标为停用、安装记录取消、审计记录 `skill.draft.discard`；试运行证据与已发布版本不受影响；与停用版本内容相同的包重新安装时生成新草稿，不复用停用版本。
+
+### SKILL-UPGRADE-01 安装同名包生成已有 Skill 的下一版本
+
+**优先级：** P1
+**角色：** 平台管理员
+**运行层级：** 专用可丢弃 PostgreSQL 与 Mock ACP Worker
+**前置数据：** 一个经 ZIP 安装并已发布的 Skill；预置的“文档处理”Skill（不经安装进入，迁移 0130 补写安装名称）；迁移到 0129 的库中构造的旧 Skill（同名多行、名称已被占用、员工提交审核中）
+**spec：** `server/src/infrastructure/postgres/admin-skill-installation.integration.test.ts`、`server/src/infrastructure/postgres/skill-installation-key-backfill-migration.integration.test.ts`
+
+1. 上传与已发布 Skill 同名、内容不同的包：同一 Skill 生成下一版本草稿，已发布版本仍是当前版本；上传内容相同的包提示无需重复安装，Skill 列表不出现同名重复项。
+2. 发布 0.2.0 后回滚到 0.1.0，再上传新包：生成 0.3.0，不与已有版本号冲突。
+3. 上传与预置“文档处理”同名的包：生成它的 1.1.0 草稿，不新建同名 Skill；当前版本仍为 1.0.0。
+4. 迁移 0130：旧 Skill 补写安装名称，同名多行只补未停用、最早创建的一行；名称已被占用的和员工提交审核中的 Skill 不补。
+
+**验收：** 修改 Skill 只能经重新安装；安装命中已有 Skill 时只追加草稿版本，不改动已发布版本与 Agent 固定引用。
 
 ### SKILL-DEP-01 脚本依赖按执行镜像核对，换镜像后复查已发布 Skill
 

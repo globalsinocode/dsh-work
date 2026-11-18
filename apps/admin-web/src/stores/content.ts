@@ -21,7 +21,6 @@ import type {
   OperationsSummary,
   PlatformStatus,
   RuntimeDefinition,
-  SkillConfiguration,
   SkillDefinition,
   SkillReleaseRecord,
   SkillVersionRecord,
@@ -211,21 +210,6 @@ export const useContentStore = defineStore('admin-content', () => {
     return result
   }
 
-  async function createSkill(input: Omit<SkillConfiguration, 'id'>) {
-    const result = await adminApi.createSkill(input)
-    skills.value.unshift(result.skill)
-    skillVersions.value.unshift(result.version)
-    return result.skill
-  }
-
-  async function updateSkill(input: SkillConfiguration) {
-    const { id, ...configuration } = input
-    const result = await adminApi.updateSkill({ skillId: id, ...configuration })
-    replaceById(skills.value, result.skill)
-    replaceById(skillVersions.value, result.version)
-    return result.skill
-  }
-
   function testSkill(skillId: string, prompt: string) {
     return adminApi.testSkill({ skillId, prompt })
   }
@@ -382,8 +366,6 @@ export const useContentStore = defineStore('admin-content', () => {
     loadAgentJoinedWorkspaces,
     loadGrantSourceReconciliation,
     reconcileGrantSources,
-    createSkill,
-    updateSkill,
     setSkillStatus,
     testSkill,
     startSkillTestRun,

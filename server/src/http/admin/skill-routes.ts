@@ -1,4 +1,4 @@
-import type { CreateSkillInput, PublishStatus, SkillDefinition, UpdateSkillInput } from '../../domain/types.ts'
+import type { PublishStatus, SkillDefinition } from '../../domain/types.ts'
 import type { PostgresSkillService } from '../../modules/skill/postgres-skill-service.ts'
 import type { BuiltinSkillStatus } from '../../modules/skill/builtin-skills.ts'
 import { envelope, httpResult, readJsonBody, requireRequestIdentity, type Router } from '../router.ts'
@@ -38,20 +38,6 @@ export function registerSkillRoutes(router: Router, service: PostgresSkillServic
   })
   router.get(`${basePath}/skill-versions`, async () => envelope('admin', await service.getSkillVersions(), 'postgres'))
   router.get(`${basePath}/skill-release-records`, async () => envelope('admin', await service.getReleaseRecords(), 'postgres'))
-  router.post(`${basePath}/skills`, async (request, context) => {
-    const input = await readJsonBody<Omit<CreateSkillInput, 'actor'>>(request)
-    return httpResult(201, envelope('admin', await service.createSkill({
-      ...input,
-      actor: requireRequestIdentity(context, 'admin').userId,
-    }), 'postgres'))
-  })
-  router.patch(`${basePath}/skills`, async (request, context) => {
-    const input = await readJsonBody<Omit<UpdateSkillInput, 'actor'>>(request)
-    return envelope('admin', await service.updateSkill({
-      ...input,
-      actor: requireRequestIdentity(context, 'admin').userId,
-    }), 'postgres')
-  })
   router.post(`${basePath}/skills/test`, async (request, context) => {
     const input = await readJsonBody<{ skillId: string; prompt?: string; scenario?: unknown }>(request)
     return envelope('admin', await service.testSkill({

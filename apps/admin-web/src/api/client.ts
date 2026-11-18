@@ -14,7 +14,6 @@ import type {
   AgentRoutine,
   AgentRoutineExecution,
   CreateAgentDraftInput,
-  CreateSkillInput,
   AgentReleaseOverview,
   AgentValidation,
   AgentVersionHistoryItem,
@@ -75,7 +74,6 @@ import type {
   SkillVersionRecord,
   UpdateAgentDraftInput,
   UpdateRuntimeConfigurationInput,
-  UpdateSkillInput,
   UsagePoint,
   SkillSubmissionReviewDetail,
   SkillSubmissionReviewItem,
@@ -328,10 +326,6 @@ export const adminApi = {
   getSkills: () => request<SkillDefinition[]>('/skills'),
   getSkillVersions: () => request<SkillVersionRecord[]>('/skill-versions'),
   getSkillReleaseRecords: () => request<SkillReleaseRecord[]>('/skill-release-records'),
-  createSkill: (input: CreateSkillInput) =>
-    request<{ skill: SkillDefinition; version: SkillVersionRecord }>('/skills', { method: 'POST', body: JSON.stringify(input) }),
-  updateSkill: (input: UpdateSkillInput) =>
-    request<{ skill: SkillDefinition; version: SkillVersionRecord }>('/skills', { method: 'PATCH', body: JSON.stringify(input) }),
   testSkill: (input: { skillId: string; prompt?: string }) =>
     request<{ id: string; skillId: string; version: string; status: 'passed' | 'failed'; resultSummary: string; testedAt: string }>('/skills/test', { method: 'POST', body: JSON.stringify(input) }),
   startSkillTestRun: (input: { skillId: string; prompt?: string }) =>

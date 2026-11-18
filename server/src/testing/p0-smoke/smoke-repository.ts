@@ -93,15 +93,6 @@ export class SmokeRepository {
     return { agent: copy(agent), version: copy(version) }
   }
 
-  async createSkill(skill: SkillDefinition): Promise<SkillDefinition> {
-    await simulateIo()
-    if (this.data.skills.some((item) => item.id === skill.id)) {
-      throw stateConflict(`Skill 标识已存在：${skill.id}`)
-    }
-    this.data.skills.unshift(copy(skill))
-    return copy(skill)
-  }
-
   async updateSkill(
     skillId: string,
     patch: Partial<Omit<SkillDefinition, 'id'>>,

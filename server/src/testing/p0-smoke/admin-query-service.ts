@@ -1,5 +1,4 @@
 import { SmokeModelUsageService } from './model-usage-service.ts'
-import { randomUUID } from 'node:crypto'
 
 import { assertAgentSpecLimits } from '../../modules/agent/agent-spec.ts'
 import { normalizeAgentMcpScope } from '../../modules/tool/agent-mcp-scope.ts'
@@ -13,7 +12,6 @@ import type {
   AuditEventListQuery,
   ConnectorConfiguration,
   CreateAgentDraftInput,
-  CreateSkillInput,
   ListPage,
   ManagedWorkspaceDefinition,
   OperationsSummary,
@@ -21,10 +19,8 @@ import type {
   SessionListPage,
   SessionListQuery,
   SkillConfiguration,
-  SkillDefinition,
   UpdateAgentDraftInput,
   UpdateRuntimeConfigurationInput,
-  UpdateSkillInput,
 } from '../../domain/types.ts'
 import { builtinTools, invalidSkillToolReferences, normalizeDisabledTools, type BuiltinToolStatus } from '../../modules/runtime/builtin-tools.ts'
 import { fileURLToPath } from 'node:url'
@@ -358,59 +354,6 @@ export class AdminQueryService {
       ...skill,
       ...(skill.status === 'published' ? { activeVersion: skill.version } : {}),
     })))
-  }
-
-  async createSkill(input: CreateSkillInput) {
-    const actor = input.actor.trim()
-    if (!actor) throw stateConflict('创建人不能为空')
-    const skillId = `skill-${randomUUID()}`
-    const configuration: SkillConfiguration = {
-      id: skillId,
-      name: input.name,
-      category: input.category,
-      description: input.description,
-      instructions: input.instructions,
-      toolIds: input.toolIds,
-      testPrompt: input.testPrompt,
-    }
-    assertSkillConfiguration(configuration)
-    await this.assertSkillToolsAvailable(input.toolIds)
-    const skill: SkillDefinition = {
-      id: skillId,
-      name: input.name.trim(),
-      category: input.category.trim(),
-      description: input.description.trim(),
-      instructions: input.instructions.trim(),
-      toolIds: unique(input.toolIds),
-      testPrompt: input.testPrompt.trim(),
-      coveredBuiltinScenarios: [],
-      visibleRoleIds: null,
-      owner: actor,
-      status: 'draft',
-      version: '0.1.0',
-      updatedAt: prototypeTimestamp().slice(0, 10),
-    }
-    return this.repository.createSkill(skill)
-  }
-
-  async updateSkill(input: UpdateSkillInput) {
-    if (!input.actor.trim()) throw stateConflict('操作人不能为空')
-    const skills = await this.repository.read('skills')
-    const current = skills.find((skill) => skill.id === input.skillId)
-    if (!current) throw notFound(`Skill 不存在：${input.skillId}`)
-    if (current.status !== 'draft') throw new Error('已发布或已停用的 Skill 不可原地编辑')
-    const configuration: SkillConfiguration = { id: input.skillId, ...input }
-    assertSkillConfiguration(configuration)
-    await this.assertSkillToolsAvailable(input.toolIds)
-    return this.repository.updateSkill(input.skillId, {
-      name: input.name.trim(),
-      category: input.category.trim(),
-      description: input.description.trim(),
-      instructions: input.instructions.trim(),
-      toolIds: unique(input.toolIds),
-      testPrompt: input.testPrompt.trim(),
-      updatedAt: prototypeTimestamp().slice(0, 10),
-    })
   }
 
   async setSkillStatus(input: {

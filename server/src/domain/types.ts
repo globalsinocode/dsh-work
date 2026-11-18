@@ -542,15 +542,6 @@ export interface SkillConfiguration {
   testPrompt: string
 }
 
-export interface CreateSkillInput extends Omit<SkillConfiguration, 'id'> {
-  actor: string
-}
-
-export interface UpdateSkillInput extends Omit<SkillConfiguration, 'id'> {
-  skillId: string
-  actor: string
-}
-
 export interface ConnectorDefinition {
   id: string
   name: string

@@ -4,17 +4,14 @@ import { ExecutionCapabilityUnavailableError } from '../runtime/execution-capabi
 import type { RuntimeManifest } from '../runtime/runtime-types.ts'
 import { normalizeSkillTestScenario, type SkillTestScenario } from '../../domain/skill-test-scenario.ts'
 import { assertStartedSkillTest, runtimeSkillFingerprint, SKILL_TEST_EVIDENCE_POLICY, SKILL_TEST_SCENARIO_POLICY, evaluateAttemptEvidence } from './skill-test-evidence.ts'
-import { createSkillPackage, type SkillPackageArtifact } from './skill-package.ts'
+import type { SkillPackageArtifact } from './skill-package.ts'
 import { createHash, randomUUID } from 'node:crypto'
 
 import type {
-  CreateSkillInput,
   PublishStatus,
-  SkillConfiguration,
   SkillDefinition,
   SkillReleaseRecord,
   SkillVersionRecord,
-  UpdateSkillInput,
 } from '../../domain/types.ts'
 import type { DatabaseClient, DatabaseTransaction } from '../../infrastructure/postgres/database.ts'
 import { requireAdminModuleActor } from '../authorization/admin-actor.ts'
@@ -24,7 +21,7 @@ import type { SkillArtifactStore } from './skill-artifact-store.ts'
 import { DEFAULT_SKILL_TEST_PROMPT, lockInstallationKey } from './skill-identity.ts'
 import { missingPythonDependencies } from './skill-installation-plan.ts'
 import type { PythonModuleIndex } from '../runtime/execution-backend.ts'
-import { BUILTIN_SKILL_NAME_SUFFIX, isReservedBuiltinSkillName, normalizeBuiltinSkillScenarios } from './builtin-skills.ts'
+import { normalizeBuiltinSkillScenarios } from './builtin-skills.ts'
 
 const tenantId = 'tenant-dsh-work'
 
@@ -365,153 +362,6 @@ export class PostgresSkillService {
        order by srr.created_at desc
     `
     return rows.map(row => ({ ...row, time: formatDateTime(row.time) }))
-  }
-
-  async createSkill(input: CreateSkillInput) {
-    const actor = await this.requireActor(input.actor)
-    const configuration = normalizeConfiguration({
-      id: `skill-${randomUUID().slice(0, 12)}`,
-      name: input.name,
-      category: input.category,
-      description: input.description,
-      instructions: input.instructions,
-      toolIds: input.toolIds,
-      testPrompt: input.testPrompt,
-    })
-    assertConfiguration(configuration)
-    assertSkillToolReferences(configuration.toolIds)
-    const versionId = `skill-version-${randomUUID()}`
-    const artifact = await this.requireArtifactStore().put(createSkillPackage({
-      name: configuration.name,
-      description: configuration.description,
-      instructions: configuration.instructions,
-      version: '0.1.0',
-      toolIds: configuration.toolIds,
-    }))
-
-    await this.database.begin(async transaction => {
-      await transaction`
-        insert into skills (
-          id, tenant_id, key, name, category, description, owner_user_id, created_by,
-          status, draft_version_id
-        ) values (
-          ${configuration.id}, ${tenantId}, ${configuration.id}, ${configuration.name},
-          ${configuration.category}, ${configuration.description}, ${actor.id}, ${actor.id},
-          'draft', null
-        )
-      `
-      await transaction`
-        insert into skill_versions (
-          id, tenant_id, skill_id, version, name, category, description, instructions,
-          manifest, artifact_ref, package_sha256, tool_refs, test_prompt, status, created_by, change_summary
-        ) values (
-          ${versionId}, ${tenantId}, ${configuration.id}, '0.1.0', ${configuration.name},
-          ${configuration.category}, ${configuration.description}, '',
-          ${transaction.json(JSON.parse(JSON.stringify({ artifact })))}, ${artifact.artifactRef}, ${artifact.sha256},
-          ${transaction.json(configuration.toolIds)}, ${configuration.testPrompt},
-          'draft', ${actor.id}, '创建 Skill 初始版本'
-        )
-      `
-      await transaction`
-        update skills set draft_version_id = ${versionId}, updated_at = now()
-         where tenant_id = ${tenantId} and id = ${configuration.id}
-      `
-    })
-    await this.audit(actor.id, 'skill.create', configuration.id, 'success', '创建 Skill 0.1.0 草稿')
-    return this.requireSkillResult(configuration.id, versionId)
-  }
-
-  async updateSkill(input: UpdateSkillInput) {
-    const actor = await this.requireActor(input.actor)
-    assertSkillId(input.skillId)
-    const [current] = await this.readSkillRows(input.skillId)
-    if (!current) throw skillNotFound(`Skill 不存在：${input.skillId}`)
-    const [packaged] = await this.database`select id from skill_versions where tenant_id = ${tenantId} and skill_id = ${input.skillId} and manifest ? 'installationId' limit 1`
-    if (packaged) throw skillConflict('安装包版本不可通过文本编辑，请通过新包安装更新', 'skill_package_immutable')
-    const configuration = normalizeConfiguration({ id: input.skillId, ...input })
-    assertConfiguration(configuration)
-    assertSkillToolReferences(configuration.toolIds)
-    let draftVersionId = current.draftVersionId
-
-    await this.database.begin(async transaction => {
-      const [locked] = await transaction<{
-        activeVersionId: string | null
-        draftVersionId: string | null
-        activeVersion: string | null
-        draftVersion: string | null
-      }[]>`
-        select s.active_version_id as "activeVersionId", s.draft_version_id as "draftVersionId",
-               active.version as "activeVersion", draft.version as "draftVersion"
-          from skills s
-          left join skill_versions active on active.tenant_id = s.tenant_id and active.id = s.active_version_id
-          left join skill_versions draft on draft.tenant_id = s.tenant_id and draft.id = s.draft_version_id
-         where s.tenant_id = ${tenantId} and s.id = ${input.skillId}
-         for update of s
-      `
-      if (!locked) throw skillNotFound(`Skill 不存在：${input.skillId}`)
-      draftVersionId = locked.draftVersionId
-      if (draftVersionId) {
-        if (!locked.draftVersion) throw skillInternalFailure('Skill 草稿版本不存在')
-        const artifact = await this.requireArtifactStore().put(createSkillPackage({
-          name: configuration.name,
-          description: configuration.description,
-          instructions: configuration.instructions,
-          version: locked.draftVersion,
-          toolIds: configuration.toolIds,
-        }))
-        await transaction`
-          update skill_versions
-             set name = ${configuration.name}, category = ${configuration.category},
-                 description = ${configuration.description}, instructions = '',
-                 manifest = ${transaction.json(JSON.parse(JSON.stringify({ artifact })))}, artifact_ref = ${artifact.artifactRef},
-                 package_sha256 = ${artifact.sha256},
-                 tool_refs = ${transaction.json(configuration.toolIds)}, test_prompt = ${configuration.testPrompt},
-                 change_summary = ${`更新 ${configuration.name} 配置`}
-           where tenant_id = ${tenantId} and id = ${draftVersionId} and status = 'draft'
-        `
-      } else {
-        if (!locked.activeVersionId || !locked.activeVersion) throw skillConflict('Skill 没有可用于创建新版本的已发布版本')
-        const [latest] = await transaction<{ version: string }[]>`
-          select version from skill_versions
-           where tenant_id = ${tenantId} and skill_id = ${input.skillId}
-           order by split_part(version, '.', 1)::integer desc,
-                    split_part(version, '.', 2)::integer desc,
-                    split_part(version, '.', 3)::integer desc
-           limit 1
-        `
-        draftVersionId = `skill-version-${randomUUID()}`
-        const version = nextVersion(latest?.version ?? locked.activeVersion)
-        const artifact = await this.requireArtifactStore().put(createSkillPackage({
-          name: configuration.name,
-          description: configuration.description,
-          instructions: configuration.instructions,
-          version,
-          toolIds: configuration.toolIds,
-        }))
-        await transaction`
-          insert into skill_versions (
-            id, tenant_id, skill_id, version, name, category, description, instructions,
-            manifest, artifact_ref, package_sha256, tool_refs, test_prompt, status, created_by, source_version, change_summary
-          ) values (
-            ${draftVersionId}, ${tenantId}, ${input.skillId}, ${version},
-            ${configuration.name}, ${configuration.category}, ${configuration.description},
-            '', ${transaction.json(JSON.parse(JSON.stringify({ artifact })))}, ${artifact.artifactRef}, ${artifact.sha256},
-            ${transaction.json(configuration.toolIds)},
-            ${configuration.testPrompt}, 'draft', ${actor.id}, ${locked.activeVersion},
-            ${`创建 ${configuration.name} 新版本`}
-          )
-        `
-      }
-      await transaction`
-        update skills set name = ${configuration.name}, category = ${configuration.category},
-                          description = ${configuration.description}, draft_version_id = ${draftVersionId},
-                          updated_at = now()
-         where tenant_id = ${tenantId} and id = ${input.skillId}
-      `
-    })
-    await this.audit(actor.id, 'skill.draft.update', input.skillId, 'success', '保存 Skill 待发布版本')
-    if (!draftVersionId) throw skillInternalFailure('Skill 草稿版本创建失败')
-    return this.requireSkillResult(input.skillId, draftVersionId)
   }
 
   async testSkill(input: { skillId: string; prompt?: string; actor: string; scenario?: unknown }): Promise<SkillTestResult> {
@@ -1327,50 +1177,15 @@ export class PostgresSkillService {
     return toSkillDefinition(row)
   }
 
-  private async requireSkillResult(skillId: string, versionId: string) {
-    const skill = await this.requireSkill(skillId)
-    const version = (await this.getSkillVersions()).find(item => item.id === versionId)
-    if (!version) throw skillNotFound(`Skill Version 不存在：${versionId}`, 'skill_version_not_found')
-    return { skill, version }
-  }
-
   private audit(actorId: string, action: string, skillId: string, result: 'success' | 'failed', detail: string) {
     return this.operations?.appendAudit(actorId, action, skillId, result, `trace-skill-${randomUUID()}`, detail)
       ?? Promise.resolve()
   }
 }
 
-function normalizeConfiguration(input: SkillConfiguration): SkillConfiguration {
-  for (const key of ['id', 'name', 'category', 'description', 'instructions', 'testPrompt'] as const) {
-    if (typeof input[key] !== 'string') throw skillInvalid(`Skill 字段 ${key} 必须为字符串`)
-  }
-  if (!Array.isArray(input.toolIds) || input.toolIds.some(id => typeof id !== 'string')) {
-    throw skillInvalid('Skill toolIds 必须为字符串数组')
-  }
-  return {
-    id: input.id,
-    name: input.name.trim(),
-    category: input.category.trim(),
-    description: input.description.trim(),
-    instructions: input.instructions.trim(),
-    toolIds: unique(input.toolIds),
-    testPrompt: input.testPrompt.trim(),
-  }
-}
-
 function normalizeTestRunStatus(status: string): SkillTestRunProgress['status'] {
   if (status === 'queued' || status === 'running' || status === 'waiting' || status === 'cancel_requested' || status === 'failed' || status === 'cancelled') return status
   return 'failed'
-}
-
-function assertConfiguration(input: SkillConfiguration) {
-  if (!/^skill-[a-z0-9-]{6,48}$/.test(input.id)) throw skillInvalid('Skill 标识格式不正确')
-  if (input.name.length < 2 || input.name.length > 40) throw skillInvalid('Skill 名称长度为 2～40 个字符')
-  if (isReservedBuiltinSkillName(input.name)) throw skillInvalid(`Skill 名称不能以“${BUILTIN_SKILL_NAME_SUFFIX}”结尾，该后缀保留给平台内置 Skill`)
-  if (!input.category || input.category.length > 40) throw skillInvalid('Skill 分类不能为空且不能超过 40 个字符')
-  if (input.description.length < 10 || input.description.length > 200) throw skillInvalid('Skill 说明长度为 10～200 个字符')
-  if (input.instructions.length < 20 || input.instructions.length > 10000) throw skillInvalid('执行指令长度为 20～10000 个字符')
-  if (input.testPrompt.length < 4 || input.testPrompt.length > 500) throw skillInvalid('典型测试问题长度为 4～500 个字符')
 }
 
 function toSkillDefinition(row: SkillRow): SkillDefinition {
@@ -1454,11 +1269,6 @@ function parseReference(reference: string) {
     throw skillInvalid(`Skill 引用必须锁定版本：${reference}`)
   }
   return { id: reference.slice(0, separator), version: reference.slice(separator + 1) }
-}
-
-function nextVersion(current: string) {
-  const [major = 0, minor = 0] = current.split('.').map(Number)
-  return `${major}.${minor + 1}.0`
 }
 
 function unique(values: string[]) {

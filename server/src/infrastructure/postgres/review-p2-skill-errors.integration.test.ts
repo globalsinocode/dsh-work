@@ -12,9 +12,11 @@ import { testApiAuthenticator } from '../../testing/test-identity.ts'
 import { SkillArtifactStore } from '../../modules/skill/skill-artifact-store.ts'
 import { PostgresSkillService } from '../../modules/skill/postgres-skill-service.ts'
 import { createThrowawayDatabase, type ThrowawayDatabase } from './test-database.ts'
+import { insertSkillDraft } from './test-skill-fixture.ts'
 import { LocalObjectStorage } from '../storage/local-object-storage.ts'
 
 let db: ThrowawayDatabase, service: PostgresSkillService, server: Server, root: string, base: string, draftId: string
+let artifactStore: SkillArtifactStore
 const actor = 'U00008', publishedId = 'skill-document'
 const configuration = {
   name: '错误分类用例', category: '测试', description: '仅用于隔离数据库的 Skill 域错误回归验证。',
@@ -24,8 +26,9 @@ const configuration = {
 before(async () => {
   db = await createThrowawayDatabase({ namePrefix: 'review_p2_skill' })
   root = await mkdtemp(join(tmpdir(), 'review-p2-skill-'))
-  service = new PostgresSkillService(db.client, undefined, new SkillArtifactStore(new LocalObjectStorage(root, { fileMode: 0o400 })))
-  draftId = (await service.createSkill(configuration)).skill.id
+  artifactStore = new SkillArtifactStore(new LocalObjectStorage(root, { fileMode: 0o400 }))
+  service = new PostgresSkillService(db.client, undefined, artifactStore)
+  draftId = (await insertSkillDraft(db.client, artifactStore, configuration)).skillId
   const router = new Router({ authenticateApi: testApiAuthenticator })
   registerSkillRoutes(router, service, async () => ({ skills: [], scenarios: [], disabledBuiltinSkills: [] }))
   server = createServer((request, response) => void router.handle(request, response))
@@ -71,11 +74,12 @@ test('P2-2 RED: published/draft lifecycle conflicts have explicit stable codes',
   await expectError('/skills/status', { skillId: draftId, status: 'published' }, 409, 'skill_test_required', 'PATCH')
   await expectError('/skills/rollback', { skillId: publishedId, version: '99.99.99' }, 404, 'skill_version_not_found')
 })
-test('P2-2: invalid status/configuration fields are 422, not implicit publication or TypeError', async () => {
+test('P2-2: invalid status fields are 422, not implicit publication or TypeError', async () => {
   await expectError('/skills/status', { skillId: draftId, status: 'destroyed' }, 422, 'skill_input_invalid', 'PATCH')
-  await expectError('/skills', { ...configuration, name: null }, 422, 'skill_input_invalid')
-  await expectError('/skills', { ...configuration, toolIds: [123] }, 422, 'skill_input_invalid')
-  await expectError('/skills', { ...configuration, name: 'X' }, 422, 'skill_input_invalid')
+})
+test('文本创建/更新 Skill 的接口已删除，只能经安装或员工提交进入', async () => {
+  await expectError('/skills', configuration, 404, 'route_not_found')
+  await expectError('/skills', { ...configuration, skillId: draftId }, 404, 'route_not_found', 'PATCH')
 })
 test('P2-2: progress endpoints classify missing Skills and non-testable state', async () => {
   await expectError('/skills/skill-does-not-exist/test-runs/missing-run', undefined, 404, 'skill_not_found', 'GET')
@@ -106,7 +110,7 @@ test('P2-2: unexpected dependency failure remains a sanitized 500, not a client 
 })
 
 test('P2-2: missing strict runner remains service-unavailable 503 on test/start/progress', async () => {
-  const id = (await service.createSkill({ ...configuration, name: '执行能力不可用测试' })).skill.id
+  const id = (await insertSkillDraft(db.client, artifactStore, { ...configuration, name: '执行能力不可用测试' })).skillId
   await db.client`update skill_versions set manifest = manifest || '{"installationId":"fixture-unavailable-runner"}'::jsonb where skill_id = ${id}`
   await expectError('/skills/test', { skillId: id }, 503, 'skill_service_unavailable')
   await expectError('/skills/test-runs', { skillId: id }, 503, 'skill_service_unavailable')

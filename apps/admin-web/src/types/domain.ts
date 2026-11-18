@@ -740,22 +740,6 @@ export interface SkillTestRunProgress {
   }>
 }
 
-export interface SkillConfiguration {
-  id: string
-  name: string
-  category: string
-  description: string
-  instructions: string
-  toolIds: string[]
-  testPrompt: string
-}
-
-export type CreateSkillInput = Omit<SkillConfiguration, 'id'>
-
-export interface UpdateSkillInput extends Omit<SkillConfiguration, 'id'> {
-  skillId: string
-}
-
 export interface ConnectorDefinition {
   id: string
   name: string

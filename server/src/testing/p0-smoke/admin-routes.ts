@@ -101,16 +101,6 @@ export function registerAdminRoutes(router: Router, service: AdminQueryService) 
     (await service.getSkills()).map(prototypeSkillVersion),
   ))
   router.get(`${basePath}/skill-release-records`, async () => envelope('admin', []))
-  router.post(`${basePath}/skills`, async (request, context) => {
-    const input = await readJsonBody<Omit<Parameters<AdminQueryService['createSkill']>[0], 'actor'>>(request)
-    const skill = await service.createSkill({ ...input, actor: requireRequestIdentity(context, 'admin').userId })
-    return envelope('admin', { skill, version: prototypeSkillVersion(skill) })
-  })
-  router.patch(`${basePath}/skills`, async (request, context) => {
-    const input = await readJsonBody<Omit<Parameters<AdminQueryService['updateSkill']>[0], 'actor'>>(request)
-    const skill = await service.updateSkill({ ...input, actor: requireRequestIdentity(context, 'admin').userId })
-    return envelope('admin', { skill, version: prototypeSkillVersion(skill) })
-  })
   router.post(`${basePath}/skills/test`, async (request) => {
     const input = await readJsonBody<{ skillId: string; prompt?: string }>(request)
     const skill = (await service.getSkills()).find(item => item.id === input.skillId)

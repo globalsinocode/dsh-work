@@ -249,6 +249,7 @@ Run 和 Attempt 的普通状态转换不能从终态回退。只有失败或取�
 - [企业知识库接入 WeKnora](../../server/migrations/0115_weknora_knowledge.sql)：新增连接、知识库、部门授权、会话所选知识库与引用快照五张表，给带 `workbench:use` 的角色加 `knowledge:view`；删除原有本地知识库四张表、两篇合成文档与检索函数。
 - [知识库重排序结果](../../server/migrations/0127_knowledge_rerank_outcome.sql)：连接上增加最近一次检索的重排序结果与时间，供管理端健康状态显示（知识库优化 O5）。
 - [知识引用来源](../../server/migrations/0128_knowledge_citation_source.sql)：引用快照增加 `source`，区分执行前检索与 Agent 检索工具（功能规则第 11 节，KO9）。
+- [补写 Skill 安装名称](../../server/migrations/0130_backfill_skill_installation_key.sql)：为经已删除的文本接口写入的 Skill 与种子 Skill 补写 `installation_key`（规则同 0035，审核中的员工提交、已被占用的名称除外，同名只补一行），使安装同名包生成其下一版本（功能规则 5.3）。
 
 新增变更使用新的顺序迁移，保留已应用迁移；迁移运行器以咨询锁串行执行并校验已执行迁移的 SHA-256，修改已执行迁移会拒绝启动。应用回滚不会自动降低 Schema，至少保持上一版本兼容；破坏性清理需独立安排。操作流程见 [部署手册](../release/mac-mini-deployment-runbook.md)。
 
