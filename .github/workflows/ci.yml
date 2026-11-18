@@ -179,3 +179,16 @@ jobs:
 
       - name: Run Agent routine P1 browser journey
         run: pnpm test:e2e:agent-routines
+
+      # 任一浏览器套件失败时上传 Playwright 结果，便于事后定位偶发失败：各配置只为失败的用例保留 trace 与截图，
+      # 失败后的套件不再运行。内容均为测试夹具的合成数据与 CI 专用身份。
+      - name: Upload Playwright results on failure
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: browser-test-results-${{ github.run_attempt }}
+          path: |
+            test-results/
+            playwright-report/
+          if-no-files-found: ignore
+          retention-days: 14

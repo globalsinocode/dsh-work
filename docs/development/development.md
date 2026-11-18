@@ -99,7 +99,7 @@ PostgreSQL 集成测试必须使用专用可丢弃测试库，禁止使用开发
 DSH_WORK_TEST_DATABASE_URL='postgres://<test-user>:<test-password>@127.0.0.1:5432/dsh_work_test' pnpm test:local-auth:integration
 ```
 
-`pnpm test:integration [目录...]` 与其他 `test:*:integration` 使用同一测试变量，按修改模块选择；集成测试逐个文件串行执行。`pnpm ci:check` 不包含 PostgreSQL 集成测试和浏览器 E2E；GitHub Actions 在 `integration` 与 `browser` 两个 Job 中各自启动 PostgreSQL Service 运行它们。
+`pnpm test:integration [目录...]` 与其他 `test:*:integration` 使用同一测试变量，按修改模块选择；集成测试逐个文件串行执行。`pnpm ci:check` 不包含 PostgreSQL 集成测试和浏览器 E2E；GitHub Actions 在 `integration` 与 `browser` 两个 Job 中各自启动 PostgreSQL Service 运行它们。`browser` Job 中任一套件失败时，上传制品 `browser-test-results-<重跑序号>`（取 `github.run_attempt`，首次运行为 1），保留 14 天。失败用例的 trace 与截图在 `test-results/` 下；钉钉、本地账号、登录选项三套分别在子目录 `dingtalk/`、`local-auth/`、`login-options/` 下。失败摘要看 Job 日志。`playwright-report/` 只是 P0 冒烟的 HTML 报告；P1 套件失败时，里面是 P0 的结果，与这次失败无关。下载后先解压，再用 `pnpm exec playwright show-trace <trace.zip>` 查看点击前后的页面、网络请求与控制台。偶发失败先看 trace，再决定修复还是重跑。仓库是公开的，制品在保留期内任何登录 GitHub 的用户都能下载，trace 含完整的请求与响应；因此 `browser` Job 只能使用测试夹具数据，不得引入真实密钥。
 
 PF-03 MCP Connector 治理使用 `pnpm test:mcp:integration`，在一次性数据库中验证平台生成标识、Bearer Token 加密存储/运行时解析/轮换、整体发现、按 Agent 选定解析、能力变更待确认与确认后摘要变化、取消租户容量上限、逐调用审计以及停用和删除门禁；该命令使用合成 Runtime，不替代真实 Streamable HTTP MCP 与目标 DSH 的 P2 验收。
 

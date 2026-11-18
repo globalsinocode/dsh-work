@@ -107,11 +107,13 @@ test('project checks reject dangling docs and tests disconnected from CI', t => 
   const workflow = join(root, '.github/workflows/ci.yml')
   writeFileSync(workflow, readFileSync(workflow, 'utf8')
     .replace('run: pnpm test:integration', 'run: echo skipped')
-    .replace('run: pnpm test:e2e:personal', 'run: echo skipped'))
+    .replace('run: pnpm test:e2e:personal', 'run: echo skipped')
+    .replace(/actions\/upload-artifact@[0-9a-f]{40}/, 'actions/upload-artifact@v7'))
   assert.match(failures(root, 'project'), /文档链接不存在：docs\/deleted.md/)
   assert.match(failures(root, 'project'), /test:unit 未接入 ci:check/)
   assert.match(failures(root, 'project'), /test:integration 未接入 GitHub CI/)
   assert.match(failures(root, 'project'), /test:e2e:personal 未接入 GitHub CI/)
+  assert.match(failures(root, 'project'), /CI 的 actions\/upload-artifact 必须固定带版本注释的 Commit SHA/)
 })
 
 test('project checks reject duplicate migration numbers and database tests outside the integration job', t => {
