@@ -330,7 +330,9 @@
 
 已随执行隔离实现：输出收集、格式与安全检查及成果登记（2b-2，`python_execute` 的输出自 1b② 起同样登记）；本轮装配了 `bash` 时原始文件只读挂载于 `input/original/`（2b-4），`python_execute` 与 `bash` 在同一执行容器中运行，脚本可经参数读取；员工侧运行总装配 `bash`，只有 Runtime 紧急停用 `bash` 时没有原始文件。服务重启不恢复执行：活动 Attempt 以 `SERVICE_RESTARTED` 失败、遗留执行容器在启动时删除，由员工重新执行（[Runtime 优化方案](../design/runtime-execution-optimization-plan.md)约束 2，已决定不做中断后继续执行）。
 
-未完成（在此之前不得宣称完整的生产脚本平台）：数据库调用记录；Mac mini 上 `python-skill` 场景的真实验收（仓库中没有 Mac mini 执行该场景的记录）。`python_execute` 读取原始 xlsx 已有真实 Docker 用例；2026-11-04 在本机开发环境（真实 DSH 与执行容器）按验收目录 `SKILL-PY-P2` 走通样例脚本型 Skill 的安装、严格试运行、发布与员工上传 xlsx 汇总。
+调用记录（2026-11-19）：`python_execute` 只写本 Attempt 工作区、`activate_skill` 只写本 Attempt 的激活状态，都没有外部副作用，不在 `task_operations` 登记幂等操作（工具约定 `writeScope: 'attempt-workspace'`）：同一轮中参数相同的再次调用、重试产生的新 Attempt 都实际重新运行脚本，中断的调用也不会留下“效果未知”的操作而阻止员工重试。脚本正常返回时在 `skill_python_executions` 记下 Run、Attempt、Skill、入口与是否成功（退出码为 0），供试运行证据与发布覆盖检查使用；不记录耗时与输出正文。此前的版本在同一 Task 内对同参数调用直接返回第一次的结果。
+
+未完成（在此之前不得宣称完整的生产脚本平台）：Mac mini 上 `python-skill` 场景的真实验收（仓库中没有 Mac mini 执行该场景的记录）。`python_execute` 读取原始 xlsx 已有真实 Docker 用例；2026-11-04 在本机开发环境（真实 DSH 与执行容器）按验收目录 `SKILL-PY-P2` 走通样例脚本型 Skill 的安装、严格试运行、发布与员工上传 xlsx 汇总。
 
 ## 7. 自动任务（AG-03）
 

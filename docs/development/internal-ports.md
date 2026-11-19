@@ -56,9 +56,9 @@ DSH 工具策略在会话开始和工具清单变化时，用 DSH 的 agent 作�
 
 dsh-work 平台工具由契约目录编译严格 JSON Schema，并在 Unix socket 桥两侧执行校验；DSH 包装器对非 2xx 响应抛出错误，不把错误正文当成成功结果。由于 DSH ToolRuntime 对普通 `Error` 只保留 `message`，包装器同时把 `code/retryable/effect_state` 以 `DSH_WORK_TOOL_ERROR` 前缀投影到模型可见消息，并保留同名属性供直接调用方使用。DSH 原生文件/任务工具的输入由 DSH 与平台路径策略约束，但结构化输出尚未穿过平台验证边界；提升验证级别前须接通实际输出校验。
 
-平台桥错误外层为 `error.code/message/retryable/effect_state`。处理器在任何写入前发现的参数或业务前置条件失败必须抛出有类型错误，才能保留可纠正消息和 `not_started`；未标记的写入处理器异常保守记为 `TOOL_RESULT_UNKNOWN`。只读安全工具超时可标记重试；写入超时、取消或执行后冲突按契约表达未知效果。`serialized` 表示同一 Attempt 内同名工具不允许重叠执行，冲突在第二个处理器启动前返回。写入平台工具按 Task 自动登记 Operation：`completionSemantics=completed` 落完成回执，`accepted` 保留异步受理状态，超时或执行后无法确认落 `unknown`；重复动作不会再次进入处理器。
+平台桥错误外层为 `error.code/message/retryable/effect_state`。处理器在任何写入前发现的参数或业务前置条件失败必须抛出有类型错误，才能保留可纠正消息和 `not_started`；未标记的写入处理器异常保守记为 `TOOL_RESULT_UNKNOWN`。只读安全工具超时可标记重试；写入超时、取消或执行后冲突按契约表达未知效果。`serialized` 表示同一 Attempt 内同名工具不允许重叠执行，冲突在第二个处理器启动前返回。写入平台工具按 Task 自动登记 Operation（`writeScope: 'attempt-workspace'` 的工具除外，见下文 PF-01）：`completionSemantics=completed` 落完成回执，`accepted` 保留异步受理状态，超时或执行后无法确认落 `unknown`；重复动作不会再次进入处理器。
 
-PF-01 的 Task/Operation 仓储提供外部动作的持久化事实：`operation_key` 防止同一 Task 重复受理，`parameter_digest` 防止同键换参，`accepted/completed/failed/unknown` 区分受理、完成、失败和效果未知。`unknown` 不是失败或可安全重试的同义词，只能由平台管理员依据权威外部状态核对转为 `completed` 或 `failed`。`POST /task-executions` 受理无 Session 的 API/event Task，查询、取消和重试接口沿用现有 Run/Attempt/Runtime Adapter/DSH；Runtime Manifest 固定 `task_id`，Artifact 可归属 Task 并按当前 Workspace 与 Task 所有人重新鉴权。
+PF-01 的 Task/Operation 仓储提供外部动作的持久化事实：`operation_key` 防止同一 Task 重复受理，`parameter_digest` 防止同键换参，`accepted/completed/failed/unknown` 区分受理、完成、失败和效果未知。`unknown` 不是失败或可安全重试的同义词，只能由平台管理员依据权威外部状态核对转为 `completed` 或 `failed`。平台写入工具默认经此登记；只写本 Attempt 工作区或本 Attempt 状态的工具（工具约定 `writeScope: 'attempt-workspace'`，目前为 `activate_skill` 与 `python_execute`）不登记，每次调用都实际执行。`POST /task-executions` 受理无 Session 的 API/event Task，查询、取消和重试接口沿用现有 Run/Attempt/Runtime Adapter/DSH；Runtime Manifest 固定 `task_id`，Artifact 可归属 Task 并按当前 Workspace 与 Task 所有人重新鉴权。
 
 PF-02 的预算账户以 `tasks.budget_scope_task_id` 标识共享范围；默认指向 Task 自身。`task_budget_accounts` 保存累计时长、工具次数和输出字节上限，`attempt_budget_usage` 保存每次预占、结算/释放、测量来源与终态。`RunRepository.createAttempt` 在同一事务锁定账户、汇总已结算与活动预占并拒绝超额；Runtime 终态事件在状态转换前精确结算，数据库触发器为取消、重启和异常路径提供一次性保守兜底。Runtime Manifest 的 `budget` 快照必须与 Task 账户及 `limits` 一致。
 

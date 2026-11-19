@@ -151,7 +151,7 @@ export async function createPlatformToolBridge(
         if (!registration.validators.input(input)) throw toolInputInvalid(ajvErrors(registration.validators.input.errors))
         await authorizeTool(authorize, 'not_started', registration.contract.retryPolicy === 'safe')
         controller.signal.throwIfAborted()
-        if (registration.contract.effect === 'write' && operations) {
+        if (registration.contract.effect === 'write' && registration.contract.writeScope !== 'attempt-workspace' && operations) {
           const callIdHeader = request.headers['x-dsh-tool-call-id']
           const callId = (Array.isArray(callIdHeader) ? callIdHeader[0] : callIdHeader)?.trim()
           if (!callId) throw toolInputInvalid('写入工具缺少 DSH tool call id')

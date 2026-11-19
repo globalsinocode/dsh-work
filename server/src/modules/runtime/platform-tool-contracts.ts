@@ -75,6 +75,9 @@ export const platformToolContracts = {
       required: ['id', 'name', 'version', 'instructions', 'resourceDirectory', 'dependencies', 'pythonEntries', 'contentSha256'],
     },
     effect: 'write', retryPolicy: 'safe', concurrencyPolicy: 'serialized', timeoutMs: 30_000,
+    // 只写本 Attempt 的激活状态（skill_runtime_activations 按 Attempt 去重），不在 task_operations 登记：
+    // 重试产生的新 Attempt 必须真正激活，否则其后的 python_execute 会因“未激活”被拒。
+    writeScope: 'attempt-workspace',
   }),
   python_execute: contract({
     inputSchema: {
@@ -102,6 +105,9 @@ export const platformToolContracts = {
       required: ['exitCode', 'stdout', 'stderr', 'artifacts'],
     },
     effect: 'write', retryPolicy: 'never', concurrencyPolicy: 'serialized',
+    // 只写本 Attempt 工作区，不在 task_operations 登记：同参数再次调用与重试都要重新运行脚本；
+    // 执行记录见 skill_python_executions（功能规则第 6 节）。
+    writeScope: 'attempt-workspace',
     // Script budget. At this deadline the bridge aborts the sandbox and waits
     // until the named container is stopped and removed (or cleanup fails loudly).
     timeoutMs: 300_000,
