@@ -40,6 +40,7 @@ interface SkillRow {
   installationRole: 'standalone' | 'root' | 'dependency'
   dependencies: SkillDefinition['dependencies']
   artifact: SkillPackageArtifact | null
+  /** 当前版本（有草稿时为草稿）带 installationId：经安装或员工提交进入，可严格试运行。 */
   strictTest: boolean
   persistedStatus: PublishStatus
   activeVersionId: string | null
@@ -365,47 +366,25 @@ export class PostgresSkillService {
   }
 
   async testSkill(input: { skillId: string; prompt?: string; actor: string; scenario?: unknown }): Promise<SkillTestResult> {
-    const actor = await this.requireActor(input.actor)
-    assertSkillId(input.skillId)
-    const [skill] = await this.readSkillRows(input.skillId)
-    if (!skill) throw skillNotFound(`Skill 不存在：${input.skillId}`)
-    if (!skill.draftVersionId) throw skillConflict('当前 Skill 没有待测试的草稿版本', 'skill_draft_required')
-    if (input.scenario !== undefined && !skill.strictTest) throw skillInvalid('场景测试要求真实 DSH 试运行包', 'invalid_test_scenario')
-    assertSkillToolReferences(skill.toolIds)
-    const prompt = normalizeTestPrompt(input.prompt, skill.testPrompt)
-    const fingerprint = configurationFingerprint(skill)
+    const { actor, skill, prompt, fingerprint, runtimeSkill } = await this.strictTestContext(input)
+    if (input.scenario !== undefined) runtimeSkill.testScenario = normalizeSkillTestScenario(input.scenario, [runtimeSkill, ...flattenRuntimeDependencies(runtimeSkill)])
+    if (!this.packageTester) throw skillUnavailable('DSH Skill 试运行不可用')
+    const runtimeFingerprint = this.runtimeFingerprint(runtimeSkill)
+    const result = await this.packageTester(actor.id, runtimeSkill, prompt)
+    const evidencePolicy = result.evidencePolicy ?? SKILL_TEST_EVIDENCE_POLICY
+    if (result.passed && !result.attemptId) throw skillConflict('严格试运行缺少精确 Attempt 证据，请重新测试', 'skill_test_evidence_required')
     let testId = `skill-test-${randomUUID()}`
     let runtimeRunId: string | null = null
     let runtimeAttemptId: string | null = null
-    let evidencePolicy = SKILL_TEST_EVIDENCE_POLICY
-    let summary = `配置校验通过：执行指令 ${skill.instructions.length} 字符，${skill.toolIds.length} 个工具引用。`
-    let status: 'passed' | 'failed' = 'passed'
-    if (skill.strictTest) {
-      if (!this.packageTester) throw skillUnavailable('DSH Skill 试运行不可用')
-      const [version] = await this.database<{ manifest: { artifact?: SkillPackageArtifact; dependencies?: string[] } }[]>`select manifest from skill_versions where tenant_id = ${tenantId} and id = ${skill.draftVersionId}`
-      if (!version?.manifest.artifact) throw skillInternalFailure('Skill 文件夹索引缺失')
-      const packageContent = await this.requireArtifactStore().read(version.manifest.artifact)
-      const dependencySkills = await this.resolveTestRuntimeSkills(version!.manifest.dependencies ?? [])
-      assertSkillToolReferences([...skill.toolIds, ...dependencySkills.flatMap(item => [item, ...flattenRuntimeDependencies(item)]).flatMap(item => item.tools)])
-      const runtimeSkill: RuntimeSkillConfiguration = { id: skill.id, name: skill.name, description: skill.description,
-        version: skill.version, instructions: packageContent.instructions, tools: skill.toolIds,
-        artifact: version.manifest.artifact, files: version.manifest.artifact.files,
-        disableModelInvocation: version.manifest.artifact.disableModelInvocation,
-        dependencies: version.manifest.dependencies ?? [], dependencySkills }
-      if (input.scenario !== undefined) runtimeSkill.testScenario = normalizeSkillTestScenario(input.scenario, [runtimeSkill, ...flattenRuntimeDependencies(runtimeSkill)])
-      const runtimeFingerprint = this.runtimeFingerprint(runtimeSkill)
-      const result = await this.packageTester(actor.id, runtimeSkill, prompt)
-      evidencePolicy = result.evidencePolicy ?? SKILL_TEST_EVIDENCE_POLICY
-      if (result.passed && !result.attemptId) throw skillConflict('严格试运行缺少精确 Attempt 证据，请重新测试', 'skill_test_evidence_required')
-      if (result.attemptId) {
-        await this.bindStrictTest(result.runId, skill.id, skill.draftVersionId, fingerprint, runtimeFingerprint, prompt, actor.id)
-        runtimeRunId = result.runId
-        runtimeAttemptId = result.attemptId
-        testId = `skill-test-${result.attemptId}`
-      }
-      status = result.passed ? 'passed' : 'failed'
-      summary = `DSH 试运行${result.passed ? '完成' : '失败'}（${result.runId}）：\n${result.summary}`
+    if (result.attemptId) {
+      await this.bindStrictTest(result.runId, skill.id, skill.draftVersionId!, fingerprint, runtimeFingerprint, prompt, actor.id)
+      runtimeRunId = result.runId
+      runtimeAttemptId = result.attemptId
+      testId = `skill-test-${result.attemptId}`
     }
+    const status: 'passed' | 'failed' = result.passed ? 'passed' : 'failed'
+    const summary = `DSH 试运行${result.passed ? '完成' : '失败'}（${result.runId}）：\n${result.summary}`
+    // 没有 Attempt 的失败记录仍标 'legacy'：库约束要求 attempt-v2 / scenario-v1 证据带精确 Attempt。
     const [inserted] = await this.database<{ id: string }[]>`
       insert into skill_test_runs (
         id, tenant_id, skill_id, skill_version_id, configuration_fingerprint,
@@ -423,7 +402,7 @@ export class PostgresSkillService {
       const [stored] = await this.database`select id from skill_test_runs where tenant_id = ${tenantId} and id = ${testId}`
       if (!stored) throw skillConflict('试运行 Attempt 已变化，请重新测试', 'skill_test_attempt_changed')
     }
-    await this.audit(actor.id, 'skill.test', skill.id, status === 'passed' ? 'success' : 'failed', skill.strictTest ? `DSH Skill 试运行 ${status}` : summary)
+    await this.audit(actor.id, 'skill.test', skill.id, status === 'passed' ? 'success' : 'failed', `DSH Skill 试运行 ${status}`)
     return {
       id: testId,
       skillId: skill.id,
@@ -437,20 +416,7 @@ export class PostgresSkillService {
   async startSkillTest(input: { skillId: string; prompt?: string; actor: string; scenario?: unknown }): Promise<SkillTestRunProgress> {
     const context = await this.strictTestContext(input)
     if (input.scenario !== undefined) {
-      if (!context.skill.strictTest) throw skillInvalid('场景测试要求真实 DSH 试运行包', 'invalid_test_scenario')
       context.runtimeSkill.testScenario = normalizeSkillTestScenario(input.scenario, [context.runtimeSkill, ...flattenRuntimeDependencies(context.runtimeSkill)])
-    }
-    if (!context.skill.strictTest) {
-      const result = await this.testSkill(input)
-      return {
-        runId: result.id,
-        skillId: result.skillId,
-        version: result.version,
-        status: result.status,
-        resultSummary: result.resultSummary,
-        testedAt: result.testedAt,
-        steps: [{ id: 'configuration', title: '校验 Skill 配置', description: result.resultSummary, status: result.status === 'passed' ? 'completed' : 'failed', occurredAt: result.testedAt }],
-      }
     }
     if (!this.packageTestLifecycle) throw skillUnavailable('DSH Skill 试运行进度服务不可用')
     const runtimeFingerprint = this.runtimeFingerprint(context.runtimeSkill)
@@ -465,7 +431,6 @@ export class PostgresSkillService {
 
   async getSkillTestProgress(input: { skillId: string; runId: string; actor: string }): Promise<SkillTestRunProgress> {
     const context = await this.strictTestContext({ skillId: input.skillId, actor: input.actor })
-    if (!context.skill.strictTest) throw skillConflict('当前 Skill 没有可查询的严格试运行', 'skill_test_state_conflict')
     if (!this.packageTestLifecycle) throw skillUnavailable('DSH Skill 试运行进度服务不可用')
     const [binding] = await this.database<{ versionId: string; fingerprint: string; runtimeFingerprint: string; prompt: string }[]>`
       select skill_version_id as "versionId", configuration_fingerprint as fingerprint,
@@ -536,25 +501,16 @@ export class PostgresSkillService {
     const [skill] = await this.readSkillRows(input.skillId)
     if (!skill) throw skillNotFound(`Skill 不存在：${input.skillId}`)
     if (!skill.draftVersionId) throw skillConflict('当前 Skill 没有待测试的草稿版本', 'skill_draft_required')
+    assertInstalledDraft(skill)
     assertSkillToolReferences(skill.toolIds)
     const prompt = normalizeTestPrompt(input.prompt, skill.testPrompt)
     const fingerprint = configurationFingerprint(skill)
-    let runtimeSkill: RuntimeSkillConfiguration = {
-      id: skill.id,
-      name: skill.name,
-      description: skill.description,
-      version: skill.version,
-      instructions: skill.instructions,
-      tools: skill.toolIds,
-    }
-    if (skill.strictTest) {
-      const [version] = await this.database<{ manifest: { artifact?: SkillPackageArtifact; dependencies?: string[] } }[]>`select manifest from skill_versions where tenant_id = ${tenantId} and id = ${skill.draftVersionId}`
-      if (!version?.manifest.artifact) throw skillInternalFailure('Skill 文件夹索引缺失')
-      const packageContent = await this.requireArtifactStore().read(version.manifest.artifact)
-      const dependencySkills = await this.resolveTestRuntimeSkills(version.manifest.dependencies ?? [])
-      assertSkillToolReferences([...skill.toolIds, ...dependencySkills.flatMap(item => [item, ...flattenRuntimeDependencies(item)]).flatMap(item => item.tools)])
-      runtimeSkill = { id: skill.id, name: skill.name, description: skill.description, version: skill.version, instructions: packageContent.instructions, tools: skill.toolIds, artifact: version.manifest.artifact, files: version.manifest.artifact.files, disableModelInvocation: version.manifest.artifact.disableModelInvocation, dependencies: version.manifest.dependencies ?? [], dependencySkills }
-    }
+    const [version] = await this.database<{ manifest: { artifact?: SkillPackageArtifact; dependencies?: string[] } }[]>`select manifest from skill_versions where tenant_id = ${tenantId} and id = ${skill.draftVersionId}`
+    if (!version?.manifest.artifact) throw skillInternalFailure('Skill 文件夹索引缺失')
+    const packageContent = await this.requireArtifactStore().read(version.manifest.artifact)
+    const dependencySkills = await this.resolveTestRuntimeSkills(version.manifest.dependencies ?? [])
+    assertSkillToolReferences([...skill.toolIds, ...dependencySkills.flatMap(item => [item, ...flattenRuntimeDependencies(item)]).flatMap(item => item.tools)])
+    const runtimeSkill: RuntimeSkillConfiguration = { id: skill.id, name: skill.name, description: skill.description, version: skill.version, instructions: packageContent.instructions, tools: skill.toolIds, artifact: version.manifest.artifact, files: version.manifest.artifact.files, disableModelInvocation: version.manifest.artifact.disableModelInvocation, dependencies: version.manifest.dependencies ?? [], dependencySkills }
     return { actor, skill, prompt, fingerprint, runtimeSkill }
   }
 
@@ -954,6 +910,7 @@ export class PostgresSkillService {
       apply: (transaction: DatabaseTransaction, actorId: string) => Promise<void>
       note: string
     }) {
+    assertInstalledDraft(current)
     const dependencyTools = current.draftVersionId ? await this.readDependencyToolReferences(current.draftVersionId) : []
     assertSkillToolReferences([...current.toolIds, ...dependencyTools])
     const release = await this.database.begin(async transaction => {
@@ -993,46 +950,44 @@ export class PostgresSkillService {
       if (locked.artifact) locked.instructions = (await this.requireArtifactStore().read(locked.artifact)).instructions
 
       const fingerprint = configurationFingerprint(locked)
-      let [test] = await transaction<{ id: string; runId: string | null; attemptId: string | null }[]>`
+      const [attemptTest] = await transaction<{ id: string; runId: string; attemptId: string }[]>`
         select t.id, t.runtime_run_id as "runId", t.runtime_attempt_id as "attemptId" from skill_test_runs t
          where t.tenant_id = ${tenantId} and t.skill_version_id = ${locked.versionId}
            and t.configuration_fingerprint = ${fingerprint} and t.status = 'passed'
-           and (${!current.strictTest} or (t.evidence_policy = ${SKILL_TEST_EVIDENCE_POLICY} and exists (
+           and t.evidence_policy = ${SKILL_TEST_EVIDENCE_POLICY} and exists (
              select 1 from runs r join run_attempts ra on ra.tenant_id = r.tenant_id and ra.id = r.current_attempt_id
               where r.tenant_id = t.tenant_id and r.id = t.runtime_run_id and ra.id = t.runtime_attempt_id
                 and ra.run_id = r.id and r.status = 'succeeded' and ra.status = 'succeeded'
-           )))
+           )
          order by t.created_at desc limit 1
       `
-      if (!test && current.strictTest) test = await this.requireScenarioPublicationCoverage(transaction, current, locked, fingerprint)
-      if (!test) throw skillConflict('发布前必须使用当前配置完成一次服务端测试', 'skill_test_required')
-      if (current.strictTest) {
-        const [run] = await transaction`
-          select id from runs where tenant_id = ${tenantId} and id = ${test.runId}
-            and current_attempt_id = ${test.attemptId} and status = 'succeeded' for update
-        `
-        if (!run) throw skillConflict('试运行 Attempt 已变化，请重新测试后发布', 'skill_test_attempt_changed')
-        await transaction`
-          with recursive graph as (
-            select dependency_skill_version_id as id from skill_version_dependencies
-             where tenant_id = ${tenantId} and skill_version_id = ${locked.versionId}
-            union
-            select d.dependency_skill_version_id from skill_version_dependencies d
-            join graph g on g.id = d.skill_version_id where d.tenant_id = ${tenantId}
-          )
-          select sv.id from skill_versions sv join graph g on g.id = sv.id
-           where sv.tenant_id = ${tenantId} order by sv.id for update of sv
-        `
-        const [binding] = await transaction<{ versionId: string; fingerprint: string; runtimeFingerprint: string }[]>`
-          select skill_version_id as "versionId", configuration_fingerprint as fingerprint,
-                 runtime_fingerprint as "runtimeFingerprint" from skill_test_bindings
-           where tenant_id = ${tenantId} and run_id = ${test.runId} and skill_id = ${current.id}
-        `
-        const [runtimeSkill] = await this.resolveTestRuntimeSkills([`${current.id}@${current.version}`], transaction)
-        if (!runtimeSkill) throw skillConflict('测试的 Skill 版本已失效', 'skill_test_snapshot_changed')
-        assertStartedSkillTest({ versionId: locked.versionId, fingerprint,
-          runtimeFingerprint: this.runtimeFingerprint(runtimeSkill) }, binding)
-      }
+      // 没有单次严格试运行通过时，须由场景测试覆盖全部锁定 Skill；都没有时在此拒绝。
+      const test = attemptTest ?? await this.requireScenarioPublicationCoverage(transaction, current, locked, fingerprint)
+      const [run] = await transaction`
+        select id from runs where tenant_id = ${tenantId} and id = ${test.runId}
+          and current_attempt_id = ${test.attemptId} and status = 'succeeded' for update
+      `
+      if (!run) throw skillConflict('试运行 Attempt 已变化，请重新测试后发布', 'skill_test_attempt_changed')
+      await transaction`
+        with recursive graph as (
+          select dependency_skill_version_id as id from skill_version_dependencies
+           where tenant_id = ${tenantId} and skill_version_id = ${locked.versionId}
+          union
+          select d.dependency_skill_version_id from skill_version_dependencies d
+          join graph g on g.id = d.skill_version_id where d.tenant_id = ${tenantId}
+        )
+        select sv.id from skill_versions sv join graph g on g.id = sv.id
+         where sv.tenant_id = ${tenantId} order by sv.id for update of sv
+      `
+      const [binding] = await transaction<{ versionId: string; fingerprint: string; runtimeFingerprint: string }[]>`
+        select skill_version_id as "versionId", configuration_fingerprint as fingerprint,
+               runtime_fingerprint as "runtimeFingerprint" from skill_test_bindings
+         where tenant_id = ${tenantId} and run_id = ${test.runId} and skill_id = ${current.id}
+      `
+      const [runtimeSkill] = await this.resolveTestRuntimeSkills([`${current.id}@${current.version}`], transaction)
+      if (!runtimeSkill) throw skillConflict('测试的 Skill 版本已失效', 'skill_test_snapshot_changed')
+      assertStartedSkillTest({ versionId: locked.versionId, fingerprint,
+        runtimeFingerprint: this.runtimeFingerprint(runtimeSkill) }, binding)
 
       if (submission) await submission.apply(transaction, actorId)
 
@@ -1073,7 +1028,7 @@ export class PostgresSkillService {
          returning id
       `
       if (!activated.length) throw skillConflict('Skill 草稿指针已发生变化，请刷新后重试')
-      return this.appendRelease(transaction, locked.versionId, current.id, 'published', actorId, submission?.note ?? '服务端配置测试通过，发布当前 Skill 版本。')
+      return this.appendRelease(transaction, locked.versionId, current.id, 'published', actorId, submission?.note ?? '严格试运行通过，发布当前 Skill 版本。')
     })
     await this.audit(actorId, 'skill.publish', current.id, 'success', release.note)
     return { skill: await this.requireSkill(current.id), release }
@@ -1181,6 +1136,20 @@ export class PostgresSkillService {
     return this.operations?.appendAudit(actorId, action, skillId, result, `trace-skill-${randomUUID()}`, detail)
       ?? Promise.resolve()
   }
+}
+
+/**
+ * 草稿须来自安装或员工提交（版本 manifest 带 installationId）才能严格试运行与发布。已删除的文本
+ * 创建/更新接口写入的旧草稿没有 DSH 激活证据可核对，明确拒绝，不再按配置校验放行；
+ * 旧 Skill 已发布的版本不经过这里，照常使用、回滚、停用与启用。
+ */
+function assertInstalledDraft(skill: Pick<SkillRow, 'strictTest'>) {
+  if (skill.strictTest) return
+  throw skillConflict(
+    '这个草稿由已删除的文本创建/更新接口写入，不能试运行或发布；请在“版本历史”中放弃该草稿后重新安装',
+    'skill_legacy_draft_unsupported',
+    '请在 Skill 详情的“版本历史”中放弃该草稿（已发布版本不受影响），再经 ZIP、链接或管理助手安装新包。',
+  )
 }
 
 function normalizeTestRunStatus(status: string): SkillTestRunProgress['status'] {

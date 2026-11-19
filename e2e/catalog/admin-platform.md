@@ -339,7 +339,7 @@
 **角色：** 平台管理员
 **运行层级：** 专用可丢弃 PostgreSQL 与 Mock ACP Worker；管理端组件测试
 **前置数据：** 一个经 ZIP 安装、尚未发布的 Skill 草稿；同名的修正包
-**spec：** `server/src/infrastructure/postgres/admin-skill-installation.integration.test.ts`、`apps/admin-web/src/stores/content.test.ts`
+**spec：** `server/src/infrastructure/postgres/admin-skill-installation.integration.test.ts`、`server/src/infrastructure/postgres/m4-skill-management.integration.test.ts`、`server/src/infrastructure/postgres/review-p2-skill-errors.integration.test.ts`、`apps/admin-web/src/stores/content.test.ts`
 
 1. 草稿严格试运行未通过后上传修正包：安装被拒绝，提示在 Skill 详情的“版本历史”中放弃该草稿。
 2. 在“版本历史”的草稿行点“放弃草稿”并确认：从未发布过的 Skill 从列表移除；已发布过的 Skill 回到当前已发布版本。
@@ -347,6 +347,7 @@
 4. 经链接安装带依赖的 Skill：放弃入口 Skill 的草稿时，同一安装带入的依赖草稿一并停用，管理端列表随之更新；直接放弃依赖草稿被拒绝并提示放弃入口 Skill（即使该依赖以前单独作为入口安装过）。
 5. 另一次安装复用了同一份依赖草稿时，放弃被拒绝并列出复用它的 Skill；先放弃那个 Skill 的草稿后可以放弃。
 6. 来自员工提交的草稿被拒绝放弃，仍在“待审核”中处理。
+7. 已删除的文本接口留下的旧草稿（前置数据另构造：版本不带安装来源）：试运行、查询试运行进度与发布都被拒绝（`skill_legacy_draft_unsupported`），提示在“版本历史”中放弃后重新安装，不产生试运行记录；放弃后该 Skill 已发布的旧版本照常被引用、回滚、停用与启用，重新安装的新版本可以试运行并发布。
 
 **验收：** 被放弃的版本标为停用、安装记录取消、审计记录 `skill.draft.discard`；试运行证据与已发布版本不受影响；与停用版本内容相同的包重新安装时生成新草稿，不复用停用版本。
 

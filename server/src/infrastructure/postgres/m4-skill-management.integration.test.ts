@@ -10,7 +10,7 @@ import { PostgresSkillService } from '../../modules/skill/postgres-skill-service
 import type { DatabaseClient } from './database.ts'
 import { createThrowawayDatabase, type ThrowawayDatabase } from './test-database.ts'
 import { publishDraftWithSealedTrial } from './test-release-fixture.ts'
-import { insertSkillDraft } from './test-skill-fixture.ts'
+import { insertSkillDraft, useSyntheticSkillTrials } from './test-skill-fixture.ts'
 import { LocalObjectStorage } from '../storage/local-object-storage.ts'
 
 const databaseUrl = process.env.DSH_WORK_TEST_DATABASE_URL
@@ -30,6 +30,7 @@ before(async () => {
   artifactRoot = await mkdtemp(join(tmpdir(), 'dsh-skill-lifecycle-test-'))
   artifactStore = new SkillArtifactStore(new LocalObjectStorage(artifactRoot, { fileMode: 0o400 }))
   skills = new PostgresSkillService(database, undefined, artifactStore)
+  useSyntheticSkillTrials(database, skills)
   agents = new PostgresAgentService(database, undefined, skills)
 })
 
@@ -39,7 +40,7 @@ after(async () => {
 })
 
 test('Skill 发布需通过测试，新草稿不影响已固定的引用，回滚、停用与启用保留版本历史', async () => {
-  // 旧文本创建/更新接口已删除，草稿经测试夹具写入；安装链路的版本生成见 admin-skill-installation 集成套件。
+  // 草稿经测试夹具按 ZIP 安装的形态写入，试运行用合成证据；安装链路与真实试运行见 admin-skill-installation 集成套件。
   const { skillId } = await insertSkillDraft(database, artifactStore, {
     name: '订单风险归纳',
     category: '供应链',
@@ -52,9 +53,9 @@ test('Skill 发布需通过测试，新草稿不影响已固定的引用，回�
 
   await assert.rejects(
     skills.setStatus({ skillId, status: 'published', actor: 'U00008' }),
-    /服务端测试/,
+    { status: 409, code: 'skill_test_coverage_incomplete' },
   )
-  await skills.testSkill({ skillId, actor: 'U00008' })
+  assert.equal((await skills.startSkillTest({ skillId, actor: 'U00008' })).status, 'passed')
   const firstPublished = await skills.setStatus({ skillId, status: 'published', actor: 'U00008' })
   assert.equal(firstPublished.skill.status, 'published')
   assert.equal(firstPublished.skill.activeVersion, '0.1.0')
@@ -104,10 +105,10 @@ test('Skill 发布需通过测试，新草稿不影响已固定的引用，回�
   await skills.assertPublishedReferences([`${skillId}@0.1.0`])
   await assert.rejects(
     skills.setStatus({ skillId, status: 'published', actor: 'U00008' }),
-    /服务端测试/,
+    { status: 409, code: 'skill_test_coverage_incomplete' },
   )
 
-  await skills.testSkill({ skillId, actor: 'U00008' })
+  assert.equal((await skills.startSkillTest({ skillId, actor: 'U00008' })).status, 'passed')
   const secondPublished = await skills.setStatus({ skillId, status: 'published', actor: 'U00008' })
   assert.equal(secondPublished.skill.activeVersion, '0.2.0')
   await skills.assertPublishedReferences([`${skillId}@0.2.0`])
@@ -128,4 +129,48 @@ test('Skill 发布需通过测试，新草稿不影响已固定的引用，回�
     database`update skill_versions set instructions = '不允许修改' where tenant_id = 'tenant-dsh-work' and skill_id = ${skillId} and version = '0.1.0'`,
     /immutable/,
   )
+})
+
+test('旧文本接口留下的草稿不能试运行或发布，只能放弃；旧 Skill 已发布的版本照常引用、回滚、停用与启用', async () => {
+  const actor = 'U00008'
+  const legacy = {
+    category: '供应链', toolIds: ['read@1.0.0'], actor, legacy: true,
+    description: '按周汇总交付异常并给出跟进建议，用于验证旧数据兼容。',
+    instructions: '读取当前输入中的交付记录，按异常类型汇总数量与典型订单，再给出跟进建议；不得补充输入中不存在的数据。',
+    testPrompt: '汇总本周交付异常。',
+  }
+  // 删除文本接口前写入并已发布的旧版本：产品中已没有让旧草稿发布的入口，直接改库模拟。
+  const publishLegacy = async (skillId: string) => {
+    await database`update skill_versions set status = 'published', published_at = now(), published_by = ${actor}
+      where tenant_id = 'tenant-dsh-work' and skill_id = ${skillId} and status = 'draft'`
+    await database`update skills set active_version_id = draft_version_id, draft_version_id = null, status = 'published'
+      where tenant_id = 'tenant-dsh-work' and id = ${skillId}`
+  }
+  const { skillId } = await insertSkillDraft(database, artifactStore, { ...legacy, name: '交付异常周报' })
+  await publishLegacy(skillId)
+  await insertSkillDraft(database, artifactStore, { ...legacy, name: '交付异常周报', skillId, version: '0.2.0' })
+  await publishLegacy(skillId)
+  await insertSkillDraft(database, artifactStore, { ...legacy, name: '交付异常周报', skillId, version: '0.3.0' })
+
+  const rejected = { status: 409, code: 'skill_legacy_draft_unsupported' }
+  await assert.rejects(skills.testSkill({ skillId, actor }), rejected)
+  await assert.rejects(skills.startSkillTest({ skillId, actor }), rejected)
+  await assert.rejects(skills.getSkillTestProgress({ skillId, runId: 'run-missing', actor }), rejected)
+  await assert.rejects(skills.setStatus({ skillId, status: 'published', actor }), rejected)
+  const [tests] = await database<{ count: number }[]>`select count(*)::int as count from skill_test_runs where skill_id = ${skillId}`
+  assert.equal(tests?.count, 0, '被拒绝的旧草稿不留下试运行记录')
+  await skills.assertPublishedReferences([`${skillId}@0.2.0`])
+
+  const discarded = await skills.discardDraft({ skillId, actor })
+  assert.deepEqual([discarded.skill?.status, discarded.skill?.version], ['published', '0.2.0'])
+  const rolledBack = await skills.rollback({ skillId, version: '0.1.0', actor })
+  assert.equal(rolledBack.skill.activeVersion, '0.1.0')
+  assert.equal((await skills.resolveRuntimeSkills([`${skillId}@0.1.0`]))[0]?.version, '0.1.0')
+  assert.equal((await skills.setStatus({ skillId, status: 'disabled', actor })).skill.status, 'disabled')
+  assert.equal((await skills.setStatus({ skillId, status: 'published', actor })).skill.status, 'published')
+
+  // 重新安装新包（夹具按 ZIP 安装的形态写入）后照常严格试运行并发布。
+  await insertSkillDraft(database, artifactStore, { ...legacy, legacy: false, name: '交付异常周报', skillId, version: '0.4.0' })
+  assert.equal((await skills.startSkillTest({ skillId, actor })).status, 'passed')
+  assert.equal((await skills.setStatus({ skillId, status: 'published', actor })).skill.activeVersion, '0.4.0')
 })

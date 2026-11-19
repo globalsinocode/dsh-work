@@ -1428,7 +1428,7 @@
     "/skills/status": {
       "patch": {
         "operationId": "setSkillStatus",
-        "summary": "发布、启用或停用 Skill；发布要求当前配置测试通过；待发布版本来自员工提交时返回 409 skill_submission_review_required，须经“待审核”通过发布",
+        "summary": "发布、启用或停用 Skill；发布要求当前版本的严格试运行通过；草稿没有安装来源（已删除的文本接口留下）时返回 409 skill_legacy_draft_unsupported；待发布版本来自员工提交时返回 409 skill_submission_review_required，须经“待审核”通过发布",
         "responses": {
           "200": {
             "$ref": "#/components/responses/Ok"
