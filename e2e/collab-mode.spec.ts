@@ -174,6 +174,38 @@ test('SKC-04: in collaboration mode the Skill plaza opens a direct chat with the
   await expect(page.getByLabel('对话输入')).toHaveValue('')
 })
 
+test('MODE-E2E-18: in collaboration mode the Skill plaza starts a new conversation with the chosen Skill', async ({ page }) => {
+  await switchToCollab(page)
+  await page.getByRole('button', { name: '打开用户菜单' }).click()
+  await page.getByRole('menuitem', { name: 'Skill 广场' }).click()
+  await page.getByRole('button', { name: '使用 Skill：订单分析' }).click()
+  // 通用助手（冒烟夹具 dsh-work-assistant）是员工可见 AI 同事的第一位；地址保留 Skill，输入框上方显示可移除的 Skill 标签。
+  await expect(page).toHaveURL(/\/c\/chats\/agent\/dsh-work-assistant\?skill=order-analysis$/)
+  await expect(page.getByLabel('已选择 Skill', { exact: true })).toHaveText(/@订单分析/)
+  await expect(page.getByRole('status').filter({ hasText: '已选用 Skill“订单分析”，发送后将开始新的对话。' })).toBeVisible()
+  await expect(page.getByLabel('对话输入')).toHaveValue('分析本月订单交付风险。')
+
+  // 发送：经与工作模式“新对话”相同的创建会话入口开启新会话并选用该 Skill，不指定 AI 同事，由服务端选择
+  // （冒烟服务不创建会话，只核对请求；发送成功后的落地由组件单测覆盖）。
+  const isCreate = (request: { method(): string; url(): string }) => request.method() === 'POST' && /\/api\/workbench\/v1\/sessions$/.test(request.url())
+  const created = page.waitForRequest(isCreate)
+  await page.getByRole('button', { name: '发送消息' }).click()
+  const withSkill = (await created).postDataJSON() as Record<string, unknown>
+  expect(withSkill).toMatchObject({ skillId: 'order-analysis', title: '分析本月订单交付风险。' })
+  expect(withSkill).not.toHaveProperty('agentId')
+
+  // 移除标签后按原规则发送：冒烟夹具中通用助手已更新版本、没有可续写的会话，所以经同一入口为该助手开启普通新会话。
+  await page.getByRole('button', { name: '移除已选择 Skill' }).click()
+  await expect(page).toHaveURL(/\/c\/chats\/agent\/dsh-work-assistant$/)
+  await expect(page.getByLabel('已选择 Skill', { exact: true })).toHaveCount(0)
+  await expect(page.getByTestId('new-session-notice')).toBeVisible()
+  const plain = page.waitForRequest(isCreate)
+  await page.getByRole('button', { name: '发送消息' }).click()
+  const withoutSkill = (await plain).postDataJSON() as Record<string, unknown>
+  expect(withoutSkill).toMatchObject({ agentId: 'dsh-work-assistant' })
+  expect(withoutSkill).not.toHaveProperty('skillId')
+})
+
 test('MODE-E2E-03: collaboration shell uses a bottom tab bar on narrow screens', async ({ page }) => {
   await page.setViewportSize({ width: 375, height: 760 })
   await switchToCollab(page, { narrow: true })
