@@ -3,6 +3,8 @@ import { SkillError, skillNotFound, skillConflict, skillInvalid, skillUnavailabl
 import { ExecutionCapabilityUnavailableError } from '../runtime/execution-capabilities.ts'
 import type { RuntimeManifest } from '../runtime/runtime-types.ts'
 import { normalizeSkillTestScenario, type SkillTestScenario } from '../../domain/skill-test-scenario.ts'
+import { undeclaredPythonEntry } from '../../domain/skill-python-entries.ts'
+import { RequestError } from '../../domain/request-errors.ts'
 import { assertStartedSkillTest, runtimeSkillFingerprint, SKILL_TEST_EVIDENCE_POLICY, SKILL_TEST_SCENARIO_POLICY, evaluateAttemptEvidence } from './skill-test-evidence.ts'
 import type { SkillPackageArtifact } from './skill-package.ts'
 import { createHash, randomUUID } from 'node:crypto'
@@ -367,7 +369,7 @@ export class PostgresSkillService {
 
   async testSkill(input: { skillId: string; prompt?: string; actor: string; scenario?: unknown }): Promise<SkillTestResult> {
     const { actor, skill, prompt, fingerprint, runtimeSkill } = await this.strictTestContext(input)
-    if (input.scenario !== undefined) runtimeSkill.testScenario = normalizeSkillTestScenario(input.scenario, [runtimeSkill, ...flattenRuntimeDependencies(runtimeSkill)])
+    if (input.scenario !== undefined) runtimeSkill.testScenario = await this.normalizeTestScenario(input.scenario, runtimeSkill)
     if (!this.packageTester) throw skillUnavailable('DSH Skill 试运行不可用')
     const runtimeFingerprint = this.runtimeFingerprint(runtimeSkill)
     const result = await this.packageTester(actor.id, runtimeSkill, prompt)
@@ -413,11 +415,25 @@ export class PostgresSkillService {
     }
   }
 
+  /**
+   * 试运行场景要求的 Python 入口须是该 Skill 登记的入口（功能规则第 6 节 python-entries）：
+   * 否则 python_execute 会在执行前拒绝，试运行只能以“缺少成功证据”失败。
+   */
+  private async normalizeTestScenario(value: unknown, runtimeSkill: RuntimeSkillConfiguration): Promise<SkillTestScenario> {
+    const catalog = [runtimeSkill, ...flattenRuntimeDependencies(runtimeSkill)]
+    const scenario = normalizeSkillTestScenario(value, catalog)
+    for (const required of scenario.requiredPythonEntries) {
+      const artifact = catalog.find(skill => `${skill.id}@${skill.version}` === required.skill)?.artifact
+      if (!artifact) continue
+      const refusal = undeclaredPythonEntry((await this.requireArtifactStore().read(artifact)).files, required.entry)
+      if (refusal) throw new RequestError(422, 'invalid_test_scenario', `试运行场景无效：${refusal}`)
+    }
+    return scenario
+  }
+
   async startSkillTest(input: { skillId: string; prompt?: string; actor: string; scenario?: unknown }): Promise<SkillTestRunProgress> {
     const context = await this.strictTestContext(input)
-    if (input.scenario !== undefined) {
-      context.runtimeSkill.testScenario = normalizeSkillTestScenario(input.scenario, [context.runtimeSkill, ...flattenRuntimeDependencies(context.runtimeSkill)])
-    }
+    if (input.scenario !== undefined) context.runtimeSkill.testScenario = await this.normalizeTestScenario(input.scenario, context.runtimeSkill)
     if (!this.packageTestLifecycle) throw skillUnavailable('DSH Skill 试运行进度服务不可用')
     const runtimeFingerprint = this.runtimeFingerprint(context.runtimeSkill)
     const progress = await this.packageTestLifecycle.start(context.actor.id, context.runtimeSkill, context.prompt)

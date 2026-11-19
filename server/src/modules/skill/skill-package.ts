@@ -4,6 +4,7 @@ import { parseDocument } from 'yaml'
 import { MAX_SKILL_FILES, MAX_SKILL_BYTES } from '../../domain/skill-package-limits.ts'
 import { RequestError } from '../../domain/request-errors.ts'
 import { builtinToolReference, skillToolName } from '../runtime/builtin-tools.ts'
+import { PYTHON_ENTRIES_FIELD, readPythonEntriesField } from '../../domain/skill-python-entries.ts'
 
 export interface SkillPackage {
   name: string
@@ -165,6 +166,11 @@ function parseSkillFiles(files: Record<string, Uint8Array>, specialPaths: Set<st
     return { path: relative, content, size: files[path]!.length, sha256: hash(files[path]!) }
   })
   const metadata = parseEntry(decoder.decode(files[entry]))
+  let pythonEntries: string[] | undefined
+  try { pythonEntries = readPythonEntriesField(readEntry(decoder.decode(files[entry])).metadata[PYTHON_ENTRIES_FIELD]) } catch (error) { fail((error as Error).message) }
+  for (const path of pythonEntries ?? []) {
+    if (!packaged.some(file => file.path === path)) fail(`${PYTHON_ENTRIES_FIELD} 登记的入口 ${path} 不在 Skill 目录中`)
+  }
   for (const reference of metadata.instructions.match(/(?:references|templates|scripts|assets)\/[A-Za-z0-9_./-]+/g) ?? []) {
     if (!packaged.some(file => file.path === reference)) fail(`缺少引用文件 ${reference}，请提供完整 Skill 目录或 ZIP`)
   }

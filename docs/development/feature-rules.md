@@ -315,7 +315,8 @@
 ## 6. Skill Python 执行
 
 - 安装与执行分离：安装只下载、检查、保存，不执行 Python、setup.py、构建脚本或安装钩子。依赖未满足的包可存为草稿，但不能试运行或发布。
-- 执行只通过平台工具 `python_execute@1.0.0`，入口只能是已激活 Skill 固定版本中登记的 `.py` 文件。模型不能提交源码、解释器路径、镜像、挂载路径或 Shell 命令；禁止 `-c` 和任意 `-m`。
+- 执行只通过平台工具 `python_execute@1.0.0`，入口只能是已激活 Skill 固定版本中的 `.py` 文件。模型不能提交源码、解释器路径、镜像、挂载路径或 Shell 命令；禁止 `-c` 和任意 `-m`。
+- **入口登记（2026-11-19）：** SKILL.md frontmatter 的 `python-entries` 列出可直接运行的脚本（单个路径或列表，Skill 目录内的相对 `.py` 路径，1～32 个，不重复），只被导入的模块和示例脚本不列入。安装、员工提交时校验：格式无效或登记的文件不在包中则拒绝。登记了入口的 Skill，`activate_skill` 只返回登记的入口，`python_execute` 拒绝未登记的入口，试运行场景要求的入口也必须已登记（否则 422 `invalid_test_scenario`）；没有这个字段的 Skill 保持原有行为（包内全部 `.py` 都可作入口），已发布版本不受影响，安装计划给出警告 `python_entries_undeclared` 建议登记。Skill 创建专家生成脚本时须登记入口。不做原方案的包格式 v2（二进制资源与 blob 引用）和平台侧入口运行配置、参数 JSON Schema，真实业务 Skill 需要时再评估。
 - 在本 Attempt 的执行容器内运行（执行隔离方案 4.8；4.9 起执行容器为必需，不再有每次调用一个容器的模式）：以 `python3 -I -B <入口>` 运行，工作目录为工作区中该 Skill 的目录（相对路径照常可用），环境变量 `DSH_SKILL_DIR`、`DSH_INPUT_DIR`、`DSH_OUTPUT_DIR` 给出 Skill、输入与输出目录的绝对路径，不提供 `/skill`、`/input`、`/output`；同一 Attempt 内能看到此前命令留下的文件。执行容器姿态由平台固定：摘要锁定的执行镜像、`--pull never`、断网、只读根文件系统、以服务账号（非 root）运行，资源随执行容器（1 GB、2 CPU、单文件 256 MB、工作区 2 GB），单次调用最长 300 秒，调用前后与 `bash` 一样做静止确认。不存在宿主机 Python 或 venv 回退，Python `-I`、AST 检查或字符串黑名单都不算安全边界。执行容器启动检查失败时所有 Agent 运行被拒绝；镜像不含 `python3` 时 Python 能力不可用，脚本型安装计划不兼容。
 - 取消与超时由执行容器的进程组终止与静止确认结束（执行隔离 1c），工具调用等清理结束再返回；执行容器随 Attempt 结束删除，服务启动时按名称前缀清扫遗留容器。
 - 所有容器经服务内执行器模块启动（执行容器经 `AttemptExecutionContainers`，成果解析的一次性容器经 `ContainerExecutor`，均基于 `ExecutionBackend` 端口的 docker 实现）：只接受固定参数，只运行配置的摘要锁定镜像，容器姿态由后端固定，业务代码不直接调用 `docker` CLI。执行器与业务服务同进程、同账号，是代码边界而非账号隔离。
@@ -329,7 +330,7 @@
 
 已随执行隔离实现：输出收集、格式与安全检查及成果登记（2b-2，`python_execute` 的输出自 1b② 起同样登记）；本轮装配了 `bash` 时原始文件只读挂载于 `input/original/`（2b-4），`python_execute` 与 `bash` 在同一执行容器中运行，脚本可经参数读取；员工侧运行总装配 `bash`，只有 Runtime 紧急停用 `bash` 时没有原始文件。服务重启不恢复执行：活动 Attempt 以 `SERVICE_RESTARTED` 失败、遗留执行容器在启动时删除，由员工重新执行（[Runtime 优化方案](../design/runtime-execution-optimization-plan.md)约束 2，已决定不做中断后继续执行）。
 
-未完成（在此之前不得宣称完整的生产脚本平台）：周期自检（依赖只在服务启动时按当前镜像复查，运行中不复查；镜像引用只记入试运行指纹，没有单独的镜像版本登记表）；包格式 v2 与显式入口配置；数据库调用记录；Mac mini 上 `python-skill` 场景的真实验收（仓库中没有 Mac mini 执行该场景的记录）。`python_execute` 读取原始 xlsx 已有真实 Docker 用例；2026-11-04 在本机开发环境（真实 DSH 与执行容器）按验收目录 `SKILL-PY-P2` 走通样例脚本型 Skill 的安装、严格试运行、发布与员工上传 xlsx 汇总。
+未完成（在此之前不得宣称完整的生产脚本平台）：数据库调用记录；Mac mini 上 `python-skill` 场景的真实验收（仓库中没有 Mac mini 执行该场景的记录）。`python_execute` 读取原始 xlsx 已有真实 Docker 用例；2026-11-04 在本机开发环境（真实 DSH 与执行容器）按验收目录 `SKILL-PY-P2` 走通样例脚本型 Skill 的安装、严格试运行、发布与员工上传 xlsx 汇总。
 
 ## 7. 自动任务（AG-03）
 

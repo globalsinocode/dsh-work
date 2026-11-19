@@ -547,7 +547,7 @@ test('published script Skills are rechecked against the execution image and refu
   const modules = { stdlib: ['os', 'sys'], modules: { pandas: ['pandas'] } }
   const installer = new AdminSkillInstallationService(database.client, orchestration, new PostgresAuthorizationService(database.client), fixtureAcquire, true, ['pandas'], artifactStore, undefined, modules)
   // pandas is imported but never declared: the plan records it as a dependency found from the import.
-  const zip = zipSync({ 'SKILL.md': strToU8(body.replace('installation-test', 'py-gap')), 'references/value.txt': strToU8('v'), 'scripts/run.py': strToU8('import os\nimport pandas as pd\n') })
+  const zip = zipSync({ 'SKILL.md': strToU8(body.replace('installation-test', 'py-gap').replace('description:', 'python-entries: [scripts/run.py]\ndescription:')), 'references/value.txt': strToU8('v'), 'scripts/run.py': strToU8('import os\nimport pandas as pd\n') })
   const preview = await installer.prepareZip(actor, { fileName: 'py-gap.zip', bytes: zip })
   assert.equal(preview.plan?.compatibility.status, 'compatible')
   assert.ok(preview.package?.requirements.some(item => item.name === 'python-package:pandas' && /由 import 识别/.test(item.evidence)))
