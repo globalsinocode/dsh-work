@@ -224,7 +224,7 @@
 **spec：** `server/src/domain/mcp-call-context.test.ts`、`server/src/infrastructure/postgres/mcp-connector-governance.integration.test.ts`、`apps/admin-web/src/views/CapabilityManagementView.test.ts`、`e2e/mvp-smoke.spec.ts`
 
 1. 管理员在“MCP 连接器”打开 Bearer 认证 Connector 的详情，看到“发送员工身份”开关（默认关闭）及说明：开启后，结果只给一个人看的调用（员工本人的对话和个人定时任务，以及 Agent 主动任务）附带该员工的平台用户 ID、手机号、邮箱和钉钉账号；项目空间中结果多人可见的调用只告知“结果多人可见”。开启后列表中该 Connector 标出“发送员工身份”。
-2. 无认证的 Connector 不能开启，说明原因；凭据与其他 Connector 共用时不能开启，提示先“更换凭据”。只读管理员只能查看开关状态。开关变化写入审计。
+2. 无认证的 Connector 不能开启，说明原因；凭据与其他 Connector 共用时不能开启，提示先在“更多”中“轮换 Token”。只读管理员只能查看开关状态。开关变化写入审计。
 3. 开启后，员工本人在个人空间的对话与定时任务运行时，该 Connector 的 MCP 请求带 `X-DSH-Work-Visibility: personal` 与该员工的 `X-DSH-Work-Viewer-*`（手机号去掉 `+86`；登录账号为邮箱时带邮箱；已绑定钉钉时带钉钉 userid）；项目空间中的运行（含结果归属空间为项目空间的定时任务）带 `shared`、不带员工标识；Agent 主动任务（含放在项目空间的）带 `personal`，员工标识为接收人。请求头都带 Run、Attempt 与 Agent 标识。
 4. 未开启的 Connector、发布验证与管理端运行不带调用上下文；开启后凭据被发现与其他 Connector 共用时，本次运行不发送员工身份。
 5. 调用审计记录每次调用是否带调用上下文及 `personal`/`shared`，管理端“最近调用”与对账可见。
@@ -246,7 +246,7 @@
 1. 留存服务身份和发现清单摘要，使用至少两个不同 Agent 的真实员工任务分别触发一次成功 MCP Tool 调用，并核对业务只读结果和审计。
 2. 分别演练错误凭据、MCP 超时/取消、服务新增 Tool、Connector 停用和删除。创建 Run 前被拒绝时（如错误凭据），核对没有新建 Run 与工具调用，并留存 traceId；已经开始的运行核对 Run/Attempt 终态及后续调用是否停止。
 3. 检查 DSH Worker Patch 和环境边界，确认密钥正文未进入 PostgreSQL、Manifest、前端响应、Patch 文件或普通日志。
-4. 首个开启“发送员工身份”的真实外部应用（EA-S1，PF-MCP-03）：外部应用校验 Bearer 凭据并按 `X-DSH-Work-Viewer-Mobile` 识别员工；员工本人对话只拿到本人有权的数据，项目空间中的运行只拿到所有员工可见的数据且写入被拒绝；写入回执记录该员工为操作人；个人定时任务按本人查询消息。留存外部应用侧日志摘要（不含手机号原文）与调用审计中的 `call_context`。
+4. 仅当该环境有开启“发送员工身份”的连接器时执行（EA-S1，PF-MCP-03；未使用的环境跳过并在留证中注明）。首个开启的真实外部应用：外部应用校验 Bearer 凭据并按 `X-DSH-Work-Viewer-Mobile` 识别员工；员工本人对话只拿到本人有权的数据，项目空间中的运行只拿到所有员工可见的数据且写入被拒绝；写入回执记录该员工为操作人；个人定时任务按本人查询消息。留存外部应用侧日志摘要（不含手机号原文）与调用审计中的 `call_context`。
 
 **验收：** 真实 DSH 为所有 Agent 只加载健康且能力快照已同步的 Connector；调用、失败、停用和删除均可追溯。P1 合成 Runtime、一次性 PostgreSQL和管理页面绿灯不能替代本层证据。
 

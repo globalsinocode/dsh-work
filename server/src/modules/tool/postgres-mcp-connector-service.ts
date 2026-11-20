@@ -888,7 +888,7 @@ function credentialSharedColumn(sql: DatabaseClient | DatabaseTransaction) {
 /** EA-S1 开启条件：Bearer 认证且凭据为本 Connector 独占（方案 5.1“开启条件”）。 */
 function employeeIdentityAvailability(row: { authType: string; credentialShared: boolean }): { available: boolean; unavailableReason?: string } {
   if (row.authType !== 'bearer') return { available: false, unavailableReason: '无认证的连接器任何人都能伪造员工身份，只有 Bearer 认证的连接器可以开启' }
-  if (row.credentialShared) return { available: false, unavailableReason: 'Bearer 凭据与其他连接器共用，其他 MCP 服务也能冒充员工；请先“更换凭据”' }
+  if (row.credentialShared) return { available: false, unavailableReason: 'Bearer 凭据与其他连接器共用，其他 MCP 服务也能冒充员工；请先在“更多”中“轮换 Token”，为本连接器换上单独的凭据' }
   return { available: true }
 }
 
