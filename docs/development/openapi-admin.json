@@ -1726,6 +1726,23 @@
         }
       }
     },
+    "/connectors/mcp/employee-identity": {
+      "patch": {
+        "operationId": "setMcpEmployeeIdentity",
+        "summary": "开启或关闭 MCP Connector 的“发送员工身份”（外部业务应用调用上下文，EA-S1）；只能为 Bearer 认证且凭据独占的 Connector 开启，只影响此后新启动的 Attempt",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
     "/runtimes": {
       "get": {
         "operationId": "listRuntimes",

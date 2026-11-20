@@ -1103,6 +1103,7 @@ export const mockConnectors: ConnectorDefinition[] = [
       discoveredAt: '2026-09-22T00:00:00.000Z',
       reviewedAt: '2026-09-22T00:05:00.000Z',
       reviewedBy: '陈默',
+      employeeIdentity: { enabled: false, available: true },
     },
   },
   {

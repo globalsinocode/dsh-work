@@ -348,7 +348,7 @@ Agent 版本不保存工具引用，只保存联网搜索开关（`web_search_en
 
 平台先解析使用范围，再将本次连接标识与生效清单摘要固定到 Manifest、DSH 配置和调用策略。未选命名空间的调用须被实际拒绝，即使该 MCP 被租户其他 Agent 选择。队列启动、恢复和活动调用继续复核健康、停用、删除及生效清单变化；已经开始的 Attempt 不自动扩入新增连接器或新确认的 Tool。
 
-发布时固定的是模式和选定 ID，MCP 实际清单按每次 Attempt 留证；连接器之后确认的新 Tool 会进入选定该连接器的 Agent 的新 Attempt。MCP 数据访问边界由上游凭据和服务端实现；Connector 的权限说明是登记信息，平台 Agent Version 的 `dataScopes` 仅约束 dsh-work 受控工具与数据集合，不过滤 MCP 返回的数据。共享 MCP 凭据不等于上游能够识别每个 Agent 或自动执行企业数据隔离。
+发布时固定的是模式和选定 ID，MCP 实际清单按每次 Attempt 留证；连接器之后确认的新 Tool 会进入选定该连接器的 Agent 的新 Attempt。MCP 数据访问边界由上游凭据和服务端实现；Connector 的权限说明是登记信息，平台 Agent Version 的 `dataScopes` 仅约束 dsh-work 受控工具与数据集合，不过滤 MCP 返回的数据。共享 MCP 凭据不等于上游能够识别每个 Agent 或自动执行企业数据隔离。Connector 开启“发送员工身份”（EA-S1，[功能规则第 14 节](feature-rules.md#14-外部业务应用接入ea-s1)）后，外部应用凭调用上下文中的可见类型与员工标识，按员工在其系统中的权限过滤数据并授权写入；Agent 的数据范围仍不限制 MCP 数据，dsh-work 不区分工具读写。
 
 ### 6.5 管理端 UI 与交互
 

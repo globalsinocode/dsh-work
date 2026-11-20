@@ -386,6 +386,8 @@ export const adminApi = {
     request<ConnectorDefinition>('/connectors/mcp/capabilities/approve', { method: 'POST', body: JSON.stringify(input) }),
   setMcpConnectorStatus: (input: { connectorId: string; status: 'enabled' | 'disabled' }) =>
     request<ConnectorDefinition>('/connectors/mcp/status', { method: 'PATCH', body: JSON.stringify(input) }),
+  setMcpEmployeeIdentity: (input: { connectorId: string; enabled: boolean }) =>
+    request<ConnectorDefinition>('/connectors/mcp/employee-identity', { method: 'PATCH', body: JSON.stringify(input) }),
   getAuditEvents: (input: { query?: string; status?: string; category?: string; page?: number; pageSize?: number } = {}) =>
     request<ListPage<AuditEvent>>(`/audit-events${listQuery(input)}`),
   getOperationsSummary: () => request<OperationsSummary>('/operations/summary'),

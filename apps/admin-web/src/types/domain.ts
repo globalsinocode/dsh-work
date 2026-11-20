@@ -771,6 +771,13 @@ export interface ConnectorDefinition {
     discoveredAt: string | null
     reviewedAt: string | null
     reviewedBy: string | null
+    /** 外部业务应用接入 EA-S1：“发送员工身份”开关；旧服务端缺省。 */
+    employeeIdentity?: {
+      enabled: boolean
+      /** false 时不能开启（无认证或凭据与其他连接器共用），原因见 unavailableReason。 */
+      available: boolean
+      unavailableReason?: string
+    }
   }
 }
 
@@ -797,6 +804,8 @@ export interface McpInvocationAudit {
   capabilityName: string
   parameterDigest: string
   result: 'success' | 'failed' | 'unknown'
+  /** EA-S1：该次调用携带的调用上下文；null 或缺省表示没有发送。 */
+  callContext?: 'personal' | 'shared' | null
   occurredAt: string
   resolvedResult?: 'success' | 'failed' | null
   resolvedBy?: string | null

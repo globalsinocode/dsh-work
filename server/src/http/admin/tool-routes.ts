@@ -83,6 +83,14 @@ export function registerToolRoutes(router: Router, mcp: PostgresMcpConnectorServ
       actor: requireRequestIdentity(context, 'admin').userId,
     }), 'postgres')
   })
+  // 外部业务应用接入方案 EA-S1：“发送员工身份”开关，只能为 Bearer 认证且凭据独占的 Connector 开启。
+  router.patch(`${basePath}/connectors/mcp/employee-identity`, async (request, context) => {
+    const input = await readJsonBody<{ connectorId: string; enabled: boolean }>(request)
+    return envelope('admin', await mcp.setMcpEmployeeIdentity({
+      ...input,
+      actor: requireRequestIdentity(context, 'admin').userId,
+    }), 'postgres')
+  })
   router.patch(`${basePath}/connectors/mcp/status`, async (request, context) => {
     const input = await readJsonBody<{ connectorId: string; status: 'enabled' | 'disabled' }>(request)
     return envelope('admin', await mcp.setMcpConnectorStatus({

@@ -428,6 +428,16 @@ export class AdminQueryService {
     return this.checkConnector(input)
   }
 
+  /** EA-S1 冒烟：只切换开关状态，不模拟运行时的请求头（由服务层集成测试覆盖）。 */
+  async setMcpEmployeeIdentity(input: { connectorId: string; enabled: boolean; actor: string }) {
+    const connector = (await this.getMcpConnectors()).find(item => item.id === input.connectorId)
+    if (!connector?.mcp) throw notFound(`MCP Connector 不存在：${input.connectorId}`)
+    if (input.enabled && !connector.mcp.employeeIdentity.available) throw stateConflict(connector.mcp.employeeIdentity.unavailableReason ?? '该连接器不能开启“发送员工身份”')
+    return this.repository.updateConnector(input.connectorId, {
+      mcp: { ...connector.mcp, employeeIdentity: { ...connector.mcp.employeeIdentity, enabled: input.enabled } },
+    })
+  }
+
   async checkConnector(input: { connectorId: string; actor: string }) {
     if (!input.actor.trim()) throw stateConflict('操作人不能为空')
     const connectors = await this.repository.read('connectors')

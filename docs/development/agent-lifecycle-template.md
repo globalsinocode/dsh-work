@@ -70,7 +70,7 @@ MCP、持久化等待、受控记忆和无 Session 入口是 Agent 的扩展轨�
 
 “需要查询外部系统”本身不是 MCP 触发条件。已有受控 Tool 或固定 API 适配器能够满足时继续使用现有路径。
 
-选择 MCP 后必须补：服务身份、Streamable HTTP 传输与网络范围、凭据引用、完整 Tool 清单及生效清单摘要（新增或 Schema 变化须确认）、Agent Version 的 `selected`/`none` 范围、命名空间冲突处理、超时取消、实际 Tool 调用审计、漂移同步以及错误服务/凭据、停用和删除测试。Agent 创建者按整个 Connector 显式选择，新 Agent 默认不使用 MCP；不提供逐 Tool Grant，也不生成平台 Tool Version/Binding。Agent 发布只固定使用范围，不携带或改变 Connector 地址与凭据。MCP Resources、Prompts、stdio 和包内任意服务进程当前不支持。使用共享凭据的 Connector 须写明由哪一层（外部系统或 MCP 服务）按人或按结果可见范围过滤数据；做不到时，数据敏感的场景须等[架构总览第 10 节](overview.md#10-当前边界与独立开发)“外部业务应用接入”中的调用上下文完成后再接入。
+选择 MCP 后必须补：服务身份、Streamable HTTP 传输与网络范围、凭据引用、完整 Tool 清单及生效清单摘要（新增或 Schema 变化须确认）、Agent Version 的 `selected`/`none` 范围、命名空间冲突处理、超时取消、实际 Tool 调用审计、漂移同步以及错误服务/凭据、停用和删除测试。Agent 创建者按整个 Connector 显式选择，新 Agent 默认不使用 MCP；不提供逐 Tool Grant，也不生成平台 Tool Version/Binding。Agent 发布只固定使用范围，不携带或改变 Connector 地址与凭据。MCP Resources、Prompts、stdio 和包内任意服务进程当前不支持。使用共享凭据的 Connector 须写明由哪一层（外部系统或 MCP 服务）按人或按结果可见范围过滤数据；数据敏感的场景须为该 Connector 开启“发送员工身份”（[功能规则第 14 节](feature-rules.md#14-外部业务应用接入ea-s1)），并写明外部应用如何按调用上下文识别员工、过滤数据与授权写入；外部应用未按接入约定改造时不得接入。
 
 ### 4.2 持久化等待与长流程
 

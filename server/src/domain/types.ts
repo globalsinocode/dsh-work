@@ -573,6 +573,15 @@ export interface ConnectorDefinition {
     discoveredAt: string | null
     reviewedAt: string | null
     reviewedBy: string | null
+    /**
+     * 外部业务应用接入方案 EA-S1：“发送员工身份”开关。`available` 为 false 时不能开启（无认证或凭据与其他
+     * Connector 共用），`unavailableReason` 说明原因；已开启但当前不满足条件时运行中不发送员工身份。
+     */
+    employeeIdentity: {
+      enabled: boolean
+      available: boolean
+      unavailableReason?: string
+    }
   }
 }
 
@@ -627,6 +636,8 @@ export interface McpInvocationAudit {
   capabilityName: string
   parameterDigest: string
   result: 'success' | 'failed' | 'unknown'
+  /** EA-S1：该次调用携带的调用上下文；null 表示没有发送。 */
+  callContext?: 'personal' | 'shared' | null
   occurredAt: Date
   resolvedResult: 'success' | 'failed' | null
   resolvedBy: string | null

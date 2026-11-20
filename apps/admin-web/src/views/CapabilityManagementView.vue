@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
+import { computed, h, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox, ElNotification } from 'element-plus'
 import { ArrowDown, Check, Clock, Close, Connection, Delete, DocumentCopy, Key, Loading, Plus, Refresh, Search, SwitchButton, View } from '@element-plus/icons-vue'
 import { useRoute, useRouter } from 'vue-router'
@@ -117,6 +117,9 @@ const skillTestResultDescription = computed(() => {
 })
 
 const selectedSkill = computed(() => contentStore.skills.find((item) => item.id === detailTargetId.value))
+const selectedConnector = computed(() => detailType.value === 'connector' ? contentStore.connectors.find(item => item.id === detailTargetId.value) : undefined)
+/** 外部业务应用接入 EA-S1：开关说明（方案 5.1“开关与界面”）。 */
+const employeeIdentityHelp = '开启后，结果只给一个人看的调用——员工本人的对话和个人定时任务，以及 Agent 主动任务（包括放在项目空间中的，员工身份为接收人）——会附带该员工的平台用户 ID、手机号、邮箱和钉钉账号，由应用按该员工的权限返回数据、判断能否写入；项目空间中结果多人可见的调用只告知“结果多人可见”，不附带员工身份。仅在应用已按接入约定改造、且 Bearer 凭据只给 dsh-work 使用时开启。'
 
 // 平台内置 Skill 随代码发布，只读；已安装 Skill 可设置“覆盖内置场景”，紧急停用在 Runtime 配置中。
 const builtinSkills = computed(() => contentStore.builtinSkills?.skills ?? [])
@@ -271,7 +274,7 @@ async function inspectConnector(connector: ConnectorDefinition) {
   if (connector.mcp) {
     try {
       const invocations = await contentStore.getMcpInvocationAudits(connector.id)
-      invocationSummary = invocations.map(item => `${item.capabilityName}（${item.result}，执行者 ${item.executorPrincipalId ?? '历史记录未归因'}，${new Date(item.occurredAt).toLocaleString('zh-CN')}）`).join('；') || '暂无调用审计'
+      invocationSummary = invocations.map(item => `${item.capabilityName}（${item.result}，执行者 ${item.executorPrincipalId ?? '历史记录未归因'}${item.callContext ? `，调用上下文 ${item.callContext === 'personal' ? '个人' : '多人可见'}` : ''}，${new Date(item.occurredAt).toLocaleString('zh-CN')}）`).join('；') || '暂无调用审计'
     } catch {
       invocationSummary = '调用审计加载失败，请稍后重试'
     }
@@ -739,6 +742,25 @@ async function toggleMcpConnector(connector: ConnectorDefinition) {
   }
 }
 
+async function setEmployeeIdentity(connector: ConnectorDefinition, enabled: boolean) {
+  try {
+    if (enabled) {
+      await ElMessageBox.confirm(
+        h('div', [h('p', employeeIdentityHelp), h('p', { style: 'margin-top: 8px' }, '开启只影响此后新启动的运行。')]),
+        `向“${connector.name}”发送员工身份？`,
+        { confirmButtonText: '确认开启', cancelButtonText: '取消', type: 'warning' },
+      )
+    }
+    actionLoading.value = `mcp-employee-identity:${connector.id}`
+    await contentStore.setMcpEmployeeIdentity(connector.id, enabled)
+    ElMessage.success(enabled ? '已开启“发送员工身份”，此后新运行生效' : '已关闭“发送员工身份”')
+  } catch (cause) {
+    if (cause instanceof Error) ElMessage.error(cause.message)
+  } finally {
+    actionLoading.value = ''
+  }
+}
+
 async function deleteMcpConnector(connector: ConnectorDefinition) {
   try {
     await ElMessageBox.confirm(
@@ -904,7 +926,7 @@ onUnmounted(() => clearSkillTestPoll())
 
       <template v-else>
       <el-table class="data-table" v-loading="contentStore.loading" :data="pagedConnectors" empty-text="暂无匹配的 MCP 连接器">
-        <el-table-column label="名称" min-width="180"><template #default="scope"><strong class="mcp-name">{{ scope.row.name }}</strong></template></el-table-column>
+        <el-table-column label="名称" min-width="180"><template #default="scope"><strong class="mcp-name">{{ scope.row.name }}</strong><el-tag v-if="scope.row.mcp?.employeeIdentity?.enabled" size="small" :type="scope.row.mcp.employeeIdentity.available ? 'info' : 'warning'" class="mcp-pending-tag" data-testid="employee-identity-tag">{{ scope.row.mcp.employeeIdentity.available ? '发送员工身份' : '发送员工身份（未生效）' }}</el-tag></template></el-table-column>
         <el-table-column label="Endpoint" min-width="280"><template #default="scope"><code class="mcp-endpoint">{{ scope.row.endpoint }}</code></template></el-table-column>
         <el-table-column label="认证方式" width="120"><template #default="scope">{{ scope.row.authType === 'bearer' ? 'Bearer Token' : '无认证' }}</template></el-table-column>
         <el-table-column label="工具数量" width="130" align="center" header-align="center"><template #default="scope"><el-button link type="primary" data-action="view-mcp-tools" @click="openMcpTools(scope.row)">{{ scope.row.mcp?.capabilityCount ?? 0 }} 个</el-button><el-tag v-if="scope.row.mcp?.pendingCapabilities.length" size="small" type="warning" class="mcp-pending-tag">{{ scope.row.mcp.pendingCapabilities.length }} 待确认</el-tag></template></el-table-column>
@@ -1060,6 +1082,23 @@ onUnmounted(() => clearSkillTestPoll())
           </dd>
         </div>
       </dl>
+      <section v-if="selectedConnector?.mcp?.employeeIdentity" class="capability-detail__coverage" aria-labelledby="employee-identity-title" data-testid="employee-identity-section">
+        <h3 id="employee-identity-title">发送员工身份</h3>
+        <p>{{ employeeIdentityHelp }}</p>
+        <el-switch
+          :model-value="selectedConnector.mcp.employeeIdentity.enabled"
+          :disabled="!authStore.canWrite('connector') || (!selectedConnector.mcp.employeeIdentity.enabled && !selectedConnector.mcp.employeeIdentity.available)"
+          :loading="actionLoading === `mcp-employee-identity:${selectedConnector.id}`"
+          aria-label="发送员工身份"
+          active-text="开启"
+          inactive-text="关闭"
+          data-action="toggle-employee-identity"
+          @change="(value: string | number | boolean) => setEmployeeIdentity(selectedConnector!, Boolean(value))"
+        />
+        <p v-if="!selectedConnector.mcp.employeeIdentity.available" class="capability-detail__hint" role="note">
+          {{ selectedConnector.mcp.employeeIdentity.enabled ? `当前不满足开启条件，运行时不发送员工身份：${selectedConnector.mcp.employeeIdentity.unavailableReason}` : selectedConnector.mcp.employeeIdentity.unavailableReason }}
+        </p>
+      </section>
       <section v-if="detailType === 'skill' && skillDetailTab === 'config' && selectedSkill && builtinScenarioOptions.length" class="capability-detail__coverage" aria-labelledby="skill-coverage-title">
         <h3 id="skill-coverage-title">覆盖内置场景</h3>
         <p>勾选后，运行中有这个 Skill 时不再提供对应的平台内置 Skill。只对可由模型调用的 Skill 生效，修改立即作用于新运行。</p>
@@ -1208,6 +1247,7 @@ onUnmounted(() => clearSkillTestPoll())
 .capability-detail__identifier code { color: var(--color-text-primary); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: var(--font-size-badge); }
 .capability-detail__code { padding: 9px; border-radius: var(--radius-button); background: var(--color-bg-subtle); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: var(--font-size-badge) !important; }
 .capability-detail__actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 24px; }
+.capability-detail__hint { margin: 0; color: var(--color-text-secondary); font-size: var(--font-size-caption); }
 .capability-detail__coverage { display: grid; justify-items: start; gap: 10px; margin-top: 20px; padding: 14px; border: 1px solid var(--color-border); border-radius: var(--radius-card); }
 .capability-detail__coverage h3 { margin: 0; color: var(--color-text-heading); font-size: var(--font-size-caption); }
 .capability-detail__coverage p { margin: 0; color: var(--color-text-secondary); font-size: var(--font-size-badge); line-height: 1.6; }

@@ -143,7 +143,7 @@ flowchart LR
 | （无表） | 内置工具 | 随代码发布，见 [内置工具注册表](../../server/src/modules/runtime/builtin-tools.ts)；迁移 `0096` 删除了原工具治理表 |
 | `tool_audit_logs` | 内置与平台工具调用审计 | 直接记录工具名称（`tool_name`） |
 | `connectors`、`connector_health_checks` | 连接器与健康检查 | 健康状态与配置分离 |
-| `mcp_connector_profiles` | MCP 连接器的发现清单与生效清单 | 只支持 Streamable HTTP；新增或输入 Schema 变化的 Tool 须确认后进入生效清单 |
+| `mcp_connector_profiles` | MCP 连接器的发现清单与生效清单 | 只支持 Streamable HTTP；新增或输入 Schema 变化的 Tool 须确认后进入生效清单；`employee_identity_enabled` 为“发送员工身份”开关（迁移 0131，默认关闭，只能为 Bearer 认证且凭据独占的 Connector 开启） |
 | `credential_refs`、`credential_secrets` | 凭据引用与加密密文 | 密文为 AES-256-GCM；接口不回显、不导出密钥正文 |
 
 ## 8. 模型与 Runtime
@@ -204,6 +204,7 @@ flowchart LR
 | `audit_events` | 管理与执行审计 | 可按用户、空间、Session、Run、Attempt 追踪；不含提示词、业务正文或密钥 |
 | `tool_audit_logs` | 工具调用审计 | 只记录参数摘要 |
 | `mcp_invocation_audits` | MCP 调用审计 | 按 Attempt + 调用 ID 唯一；参数只存摘要；结果未知需管理员核对登记；登记未生效才解除重试拦截，登记已生效继续拦截 |
+| `mcp_attempt_call_contexts` | 每个 Attempt 向各 Connector 实际下发的调用上下文（EA-S1） | 主键 Attempt + Connector；只存 `personal`/`shared`，不存员工标识；`mcp_invocation_audits.call_context` 据此记录每次调用带的调用上下文（迁移 0131） |
 | `model_usage_events` | 模型用量 | 每个 Attempt 对话一行、联网搜索另一行（迁移 0122，按 `(attempt, endpoint)` 唯一）。有网关记录时 `measurement = gateway`：实际模型取厂商成功返回的请求，记录请求次数（含重试）、失败次数与缓存读写 token（厂商未返回为空，不记为 0）；没有网关记录时为 `session-log`（DSH 会话日志）或 `estimated`（按文本长度估算），`estimated` 与之一致。取消的运行有网关记录时也记录。按执行计数的聚合用 `count(distinct attempt_id)` |
 | `operational_events`（视图） | 运营事件投影 | 只读投影，不含业务正文 |
 
@@ -250,6 +251,7 @@ Run 和 Attempt 的普通状态转换不能从终态回退。只有失败或取�
 - [知识库重排序结果](../../server/migrations/0127_knowledge_rerank_outcome.sql)：连接上增加最近一次检索的重排序结果与时间，供管理端健康状态显示（知识库优化 O5）。
 - [知识引用来源](../../server/migrations/0128_knowledge_citation_source.sql)：引用快照增加 `source`，区分执行前检索与 Agent 检索工具（功能规则第 11 节，KO9）。
 - [补写 Skill 安装名称](../../server/migrations/0130_backfill_skill_installation_key.sql)：为经已删除的文本接口写入的 Skill 与种子 Skill 补写 `installation_key`（规则同 0035，审核中的员工提交、已被占用的名称除外，同名只补一行），使安装同名包生成其下一版本（功能规则 5.3）。
+- [MCP 发送员工身份](../../server/migrations/0131_mcp_employee_identity.sql)：Connector 的“发送员工身份”开关、每个 Attempt 下发的调用上下文与调用审计的 `call_context`（外部业务应用接入方案 EA-S1，功能规则第 14 节）。
 
 新增变更使用新的顺序迁移，保留已应用迁移；迁移运行器以咨询锁串行执行并校验已执行迁移的 SHA-256，修改已执行迁移会拒绝启动。应用回滚不会自动降低 Schema，至少保持上一版本兼容；破坏性清理需独立安排。操作流程见 [部署手册](../release/mac-mini-deployment-runbook.md)。
 
