@@ -7,7 +7,7 @@
 dsh-work 不依赖同机的其他服务；同一台机器若还运行其他应用，只需避开端口冲突、互不改动对方的目录与数据。
 
 目标顺序：确认现有环境 → 验证并下载 Release → 配置与预检 →
-部署指定版本 → 初始化管理员、登录和备份验收 → 启用后续自动部署。
+部署指定版本 → 初始化管理员、登录和备份检查 → 启用后续自动部署。
 
 本文是操作手册，不代表已经在 Mac mini 上执行或验收。当前已确认的服务器访问基线是
 `deploy@192.168.1.99`，服务器报告的 DSH 为 `0.1.2-rc.1`、Commit
@@ -355,7 +355,7 @@ bash "${DWP_BUNDLE}/scripts/deploy/release.sh" "${DWP_VERSION}" "${DWP_ROOT}"
 也不要重跑同版本 `release.sh`，脚本会拒绝覆盖活动 Release。`DSH_WORK_AUTO_DEPLOY_ENABLED=false`
 只暂停 watcher，不禁止这里明确执行的人工部署。
 
-## 9. 完成首次验收与备份
+## 9. 完成首次检查与备份
 
 ### 9.1 服务和入口
 
@@ -420,13 +420,9 @@ dsh-work 数据库、`DSH_WORK_DATA_ROOT` 与发布清单，不覆盖 `runtime.e
 恢复验收必须抽查 `${DSH_WORK_DATA_ROOT}/skills/packages` 中的文件夹能够按数据库中的
 `artifact_ref` 找到并通过摘要校验；只恢复数据库或只恢复数据目录都会造成 Skill 不可执行。
 
-### 9.4 目标环境部署验收
+## 10. 首次检查后启用自动部署
 
-完成 9.1～9.3 后，按 [PF-07 手册的目标环境部署验收清单](../development/pf07-platform-acceptance.md#目标环境部署验收) 逐项检查并留证。首次部署和之后的每次发布都要执行；恢复演练只在隔离环境进行，不在本机运行 `restore.sh`。清单完成前，不在该环境开放新版本带来的新能力；已开放的能力继续运行并按发布问题跟踪，清单未通过时回退版本或停用相关 Agent；需要先验收后安装的环境应关闭自动部署。交接记录须包含清单结论、Run/Attempt 引用和证据位置。
-
-## 10. 验收后启用自动部署
-
-watcher 只跟随 GitHub 的最新稳定 Release，安装后会立即运行。先确认最新版本就是刚验收
+watcher 只跟随 GitHub 的最新稳定 Release，安装后会立即运行。先确认最新版本就是刚检查
 的版本；若已有新版本，先评估它，不要在未获准时启用自动升级：
 
 ```bash
@@ -459,7 +455,7 @@ launchctl print "gui/$(id -u)/com.company.dsh-work.release-watcher"
 2. 发布人员在 GitHub Actions 人工运行 **Manual release**，发布新的不可变稳定版本。
 3. Mac mini 通常在下一次 300 秒轮询时发现，自动验证 → 停止旧后端并备份 → 验证异机副本 →
    向前迁移 → 切换应用 → 健康检查。不需要每次手工执行 `release.sh`。
-4. 查看 `active-release` 和日志，按 9.4 节完成该版本的部署验收。watcher 没有等待验收的拦截点，新版本会先被安装；需要先验收后安装时，保持 `DSH_WORK_AUTO_DEPLOY_ENABLED=false` 并人工升级。
+4. 查看 `active-release` 和日志，按 9.1 节确认服务健康。watcher 没有人工确认的拦截点，新版本会先被安装；需要先检查后安装时，保持 `DSH_WORK_AUTO_DEPLOY_ENABLED=false` 并人工升级。
 
 dsh-work 自己创建并校验备份，因而可以自动提升。不要与同机其他应用互用发布脚本或备份回执。
 
@@ -508,7 +504,7 @@ bash "${DWP_ROOT}/current/scripts/deploy/rollback.sh" "${DWP_ROLLBACK_VERSION}" 
 项目副本续期后都需要分别更新并生效。
 
 部署交接只记录账号、目录、Release Tag/Commit、DSH Lock、健康/登录/任务/备份与重启
-验收结论，以及 9.4 节要求的清单结论、Run/Attempt 引用和证据位置，不记录密码、Token 或私钥。绝不执行 `docker compose down -v`、删除数据卷，
+检查结论，不记录密码、Token 或私钥。绝不执行 `docker compose down -v`、删除数据卷，
 或覆盖已有 `runtime.env` 来处理部署失败。
 
 ## 12. 升级与备份恢复
@@ -652,7 +648,7 @@ grep -E '^DSH_WORK_(WORKBENCH|ADMIN)_ORIGINS=.+' "${DWP_ROOT}/runtime.env" || ec
 
 #### 5. 下载、验证并执行升级
 
-按第 6 节下载并验证 `v2026.11.16-01`（得到 `DWP_BUNDLE`），先记下后端错误日志当前的行数（launchd 日志是追加写入的，验收时只看这之后的内容），再用新包里的脚本升级：
+按第 6 节下载并验证 `v2026.11.16-01`（得到 `DWP_BUNDLE`），先记下后端错误日志当前的行数（launchd 日志是追加写入的，检查时只看这之后的内容），再用新包里的脚本升级：
 
 ```bash
 DWP_LOG="${DWP_ROOT}/logs/server.stderr.log"
@@ -669,7 +665,7 @@ bash "${DWP_BUNDLE}/scripts/deploy/release.sh" "${DWP_VERSION}" "${DWP_ROOT}"
 | 迁移 0129 | `release.sh` 终端输出含 `仍有 N 个 AI Hub 用户` 与 `database migration failed`（不写入日志文件） | 每个迁移各自一个事务：0126～0128 已生效（只新增列，旧版本可用），0129 已回滚，脚本已恢复旧版本；先处理这些账号（只可能是遗留数据），再重跑 |
 | 迁移后健康检查 | 输出 `database migrations were applied ... service stays stopped` | 服务保持停止，不能手工启动旧版本；查看 `logs/server.stderr.log` 排障，优先发布修复版本。必要时按第 12 节用本次备份 `restore.sh` 后立即 `rollback.sh`：此时 `current` 指向新版本，`restore.sh` 会先用新版本在恢复后的旧 Schema 上启动服务，回滚完成前保持 Runtime 排空、不对员工开放。新版本从未激活时 `active-release` 仍是旧版本，回滚会把旧版本自己记入 `automation/state/blocked-release`；以后开启自动部署前先确认并清理该文件 |
 
-#### 6. 升级后验收
+#### 6. 升级后检查
 
 ```bash
 cat "${DWP_ROOT}/active-release"   # 应为 v2026.11.16-01
@@ -700,7 +696,6 @@ fi
 1. 管理端与员工端登录页只有账号密码，没有 AI Hub 入口；平台管理员能登录管理端，“员工与权限”列表正常、没有“来源”列。
 2. 用一名普通员工登录员工端；配置了钉钉的环境，在钉钉内打开一次确认免登正常。
 3. 把 Runtime 调度**先切回“接受”**，再发一条无敏感内容的员工对话，确认回答、事件流与成果正常。
-4. 按 9.4 节记录本次部署验收（版本、Commit、检查结果、Run/Attempt 引用），不记录密码。
 
 确认一切正常后，删除第 4 步留的 `runtime.env.before-ah-s1`（含密钥，不要长期保留）。
 
@@ -718,12 +713,12 @@ fi
    - 访问日志不原样记录手机号与邮箱。
 2. 在管理端“MCP 连接器”中，用该应用单独签发的 Bearer Token 登记连接器。不要复用其他连接器的 Token：凭据共用的连接器不能开启“发送员工身份”。
 3. 打开连接器详情，开启“发送员工身份”并确认。只影响此后新启动的运行。
-4. 按[验收目录 PF-MCP-P2](../../e2e/catalog/admin-platform.md#pf-mcp-p2-真实-mcp-与-dsh-发布前验收) 第 4 步验收：
+4. 按[验收目录 PF-MCP-P2](../../e2e/catalog/admin-platform.md#pf-mcp-p2-真实-mcp-与-dsh-发布前验收) 第 4 步核对：
    - 一名员工在个人对话中只拿到本人有权的数据；
    - 在项目空间中只拿到所有员工可见的数据，且写入被拒绝；
    - 管理端连接器详情的“最近调用”显示对应的调用上下文。
 
-   按 9.4 节留证，不记录手机号原文。
+   核对记录中不写手机号原文。
 5. 怀疑 Bearer 凭据泄露时，在连接器“更多”中选“轮换 Token”（凭据需重新录入时为“录入 Token”），并让外部应用作废旧 Token。持有旧凭据的人在更换前可以冒充任意员工调用该应用。
 
 列表中标为“发送员工身份（未生效）”的连接器，表示开关已开启但当前不满足条件（如凭据与其他连接器共用），运行中不会发送员工身份；在“更多”中选“轮换 Token”换上本连接器单独的凭据即可（轮换会把共用的凭据拆开）。

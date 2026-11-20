@@ -531,11 +531,11 @@ B、C、D 的风险由执行容器姿态决定，隔离要求相同，不能因�
 | 单元 | 执行器参数白名单、容器参数生成、固定环境变量、路径映射、可执行文件映射、令牌校验、静止确认与“不干净就删除”、清理期间授权探测等待、`output/` 目录本身的检查、进程组终止、能力报告、孤儿清扫 |
 | P1 集成 | 受控 DSH + 假上游：remote subprocess 经工具桥与平台到达执行容器；命令留下的后台进程在下一个工具前被清除；`glob`、`grep` 在容器内返回与宿主一致的结果；DSH 与容器内命令使用同一路径；审批仍在工具层生效，收权后底层操作立即被拒；取消与超时回收；断网验证；跨 Attempt 不可见 |
 | 安全回归 | 执行容器内读取 `/proc`、凭据路径、工具桥 socket、其他工作区、Worker 环境变量均失败；执行容器无法连接工具桥；出网失败；工作区内指向外部的符号链接（含把 `output/` 本身换成链接）在文件工具、产物收集与检查点复制中均被拒绝；`setsid`、`nohup` 留下的进程与进程数耗尽都不能让后续工具在容器非静止时执行；白名单外的可执行文件被拒绝 |
-| P2 真实验收 | Mac mini 在目标 DSH 版本下逐场景留证；C 档放开时另行验收：模型写脚本经 `bash` 运行并生成 Office 产物、`run_in_background` 被拒绝、`job_*` 工具不可见 |
+| P2 真实验收 | 本机在目标 DSH 版本下逐场景留证；C 档放开时另行验收：模型写脚本经 `bash` 运行并生成 Office 产物、`run_in_background` 被拒绝、`job_*` 工具不可见 |
 
 Mock、探针或 P1 通过不能代替 P2。
 
-**C 档 P2 的执行方式（2026-10-27）：** 在 Mac mini 上运行 `scripts/acceptance/c-tier-p2.mjs`（随 Release 发布，用法与安全步骤见脚本开头），逐场景留证后由验收人填写结论；2026-10-28 在 Mac mini（Release v2026.10.28-01，`mac-mini-production`）执行并经验收人复核通过，证据留在 Mac mini 的验收目录，不提交到仓库。2026-10-28 本机预演（本地认证、开发库、本机 Docker、真实 DSH 与 DeepSeek 模型）各场景自动核对通过：xlsx/docx 生成并转换为 PDF、下载与解析文本含指定中文、PDF 中文字体均为 Noto Sans CJK SC、引用上一轮表格得到同一成果的 V2、`bash` 无 `run_in_background` 参数且 `job_*` 不可见、Attempt 结束后工作区已删除。同日在 `0cd3c34` 上按清单完整执行一轮并经验收人复核通过：自动核对无失败，工具链、`bash-limits` 回答、PDF 版式与中文、“查看正文”与“我的文件”预览、取消 Run 后执行容器消失均人工复核通过；`python-skill` 未执行（无合适 Skill），工作区写满以本机真实 Docker 用例与单元测试为证。本机验收不代替 Mac mini 上的 P2。
+**C 档 P2 的执行方式（2026-10-27）：** 在 Mac mini 上运行 `scripts/acceptance/c-tier-p2.mjs`（随 Release 发布，用法与安全步骤见脚本开头），逐场景留证后由验收人填写结论；2026-10-28 在 Mac mini（Release v2026.10.28-01，`mac-mini-production`）执行并经验收人复核通过，证据留在 Mac mini 的验收目录，不提交到仓库。2026-10-28 本机预演（本地认证、开发库、本机 Docker、真实 DSH 与 DeepSeek 模型）各场景自动核对通过：xlsx/docx 生成并转换为 PDF、下载与解析文本含指定中文、PDF 中文字体均为 Noto Sans CJK SC、引用上一轮表格得到同一成果的 V2、`bash` 无 `run_in_background` 参数且 `job_*` 不可见、Attempt 结束后工作区已删除。同日在 `0cd3c34` 上按清单完整执行一轮并经验收人复核通过：自动核对无失败，工具链、`bash-limits` 回答、PDF 版式与中文、“查看正文”与“我的文件”预览、取消 Run 后执行容器消失均人工复核通过；`python-skill` 未执行（无合适 Skill），工作区写满以本机真实 Docker 用例与单元测试为证。
 
 **2a 的覆盖（2026-10-27）：** 单元 `execution-container.test.ts`（`bash -c` 是唯一接受的 shell 形式、叠加层停用与插入项、容器参数含单文件上限）、`builtin-tools.test.ts`（装配方式、Skill 不能声明）、`runtime-adapter.test.ts`（无执行容器时拒绝带 `bash` 的 Manifest、Runtime 说明）；集成 `builtin-tools.integration.test.ts`（员工对话仅在执行容器可用时装配 `bash`，紧急停用同样生效）；真实 DSH + 真实 Docker `execution-container.e2e.test.ts`（opt-in）：`bash` 以服务用户在容器内运行并写入共享工作区、DSH 不另行要求审批、Worker 环境变量/工具桥 socket/`DSH_HOME`/其他 Attempt 工作区/项目文件在容器内不可见、出网失败、根文件系统只读、`setsid`/`nohup` 残留在下一个工具前已清除、`bash` 超过自身时限（`timeoutMs`）时平台中断请求并整组杀掉容器内进程、`run_in_background` 被拒绝、`job_*` 不可见、只有 `rg` 与 `bash` 到达容器且逐条审计；`execution-container-startup.integration.test.ts` 覆盖叠加 `dsh-bash-local` 后的启动准入（`bash` 仍独占调度）。未覆盖：P2、Office 产物、用户取消 Run 时 `bash` 的端到端回收（执行器层的中断已由真实 Docker 用例覆盖）。
 
