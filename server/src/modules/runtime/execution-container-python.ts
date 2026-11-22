@@ -4,6 +4,7 @@ import { join, resolve } from 'node:path'
 import type { RuntimeManifest } from './runtime-types.ts'
 import { EXECUTION_CONTAINER_LIMITS, type ContainerCommand, type ContainerCommandResult } from './execution-backend.ts'
 import { invalidRequest } from '../../domain/request-errors.ts'
+import { resolveSkillActivationTarget } from './skill-activation-target.ts'
 
 const ENTRY_PATTERN = /^(?:scripts\/)?[A-Za-z0-9._/-]+\.py$/
 
@@ -79,9 +80,9 @@ export function resolvePythonCall(input: Record<string, unknown>, manifest: Runt
   const args = input['args'] === undefined ? [] : input['args']
   if (!skillName || !ENTRY_PATTERN.test(entry) || entry.includes('..')) throw invalidRequest('Python Skill 或入口文件无效')
   if (!Array.isArray(args) || args.length > 32 || args.some(value => typeof value !== 'string' || value.length > 1000 || value.includes('\0'))) throw invalidRequest('Python 参数无效')
-  const matches = manifest.agent_configuration.skill_instructions.filter(skill => (skill.name ?? skill.id) === skillName || skill.id === skillName)
-  if (matches.length !== 1 || !matches[0]!.files?.some(file => file.path === entry && file.path.endsWith('.py'))) throw new Error('入口文件未在当前 Run 的锁定 Skill 中声明')
-  return { skillId: matches[0]!.id, entry, args: args as string[] }
+  const skill = resolveSkillActivationTarget(manifest.agent_configuration.skill_instructions, skillName)
+  if (!skill || !skill.files?.some(file => file.path === entry && file.path.endsWith('.py'))) throw new Error('入口文件未在当前 Run 的锁定 Skill 中声明')
+  return { skillId: skill.id, entry, args: args as string[] }
 }
 
 /** Where the Adapter materializes an activated Skill inside the Attempt workspace. */

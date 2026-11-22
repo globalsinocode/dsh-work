@@ -748,6 +748,41 @@ describe('DSH ACP Runtime Adapter', () => {
     assert.deepEqual(await run([]), { status: 'completed', activations: ['dsh-work-html-page'] })
     assert.deepEqual(await run(['dsh-work-html-page']), { status: 'completed', activations: [] })
   })
+  it('activates Skills by the catalog id@version form without bypassing explicit-only Skills', async () => {
+    const run = async (target: string) => {
+      const activations: string[] = []
+      const adapter = await createAdapter(500, undefined, undefined, {
+        recordSkillActivation: async (_manifest, skill) => { activations.push(skill.id) },
+      })
+      const input = manifest(`run-alias-${target.replace(/[^a-z0-9]/gi, '-')}`, 'attempt-alias')
+      input.agent_configuration.system_prompt = `必须先调用 activate_skill 激活 ${target}，然后按说明完成任务。`
+      input.skills = [{ id: 'skill-weekly', version: '0.2.0' }, { id: 'skill-secret', version: '1.0.0' }]
+      input.agent_configuration.skill_instructions = [
+        { id: 'skill-weekly', name: '周报汇总', description: '汇总周报', version: '0.2.0', instructions: '按团队模板汇总本周各成员的周报要点，输出一页摘要。' },
+        { id: 'skill-secret', name: '机密核对', description: '只允许员工点名使用', version: '1.0.0', instructions: '逐项核对机密清单中的条目，只在员工点名时使用本方法。', disable_model_invocation: true },
+      ]
+      input.tools = [...input.tools, { id: 'activate_skill', version: '1.0.0' }]
+      const handle = await adapter.execute(input)
+      const events: RuntimeEvent[] = []
+      adapter.subscribe(input.run_id, event => { events.push(event) })
+      const result = await handle.done
+      const text = events.filter(event => event.event_type === 'assistant.delta').map(event => event.display_message ?? '').join('')
+      return { status: result.status, activations, text }
+    }
+    // BSK-P2：模型照抄目录括号里的 id@版本。
+    const alias = await run('skill-weekly@0.2.0')
+    assert.equal(alias.status, 'completed')
+    assert.deepEqual(alias.activations, ['skill-weekly'])
+    // 换成别名也不能绕过“只允许用户显式激活”。
+    const explicitOnly = await run('skill-secret@1.0.0')
+    assert.deepEqual(explicitOnly.activations, [])
+    assert.match(explicitOnly.text, /只允许用户显式激活/)
+    // 失败时列出可激活的名称，但不含只允许用户显式激活的 Skill。
+    const missing = await run('skill-weekly@9.9.9')
+    assert.deepEqual(missing.activations, [])
+    assert.match(missing.text, /可激活：周报汇总（skill-weekly）/)
+    assert.doesNotMatch(missing.text, /机密核对|skill-secret/)
+  })
   it('discovers the session-scoped tool schemas from an isolated active DSH Profile', async () => {
     const root = await mkdtemp(join(tmpdir(), 'dsh-work-runtime-catalog-test-'))
     const adapter = new DshAcpRuntimeAdapter({

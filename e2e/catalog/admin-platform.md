@@ -344,7 +344,7 @@
 2. 要求“整理成 Word 文档”：模型激活 Office 文档内置 Skill，成果 docx 可打开、通过成果登记。
 3. 在 Runtime 中紧急停用 `bash` 后重复第 1 步：回答为 Markdown 并说明无法生成 HTML，运行不失败。
 
-另需观察：模型调用 `activate_skill` 时传入的名称能否唯一匹配（目录行形如“文件分析（平台内置）（dsh-work-file-analysis@1.0.0）”，只传“文件分析”会得到“没有唯一匹配”）。
+另需观察：模型调用 `activate_skill` 是否一次成功（目录行形如“文件分析（平台内置）（dsh-work-file-analysis@1.0.0）”；`id@版本`、整行和不带“（平台内置）”的名称都能匹配，见[功能规则 5.3](../../docs/development/feature-rules.md)）。
 
 **验收：** 留存 Run/Attempt、激活记录、成果与版本；与不装配内置 Skill 的同题产出对比的人工结论写入发布说明。P0/P1 绿灯不能替代本层。
 
