@@ -469,4 +469,4 @@ Agent 是独立 AI 员工，权限与人类员工同构，由管理员在 Agent 
 - **审计：** 每个 Attempt 实际下发的可见类型记入 `mcp_attempt_call_contexts`，`mcp_invocation_audits.call_context` 记录每次调用带的 `personal`/`shared`（未发送为空），不另存员工标识；连接器详情的“最近调用”显示。
 - **数据权限与写入：** 以外部应用自己的权限为准，dsh-work 不传数据范围，Agent 的数据范围不限制 MCP 数据；写入只由外部应用按调用上下文授权（方案第 6 节接入约定）。
 
-未完成：P1 受控 DSH 用户旅程（假 MCP 服务验证请求头）与首个真实外部应用的 P2 验收（PF-MCP-P2），完成前不得宣称已真实验收。
+P1 受控 DSH 用户旅程（真实 DSH 经平台模型网关与假外部应用，核对线路上实际收到的请求头）已补：`pnpm --filter @dsh-work/server test:ea:e2e`。发布验证的 MCP 工具调用由 DSH 策略返回 `trial_only`、不执行（第 9 节），只有列出工具等请求到达外部应用，且不带调用上下文。未完成：首个真实外部应用的 P2 验收（PF-MCP-P2），完成前不得宣称已真实验收。

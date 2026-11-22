@@ -1,6 +1,6 @@
 # 外部业务应用接入方案
 
-**状态：** 第 3 节决策 EA1～EA4 已确认（EA3 于 2026-11-19 改为明文请求头）；EA-S1 已于 2026-11-20 实施（迁移 `0131_mcp_employee_identity`），单元、PostgreSQL 服务层集成与 P0 冒烟通过；P1 受控 DSH 与 P2 真实外部应用验收未做，按第 10 节完成前视为“未真实验收”。<br>
+**状态：** 第 3 节决策 EA1～EA4 已确认（EA3 于 2026-11-19 改为明文请求头）；EA-S1 已于 2026-11-20 实施（迁移 `0131_mcp_employee_identity`），单元、PostgreSQL 服务层集成与 P0 冒烟通过；2026-11-22 补 P1 受控 DSH 用户旅程（`pnpm --filter @dsh-work/server test:ea:e2e`）；P2 真实外部应用验收未做，按第 10 节完成前视为“未真实验收”。<br>
 **更新日期：** 2026-11-19（EA3 改为明文请求头：调用上下文以几个明文请求头下发，外部应用凭该 Connector 的 Bearer 凭据确认请求来自 dsh-work，删去签名令牌、签名密钥与密钥管理；开关在管理端称“发送员工身份”，只能为 Bearer 认证且凭据独占的 Connector 开启；以后需要时可升级为签名令牌，字段保持一致）；2026-11-18（确认 EA1～EA4：外部应用优先按手机号识别员工，数据权限以外部应用自己的权限为准，不带数据范围，项目空间的运行不带员工标识；按 Connector 开启，默认关闭。同日按 PR #133 评审修正：`visibility` 按授权分支判定，项目空间的定时任务为 `shared`、主动任务一律 `personal`；发布验证不发送；幂等键由外部应用在工具参数中定义）；2026-11-17 首版（同日确定写入的授权由外部应用负责，删去平台侧的工具读写分类与准入；同日删去外部事件推送，需要提醒员工的场景由 Agent 定期查询外部应用）<br>
 **依据：** [架构总览第 10 节](../development/overview.md#10-当前边界与独立开发)“外部业务应用接入”；现有代码中的 Attempt 级 MCP 配置（`dsh-attempt-patch.ts`）、MCP 连接器服务（`postgres-mcp-connector-service.ts`）、运行授权（`postgres-authorization-service.ts` 的 `authorizeRuntime`）与 Attempt 派发（`attempt-dispatcher.ts`）。<br>
 **关联：** [Agent 设计规范 6.4](../development/agent-design-standard.md#64-mcp-使用范围)、[功能规则第 7 节](../development/feature-rules.md#7-自动任务ag-03)、[PF-07 验收手册](../development/pf07-platform-acceptance.md)。
@@ -126,7 +126,7 @@
 | 层级 | 内容 |
 | --- | --- |
 | 单元 | 请求头字段、`personal` 与 `shared` 按授权分支判定（含项目空间的定时任务、主动任务与 Task 执行接口）、发布验证不发送、未开启的 Connector 不发送、`viewer` 取披露用户及其手机号（去掉 `+86`）、邮箱（非 ASCII 不发送）与钉钉 userid；只能为 Bearer 认证且凭据独占的 Connector 开启，凭据变为共用时运行中不发送；请求头只经环境变量注入、不写入 patch 正文 |
-| P1 集成 | 一次性 PostgreSQL + 假 MCP 服务（校验 Bearer 凭据，按 `X-DSH-Work-Viewer-Mobile` 识别员工并按其权限返回数据，`shared` 只返回对所有员工可见的数据并拒绝写入）+ 受控 DSH：员工对话、个人空间的定时任务与项目空间拿到不同的上下文；结果归属空间为项目空间的定时任务得到 `shared`，放在项目空间的主动任务得到 `personal`（员工标识为接收人）；发布验证与未开启的 Connector 不带调用上下文 |
+| P1 集成 | 一次性 PostgreSQL + 假 MCP 服务（校验 Bearer 凭据，按 `X-DSH-Work-Viewer-Mobile` 识别员工并按其权限返回数据，`shared` 只返回对所有员工可见的数据并拒绝写入）+ 受控 DSH：员工对话、个人空间的定时任务与项目空间拿到不同的上下文；结果归属空间为项目空间的定时任务得到 `shared`，放在项目空间的主动任务得到 `personal`（员工标识为接收人）；未开启的 Connector 不带调用上下文；发布验证的工具调用由 DSH 返回 `trial_only` 不到外部应用，到达的列出工具等请求不带调用上下文（`test:ea:e2e`；Task 执行接口的 `shared` 只由单元测试覆盖） |
 | P0 冒烟 | 管理端“发送员工身份”开关可操作，无认证或凭据共用的 Connector 不能开启 |
 | P2 真实验收 | 首个真实外部应用：凭据校验与按手机号识别、按人过滤、写入回执与操作人、定时任务按本人查询消息；按 PF-07 手册留证 |
 

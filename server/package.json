@@ -80,6 +80,7 @@
     "test:review:p2:skill:integration": "node --env-file-if-exists=../.env --experimental-strip-types --test src/infrastructure/postgres/review-p2-skill-errors.integration.test.ts",
     "test:review:p2:logging": "node --env-file-if-exists=../.env --experimental-strip-types --test src/http/review-p2-error-logging.test.ts",
     "auth:bootstrap": "node --env-file-if-exists=../.env --experimental-strip-types src/modules/identity/local-bootstrap.ts",
+    "test:ea:e2e": "DSH_WORK_EA_P1_E2E=1 node --env-file-if-exists=../.env --experimental-strip-types --test --test-concurrency=1 src/modules/tool/mcp-employee-identity-dsh.e2e.integration.test.ts",
     "test:model-gateway:e2e": "DSH_WORK_MODEL_GATEWAY_E2E=1 node --env-file-if-exists=../.env --experimental-strip-types --test src/modules/runtime/model-gateway-dsh.e2e.test.ts",
     "test:execution-container:e2e": "node --env-file-if-exists=../.env --experimental-strip-types --test src/modules/runtime/execution-container.e2e.test.ts src/infrastructure/postgres/execution-container-startup.integration.test.ts",
     "test:local-auth": "node --experimental-strip-types --test src/modules/identity/local-auth.test.ts src/modules/identity/dingtalk/dingtalk.test.ts",

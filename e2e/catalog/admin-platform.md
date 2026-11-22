@@ -219,9 +219,9 @@
 
 ### PF-MCP-03 MCP 连接器“发送员工身份”（外部应用调用上下文，EA-S1）
 
-**优先级：** P0（个人信息与按人授权） · **角色：** 连接器管理员、只读管理员、员工 · **运行层级：** 单元、隔离 PostgreSQL 集成（服务层，合成 Runtime，不执行真实 DSH）与 P0 浏览器冒烟（管理端开关）；真实外部应用按 PF-MCP-P2 另留证<br>
+**优先级：** P0（个人信息与按人授权） · **角色：** 连接器管理员、只读管理员、员工 · **运行层级：** 单元、隔离 PostgreSQL 集成（服务层，合成 Runtime）、P1 受控真实 DSH（一次性 PostgreSQL、平台真实入口、模型网关假上游与假外部应用，opt-in）与 P0 浏览器冒烟（管理端开关）；真实外部应用按 PF-MCP-P2 另留证<br>
 **前置数据：** 一个 Bearer 认证、凭据独占的 MCP Connector；一个无认证的 MCP Connector；个人空间、项目空间各一个，登录账号分别为手机号与邮箱、其中一人已绑定钉钉的员工<br>
-**spec：** `server/src/domain/mcp-call-context.test.ts`、`server/src/infrastructure/postgres/mcp-connector-governance.integration.test.ts`、`apps/admin-web/src/views/CapabilityManagementView.test.ts`、`e2e/mvp-smoke.spec.ts`
+**spec：** `server/src/domain/mcp-call-context.test.ts`、`server/src/infrastructure/postgres/mcp-connector-governance.integration.test.ts`、`server/src/modules/tool/mcp-employee-identity-dsh.e2e.integration.test.ts`（P1）、`apps/admin-web/src/views/CapabilityManagementView.test.ts`、`e2e/mvp-smoke.spec.ts`
 
 1. 管理员在“MCP 连接器”打开 Bearer 认证 Connector 的详情，看到“发送员工身份”开关（默认关闭）及说明：开启后，结果只给一个人看的调用（员工本人的对话和个人定时任务，以及 Agent 主动任务）附带该员工的平台用户 ID、手机号、邮箱和钉钉账号；项目空间中结果多人可见的调用只告知“结果多人可见”。开启后列表中该 Connector 标出“发送员工身份”。
 2. 无认证的 Connector 不能开启，说明原因；凭据与其他 Connector 共用时不能开启，提示先在“更多”中“轮换 Token”。只读管理员只能查看开关状态。开关变化写入审计。
