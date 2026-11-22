@@ -75,6 +75,14 @@ export class MemoryKnowledgeAdminStore {
     return { ok: true, reason: null }
   }
 
+  /** P0 冒烟的确定性替身：UUID 形状的 ID 视为有效，其余按解析失败返回。 */
+  async verifyEmbeddingModel(_actorId: string, input: { embeddingModelId: string }) {
+    const valid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(input.embeddingModelId.trim())
+    return valid
+      ? { ok: true, reason: null, detail: null, cleanupFailed: false }
+      : { ok: false, reason: 'parse_failed', detail: 'model not found', cleanupFailed: false }
+  }
+
   async departments(): Promise<KnowledgeAdminDepartment[]> {
     return departments.filter(item => item.active).map(({ id, label, root }) => ({ id, label, root }))
   }

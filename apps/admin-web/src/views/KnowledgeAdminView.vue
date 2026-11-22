@@ -28,6 +28,7 @@ const failureLabels: Record<string, string> = {
   timeout: '超时', network: '连接失败', auth: '认证失败', rate_limited: '限流', server: '服务错误',
   protocol: '响应格式不符', request_rejected: '请求被拒绝', not_configured: '尚未配置',
   api_key_required: '更换地址须重新填写 API Key',
+  parse_failed: '测试文本解析失败', parse_timeout: '等待解析超时',
 }
 
 /** WeKnora 重排序结果（meta.rerank.outcome，功能规则第 11 节）；模型不可用与调用失败表示检索已降级为不重排。 */
@@ -203,6 +204,24 @@ async function removeBase(base: KnowledgeAdminBase) {
 // —— 连接配置 ——
 const connectionForm = reactive({ baseUrl: '', apiKey: '', editingKey: false, credentialExpiresAt: '', embeddingModelId: '', enabled: true })
 const testResult = ref<{ ok: boolean; reason: string | null } | null>(null)
+const verifying = ref(false)
+const verifyResult = ref<{ signature: string; ok: boolean; reason: string | null; detail: string | null; cleanupFailed: boolean } | null>(null)
+/** 校验结果只对发起时的模型 ID、地址与 Key 有效；表单任一项变了（包括校验进行中改的）就不再显示。 */
+const verifySignature = computed(() => JSON.stringify([
+  connectionForm.embeddingModelId.trim(), comparableBaseUrl(connectionForm.baseUrl),
+  connectionForm.editingKey ? connectionForm.apiKey.trim() : '',
+]))
+const currentVerifyResult = computed(() => verifyResult.value?.signature === verifySignature.value ? verifyResult.value : null)
+const verifyAlert = computed(() => {
+  const result = currentVerifyResult.value
+  if (!result) return null
+  if (result.ok) return { type: 'success' as const, title: '嵌入模型可用：已用它解析了一份测试文本。' }
+  if (result.reason === 'parse_failed') {
+    return { type: 'error' as const, title: `嵌入模型不可用：测试文本解析失败${result.detail ? `（${result.detail}）` : ''}。常见原因是填了模型名称而不是模型 ID。` }
+  }
+  if (result.reason === 'parse_timeout') return { type: 'warning' as const, title: '等待解析超时，无法确认。可稍后重试，或到 WeKnora 查看解析队列。' }
+  return { type: 'error' as const, title: `无法完成校验：${failureLabels[result.reason ?? ''] ?? result.reason}${result.detail ? `（${result.detail}）` : ''}` }
+})
 /** 与服务端规范化一致：去掉末尾斜杠与 /api/v1（WeKnora 文档常带），比较时两边同样处理。 */
 function comparableBaseUrl(value: string) {
   return value.trim().replace(/\/+$/, '').replace(/(\/api\/v1)+\/*$/i, '').replace(/\/+$/, '')
@@ -224,6 +243,7 @@ function resetConnectionForm() {
     enabled: value?.configured ? value.enabled : true,
   })
   testResult.value = null
+  verifyResult.value = null
 }
 async function testConnection() {
   testResult.value = null
@@ -237,6 +257,23 @@ async function testConnection() {
     return tested
   }, '测试已完成')
   if (result) testResult.value = result
+}
+/** 用表单中的地址与 Key（未更换时用已保存的）校验所填的嵌入模型，不保存配置。 */
+async function verifyEmbeddingModel() {
+  const modelId = connectionForm.embeddingModelId.trim()
+  if (!modelId) return
+  verifyResult.value = null
+  verifying.value = true
+  const signature = verifySignature.value
+  try {
+    const apiKey = connectionForm.editingKey ? connectionForm.apiKey.trim() || undefined : undefined
+    const result = await adminApi.verifyKnowledgeEmbeddingModel({ embeddingModelId: modelId, baseUrl: connectionForm.baseUrl.trim() || undefined, apiKey })
+    verifyResult.value = { signature, ...result }
+  } catch (cause) {
+    ElMessage.error(cause instanceof Error ? cause.message : '校验失败')
+  } finally {
+    verifying.value = false
+  }
 }
 async function confirmConnectionChanges(): Promise<boolean> {
   const modelId = connectionForm.embeddingModelId.trim()
@@ -411,6 +448,15 @@ onMounted(load)
                 <el-input v-model="connectionForm.embeddingModelId" placeholder="例如 00000000-0000-4000-8000-000000000000" aria-label="统一嵌入模型 ID" />
                 <span v-if="connectionForm.embeddingModelId.trim() && !modelIdPattern.test(connectionForm.embeddingModelId.trim())" class="knowledge-admin__hint knowledge-admin__hint--warn">这看起来不是 WeKnora 的模型 ID（应为 UUID，不是模型名称）。</span>
                 <span class="knowledge-admin__hint">WeKnora 模型管理中嵌入模型的 ID（UUID），不是模型名称；查看方法见部署手册。新建知识库时自动带上，员工不选择。须是在内网运行的模型。</span>
+                <div v-if="canManage" class="knowledge-connection__verify">
+                  <el-button size="small" :loading="verifying" :disabled="!connectionForm.embeddingModelId.trim() || saving" @click="verifyEmbeddingModel">
+                    {{ verifying ? '正在校验…' : '校验嵌入模型' }}
+                  </el-button>
+                  <span class="knowledge-admin__hint">在 WeKnora 中临时建一个知识库并解析一份很小的文本，约需几十秒，结束后自动删除；不会保存配置。</span>
+                </div>
+                <el-alert v-if="verifyAlert" :type="verifyAlert.type" :closable="false" show-icon :title="verifyAlert.title" class="knowledge-connection__verify-result" />
+                <el-alert v-if="currentVerifyResult?.cleanupFailed" type="warning" :closable="false" show-icon class="knowledge-connection__verify-result"
+                  title="临时知识库可能未删除，请到 WeKnora 中删除名称以“dsh-work 嵌入模型校验”开头的知识库。" />
               </el-form-item>
               <el-alert v-if="modelChanged" type="warning" :closable="false" show-icon
                 :title="`更换嵌入模型只影响之后新建的知识库。现有 ${activeBaseCount} 个知识库仍按原模型检索，将标为“需重建”；原模型从 WeKnora 删除前它们都能正常使用。`" />
@@ -420,8 +466,8 @@ onMounted(load)
               <el-alert v-if="!connectionForm.enabled" type="error" :closable="false" show-icon
                 title="停用后：员工端不显示“知识库”与“添加知识库”，对话不再检索企业知识；知识库与授权保留。" />
               <div v-if="canManage" class="knowledge-connection__actions">
-                <el-button :loading="saving" @click="testConnection">测试连接</el-button>
-                <el-button type="primary" :loading="saving" native-type="submit">保存</el-button>
+                <el-button :loading="saving" :disabled="verifying" @click="testConnection">测试连接</el-button>
+                <el-button type="primary" :loading="saving" :disabled="verifying" native-type="submit">保存</el-button>
               </div>
               <el-alert v-if="testResult" :type="testResult.ok ? 'success' : 'error'" :closable="false" show-icon
                 :title="testResult.ok ? '连接正常：地址与 API Key 可用。' : `连接失败：${failureLabels[testResult.reason ?? ''] ?? testResult.reason}`" />
@@ -518,6 +564,8 @@ onMounted(load)
 .knowledge-connection__key { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
 .knowledge-connection__key code { padding: 4px 10px; border-radius: 6px; background: var(--color-bg-subtle); }
 .knowledge-connection__actions { display: flex; gap: 8px; margin: 8px 0; }
+.knowledge-connection__verify { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; width: 100%; margin-top: 6px; }
+.knowledge-connection__verify-result { width: 100%; margin-top: 6px; }
 .knowledge-connection__health { flex: 1 1 260px; padding: var(--spacing-card); border: 1px solid var(--color-border); border-radius: var(--radius-card); }
 .knowledge-connection__health h3 { margin: 0 0 6px; font-size: var(--font-size-title); }
 .knowledge-connection__health dl { margin: 0 0 8px; }

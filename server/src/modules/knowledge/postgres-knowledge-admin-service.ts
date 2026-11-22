@@ -73,6 +73,19 @@ export interface KnowledgeAdminBaseList {
   statsAvailable: boolean
 }
 
+/**
+ * “校验嵌入模型”的结果。reason：not_configured、api_key_required、parse_failed（文档解析失败，多为模型 ID 无效）、
+ * parse_timeout（等待解析超时，无法确认）、request_rejected（WeKnora 拒绝建库或上传），以及连接类原因
+ * timeout、network、auth、rate_limited、server、protocol。detail 是 WeKnora 给出的简短错误说明。
+ */
+export interface EmbeddingModelCheck {
+  ok: boolean
+  reason: string | null
+  detail: string | null
+  /** 临时知识库没能删除，需要管理员到 WeKnora 中清理。 */
+  cleanupFailed: boolean
+}
+
 export interface KnowledgeAdminDepartment {
   id: string
   /** 带上级路径的名称，例如“供应链部 / 计划组”；根部门为“全公司”。 */
@@ -104,17 +117,20 @@ export class PostgresKnowledgeAdminService {
   private readonly audit: AuditTrail
   private readonly connection: PostgresKnowledgeConnection
   private readonly credentials: PostgresEncryptedCredentialStore | undefined
+  private readonly embeddingCheck: { pollMs: number; timeoutMs: number }
 
   constructor(
     database: DatabaseClient,
     audit: AuditTrail,
     connection: PostgresKnowledgeConnection,
     credentials?: PostgresEncryptedCredentialStore,
+    options: { embeddingCheck?: { pollMs?: number; timeoutMs?: number } } = {},
   ) {
     this.database = database
     this.audit = audit
     this.connection = connection
     this.credentials = credentials
+    this.embeddingCheck = { pollMs: options.embeddingCheck?.pollMs ?? 2_000, timeoutMs: options.embeddingCheck?.timeoutMs ?? 120_000 }
   }
 
   async overview(): Promise<KnowledgeAdminOverview> {
@@ -244,6 +260,81 @@ export class PostgresKnowledgeAdminService {
       if (error instanceof WeKnoraUnavailableError) return { ok: false, reason: error.reason }
       if (error instanceof WeKnoraRequestError) return { ok: false, reason: 'request_rejected' }
       throw error
+    }
+  }
+
+  /**
+   * “校验嵌入模型”（功能规则第 11 节）：WeKnora 建库时不校验嵌入模型 ID，填错（例如填了模型名称）要到上传文档
+   * 解析失败才暴露；平台 Key 也没有读取模型列表的能力。这里用填写的（或已保存的）地址与 Key，以待校验的模型
+   * 新建一个临时知识库、上传一个很小的文本文件、等解析结束，再删除临时库。只用 ingest 与 manage_kbs 能力，
+   * 代价是一次嵌入调用；只在管理员点击时执行。临时库删不掉时如实返回，由管理员到 WeKnora 中清理。
+   */
+  async verifyEmbeddingModel(actorId: string, input: { baseUrl?: string; apiKey?: string; embeddingModelId: string }): Promise<EmbeddingModelCheck> {
+    await requireAdminModuleActor(this.database, actorId, 'knowledge', 'write')
+    const embeddingModelId = input.embeddingModelId.trim()
+    if (!embeddingModelId || embeddingModelId.length > 200) throw invalidRequest('请填写要校验的嵌入模型 ID')
+    const baseUrl = input.baseUrl ? normalizeBaseUrl(input.baseUrl) : undefined
+    const apiKey = normalizeApiKey(input.apiKey)
+    const probe = await this.connection.probeClient({ ...(baseUrl ? { baseUrl } : {}), ...(apiKey ? { apiKey } : {}) })
+    if ('reason' in probe) {
+      await this.recordEmbeddingCheck(actorId, { ok: false, reason: probe.reason }, null)
+      return { ok: false, reason: probe.reason, detail: null, cleanupFailed: false }
+    }
+    const client = probe.client
+    let temporaryBaseId: string | null = null
+    // 建库请求已发出但没拿到 ID（超时、响应格式不符）时，WeKnora 中可能已经建好了临时库，无法按 ID 删除。
+    let possiblyCreated = false
+    let result: Omit<EmbeddingModelCheck, 'cleanupFailed'> = { ok: false, reason: 'protocol', detail: null }
+    let cleanupFailed = false
+    try {
+      try {
+        const created = await client.createKnowledgeBase({
+          name: `dsh-work 嵌入模型校验 ${randomUUID().slice(0, 8)}`,
+          description: '平台“校验嵌入模型”临时创建，校验结束即删除。',
+          embeddingModelId,
+        })
+        temporaryBaseId = created.id
+      } catch (error) {
+        possiblyCreated = error instanceof WeKnoraUnavailableError && (error.reason === 'timeout' || error.reason === 'protocol')
+        throw error
+      }
+      const document = await client.uploadDocument(temporaryBaseId, {
+        fileName: 'dsh-work-embedding-check.txt',
+        mimeType: 'text/plain',
+        bytes: Buffer.from('dsh-work 嵌入模型校验：这是一段用于确认嵌入模型可用的短文本。\nEmbedding model check from dsh-work.\n', 'utf8'),
+      })
+      result = await this.awaitParse(client, temporaryBaseId, document.id)
+    } catch (error) {
+      if (error instanceof WeKnoraUnavailableError) result = { ok: false, reason: error.reason, detail: null }
+      else if (error instanceof WeKnoraRequestError) result = { ok: false, reason: 'request_rejected', detail: error.message.slice(0, 200) || null }
+      else throw error
+    } finally {
+      // 任何结果（包括意外异常）都删除临时库；已不存在（404）不算失败。
+      if (temporaryBaseId) {
+        try { await client.deleteKnowledgeBase(temporaryBaseId) } catch (error) {
+          cleanupFailed = !(error instanceof WeKnoraRequestError && error.status === 404)
+        }
+      } else if (possiblyCreated) cleanupFailed = true
+      await this.recordEmbeddingCheck(actorId, result, cleanupFailed ? temporaryBaseId ?? '（未拿到 ID）' : null)
+    }
+    return { ...result, cleanupFailed }
+  }
+
+  private async recordEmbeddingCheck(actorId: string, result: { ok: boolean; reason: string | null }, leftover: string | null) {
+    await this.record(actorId, 'knowledge.embedding_model.verify', this.connection.connectionId,
+      `${result.ok ? '有效' : `无效或无法确认（${result.reason}）`}${leftover ? `；临时知识库 ${leftover} 可能未删除` : ''}`, 'knowledge_connection')
+  }
+
+  private async awaitParse(client: WeKnoraClient, knowledgeBaseId: string, documentId: string): Promise<Omit<EmbeddingModelCheck, 'cleanupFailed'>> {
+    const deadline = Date.now() + this.embeddingCheck.timeoutMs
+    for (;;) {
+      const { items } = await client.listDocuments(knowledgeBaseId, { page: 1, pageSize: 20 })
+      const document = items.find(item => item.id === documentId)
+      const status = document?.parseStatus ?? 'pending'
+      if (status === 'completed') return { ok: true, reason: null, detail: null }
+      if (status === 'failed' || status === 'cancelled') return { ok: false, reason: 'parse_failed', detail: document?.errorMessage?.slice(0, 200) ?? null }
+      if (Date.now() + this.embeddingCheck.pollMs > deadline) return { ok: false, reason: 'parse_timeout', detail: null }
+      await new Promise(resolveWait => setTimeout(resolveWait, this.embeddingCheck.pollMs))
     }
   }
 

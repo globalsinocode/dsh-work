@@ -4916,6 +4916,101 @@
         }
       }
     },
+    "/knowledge/connection/verify-embedding-model": {
+      "post": {
+        "operationId": "verifyKnowledgeEmbeddingModel",
+        "summary": "校验嵌入模型",
+        "description": "用填写的或已保存的地址与 Key，以待校验的嵌入模型新建临时知识库、上传一个小文本文件并等待解析结束，随后删除临时库。返回 ok、原因分类（not_configured、api_key_required、parse_failed、parse_timeout、request_rejected、timeout、network、auth、rate_limited、server、protocol）、WeKnora 的简短说明与临时库是否未能删除。",
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/Envelope"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "type": "object",
+                          "required": [
+                            "ok",
+                            "reason",
+                            "detail",
+                            "cleanupFailed"
+                          ],
+                          "properties": {
+                            "ok": {
+                              "type": "boolean"
+                            },
+                            "reason": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
+                            "detail": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
+                            "cleanupFailed": {
+                              "type": "boolean"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "baseUrl": {
+                    "type": "string"
+                  },
+                  "apiKey": {
+                    "type": "string",
+                    "writeOnly": true
+                  },
+                  "embeddingModelId": {
+                    "type": "string",
+                    "maxLength": 200
+                  }
+                },
+                "required": [
+                  "embeddingModelId"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
     "/knowledge/departments": {
       "get": {
         "operationId": "listKnowledgeAdminDepartments",

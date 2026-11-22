@@ -5,7 +5,7 @@ const basePath = '/api/admin/v1/knowledge'
 
 type KnowledgeAdminStore = Pick<
   PostgresKnowledgeAdminService,
-  'overview' | 'updateConnection' | 'testConnection' | 'listBases' | 'departments'
+  'overview' | 'updateConnection' | 'testConnection' | 'verifyEmbeddingModel' | 'listBases' | 'departments'
   | 'createBase' | 'updateOwner' | 'addGrant' | 'revokeGrant' | 'deleteBase' | 'restoreBase'
 >
 
@@ -39,6 +39,16 @@ export function registerKnowledgeAdminRoutes(
   router.post(`${basePath}/connection/test`, async (request, context) => {
     const body = await readJsonBody<Record<string, unknown>>(request)
     return ok(await knowledge.testConnection(actor(context), {
+      ...(typeof body.baseUrl === 'string' && body.baseUrl ? { baseUrl: body.baseUrl } : {}),
+      ...(typeof body.apiKey === 'string' && body.apiKey ? { apiKey: body.apiKey } : {}),
+    }))
+  })
+
+  router.post(`${basePath}/connection/verify-embedding-model`, async (request, context) => {
+    const body = await readJsonBody<Record<string, unknown>>(request)
+    if (typeof body.embeddingModelId !== 'string') throw routeValidationFailed('embeddingModelId 必须为字符串')
+    return ok(await knowledge.verifyEmbeddingModel(actor(context), {
+      embeddingModelId: body.embeddingModelId,
       ...(typeof body.baseUrl === 'string' && body.baseUrl ? { baseUrl: body.baseUrl } : {}),
       ...(typeof body.apiKey === 'string' && body.apiKey ? { apiKey: body.apiKey } : {}),
     }))

@@ -162,6 +162,9 @@ export const adminApi = {
     request<KnowledgeAdminOverview>('/knowledge/connection', { method: 'PUT', body: JSON.stringify(input) }),
   testKnowledgeConnection: (input: { baseUrl?: string; apiKey?: string } = {}) =>
     request<{ ok: boolean; reason: string | null }>('/knowledge/connection/test', { method: 'POST', body: JSON.stringify(input) }),
+  /** 校验嵌入模型：在 WeKnora 临时建库、解析一份小文本后删除，可能需要几十秒。 */
+  verifyKnowledgeEmbeddingModel: (input: { embeddingModelId: string; baseUrl?: string; apiKey?: string }) =>
+    request<{ ok: boolean; reason: string | null; detail: string | null; cleanupFailed: boolean }>('/knowledge/connection/verify-embedding-model', { method: 'POST', body: JSON.stringify(input) }),
   listKnowledgeBases: () => request<KnowledgeAdminBaseList>('/knowledge/bases'),
   listKnowledgeDepartments: () => request<KnowledgeAdminDepartment[]>('/knowledge/departments'),
   createKnowledgeBase: (input: { name: string; description?: string; ownerDepartmentId: string }) =>

@@ -98,6 +98,29 @@ test('KB-ADM-P0: 连接配置只显示 Key 末四位，修改嵌入模型与停�
   await expect(health).toContainText('128 次')
 })
 
+test('KB-ADM-06: 校验嵌入模型给出可用或解析失败的结果，不保存配置', async ({ page }) => {
+  await page.goto(`${adminUrl}/knowledge`)
+  await page.getByRole('tab', { name: '连接配置' }).click()
+  const verify = page.getByRole('button', { name: '校验嵌入模型' })
+  await page.getByLabel('统一嵌入模型 ID').fill('')
+  await expect(verify).toBeDisabled()
+
+  await page.getByLabel('统一嵌入模型 ID').fill('5d0f6c2a-7b1e-4c3d-9a8e-2f4b6d8c1a90')
+  await verify.click()
+  await expect(page.getByText('嵌入模型可用：已用它解析了一份测试文本。')).toBeVisible()
+
+  // 改了模型 ID：旧结果不再适用，随即清除。
+  await page.getByLabel('统一嵌入模型 ID').fill('bge-m3')
+  await expect(page.getByText('嵌入模型可用：已用它解析了一份测试文本。')).toHaveCount(0)
+  await verify.click()
+  await expect(page.getByText(/嵌入模型不可用：测试文本解析失败（model not found）。常见原因是填了模型名称而不是模型 ID。/)).toBeVisible()
+
+  // 校验不保存：重新打开页面仍是已保存的模型。
+  await page.reload()
+  await page.getByRole('tab', { name: '连接配置' }).click()
+  await expect(page.getByLabel('统一嵌入模型 ID')).toHaveValue('5d0f6c2a-7b1e-4c3d-9a8e-2f4b6d8c1a90')
+})
+
 test('KB-ADM-P0: 更换 WeKnora 地址后原有知识库标为原连接已更换，可逐个恢复（功能规则第 11 节）', async ({ page }) => {
   await page.goto(`${adminUrl}/knowledge`)
   await page.getByRole('tab', { name: '连接配置' }).click()

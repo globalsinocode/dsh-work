@@ -60,6 +60,13 @@ export class WeKnoraDouble {
   readonly summaryModels = new Map<string, string>()
   /** 经 POST /knowledge-bases 创建、尚未删除的知识库及收到的建库请求体。 */
   readonly knowledgeBases = new Map<string, Record<string, unknown>>()
+  /**
+   * WeKnora 中存在的嵌入模型 ID。设置后上传的文档立即解析完：知识库的模型在其中为 completed，否则为 failed
+   * （与 v0.9.0 一致：建库不校验模型 ID，解析时才失败）。为空时上传的文档一直停在 processing。
+   */
+  embeddingModels: Set<string> | null = null
+  /** 删除知识库时返回该状态（模拟清理失败）。 */
+  failDeleteKnowledgeBaseWith: number | null = null
   private server: Server | null = null
   private nextKnowledgeBase = 1
 
@@ -106,6 +113,8 @@ export class WeKnoraDouble {
     this.searchCount = 0
     this.summaryModels.clear()
     this.knowledgeBases.clear()
+    this.embeddingModels = null
+    this.failDeleteKnowledgeBaseWith = null
   }
 
   private async handle(request: IncomingMessage): Promise<{ status: number; body?: unknown; raw?: Buffer; contentType?: string }> {
@@ -190,6 +199,7 @@ export class WeKnoraDouble {
       }) } }
     }
     if (request.method === 'DELETE' && base) {
+      if (this.failDeleteKnowledgeBaseWith) return { status: this.failDeleteKnowledgeBaseWith, body: { success: false, error: { code: 1000, message: 'delete failed' } } }
       this.knowledgeBases.delete(decodeURIComponent(base[1]!))
       return { status: 200, body: { success: true, message: 'Knowledge base deleted successfully' } }
     }
@@ -220,7 +230,9 @@ export class WeKnoraDouble {
       const knowledgeBaseId = decodeURIComponent(upload[1]!)
       const existing = this.documents.find(document => document.knowledgeBaseId === knowledgeBaseId && document.fileName === fileName)
       if (existing) return { status: 409, body: { success: false, data: toKnowledge(existing) } }
-      const document = { id: `doc-double-${this.nextKnowledgeBase++}`, knowledgeBaseId, title: fileName.replace(/\.[^.]+$/, ''), fileName, updatedAt: new Date().toISOString(), parseStatus: 'processing' }
+      const model = String(this.knowledgeBases.get(knowledgeBaseId)?.embedding_model_id ?? '')
+      const parseStatus = this.embeddingModels ? (this.embeddingModels.has(model) ? 'completed' : 'failed') : 'processing'
+      const document = { id: `doc-double-${this.nextKnowledgeBase++}`, knowledgeBaseId, title: fileName.replace(/\.[^.]+$/, ''), fileName, updatedAt: new Date().toISOString(), parseStatus }
       this.documents.push(document)
       return ok(toKnowledge(document))
     }
