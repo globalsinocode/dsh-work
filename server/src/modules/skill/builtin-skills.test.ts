@@ -62,8 +62,8 @@ test('changing a built-in Skill without bumping its version fails to load', () =
     const path = join(copy, 'dsh-work-html-page', 'SKILL.md')
     writeFileSync(path, `${readFileSync(path, 'utf8')}\n补充一行。\n`)
     assert.throws(() => loadBuiltinSkillCatalog(copy), /内容与 versions\.lock\.json 不一致/)
-    writeFileSync(path, readFileSync(path, 'utf8').replace('version: 1.0.0', 'version: 1.0.1'))
-    assert.throws(() => loadBuiltinSkillCatalog(copy), /缺少 1\.0\.1 的摘要/)
+    writeFileSync(path, readFileSync(path, 'utf8').replace(/^version: \d+\.\d+\.\d+$/m, 'version: 9.9.9'))
+    assert.throws(() => loadBuiltinSkillCatalog(copy), /缺少 9\.9\.9 的摘要/)
   } finally {
     rmSync(copy, { recursive: true, force: true })
   }

@@ -168,7 +168,7 @@ test('administrator views built-in Skills read-only, sets a covered scenario and
   await configuration.getByText('不停用任何内置 Skill', { exact: true }).click()
   await page.getByRole('option', { name: /文件分析（平台内置）/ }).click()
   await page.keyboard.press('Escape')
-  await expect(configuration.getByText('文件分析（平台内置） v1.0.0', { exact: false })).toBeVisible()
+  await expect(configuration.getByText(/文件分析（平台内置） v\d+\.\d+\.\d+/)).toBeVisible()
   await configuration.getByRole('button', { name: '保存配置' }).click()
   await page.getByRole('dialog', { name: '确认停用平台内置 Skill' }).getByRole('button', { name: '确认停用' }).click()
   await expect(page.getByText('配置已保存', { exact: false })).toBeVisible()
