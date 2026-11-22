@@ -597,3 +597,50 @@ async function waitFor(predicate: () => boolean) {
     await new Promise(resolve => setTimeout(resolve, 10))
   }
 }
+
+test('rechecks the execution image after startup, caches the answer and recovers when it is pulled again', async () => {
+  class ImageBackend extends FakeExecBackend {
+    present = true
+    inspections = 0
+    override async inspectImage() {
+      this.inspections += 1
+      if (!this.present) throw new Error('Python Skill 沙箱镜像不可用：Error response from daemon: No such image: exec@sha256:…')
+    }
+  }
+  const backend = new ImageBackend()
+  const containers = new AttemptExecutionContainers(backend, { image, user: '501:20', imageRecheckMs: 30 })
+  assert.equal(await containers.imageAvailable(), true)
+  backend.present = false
+  assert.equal(await containers.imageAvailable(), true, 'within the recheck interval the last answer is reused')
+  assert.equal(backend.inspections, 1)
+  await new Promise(resolve => setTimeout(resolve, 40))
+  const [first, second] = await Promise.all([containers.imageAvailable(), containers.imageAvailable()])
+  assert.deepEqual([first, second], [false, false])
+  assert.equal(backend.inspections, 2, 'concurrent callers share one inspection')
+  backend.present = true
+  await new Promise(resolve => setTimeout(resolve, 40))
+  assert.equal(await containers.imageAvailable(), true)
+})
+
+test('a failed image check (timeout, daemon error) keeps the last answer instead of reporting the image missing', async () => {
+  class FlakyBackend extends FakeExecBackend {
+    mode: 'ok' | 'timeout' | 'missing' = 'ok'
+    inspections = 0
+    override async inspectImage() {
+      this.inspections += 1
+      if (this.mode === 'timeout') throw new Error('Python Skill 沙箱镜像不可用：exec@sha256:…')
+      if (this.mode === 'missing') throw new Error('Error: No such object: exec@sha256:…')
+    }
+  }
+  const backend = new FlakyBackend()
+  const containers = new AttemptExecutionContainers(backend, { image, user: '501:20', imageRecheckMs: 30 })
+  backend.mode = 'timeout'
+  assert.equal(await containers.imageAvailable(), true, 'never checked before: assume the startup check still holds')
+  assert.equal(await containers.imageAvailable(), true)
+  assert.equal(backend.inspections, 2, 'a failed check is not cached, the next call checks again')
+  backend.mode = 'missing'
+  assert.equal(await containers.imageAvailable(), false)
+  await new Promise(resolve => setTimeout(resolve, 40))
+  backend.mode = 'timeout'
+  assert.equal(await containers.imageAvailable(), false, 'a failed check keeps the last answer (missing)')
+})

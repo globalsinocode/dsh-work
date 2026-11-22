@@ -473,7 +473,12 @@ async function start() {
     builtinCatalog = { checkedAt: new Date().toISOString(), error: error instanceof Error ? error.message : String(error) }
     console.warn('DSH built-in tool catalog check skipped:', error)
   })
-  const executionContainerStatus = () => executionContainerCapability.status === 'available' ? 'available' as const : 'unavailable' as const
+  // 启动检查通过后仍复查执行镜像：镜像被删除时报告不可用，重新拉取后自动恢复（结果按短间隔缓存）。
+  const currentExecutionContainerCapability = async (): Promise<CapabilityState> =>
+    executionContainerCapability.status === 'available' && attemptContainers && !(await attemptContainers.imageAvailable())
+      ? { status: 'unavailable', code: 'EXECUTION_CONTAINER_UNAVAILABLE' }
+      : executionContainerCapability
+  const executionContainerStatus = async () => (await currentExecutionContainerCapability()).status === 'available' ? 'available' as const : 'unavailable' as const
   // 方案 4.7：执行容器可用时报告数据卷剩余空间是否低于阈值（低时不运行命令）。
   const executionDiskLow = async () => attemptContainers
     ? (await freeSpace(dataRoot).catch(() => null))?.low ?? false
@@ -482,7 +487,7 @@ async function start() {
     tools: builtinTools,
     disabledTools: [...(await operations.getRuntimePolicy('runtime-local-01')).disabledTools],
     catalog: builtinCatalog,
-    executionContainer: { status: executionContainerStatus(), ...((await executionDiskLow()) ? { diskLow: true } : {}) },
+    executionContainer: { status: await executionContainerStatus(), ...((await executionDiskLow()) ? { diskLow: true } : {}) },
   })
   const skills = new PostgresSkillService(database, operations, skillArtifacts)
   // C7 only inspects execution capability; it never starts a Worker/model call.
@@ -729,7 +734,7 @@ async function start() {
     // is intentionally separate; a DB outage never reports core readiness.
     try {
       await checkDatabase(database)
-      return { status: 'ready', core: true, executionCapabilities: { dsh: dshCapability, python: pythonCapability, executionContainer: executionContainerCapability } }
+      return { status: 'ready', core: true, executionCapabilities: { dsh: dshCapability, python: pythonCapability, executionContainer: await currentExecutionContainerCapability() } }
     } catch {
       return httpResult(503, { status: 'not-ready', core: false, code: 'DATABASE_UNAVAILABLE' })
     }
@@ -744,7 +749,7 @@ async function start() {
       executionCapabilities: {
         dsh: { status: dshCapability.status },
         python: { status: pythonCapability.status },
-        executionContainer: { status: executionContainerStatus(), ...((await executionDiskLow()) ? { diskLow: true } : {}) },
+        executionContainer: { status: await executionContainerStatus(), ...((await executionDiskLow()) ? { diskLow: true } : {}) },
       },
       dshRuntime: {
         status: executionRuntime ? (await executionRuntime.health()).status : dshInstallation ? 'connected' : 'not-configured',

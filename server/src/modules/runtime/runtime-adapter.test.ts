@@ -28,6 +28,7 @@ import { ModelGateway } from '../model-gateway/model-gateway.ts'
 import { MemoryModelGatewayRequestLog } from '../model-gateway/model-gateway-request-log.ts'
 import { preflightDshRuntime, resolveDshRuntimeInstallation } from './dsh-runtime-installation.ts'
 import { compileRuntimeManifest } from './manifest-compiler.ts'
+import { ExecutionCapabilityUnavailableError } from './execution-capabilities.ts'
 import { canonicalJson, mcpToolSchemaDigest } from './canonical-json.ts'
 import type { RuntimeEvent, RuntimeManifest } from './runtime-types.ts'
 
@@ -747,6 +748,23 @@ describe('DSH ACP Runtime Adapter', () => {
     }
     assert.deepEqual(await run([]), { status: 'completed', activations: ['dsh-work-html-page'] })
     assert.deepEqual(await run(['dsh-work-html-page']), { status: 'completed', activations: [] })
+  })
+  it('refuses new runs before creating them when the execution image disappeared after startup', async () => {
+    let present = false
+    const adapter = await createAdapter(500, undefined, undefined, {
+      remoteExecution: {
+        exec: async () => { throw new Error('must not run') },
+        waitUntilIdle: async () => 'idle' as const,
+        release: async () => undefined,
+        imageAvailable: async () => present,
+      },
+    })
+    await assert.rejects(adapter.execute(manifest('run-image-missing', 'attempt-image-missing')), (error: unknown) =>
+      error instanceof ExecutionCapabilityUnavailableError && error.code === 'EXECUTION_CONTAINER_UNAVAILABLE')
+    await assert.rejects(adapter.assertAvailable(), ExecutionCapabilityUnavailableError)
+    present = true
+    await adapter.assertAvailable()
+    assert.equal((await (await adapter.execute(manifest('run-image-back', 'attempt-image-back'))).done).status, 'completed')
   })
   it('activates Skills by the catalog id@version form without bypassing explicit-only Skills', async () => {
     const run = async (target: string) => {

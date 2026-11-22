@@ -220,6 +220,8 @@ export interface DshAcpRuntimeAdapterConfiguration {
     release(attemptId: string): Promise<void>
     /** 不能再执行命令的原因：静止无法恢复，或工作区远超上限（方案 4.7）。 */
     failureReason?(attemptId: string): 'quiescence' | 'workspace_limit' | undefined
+    /** 执行镜像是否仍在本机；启动后被删除时返回 false，新运行在创建前被拒绝。 */
+    imageAvailable?(): Promise<boolean>
     /** 启动检查在执行镜像中找到的程序（2b-1），写入 Runtime 说明。 */
     readonly toolchain?: readonly ExecutionTool[]
   }
@@ -295,6 +297,10 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
     // bash only runs inside the Attempt execution container. Without it (no overlay) DSH would
     // run the command on the host, so a Manifest carrying bash is refused, never downgraded.
     if (!this.configuration.remoteExecution && manifest?.tools?.some(tool => tool.id === 'bash')) {
+      throw new ExecutionCapabilityUnavailableError('execution-container')
+    }
+    // 执行容器为必需（方案 4.9）：镜像在启动后被删除时，所有 Agent 运行在创建前明确失败，不等到命令才失败。
+    if (this.configuration.remoteExecution?.imageAvailable && !(await this.configuration.remoteExecution.imageAvailable())) {
       throw new ExecutionCapabilityUnavailableError('execution-container')
     }
   }
