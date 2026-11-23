@@ -3,8 +3,9 @@ import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const root = resolve(import.meta.dirname, '../..')
+// 持久化等待（PF-04）已于 2026-11-23 移出门禁，见矩阵 removed；重新纳入时作为新能力加回这里。
 const expectedIds = new Set([
-  'session-neutral-task', 'external-action', 'cumulative-budget', 'mcp-connector', 'persistent-wait', 'controlled-memory'
+  'session-neutral-task', 'external-action', 'cumulative-budget', 'mcp-connector', 'controlled-memory'
 ])
 const filled = value => typeof value === 'string' && value.trim() !== ''
 const requiredEvidence = [

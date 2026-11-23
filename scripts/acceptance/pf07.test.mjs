@@ -17,20 +17,26 @@ test('PF-07 matrix references every platform capability and existing test comman
 test('deferred items need a reason and cannot stay inside the gate', () => {
   const item = { capability: 'controlled-memory', scenarios: ['real-recall'], reason: 'why', reentry: 'when' }
   assert.match(validateMatrix({ ...matrix, deferred: [item] }, scripts).join(' '), /同时在门禁内/)
-  const unexplained = { capability: 'persistent-wait', scenarios: ['unknown-action'], reason: '', reentry: 'when' }
+  const unexplained = { capability: 'cumulative-budget', scenarios: ['concurrent-limit'], reason: '', reentry: 'when' }
   assert.match(validateMatrix({ ...matrix, deferred: [unexplained] }, scripts).join(' '), /缺少移出原因/)
 })
 
 test('a capability outside the gate needs a deferred record and may return', () => {
-  const deferred = matrix.deferred.filter(item => item.capability !== 'persistent-wait')
-  assert.match(validateMatrix({ ...matrix, deferred }, scripts).join(' '), /缺少能力: persistent-wait/)
+  const capabilities = matrix.capabilities.filter(item => item.id !== 'controlled-memory')
+  assert.match(validateMatrix({ ...matrix, capabilities }, scripts).join(' '), /缺少能力: controlled-memory/)
+  const deferred = [{ capability: 'controlled-memory', scenarios: ['real-recall'], reason: 'why', reentry: 'when' }]
+  assert.deepEqual(validateMatrix({ ...matrix, capabilities, deferred }, scripts), [])
+  assert.deepEqual(validateMatrix(matrix, scripts), [])
+})
+
+test('persistent wait is no longer a gate capability', () => {
   const restored = { id: 'persistent-wait', package: 'PF-04', p0: ['pnpm test:m1'], p1: ['pnpm test:pf04:integration'], p2Scenarios: ['real-approval-and-resume'] }
-  assert.deepEqual(validateMatrix({ ...matrix, deferred, capabilities: [...matrix.capabilities, restored] }, scripts), [])
-  assert.match(validateMatrix({ ...matrix, capabilities: [...matrix.capabilities, { ...restored, id: 'other' }] }, scripts).join(' '), /能力 ID 无效/)
+  assert.match(validateMatrix({ ...matrix, capabilities: [...matrix.capabilities, restored] }, scripts).join(' '), /能力 ID 无效.*persistent-wait/)
+  assert.ok(matrix.removed.some(item => item.capability === 'persistent-wait'))
 })
 
 test('deferred and removed entries are validated without crashing', () => {
-  assert.match(validateMatrix({ ...matrix, deferred: [{ capability: 'persistent-wait', scenarios: ['x'], reason: 42, reentry: 'when' }] }, scripts).join(' '), /缺少移出原因/)
+  assert.match(validateMatrix({ ...matrix, deferred: [{ capability: 'controlled-memory', scenarios: ['x'], reason: 42, reentry: 'when' }] }, scripts).join(' '), /缺少移出原因/)
   assert.match(validateMatrix({ ...matrix, deferred: 'none' }, scripts).join(' '), /deferred 必须是数组/)
   assert.match(validateMatrix({ ...matrix, removed: [{ capability: 'session-neutral-task', scenario: 'revocation', reason: 'why' }] }, scripts).join(' '), /仍在门禁内/)
   assert.match(validateMatrix({ ...matrix, removed: [{ capability: 'session-neutral-task', scenario: 'gone', reason: '' }] }, scripts).join(' '), /删除项.*缺少/)
