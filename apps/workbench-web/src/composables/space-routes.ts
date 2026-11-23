@@ -10,6 +10,8 @@ import type { RouteLocationNormalizedLoaded } from 'vue-router'
 export interface SpaceRoutes {
   /** 空间首页（A：默认页签；B：群聊）。 */
   home(workspaceId: string): string
+  /** 空间的对话列表：对话视图“返回”的去处（A：对话页签的历史对话；B：群聊）。 */
+  conversations(workspaceId: string): string
   /** 任务列表。 */
   tasks(workspaceId: string): string
   task(workspaceId: string, taskId: string): string
@@ -22,6 +24,7 @@ export type SpaceView = 'conversation' | 'task' | 'task-thread'
 
 export const workSpaceRoutes: SpaceRoutes = {
   home: id => `/workspaces/${id}`,
+  conversations: id => `/workspaces/${id}?tab=conversations&view=history`,
   tasks: id => `/workspaces/${id}`,
   task: (id, taskId) => `/workspaces/${id}/tasks/${taskId}`,
   taskThread: (id, taskId, conversationId) => `/workspaces/${id}/tasks/${taskId}/thread/${conversationId}`,
@@ -30,6 +33,7 @@ export const workSpaceRoutes: SpaceRoutes = {
 
 export const collabSpaceRoutes: SpaceRoutes = {
   home: id => `/c/chats/group/${id}`,
+  conversations: id => `/c/chats/group/${id}`,
   tasks: id => `/c/chats/group/${id}?tab=tasks`,
   task: (id, taskId) => `/c/chats/group/${id}/tasks/${taskId}`,
   taskThread: (id, taskId, conversationId) => `/c/chats/group/${id}/tasks/${taskId}/thread/${conversationId}`,

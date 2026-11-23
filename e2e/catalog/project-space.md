@@ -19,50 +19,52 @@
 ### TW-E2E-10 团队共享讨论与 @Agent 触发（TW-10）
 
 **优先级：** P1
-**角色：** 空间成员（member）、负责人（owner）、只读成员（viewer），各自独立 browser context
-**运行层级：** P1 集成用户旅程（P0 不可达：Prototype 模式无会话持久化，命令面 503）
-**前置数据：** 专用可丢弃 PostgreSQL；团队空间含 owner/member/viewer 三个测试身份与至少一个可发起的 Agent 成员
-**spec：** `e2e/team-discussion.integration.spec.ts`（计划）；API 契约已由 `server/src/http/team-workspace-discussion-api.integration.test.ts` 固化
+**角色：** 成员（member，周衡）、负责人（owner，林岚）、只读成员（viewer，苏晚），各自独立 browser context
+**运行层级：** P1 集成用户旅程（专用可丢弃 PostgreSQL + 合成 Runtime；P0 冒烟服务无会话持久化，不可达）
+**前置数据：** “P1 项目空间”含负责人、成员、只读成员与唯一可发起的 Agent 成员“项目空间助手”；“P1 已归档空间”中只读成员为苏晚
+**spec：** `e2e/project-space.integration.spec.ts`（`pnpm test:e2e:project-space`）；API 契约另由 `server/src/http/team-workspace-discussion-api.integration.test.ts` 固化
 
-1. 成员 A 在空间「新对话」直接输入普通消息发送（不 @）：创建讨论会话并出现全员可见的讨论消息，不产生 Run。
-2. 成员 B 打开同一会话（历史列表对全员可见）：读到 A 的消息并回帖，消息标注各自发送者。
-3. 成员 B 输入 `@` 触发 Agent 成员补全，选择 Agent 后发送：创建 Run 并沿用该成员固定版本，回复进同一消息流且标注「由 B 发起」。
-4. viewer 打开同一会话：消息流可读，输入框隐藏并显示只读提示。
+1. 成员在空间「对话 › 新对话」发首条消息：空间只有一个可发起的 Agent 时自动预选（输入区上方显示“本次对话使用 Agent 成员：项目空间助手”），创建会话并执行，回复标注“由 周衡 发起”（功能规则 3.4）。
+2. 成员在该会话中不 @ 任何人发普通消息：作为全员可见的讨论出现，提示“讨论消息已发送，如需 Agent 处理请 @ 对应成员”，不产生新执行。
+3. 负责人在「历史对话」打开同一会话：读到成员的首条消息、Agent 回复与讨论消息，各自标注发送者；负责人回帖仍是讨论，执行次数不变。
+4. 只读成员打开同一会话：消息流可读，没有输入框，显示“当前角色为只读成员，仅可查看讨论内容。”
+5. 只读成员打开已归档空间的「对话」页签：没有发起新对话的输入框。
 
-**验收：** 无 @ 消息零 Run；@ 触发复用既有 Run/Attempt/Runtime 链路；发送者与触发人归因逐条可见；viewer 写入口不出现；归档空间全部写入口隐藏。
+**验收：** 首条消息交给唯一预选的 Agent、会话内不 @ 的消息零执行；@ 触发复用既有 Run/Attempt/Runtime 链路；发送者与发起人归因逐条可见；只读成员与归档空间不出现写入口。
 
 ### TW-E2E-11 空间内对话视图（TW-10 导航）
 
 **优先级：** P1
-**角色：** 空间成员（member）
-**运行层级：** P1 集成用户旅程（P0 不可达：Prototype 模式无会话持久化）
-**前置数据：** 专用可丢弃 PostgreSQL；团队空间含至少一个可发起的 Agent 成员与一段历史会话
-**spec：** `e2e/team-discussion.integration.spec.ts`（计划，与 TW-E2E-10 同文件）；组件行为由 `WorkspaceDetailView`/`ConversationView` 单测固化
+**角色：** 成员（member，周衡）
+**运行层级：** P1 集成用户旅程（专用可丢弃 PostgreSQL + 合成 Runtime；P0 冒烟服务无会话持久化，不可达）
+**前置数据：** 同 TW-E2E-10
+**spec：** `e2e/project-space.integration.spec.ts`（`pnpm test:e2e:project-space`）；组件行为另由 `WorkspaceDetailView`/`ConversationView` 单测固化
 
-1. 成员在空间页「新对话」发送消息（或 @Agent 触发 Run）：不离开 `/workspaces/:id` 上下文，地址栏进入 `/workspaces/:id/conversations/:target`，空间标题、页签与右栏保持可见。
-2. 在对话视图内点「返回」：回到同一空间页的「新对话/历史对话」页签。
-3. 「历史对话」打开任一会话：同样落在空间内对话视图。
-4. 从空间外入口（工作台最近对话）打开团队会话 `/conversations/:id`：自动跳转到对应 `/workspaces/:id/conversations/:id`，空间外壳完整。
-5. 个人空间会话仍使用 `/conversations/:id` 独立页，不发生跳转。
+1. 成员在空间「对话 › 新对话」发送消息：不离开空间上下文，地址进入 `/workspaces/:id/conversations/:target`，空间页签行与右栏“工作空间信息”保持可见。
+2. 在对话视图内点「返回」：回到所属空间的「对话 › 历史对话」，刚才的会话在列表中（协作模式下回到群聊）。
+3. 「对话 › 历史对话」打开该会话：同样落在空间内对话视图。
+4. 从空间外的旧链接 `/conversations/:sessionId` 打开团队会话：自动归位到 `/workspaces/:id/conversations/:sessionId`，空间外壳完整。
+5. 个人空间会话（工作台首页发起）停留在 `/conversations/:id` 独立页，不发生跳转。
 
-**验收：** 空间内发起/打开团队会话始终停留在空间上下文；返回键回到空间页而非工作台；空间外旧链接可解析但归位到空间 URL；个人空间路径行为不变。
+**验收：** 空间内发起/打开团队会话始终停留在空间上下文；返回键回到所属空间的对话列表，而非默认的任务页签或工作台；空间外旧链接可解析并归位到空间 URL；个人空间路径行为不变。
 
-### PS-E2E-00 团队交付边界按全体成员数据范围（项目空间 S0）
+### PS-E2E-00 Agent 可交付数据范围随成员收紧与恢复（项目空间 S0）
 
 **优先级：** P1
-**角色：** 负责人（owner，数据范围 A+B）、成员（member，数据范围 A+B）、待加入员工（数据范围仅 A），各自独立 browser context
-**运行层级：** P1 集成用户旅程（受控 Runtime/Worker；P0 冒烟服务无授权计算，不可达）
-**前置数据：** 专用可丢弃 PostgreSQL；团队空间含一个 Agent 成员，其 Agent 岗位授权包含数据范围 A、B 及一个 owner/member 都不具备的岗位角色；范围 A、B 各有一条可识别的合成业务数据
-**spec：** `e2e/project-space-disclosure.integration.spec.ts`（计划）；授权契约先由服务端集成测试固化
+**角色：** 负责人（owner，林岚，数据范围：华东区域、华南区域）、成员（member，周衡，同上）、待加入员工（顾远，只有华东区域）
+**运行层级：** P1 集成用户旅程（专用可丢弃 PostgreSQL + 合成 Runtime；P0 冒烟服务无授权计算，不可达）
+**前置数据：** “P1 数据范围空间”含负责人、成员与 Agent 成员“区域数据助手”，后者的 Agent 授权包含华东区域、华南区域
+**spec：** `e2e/project-space.integration.spec.ts`（`pnpm test:e2e:project-space`）
 **方案：** [项目空间方案第 3 节](../../docs/design/project-space-plan.md#3-团队交付边界s0)
 
-1. 负责人打开 Agent 成员详情：显示“在本空间可交付的数据范围”为 A、B。
-2. 成员在任务讨论中 @Agent 请求同时查询 A、B 两类数据：执行成功，回复含两条合成数据；成员本人不具备的岗位角色对应能力仍可用（角色只取 Agent 授权）。
-3. 负责人添加只具备范围 A 的员工：确认前提示“加入后 Agent 在本空间的可交付范围将缩小为 A”。确认加入。
-4. 成员再次发起同一请求：回复只含范围 A 的数据，不出现 B 的数据；Agent 成员详情的可交付范围显示为 A。
-5. 负责人移除该员工后再次发起：范围恢复为 A、B，只影响新的执行。
+1. 负责人打开空间信息中的「管理 Agent」：区域数据助手显示“本空间可交付数据范围：华东区域、华南区域”。
+2. 负责人在「管理成员」添加顾远：加入前提示“加入后 Agent 的可用数据范围会缩小”，并说明区域数据助手将不能再使用华南区域；选择“取消”则不加入，可交付范围仍为“华东区域、华南区域”。
+3. 再次添加并选择“仍然添加”：顾远成为成员，「管理 Agent」中可交付范围变为“华东区域”。
+4. 负责人移除顾远后：可交付范围恢复为“华东区域、华南区域”。
 
-**验收：** 可交付数据范围始终等于 Agent 授权与全体现任成员（含只读成员）数据范围的交集；岗位角色不随成员变化；加入成员收紧范围时有前置提示，在途执行按收权链路收敛；个人空间与员工个人请求行为不变。
+**验收：** 名册中的可交付范围等于 Agent 授权与全体现任成员数据范围的交集；加入成员收紧范围时有前置提示，取消不产生变化。只读成员计入交集由服务端集成测试覆盖，本旅程的空间里没有只读成员。
+
+**不在本旅程：** 执行结果按收紧后的范围裁剪、岗位角色只取 Agent 授权、在途执行按收权链路收敛——合成 Runtime 不按数据范围查询数据，这些由服务端集成测试覆盖（`server/src/infrastructure/postgres/team-workspace-authorization.integration.test.ts`、`m4-authorization.integration.test.ts`、`m5-revocation-pipeline.integration.test.ts`、`server/src/http/workspace-agent-member-api.integration.test.ts`）。
 
 ### PS-E2E-01 项目简报查看与编辑（项目空间 S1）
 

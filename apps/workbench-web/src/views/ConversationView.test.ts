@@ -1255,13 +1255,13 @@ describe('ConversationView 空间内嵌套视图（TW-10 导航）', () => {
     expect(router.push).toHaveBeenCalledWith('/workspaces/ws-team/conversations/run-9')
   })
 
-  it('falls back to the workspace page when going back without history', async () => {
+  it('goes back to the workspace conversation list, not the default tasks tab', async () => {
     route.name = 'workspace-conversation'
     route.params = { id: 'ws-team', conversationId: 'session-001' }
     api.getSessionThread.mockResolvedValue(sessionThread())
     const { wrapper } = await mountView({ item: null })
     await wrapper.get('.conversation-header__back').trigger('click')
-    expect(router.push).toHaveBeenCalledWith('/workspaces/ws-team')
+    expect(router.push).toHaveBeenCalledWith('/workspaces/ws-team?tab=conversations&view=history')
   })
 
   it('re-roots to the owning workspace when the embedded target belongs elsewhere', async () => {

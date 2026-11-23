@@ -1,5 +1,5 @@
 /**
- * P1 项目空间浏览器夹具（PS-E2E-03/04/06/07/08）。
+ * P1 项目空间浏览器夹具（PS-E2E-00/03/04/06/07/08、TW-E2E-10/11、MODE-E2E-09/10/13/16/17）。
  *
  * 专用可丢弃 PostgreSQL + 真实 HTTP API；Runtime 是确定性合成实现，
  * 不连接模型、MCP 或真实 DSH。档案整理运行返回固定的 JSON 整理结果，
@@ -226,8 +226,85 @@ const archivedTask = await projects.createTask(archived.id, 'U00001', {
 })
 await lifecycle.archiveWorkspace(archived.id, 'U00001')
 
+// MODE-E2E-17：陈默不在任何空间，用例临时加入“P1 项目空间”接收 @，再移除验证失权后不显示。
+// PS-E2E-00：顾远只有华东区域的数据范围，用例把他加入“P1 数据范围空间”以收紧 Agent 的可交付范围。
+for (const [id, name, subject] of [
+  ['U00004', '顾远', 'bootstrap:p1-narrow'],
+  ['U00005', '陈默', 'bootstrap:p1-mentioned'],
+] as const) {
+  // 业务用户才会出现在“添加员工”的候选中。
+  await database`
+    insert into users (id, tenant_id, external_subject, display_name, department_id, status, business_user)
+    values (${id}, ${tenantId}, ${subject}, ${name}, 'supply-chain', 'active', true)
+    on conflict (tenant_id, id) do nothing
+  `
+  await database`
+    insert into user_roles (tenant_id, user_id, role_id)
+    values (${tenantId}, ${id}, 'role-employee')
+    on conflict do nothing
+  `
+}
+const scopeEast = '华东区域'
+const scopeSouth = '华南区域'
+for (const [userId, scopes] of [
+  ['U00001', [scopeEast, scopeSouth]],
+  ['U00002', [scopeEast, scopeSouth]],
+  ['U00004', [scopeEast]],
+] as const) {
+  for (const scope of scopes) {
+    await database`
+      insert into data_scope_grants (id, tenant_id, subject_type, subject_id, scope_code, scope_value)
+      values (${`grant-p1-${userId}-${scope}`}, ${tenantId}, 'user', ${userId}, 'capability', ${scope})
+      on conflict do nothing
+    `
+  }
+}
+const scopedWorkspace = await content.createWorkspace({ name: 'P1 数据范围空间', description: 'PS-E2E-00 夹具' }, 'U00001')
+if (!scopedWorkspace) throw new Error('无法创建 P1 数据范围空间')
+await database`
+  insert into workspace_members (tenant_id, workspace_id, user_id, member_role, added_by)
+  values (${tenantId}, ${scopedWorkspace.id}, 'U00002', 'member', 'U00001')
+  on conflict do nothing
+`
+const scopedAgent = await agents.createAgent({
+  id: 'agent-ps-p1-scoped',
+  name: '区域数据助手',
+  description: 'P1 夹具 Agent，授权华东、华南两个区域',
+  owner: '平台管理员',
+  department: 'platform',
+  welcomeMessage: '我可以查询区域数据。',
+  examplePrompts: ['汇总各区域交付情况'],
+  systemPrompt: '你是区域数据助手，只依据授权范围内的区域数据作答。',
+  workInstructions: '',
+  maxOutputBytes: 65536,
+  maxToolCalls: 20,
+  timeoutSeconds: 300,
+  skills: [],
+  mcpScope: { mode: 'none', connectorIds: [] },
+  changeSummary: 'P1 数据范围夹具',
+  actor: 'U00008',
+  visibleRoleIds: ['role-employee'],
+  executionRoleIds: [],
+  executionDataScopes: [],
+})
+await publishDraftWithSealedTrial(database, agents, scopedAgent.agent.id, 'U00008')
+const [scopedPrincipal] = await database<{ id: string }[]>`
+  select id from execution_principals
+   where tenant_id = ${tenantId} and kind = 'agent' and agent_id = ${scopedAgent.agent.id} and status = 'active'
+`
+if (!scopedPrincipal) throw new Error('区域数据助手缺少执行身份')
+for (const scope of [scopeEast, scopeSouth]) {
+  await database`
+    insert into agent_principal_scope_grants (tenant_id, principal_id, scope_value)
+    values (${tenantId}, ${scopedPrincipal.id}, ${scope})
+    on conflict do nothing
+  `
+}
+await workspaceAgentMembers.addAgentMember(scopedWorkspace.id, scopedAgent.agent.id, 'U00001', ['role-employee'])
+
 fixture.router.get('/api/workbench/v1/test/fixtures', () => envelope('workbench', {
   workspaceId: workspace.id,
+  scopedWorkspaceId: scopedWorkspace.id,
   archivedWorkspaceId: archived.id,
   archivedTaskId: archivedTask.id,
   agentId: created.agent.id,

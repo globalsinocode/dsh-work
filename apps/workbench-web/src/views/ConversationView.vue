@@ -349,10 +349,10 @@ function goBack() {
     void router.push(sessionId ? conversationPath(sessionId) : spaceRoutes.task(embeddedWorkspaceId.value, String(route.params.taskId)))
     return
   }
-  // 嵌入态的返回固定归位到所属空间页（线程返回控件回到列表）：外部旧链接
+  // 嵌入态的返回固定归位到所属空间的对话列表（A 为“对话 › 历史对话”，B 为群聊）：外部旧链接
   // 经 replace 归位后，router.back() 会跳出空间上下文，不能依赖历史栈。
   if (isEmbeddedInWorkspace.value) {
-    void router.push(spaceRoutes.home(embeddedWorkspaceId.value))
+    void router.push(spaceRoutes.conversations(embeddedWorkspaceId.value))
     return
   }
   if (window.history.length > 1) router.back()
