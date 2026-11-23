@@ -14,7 +14,7 @@
 | 设计和评审 Agent，区分现行规则与扩展门槛 | [Agent 设计规范](../development/agent-design-standard.md) |
 | 按统一阶段定义、发布、运行和退役 Agent | [通用 Agent 全生命周期模板](../development/agent-lifecycle-template.md) |
 | 移动端 H5 接入 | [移动端接入规范](../development/mobile-integration-guide.md) |
-| 代码级已实施（MR-S1～S3），本机与 Mac mini 人工验收通过，受控 DSH 余项与 P2 未完成：平台路由决定实际模型、模型网关与用量 | [模型路由方案](../design/model-routing-plan.md) |
+| 代码级已实施（MR-S1～S3），P1 受控 DSH 通过，本机与 Mac mini 人工验收通过，P2 已于 2026-11-23 决定删除：平台路由决定实际模型、模型网关与用量 | [模型路由方案](../design/model-routing-plan.md) |
 | 代码级已实施（DLP-S1～S3），外部厂商已在本机与 Mac mini 验收：发往模型的敏感值遮盖与还原、密钥拦截 | [发往模型的数据防护方案](../design/model-data-protection-plan.md) |
 | DT-S1 账号绑定与钉钉内免登已实施到代码级，真实钉钉验收（P2）未做；DT-S2 工作通知与群组提醒未实施 | [钉钉接入方案](../design/dingtalk-integration-plan.md) |
 | EA-S1 已实施（发送员工身份、调用上下文请求头），未真实验收：外部业务应用经 MCP 接入所需的调用上下文 | [外部业务应用接入方案](../design/external-app-integration-plan.md) |
