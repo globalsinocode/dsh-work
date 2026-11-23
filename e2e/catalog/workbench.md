@@ -413,5 +413,5 @@ P1/P2 的执行结果须单独记录数据库、身份、Runtime/DSH 版本和�
 
 1. 核对上游请求、员工端回答与工具调用结果、审计记录与用量（[数据防护方案](../../docs/design/model-data-protection-plan.md)第 9 节）。
 
-**验收：** P0、P1 绿灯不能代替本项。
+**验收：** P0、P1 绿灯不能代替本项。当前状态见[数据防护方案](../../docs/design/model-data-protection-plan.md)第 9 节末尾。
 
