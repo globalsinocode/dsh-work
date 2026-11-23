@@ -109,6 +109,59 @@ test.describe('PS-E2E-03 Agent 任务执行、线程续接与成果', () => {
   })
 })
 
+test.describe('PS-E2E-03 引用文件、成果标注与他人续接', () => {
+  test.use({ extraHTTPHeaders: { 'x-test-user-id': 'U00002' } })
+
+  test('成员引用共享文件启动任务；成果标注所属任务与发起人；负责人在自己的会话中续接', async ({ page, browser, baseURL }) => {
+    const seed = await loadSeed(page)
+    // 标题带 `P1-成果达成`：合成 Runtime 为这次执行登记一个成果（测试夹具，非真实 DSH 产出）。
+    const title = uniqueTitle('PS-E2E-03 P1-成果达成')
+    await page.goto(`/workspaces/${seed.workspaceId}?tab=tasks`)
+    await page.getByRole('button', { name: '新建任务' }).click()
+    const dialog = page.getByRole('dialog', { name: '新建任务' })
+    await dialog.getByLabel('任务标题').fill(title)
+    await dialog.getByTestId('project-task-assignee').click()
+    await page.getByRole('option', { name: /项目空间助手/ }).click()
+    // 下拉框的占位文字覆盖在输入框上，点它展开（与用户操作一致）。
+    await dialog.getByText('选择已解析成功的共享文件').click()
+    await page.getByRole('option', { name: 'P1-共享文件.txt（V1）' }).click()
+    await dialog.getByTestId('project-task-schedule-editor').getByText('手动', { exact: true }).click()
+    await dialog.getByRole('button', { name: '保存并立即执行' }).click()
+    await expect(dialog).toBeHidden()
+
+    // 第 1 步：任务详情内的任务对话；任务信息与启动消息都带着引用文件。
+    await expect(page).toHaveURL(new RegExp(`/workspaces/${seed.workspaceId}/tasks/[^/]+/thread/session-`))
+    const taskUrl = page.url()
+    await expect(page.getByTestId('project-task-info')).toContainText('P1-共享文件.txt（V1）')
+    await expect(page.getByLabel('附带文件').filter({ hasText: 'P1-共享文件.txt' }).first()).toBeVisible()
+    await expect(page.getByTestId('task-conversation-run').filter({ hasText: '周衡 交给 项目空间助手 执行 · 执行完成' }))
+      .toHaveCount(1, { timeout: 20_000 })
+    await expect(page.getByTestId('project-task-detail-status')).toHaveText('进行中')
+
+    const owner = await openAs(browser, baseURL, 'U00001')
+    try {
+      // 第 3 步：负责人在自己的会话中打开同一任务对话，直接回复即交给同一 Agent。
+      await owner.page.goto(taskUrl)
+      await expect(owner.page.getByTestId('workspace-crumb-task')).toHaveText(title)
+      // 回复也带 `P1-成果达成`：合成 Runtime 只为带该标记的输入登记成果。
+      await owner.page.getByPlaceholder('继续交代，交给 项目空间助手 处理…').fill('补充华南区域的数据 P1-成果达成')
+      await owner.page.getByRole('button', { name: '发送消息', exact: true }).click()
+      await expect(owner.page.getByTestId('task-conversation-run').filter({ hasText: '林岚 交给 项目空间助手 执行 · 执行完成' }))
+        .toHaveCount(1, { timeout: 20_000 })
+      await expect(owner.page.getByTestId('task-conversation-run')).toHaveCount(2)
+
+      // 第 2 步：成果页签按任务与发起人标注两次执行各自的成果。
+      await owner.page.goto(`/workspaces/${seed.workspaceId}?tab=artifacts`)
+      const origins = owner.page.getByTestId('artifact-card-origin').filter({ hasText: `任务「${title}」` })
+      await expect(origins).toHaveCount(2)
+      await expect(origins.filter({ hasText: /项目空间助手 \S+ · 周衡 发起$/ })).toHaveCount(1)
+      await expect(origins.filter({ hasText: /项目空间助手 \S+ · 林岚 发起$/ })).toHaveCount(1)
+    } finally {
+      await owner.context.close()
+    }
+  })
+})
+
 test.describe('PS-E2E-04 只读成员与归档空间的任务写入口', () => {
   test.use({ extraHTTPHeaders: { 'x-test-user-id': 'U00003' } })
 
