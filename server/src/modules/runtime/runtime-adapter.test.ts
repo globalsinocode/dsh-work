@@ -2222,9 +2222,9 @@ describe('current execution authorization', () => {
     })
     const input = manifest('run-slow-authorization', 'attempt-1', '[echo]')
     const result = await (await adapter.execute(input)).done
-    // Runtime 成功状态是 'completed'（runtime-types.ts），不是 'succeeded'。
+    // Runtime 成功状态是 'completed'（runtime-types.ts），不是 'succeeded'；成功 Run 的 errorCode 为 null。
     assert.equal(result.status, 'completed')
-    assert.equal(result.errorCode, undefined)
+    assert.equal(result.errorCode, null)
     assert.ok(logs.some(entry => entry.phase === 'setup' && entry.outcome === 'slow'))
     assert.ok(logs.some(entry => entry.phase === 'setup' && entry.outcome === 'recovered'))
   })
