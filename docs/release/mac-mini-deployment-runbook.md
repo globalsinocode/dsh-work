@@ -565,6 +565,52 @@ docker compose --env-file "${DWP_ROOT}/runtime.env" \
 
 事件背景、根因与回滚见[授权复核超时事件记录](incident-2026-11-24-authorization-timeout.md)。
 
+### 8.3 2026.11.24-02 补充：Nginx 宿主后端与启动探针
+
+该版本处理 11-24 上线后记录的两处缺陷：Nginx 上游解析到不可达 IPv6 导致 502
+`no live upstreams`，以及服务启动时执行能力探针偶发失败导致整个服务以
+`UnavailableRuntime` 运行到人工重启。无 schema、UI、公共 API 变更。
+
+1. **部署前确认上游地址。** 默认 `DSH_WORK_UPSTREAM_HOST=host.docker.internal`；若容器内该名字
+   同时解析出不可达 IPv6（Docker Desktop 常见 `fdc4:…`），把 `runtime.env` 的
+   `DSH_WORK_UPSTREAM_HOST` 设为宿主网关 IPv4（当前现场为 `192.168.65.254`，以实测为准）：
+
+   ```bash
+   docker compose --env-file "${DWP_ROOT}/runtime.env" \
+     -f "${DWP_ROOT}/current/deploy/compose.yaml" \
+     -f "${DWP_ROOT}/generated/compose.endpoints.yaml" exec -T web sh -c \
+     'cat /etc/hosts; nslookup host.docker.internal 127.0.0.11 || true'
+   ```
+
+   只接受单个 IPv4 或可解析且可连通的 IPv4 名称；不要同时保留一个不可达 IPv6 解析。
+   `max_fails=0` 只阻止“一次失败把唯一上游标记 down 十秒”，后端真实不可用时单个请求仍返回 502。
+
+2. **启动探针有界重试。** DSH 与执行容器探针各最多 3 次、间隔 2 秒、总预算 20 秒；超过预算
+   仍按原逻辑 fail-closed（`UnavailableRuntime`，不降级到宿主执行），日志逐次记录
+   `startup probe <capability> attempt N/3 failed`。发布健康检查窗口不变，若首次启动日志出现
+   `execution container toolchain: …` 即表示执行能力可用，不需要再人工 kickstart。
+
+3. **部署前门禁与部署**：仍按 8.1；watcher 必须已停止且无活动锁。部署后立即记录新的
+   `DEPLOYED_AT`（UTC），所有观测用它作下界。
+
+4. **验收**：
+
+   - `active-release` 为 `v2026.11.24-02`，公网 `/health` 与宿主 `/health/ready` 正常；
+   - 110 次请求（60 顺序 + 50 并发，`xargs -P 10`）打员工端 `/api/workbench/v1/session`，
+     期望全部 401（或 200），**0 个 502/499**；Nginx 日志无 `no live upstreams` 与
+     `connect() to [fdc…]`；
+   - 以新 `DEPLOYED_AT` 执行 8.2 第 4 步 SQL，期望 0；`authorization.check` 慢日志可按
+     run/attempt/phase 关联；
+   - 吴军重跑一次：`run.started`、`assistant.delta`、`assistant.completed`、`run.completed` 均出现，
+     `run_attempts.error_code` 为空；
+   - 受控 5–10 秒慢授权：有受控环境才执行，否则在事件记录写明“环境阻塞”，不得用普通 Run 替代。
+
+5. **已知边界（P1，不属本版本）**：DSH 每次 boot 都会重写
+   `$DSH_HOME/profiles/acp/cordis.yml`，部署侧 preflight 与启动仍可能竞争；本版本只做有界重试，
+   不改变部署脚本顺序。若日志确认竞争，应另开任务做临时 `DSH_HOME` 隔离演练。
+
+6. **回滚**：无 schema，可回退 `v2026.11.24-01`；注意回退后 502/503 缺陷会回来。
+
 ## 9. 完成首次验收与备份
 
 ### 9.1 服务和入口
@@ -587,9 +633,10 @@ curl --fail --silent --show-error --max-time 30 \
   --cacert "${DWP_CERT_SOURCE}/root-ca.crt" "https://${DWP_IP}:8443/-/health/ready/"
 ```
 
-确认 `postgres`、`web` 健康，且 AI Hub 仍健康。Nginx 通过 `host.docker.internal:4190`
-访问宿主机后端：若回环健康而 HTTPS 返回 502，检查 Docker Desktop 到宿主机的连接和
-Nginx 日志；不要为排障把 4190 暴露到全网，也不要忽略 HTTPS 检查。
+确认 `postgres`、`web` 健康，且 AI Hub 仍健康。Nginx 通过 `DSH_WORK_UPSTREAM_HOST`
+（默认 `host.docker.internal`）访问宿主机后端：若回环健康而 HTTPS 返回 502，检查
+Docker Desktop 到宿主机的连接、容器内该名字是否优先解析到不可达 IPv6，以及 Nginx 日志；
+按 8.3 固定上游 IPv4。不要为排障把 4190 暴露到全网，也不要忽略 HTTPS 检查。
 端口发布由预检生成的 `generated/compose.endpoints.yaml` 管理；不要省略该文件直接运行
 Compose，否则无法验证实际入口集合。
 
@@ -688,7 +735,7 @@ docker compose --env-file "${DWP_ROOT}/runtime.env" \
 | 情况 | 处理 |
 | --- | --- |
 | 需要暂停后续自动升级 | 把 `DSH_WORK_AUTO_DEPLOY_ENABLED` 改为 `false`；不会中止已经开始的部署，等待当前操作结束 |
-| Release 验证失败 | 检查 Tag、不可变设置、CI 来源和服务账号 gh 认证，不跳过验证 |
+| Release 验证失败 | 检查 Tag、不可变设置、CI 来源和服务账号 gh 认证，不跳过验证。若报 `no valid Sigstore verifiers could be initialized`，说明 `~/.cache/gh/.sigstore` 的 TUF 缓存过期：用 `XDG_CACHE_HOME=$(mktemp -d)` 指向全新缓存后重试，仍失败则停止发布并检查网络，不得跳过验证 |
 | DSH Lock/ACP 失败 | 核对已安装 checkout、构建、权限与发布包 Lock，单独安排 Runtime 变更 |
 | NAS 不可用或备份失败 | 恢复真实异机挂载及权限；不删除备份门禁，不用本机目录替代 |
 | 登录报 Issuer/Audience/回调错误 | 对照 AI Hub 当前 `production` 凭据及两个完整 HTTPS 回调，不轮换全平台密钥 |

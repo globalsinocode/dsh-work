@@ -103,3 +103,21 @@ R2 / P-A 接管时，应把该值与周期复核间隔、工具探测预算一�
 - R2 Capacity Profile 纳入 auth timeout/interval/retry；
 - 多 Run 并发授权风暴压测；
 - 七天观察基线与容量验证。
+
+## 9. 上线结果与遗留（2026-11-24）
+
+- 发布：`v2026.11.24-01`，`Manual release` run `45337256940` success，target
+  `8d8f77a0a9186dead346ff47d6a1353982db7f4b`，immutable，2026-11-24T06:01:32Z published；
+  四项 CI（Static / Unit / Integration / Browser）success。
+- 部署：2026-11-24T06:14–06:16Z 完成，`active-release` 切换到 `v2026.11.24-01`，
+  `/health` 200，日志已带 ISO 时间戳（`console-timestamps` 生效），迁移全部 skipped、零 DDL。
+- 授权观测：以部署截点 `DEPLOYED_AT`（UTC）为下界查询
+  `AUTHORIZATION_CHECK_UNAVAILABLE`（命令见[部署手册 8.2](mac-mini-deployment-runbook.md#82-授权复核超时热修20261124-01的观测与验收)）；
+  结果与证据位置在取得运维回传后回填，不预先写成 0。
+- 受控 5–10 秒慢授权：生产无受控延迟设施时记为“环境阻塞，待专用验收环境执行”，
+  不得用普通快速 Run 替代。
+- 上线后另发现两个与本热修无关的故障（Nginx 双栈上游 502、启动探针 503），已单独立项修复，
+  见[上线后 502/503 事件记录](incident-2026-11-24-post-deploy-502-503.md)；对应版本
+  `2026.11.24-02` 的部署与验收见手册 8.3。
+- 自动部署 watcher 在本轮验收与一周复核完成前保持关闭（`DSH_WORK_AUTO_DEPLOY_ENABLED=false`，
+  且无 launchd job），复核结论明确后再按手册第 10 节决定是否恢复。

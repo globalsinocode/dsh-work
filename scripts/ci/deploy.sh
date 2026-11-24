@@ -80,6 +80,9 @@ python3 -c "import plistlib; plistlib.load(open('deploy/launchd/com.company.dsh-
 
 grep -F 'listen 8443 ssl;' deploy/nginx/default.conf.template >/dev/null
 grep -F 'listen 8444 ssl;' deploy/nginx/default.conf.template >/dev/null
+grep -F 'server ${DSH_WORK_UPSTREAM_HOST}:${DSH_WORK_SERVER_PORT} max_fails=0;' deploy/nginx/default.conf.template >/dev/null
+grep -F 'DSH_WORK_UPSTREAM_HOST: ${DSH_WORK_UPSTREAM_HOST:-host.docker.internal}' deploy/compose.yaml >/dev/null
+grep -F 'DSH_WORK_UPSTREAM_HOST' deploy/runtime.env.example >/dev/null
 grep -F 'workflow_dispatch:' .github/workflows/release.yml >/dev/null
 grep -Eq 'actions/attest@[0-9a-f]{40}[[:space:]]+# v4\.' .github/workflows/release.yml
 grep -F 'gh release edit "${tag}" --draft=false --latest' .github/workflows/release.yml >/dev/null
@@ -103,5 +106,43 @@ if grep -Eq 'runs-on:.*self-hosted' .github/workflows/release.yml; then
   echo "public repository release workflow must not target a production self-hosted runner" >&2
   exit 1
 fi
+
+# Render the Nginx template with the pinned image and check the upstream syntax. The template is
+# the only place that reaches the host backend, and an unreachable IPv6 resolution there caused
+# production 502 "no live upstreams"; both the default name and a pinned IPv4 must parse.
+nginx_image=$(sed -n 's/.*DSH_WORK_NGINX_IMAGE:-\([^}]*\).*/\1/p' deploy/compose.yaml | head -1)
+[[ -n "${nginx_image}" ]] || { echo "cannot resolve the Nginx image from deploy/compose.yaml" >&2; exit 1; }
+nginx_fixture=$(mktemp -d "${TMPDIR:-/tmp}/dsh-work-nginx-test.XXXXXX")
+cleanup_nginx() {
+  rm -rf "${nginx_fixture}"
+}
+trap cleanup_nginx EXIT
+mkdir -p "${nginx_fixture}/tls"
+openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj '/CN=work.example.com' \
+  -keyout "${nginx_fixture}/tls/server.key" -out "${nginx_fixture}/tls/server.crt" >/dev/null 2>&1
+cp deploy/nginx/proxy_params "${nginx_fixture}/proxy_params"
+# envsubst must only replace the deployment variables: Nginx's own $http_upgrade/$connection_upgrade
+# must survive, and the image entrypoint does the same by listing the defined variables.
+cat > "${nginx_fixture}/check.sh" <<'SH'
+set -eu
+envsubst '${DSH_WORK_UPSTREAM_HOST} ${DSH_WORK_SERVER_PORT} ${DSH_WORK_WORKBENCH_SERVER_NAMES} ${DSH_WORK_ADMIN_SERVER_NAMES}' \
+  < /template.conf > /etc/nginx/conf.d/default.conf
+nginx -t
+SH
+for upstream_host in host.docker.internal 192.0.2.10; do
+  docker run --rm --entrypoint sh --add-host host.docker.internal:127.0.0.1 \
+    -e DSH_WORK_UPSTREAM_HOST="${upstream_host}" \
+    -e DSH_WORK_SERVER_PORT=4190 \
+    -e DSH_WORK_WORKBENCH_SERVER_NAMES=work.example.com \
+    -e DSH_WORK_ADMIN_SERVER_NAMES=admin.example.com \
+    -v "${project_root}/deploy/nginx/default.conf.template:/template.conf:ro" \
+    -v "${nginx_fixture}/tls:/etc/dsh-work/tls:ro" \
+    -v "${nginx_fixture}/proxy_params:/etc/nginx/proxy_params:ro" \
+    -v "${nginx_fixture}/check.sh:/check.sh:ro" \
+    "${nginx_image}" /check.sh >/dev/null \
+    || { echo "Nginx template is invalid for upstream host ${upstream_host}" >&2; exit 1; }
+done
+rm -rf "${nginx_fixture}"
+trap - EXIT
 
 echo "deployment configuration gate passed"
