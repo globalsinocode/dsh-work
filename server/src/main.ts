@@ -243,11 +243,25 @@ async function start() {
   await migrateSkillFilesToFileSystem(database, skillArtifacts)
   // Database migrations and identity initialization above stay fail-closed.
   // Only optional execution capabilities may fail independently.
+  // DSH rewrites $DSH_HOME/profiles/acp/cordis.yml on every boot, and Docker can be briefly busy
+  // while the deployment recreates containers: retry a bounded number of times so a transient
+  // startup race does not leave the whole service on UnavailableRuntime until an operator restarts it.
+  // The budget stays under the release health-check window; fail-closed behavior is unchanged.
+  const startupProbeRetry = (label: 'dsh' | 'execution-container') => ({
+    attempts: 3,
+    delayMs: 2_000,
+    deadlineMs: 20_000,
+    onAttemptFailure: (error: unknown, attempt: number) => {
+      console.warn(`startup probe ${label} attempt ${attempt}/3 failed: ${redactSensitiveText(error instanceof Error ? error.message : String(error)).slice(0, 500)}`)
+    },
+  })
   const dsh = await probeExecutionCapability('dsh', async () => {
     const installation = await resolveDshRuntimeInstallation({ projectRoot })
     await preflightDshRuntime(installation)
     return installation
-  })
+  }, error => {
+    console.warn(`DSH runtime unavailable; Agent runs are refused until it is fixed and the service restarts: ${redactSensitiveText(error instanceof Error ? error.message : String(error)).slice(0, 500)}`)
+  }, startupProbeRetry('dsh'))
   dshCapability = dsh.state
   // 执行隔离阶段 3（方案 4.9）：执行容器为必需。DSH 子进程只经执行容器叠加层运行；
   // 执行容器启动检查失败时不在宿主执行，Runtime 不可用，所有 Agent 运行在创建前明确失败。
@@ -258,7 +272,7 @@ async function start() {
       projectRoot, dataRoot, image: process.env.DSH_WORK_EXECUTION_IMAGE,
     }), error => {
       console.warn(`execution container unavailable; Agent runs are refused until it is fixed and the service restarts: ${redactSensitiveText(error instanceof Error ? error.message : String(error)).slice(0, 500)}`)
-    })
+    }, startupProbeRetry('execution-container'))
     if (probed.value) {
       dshInstallation = probed.value.installation
       attemptContainers = probed.value.containers

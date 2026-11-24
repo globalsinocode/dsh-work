@@ -53,20 +53,44 @@ export interface CapabilityState {
   code?: string
 }
 
+export interface CapabilityProbeRetry {
+  /** Total attempts, including the first. Default 1 (no retry). */
+  attempts?: number
+  /** Delay between attempts in milliseconds. Default 0. */
+  delayMs?: number
+  /** Stop retrying once this many milliseconds have passed since the first attempt started. Default Infinity. */
+  deadlineMs?: number
+  /** Server-log only; called for every failed attempt, before deciding whether to retry. */
+  onAttemptFailure?: (error: unknown, attempt: number) => void
+}
+
 /** Only use for optional execution dependencies, NEVER database/identity initialization. */
 export async function probeExecutionCapability<T>(
   capability: 'dsh' | 'python' | 'execution-container',
   initialize: (() => Promise<T>) | null,
   /** Server-log only; health never carries the reason. */
   onFailure?: (error: unknown) => void,
+  retry?: CapabilityProbeRetry,
 ): Promise<{ value: T | null; state: CapabilityState }> {
   if (!initialize) return { value: null, state: { status: 'not-configured' } }
-  try { return { value: await initialize(), state: { status: 'available' } } }
-  catch (error) {
-    onFailure?.(error)
-    // Do not expose subprocess stderr, credentials or local paths through health.
-    const code = new ExecutionCapabilityUnavailableError(capability).code
-    return { value: null, state: { status: 'unavailable', code } }
+  const attempts = Math.max(1, Math.trunc(retry?.attempts ?? 1))
+  const delayMs = Math.max(0, retry?.delayMs ?? 0)
+  const deadlineMs = retry?.deadlineMs ?? Number.POSITIVE_INFINITY
+  const startedAt = performance.now()
+  // A retry only absorbs startup races (profile rewrite, Docker briefly unavailable). It does not
+  // relax fail-closed: after the attempt or deadline budget the capability still reports unavailable.
+  for (let attempt = 1; ; attempt += 1) {
+    try { return { value: await initialize(), state: { status: 'available' } } }
+    catch (error) {
+      retry?.onAttemptFailure?.(error, attempt)
+      if (attempt >= attempts || performance.now() - startedAt >= deadlineMs) {
+        onFailure?.(error)
+        // Do not expose subprocess stderr, credentials or local paths through health.
+        const code = new ExecutionCapabilityUnavailableError(capability).code
+        return { value: null, state: { status: 'unavailable', code } }
+      }
+      if (delayMs > 0) await new Promise(resolve => setTimeout(resolve, delayMs))
+    }
   }
 }
 

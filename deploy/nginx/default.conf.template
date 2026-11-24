@@ -4,7 +4,11 @@ map $http_upgrade $connection_upgrade {
 }
 
 upstream dsh_work_server {
-  server host.docker.internal:${DSH_WORK_SERVER_PORT};
+  # Point the host backend at one IPv4 address (production). On Docker Desktop the default name
+  # also resolves to an unreachable ULA IPv6 gateway; a connect failure marks the only upstream
+  # down for fail_timeout, and concurrent requests then fail with "no live upstreams".
+  # max_fails=0 stops that amplification.
+  server ${DSH_WORK_UPSTREAM_HOST}:${DSH_WORK_SERVER_PORT} max_fails=0;
   keepalive 32;
 }
 

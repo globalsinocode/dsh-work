@@ -23,6 +23,7 @@ services:
     image: ${DSH_WORK_NGINX_IMAGE:-nginx:1.30.4-alpine@sha256:97d490c12ba55b4946b01546d1c3ed324e8d41ab1c9fcb2a616aa470620e5b46}
     environment:
       DSH_WORK_SERVER_PORT: ${DSH_WORK_SERVER_PORT:-4190}
+      DSH_WORK_UPSTREAM_HOST: ${DSH_WORK_UPSTREAM_HOST:-host.docker.internal}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:

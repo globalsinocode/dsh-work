@@ -69,6 +69,46 @@ test('model admission fails closed without a verifier and forwards the exact tar
   assert.equal(checks, 1)
 })
 
+test('startup capability probe retries transient failures inside the budget', async () => {
+  let attempts = 0
+  const failedAttempts: number[] = []
+  const result = await probeExecutionCapability('dsh', async () => {
+    attempts += 1
+    if (attempts < 3) throw new Error('transient startup race')
+    return 'installation'
+  }, undefined, { attempts: 3, delayMs: 1, deadlineMs: 1_000, onAttemptFailure: (_error, attempt) => { failedAttempts.push(attempt) } })
+  assert.deepEqual(result, { value: 'installation', state: { status: 'available' } })
+  assert.deepEqual(failedAttempts, [1, 2])
+})
+
+test('exhausted startup probe still fails closed and reports the final failure once', async () => {
+  let attempts = 0
+  let finalFailures = 0
+  const failedAttempts: number[] = []
+  const result = await probeExecutionCapability('python', async () => {
+    attempts += 1
+    throw new Error('still unavailable')
+  }, () => { finalFailures += 1 }, { attempts: 2, delayMs: 1, deadlineMs: 1_000, onAttemptFailure: (_error, attempt) => { failedAttempts.push(attempt) } })
+  assert.equal(attempts, 2)
+  assert.deepEqual(failedAttempts, [1, 2])
+  assert.equal(finalFailures, 1)
+  assert.deepEqual(result, { value: null, state: { status: 'unavailable', code: 'PYTHON_UNAVAILABLE' } })
+})
+
+test('startup probe stops retrying after the deadline and defaults to a single attempt', async () => {
+  let attempts = 0
+  const expired = await probeExecutionCapability('dsh', async () => {
+    attempts += 1
+    throw new Error('slow failure')
+  }, undefined, { attempts: 5, delayMs: 1, deadlineMs: 0 })
+  assert.equal(attempts, 1)
+  assert.equal(expired.value, null)
+
+  let single = 0
+  await probeExecutionCapability('dsh', async () => { single += 1; throw new Error('no retry by default') })
+  assert.equal(single, 1)
+})
+
 test('production capability wrapper forwards MCP discovery to the DSH adapter', async () => {
   const connection: McpRuntimeConnection = {
     snapshot: {
