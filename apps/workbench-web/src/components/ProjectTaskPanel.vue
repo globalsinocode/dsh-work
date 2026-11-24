@@ -161,6 +161,9 @@ function taskPath(taskId: string) {
 
 /** 任务对话（会话视图：全部发言、执行记录与系统记录）；没有任务对话的旧任务为 null。 */
 function threadPath(task: ProjectTask) {
+  // 任务对话必须用 Session ID：Run ID 会让 ConversationView 进入单次执行详情（“最近执行”用
+  // latestRunPath）。此前线程页对 Session 目标也会先请求 /runs/<sessionId> 得到 404，再靠
+  // /sessions/<id> 兜底；该噪声已在 loadConversationTarget 里按 Session 前缀直接跳过。
   return task.sessionId ? spaceRoutes.taskThread(props.workspaceId, task.id, task.sessionId) : null
 }
 

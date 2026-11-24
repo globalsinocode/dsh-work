@@ -497,6 +497,15 @@ describe('ConversationView 归档只读态（design §2.7 / AC-23）', () => {
     expect(wrapper.find('[data-testid="conversation-unavailable"]').exists()).toBe(false)
   })
 
+  it('loads a session target directly without probing /runs (no run_not_found noise)', async () => {
+    route.params = { id: 'session-001' }
+    api.getSessionThread.mockResolvedValue(sessionThread())
+    api.getRun.mockClear()
+    await mountView({ item: null })
+    expect(api.getSessionThread).toHaveBeenCalledWith('session-001')
+    expect(api.getRun).not.toHaveBeenCalled()
+  })
+
   it('loads a shared session thread without runs and shows sender/Agent attribution (TW-10)', async () => {
     route.params = { id: 'session-001' }
     api.getSessionThread.mockResolvedValue(sessionThread({
