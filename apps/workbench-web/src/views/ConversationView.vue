@@ -894,6 +894,9 @@ async function loadConversationTarget(id: string): Promise<SessionThread | null>
   contentSyncedAt.value = new Date().toISOString()
   let runError: unknown
   try {
+    // Session 目标（任务对话、讨论串）不必先查 Run：/runs/<sessionId> 必然 404，旧实现靠
+    // 兜底继续加载，但会产生 run_not_found 噪声，也让目标类型判断绕一圈。
+    if (id.startsWith('session-')) return loadSessionMode(id)
     const run = await taskStore.refreshRun(id).catch((error: unknown) => { runError = error; return null }) ?? taskStore.getTask(id) ?? null
     if (run) return null
     // 不是 Run 时按 Session 加载；Run 接口暂时不可用时同样先试 Session，两者都没能确认才判定。

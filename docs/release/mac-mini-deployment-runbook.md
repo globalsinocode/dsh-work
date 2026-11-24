@@ -518,19 +518,29 @@ done
 发布与验收要点：
 
 1. 部署后立即记录 `DEPLOYED_AT`（UTC），例如 `date -u +%Y-%m-%dT%H:%M:%SZ`；后文查询必须用它作下界，
-   不能使用滚动 24 小时窗口混入部署前旧故障。
+   不能使用滚动 24 小时窗口混入部署前旧故障。部署脚本未落 times 文件时，用
+   `date -u -r "${DWP_ROOT}/active-release" '+%Y-%m-%dT%H:%M:%SZ'` 取 UTC（macOS 的 BSD `stat`
+   没有 `-u`，不要用 `stat -u`）。
 2. 健康检查按第 9.1 节执行：公网工作台 Origin 使用生产自管 CA 检查 `/health`，宿主回环检查
    `http://127.0.0.1:4190/health/ready`；不要从公网 Origin 断言 `/health/ready`（Nginx 未把它定义成外部就绪契约）。
-3. 观测：结构化授权日志写在 `server.stderr.log`，事件为 `authorization.check`（`slow` / `recovered` /
-   `late_success` / `late_error` / `timeout` / `error` / `denied`），带 `run_id`、`attempt_id`、`phase`、
-   `duration_ms`、`slow_ms`、`timeout_ms`。`run.failed` 事件额外带
+3. 观测：结构化授权日志 `authorization.check`（`slow` / `recovered` / `late_success` / `late_error` /
+   `timeout` / `error` / `denied`）带 `run_id`、`attempt_id`、`phase`、`duration_ms`、`slow_ms`、
+   `timeout_ms`。**warn（slow/timeout/error 等）走 `server.stderr.log`，info（recovered）走
+   `server.stdout.log`，两路都要查**；只查 stderr 会把 `recovered` 漏掉。`run.failed` 事件额外带
    `authorization_phase` / `authorization_check_ms` / `authorization_slow_ms` / `authorization_timeout_ms` / `authorization_outcome`。
 4. 以部署截点查询（psql 中先执行：`\set deployed_at '2026-11-24T...Z'`）：
+   脚本化执行时不要用 `psql -c` 配 `:'deployed_at'`（psql 不对 `-c` 字符串做变量插值，会报
+   `syntax error at or near ":"`）；用 stdin heredoc 或直接写字面量时间。建议同时给 `ended_at` 口径，
+   覆盖“部署前创建、部署后失败”的长跑 attempt。
 
 ```sql
 select count(*) from run_attempts
  where error_code = 'AUTHORIZATION_CHECK_UNAVAILABLE'
    and created_at >= :'deployed_at'::timestamptz;
+
+select count(*) from run_attempts
+ where error_code = 'AUTHORIZATION_CHECK_UNAVAILABLE'
+   and ended_at >= :'deployed_at'::timestamptz;
 
 select occurred_at, safe_metadata from run_events
  where event_type = 'run.failed'
@@ -567,9 +577,10 @@ docker compose --env-file "${DWP_ROOT}/runtime.env" \
 
 ### 8.3 2026.11.24-02 补充：Nginx 宿主后端与启动探针
 
-该版本处理 11-24 上线后记录的两处缺陷：Nginx 上游解析到不可达 IPv6 导致 502
-`no live upstreams`，以及服务启动时执行能力探针偶发失败导致整个服务以
-`UnavailableRuntime` 运行到人工重启。无 schema、UI、公共 API 变更。
+该版本处理 11-24 上线后记录的三处缺陷：Nginx 上游解析到不可达 IPv6 导致 502
+`no live upstreams`；服务启动时执行能力探针偶发失败导致整个服务以
+`UnavailableRuntime` 运行到人工重启；任务线程对 Session 目标先探测 `/runs` 造成 404 噪声并
+使详情页误报“不存在”。无 schema、UI 框架或公共 API 变更。
 
 1. **部署前确认上游地址。** 默认 `DSH_WORK_UPSTREAM_HOST=host.docker.internal`；若容器内该名字
    同时解析出不可达 IPv6（Docker Desktop 常见 `fdc4:…`），把 `runtime.env` 的
@@ -597,13 +608,18 @@ docker compose --env-file "${DWP_ROOT}/runtime.env" \
 
    - `active-release` 为 `v2026.11.24-02`，公网 `/health` 与宿主 `/health/ready` 正常；
    - 110 次请求（60 顺序 + 50 并发，`xargs -P 10`）打员工端 `/api/workbench/v1/session`，
-     期望全部 401（或 200），**0 个 502/499**；Nginx 日志无 `no live upstreams` 与
-     `connect() to [fdc…]`；
+     期望全部 401（或 200），**0 个 502/499**。这**只是冒烟**：11-24-01 的实测出现过
+     “探测全 401、同期 Nginx 仍 397 次 IPv6 connect 失败 + 24 次 no live upstreams”；
+     502 是否修复必须以部署后 Nginx 日志为准——`connect() to [fdc…]` 与
+     `no live upstreams` 均为 0（`docker logs` 是滚动缓冲，计数只是下限）；
    - 以新 `DEPLOYED_AT` 执行 8.2 第 4 步 SQL，期望 0；`authorization.check` 慢日志可按
-     run/attempt/phase 关联；
+     run/attempt/phase 关联（warn 在 stderr、recovered 在 stdout）；
    - 吴军重跑一次：`run.started`、`assistant.delta`、`assistant.completed`、`run.completed` 均出现，
      `run_attempts.error_code` 为空；
-   - 受控 5–10 秒慢授权：有受控环境才执行，否则在事件记录写明“环境阻塞”，不得用普通 Run 替代。
+   - 任务线程：任务对话仍使用 `/thread/session-…`；打开时不再出现 `/runs/<sessionId>` 404
+     或“不存在”误报；“最近执行”用 `/thread/run-…` 正常进入执行详情；旧链接仍兼容；
+   - 受控 5–10 秒慢授权：有受控环境才执行；已有真实生产慢样本（slow→recovered、Run 成功）
+     可记“真实样本验收”，否则写“环境阻塞”，不得用普通 Run 替代。
 
 5. **已知边界（P1，不属本版本）**：DSH 每次 boot 都会重写
    `$DSH_HOME/profiles/acp/cordis.yml`，部署侧 preflight 与启动仍可能竞争；本版本只做有界重试，

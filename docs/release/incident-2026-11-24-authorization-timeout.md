@@ -111,11 +111,18 @@ R2 / P-A 接管时，应把该值与周期复核间隔、工具探测预算一�
   四项 CI（Static / Unit / Integration / Browser）success。
 - 部署：2026-11-24T06:14–06:16Z 完成，`active-release` 切换到 `v2026.11.24-01`，
   `/health` 200，日志已带 ISO 时间戳（`console-timestamps` 生效），迁移全部 skipped、零 DDL。
-- 授权观测：以部署截点 `DEPLOYED_AT`（UTC）为下界查询
-  `AUTHORIZATION_CHECK_UNAVAILABLE`（命令见[部署手册 8.2](mac-mini-deployment-runbook.md#82-授权复核超时热修20261124-01的观测与验收)）；
-  结果与证据位置在取得运维回传后回填，不预先写成 0。
-- 受控 5–10 秒慢授权：生产无受控延迟设施时记为“环境阻塞，待专用验收环境执行”，
-  不得用普通快速 Run 替代。
+- 授权观测：以部署截点 `DEPLOYED_AT=2026-11-24T06:16:13Z`（UTC）为下界查询
+  `AUTHORIZATION_CHECK_UNAVAILABLE`（命令见[部署手册 8.2](mac-mini-deployment-runbook.md#82-授权复核超时热修20261124-01的观测与验收)）：
+  按 `created_at` 与 `ended_at` 两种口径均为 **0**；部署后 6 次 attempt 的 `error_code` 全空。
+- 慢授权真实样本：`run-84c01904-53d0-443b-9683-fb4fedd73a79` 在 `scheduled` phase 出现
+  `authorization.check` `slow`（5148 ms，stderr/warn）→ `recovered`（8636 ms，stdout/info），
+  同一 run/attempt/phase，Run 最终 succeeded。该样本**非受控注入**，作为“真实生产慢样本”验收；
+  受控 6–8 秒注入仍是可选的后续补证，不再作为阻塞项。注意 `recovered` 走 stdout，排查时两路日志都要查。
+- 吴军重跑：2026-11-24T08:13–08:20Z 在员工端重跑 5 次，4 次 succeeded；主证据
+  `run-84c01904` 的 `run.started` / `assistant.delta` / `assistant.completed` / `run.completed`
+  齐全、`error_code` 空。另 1 次 `RUN_TIMEOUT`（2m21s，08:07）作为观察项，不是授权失败。
+  同次重跑暴露任务线程对 Session 目标先探测 `/runs` 的前端缺陷，已在 `2026.11.24-02` 一并修复，
+  见[上线后 502/503 事件记录](incident-2026-11-24-post-deploy-502-503.md#5-任务线程目标探测缺陷重跑暴露20261124-02-一并修复)。
 - 上线后另发现两个与本热修无关的故障（Nginx 双栈上游 502、启动探针 503），已单独立项修复，
   见[上线后 502/503 事件记录](incident-2026-11-24-post-deploy-502-503.md)；对应版本
   `2026.11.24-02` 的部署与验收见手册 8.3。
