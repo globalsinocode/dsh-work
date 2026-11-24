@@ -32,4 +32,5 @@
 | [企业知识库](catalog/knowledge.md) | 员工端“知识库”：按部门可见、三级操作权限、新建与授权调整、文档管理、对话中添加知识库、服务不可用（WK-S2）；管理端连接配置、全部知识库与跨部门授权、验证页提示（WK-S3）；真实 WeKnora 验收（WK-S4）。 | `KB-P0-01`、`KB-P0-02`、`KB-01`、`KB-02`、`KB-03`、`KB-04`、`KB-05`、`KB-06`、`KB-ADM-P0`、`KB-ADM-01`、`KB-ADM-02`、`KB-ADM-03`、`KB-P2` |
 | [钉钉接入](catalog/dingtalk.md) | 钉钉内登录即绑定与免登、`dingtalk` 会话、管理员代绑与解绑、钉钉集成页（含页面配置钉钉应用）与离职检查、个人设置 › 钉钉、钉钉容器内协作模式（DT-S1）；真实钉钉验收。 | `DT-ID-01`、`DT-ADM-01`、`DT-ADM-02`、`DT-ADM-03`、`DT-ADM-04`、`DT-EMP-01`、`DT-EMP-02`、`DT-EMP-P0`、`DT-P2` |
 | [管理端模块权限](catalog/admin-permissions.md) | 管理端按模块授权：菜单与落地页、无权访问、只读提示（P0）；按模块新建角色、钉钉模块管理员在集成页内处理绑定与员工与权限、钉钉模块的防提权规则（P1）。 | `AMP-P0-01`～`AMP-P0-03`、`AMP-P1-02`、`AMP-P1-03`、`AMP-01` |
+| [产品对比测评](catalog/product-evaluation.md) | dsh-work 与 DeepSeek Harness 应用（`dsh web`）的效果对比：办公场景（A 类）与治理、安全行为（C 类）；方法见[产品对比测评方案](../docs/design/product-comparison-evaluation-plan.md)。 | `PCE-A01`、`PCE-A02`、`PCE-A03`、`PCE-A04`、`PCE-A05`、`PCE-A06`、`PCE-A07`、`PCE-A08`、`PCE-A09`、`PCE-A10`、`PCE-A11`、`PCE-A12`、`PCE-A13`、`PCE-A14`、`PCE-A15`、`PCE-A16`、`PCE-A17`、`PCE-C01`、`PCE-C02`、`PCE-C03`、`PCE-C04` |
 | [验证记录](catalog/verification-log.md) | 留证约定（非验收标准）；不在工作树堆积某次跑测长文。 | — |

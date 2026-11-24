@@ -18,6 +18,7 @@
 | 代码级已实施（DLP-S1～S3），P2 已于 2026-11-23 以本机真实厂商验收结项（未按 PF-07 留证）：发往模型的敏感值遮盖与还原、密钥拦截 | [发往模型的数据防护方案](../design/model-data-protection-plan.md) |
 | DT-S1 账号绑定与钉钉内免登已实施到代码级，真实钉钉验收（P2）未做；DT-S2 工作通知与群组提醒未实施 | [钉钉接入方案](../design/dingtalk-integration-plan.md) |
 | EA-S1 已实施（发送员工身份、调用上下文请求头），未真实验收：外部业务应用经 MCP 接入所需的调用上下文 | [外部业务应用接入方案](../design/external-app-integration-plan.md) |
+| 草案，未执行：完整 dsh-work 与 DeepSeek Harness 应用在办公场景上的效果对比，以及治理与安全行为对比 | [产品对比测评方案](../design/product-comparison-evaluation-plan.md) |
 | 平台基线真实验收（PF-07） | [PF-07 验收手册](../development/pf07-platform-acceptance.md) |
 | 已实施（阶段 1～3，C 档 P2 已于 2026-10-28 在 Mac mini 通过）：执行容器、受控 Shell 与 Office 工具链的设计依据 | [执行隔离方案](../design/execution-isolation-plan.md) |
 | 进行中：执行观测、上下文延续与性能 | [Runtime 执行架构渐进优化方案](../design/runtime-execution-optimization-plan.md) |
