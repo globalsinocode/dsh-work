@@ -128,6 +128,28 @@ test('core database and identity configuration failures never expose readiness',
   }
 })
 
+test('invalid authorization check timeout fails startup before migrations or listening', async () => {
+  // 6000 低于生产下限：解析发生在 createDatabase/迁移与 listen 之前，子进程必须直接退出。
+  const app = await startApplication({ DSH_WORK_AUTHORIZATION_CHECK_TIMEOUT_MS: '6000' })
+  try {
+    await assert.rejects(ready(app), /backend exited/)
+    await assert.rejects(fetch(`${app.base}/health/live`))
+    assert.match(app.output(), /DSH_WORK_AUTHORIZATION_CHECK_TIMEOUT_MS/)
+  } finally { await app.close() }
+})
+
+test('a valid authorization check timeout starts and reports core readiness', async () => {
+  const app = await startApplication({ DSH_WORK_AUTHORIZATION_CHECK_TIMEOUT_MS: '10000' })
+  try {
+    await ready(app)
+    const response = await fetch(`${app.base}/health/ready`)
+    assert.equal(response.status, 200)
+    const body = await response.json() as { status: string; core: boolean }
+    assert.equal(body.status, 'ready')
+    assert.equal(body.core, true)
+  } finally { await app.close() }
+})
+
 test('restored queues fail explicitly when Runtime is unavailable even if scheduling is disabled', async () => {
   const { PostgresRunRepository } = await import('../../modules/run/postgres-run-repository.ts')
   const { RunOrchestrationService } = await import('../../modules/run/run-orchestration-service.ts')

@@ -7,7 +7,7 @@ import { IdentityAccessError } from '../modules/identity/auth-service.ts'
 import { skillConflict } from '../modules/skill/skill-errors.ts'
 import { httpResult, readJsonBody, Router } from './router.ts'
 
-interface LogRecord { event: string; traceId: string; method: string; path: string; status: number; code: string; message: string; responseStarted: boolean }
+interface LogRecord { event: string; at: string; traceId: string; method: string; path: string; status: number; code: string; message: string; responseStarted: boolean }
 function capture(t: TestContext) {
   const lines: unknown[][] = []
   t.mock.method(console, 'error', (...args: unknown[]) => { lines.push(args) })
@@ -40,12 +40,14 @@ test('P2-3 RED: thrown 5xx logs correlation and original sanitized message, not 
     assert.equal(logs().length, 1)
     const { raw, record } = logs()[0]!
     assert.equal(record.event, 'http.request.failed')
+    // 单行 JSON 必须自带有效 at，才能被 stderr 时间戳包装原样保留。
+    assert.equal(Number.isFinite(Date.parse(record.at)), true)
     assert.equal(record.traceId, error.traceId)
     assert.equal(record.method, 'POST'); assert.equal(record.status, 500)
     assert.equal(record.path, '/api/admin/v1/skills/:skillId/test')
     assert.equal(record.code, 'operation_failed'); assert.match(record.message, /synthetic service broke/)
     assert.doesNotMatch(raw, /message-secret|path-secret|query-secret|header-secret|cookie-secret|REQUEST_BODY_SECRET|INTERNAL_STACK_SECRET|CAUSE_SECRET|error-body-secret|error-headers-secret/)
-    assert.deepEqual(Object.keys(record).sort(), ['event', 'traceId', 'method', 'path', 'status', 'code', 'message', 'responseStarted'].sort())
+    assert.deepEqual(Object.keys(record).sort(), ['event', 'at', 'traceId', 'method', 'path', 'status', 'code', 'message', 'responseStarted'].sort())
   })
 })
 for (const [error, status] of [[skillConflict('已有草稿未完成'), 409], [new IdentityAccessError(421, 'unknown_request_origin', '请求入口不在允许列表中'), 421]] as const) {

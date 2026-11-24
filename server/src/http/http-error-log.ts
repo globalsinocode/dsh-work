@@ -20,7 +20,7 @@ export function logHttpFailure(input: {
       : input.error instanceof Error ? input.error.message
         : input.error === undefined ? input.safeMessage : '未知服务端错误'
     console.error(JSON.stringify({
-      event: 'http.request.failed', traceId: input.traceId,
+      event: 'http.request.failed', at: new Date().toISOString(), traceId: input.traceId,
       method: input.method.slice(0, 24), path: input.path.slice(0, 512),
       status: input.status, code: input.code,
       message: diagnosticMessage(typeof original === 'string' ? original : input.safeMessage),

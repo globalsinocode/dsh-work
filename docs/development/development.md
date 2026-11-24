@@ -28,6 +28,8 @@ pnpm test:e2e
 4. 不设置 `DSH_WORK_AUTH_MODE`。按 [独立登录指南](../release/local-authentication.md) 初始化首个管理员账号；AI Hub 按 [接入指南](../release/ai-hub-sso-integration.md) 配置后自动可用。
 5. 执行 `pnpm dev:all`，默认入口为员工端 `http://localhost:4174/workbench`、管理端 `http://localhost:4180/overview`、后端 `http://localhost:4190/health`。服务启动会自动运行 SQL 迁移并预检 DSH/Python；执行能力故障隔离见 [内部契约](internal-ports.md#执行能力故障隔离c9)；也可单独执行 `pnpm --filter @dsh-work/server db:migrate`。
 
+授权复核超时：`DSH_WORK_AUTHORIZATION_CHECK_TIMEOUT_MS` 只影响平台授权复核的硬超时（默认 `10000`ms，生产只接受 7000–30000 的无外围空白整数），不改变撤销语义；DSH 工具侧授权探测预算自动为该值 +5000ms，无需单独配置。单元测试通过 `authorizationCheckTimeoutMs` / `authorizationToolProbeTimeoutMs` 注入短值，不放宽生产 env。超时与晚到的观测说明见 [授权复核超时事件记录](../release/incident-2026-11-24-authorization-timeout.md)。
+
 使用 Bearer 认证的 MCP Connector 前，开发和生产都必须配置 `DSH_CREDENTIAL_MASTER_KEY`。执行 `openssl rand -base64 32` 生成 32 字节 Base64 密钥，并设置 `DSH_CREDENTIAL_MASTER_KEY_ID`（默认 `v1`）。密钥不进入 PostgreSQL 或 Git；数据库只保存 AES-256-GCM 密文、随机 nonce、认证标签和密钥版本。备份或恢复数据库时必须同时通过独立安全渠道备份或恢复对应主密钥，否则已有 Token 无法解密。
 
 本地完整模式与生产部署使用两套环境文件，且允许 DSH Runtime 目标不同：

@@ -30,6 +30,7 @@ import { preflightDshRuntime, resolveDshRuntimeInstallation } from './dsh-runtim
 import { compileRuntimeManifest } from './manifest-compiler.ts'
 import { canonicalJson, mcpToolSchemaDigest } from './canonical-json.ts'
 import type { RuntimeEvent, RuntimeManifest } from './runtime-types.ts'
+import type { AuthorizationCheckLogEntry } from './authorization-check.ts'
 
 const moduleDirectory = dirname(fileURLToPath(import.meta.url))
 const mockWorker = join(moduleDirectory, 'testing/mock-acp-worker.ts')
@@ -2209,6 +2210,192 @@ describe('current execution authorization', () => {
     assert.equal(result.errorCode, 'AUTHORIZATION_CHECK_UNAVAILABLE', result.errorMessage ?? undefined)
     unsubscribe()
     assert.equal(events.some(event => event.event_type === 'assistant.completed' || event.event_type === 'run.completed'), false)
+  })
+
+  it('allows a slow authorization check under the hard timeout and records the slow probe', async () => {
+    const logs: AuthorizationCheckLogEntry[] = []
+    const adapter = await createAdapter(200, undefined, undefined, {
+      authorizeExecution: async () => { await new Promise(resolve => setTimeout(resolve, 40)) },
+      authorizationCheckTimeoutMs: 120,
+      authorizationCheckSlowMs: 10,
+      authorizationLog: entry => logs.push(entry),
+    })
+    const input = manifest('run-slow-authorization', 'attempt-1', '[echo]')
+    const result = await (await adapter.execute(input)).done
+    // Runtime 成功状态是 'completed'（runtime-types.ts），不是 'succeeded'。
+    assert.equal(result.status, 'completed')
+    assert.equal(result.errorCode, undefined)
+    assert.ok(logs.some(entry => entry.phase === 'setup' && entry.outcome === 'slow'))
+    assert.ok(logs.some(entry => entry.phase === 'setup' && entry.outcome === 'recovered'))
+  })
+
+  it('fails after the configured hard timeout and records phase metadata', async () => {
+    const adapter = await createAdapter(200, undefined, undefined, {
+      authorizeExecution: () => new Promise<void>(() => undefined),
+      authorizationCheckTimeoutMs: 30,
+      authorizationCheckSlowMs: 5,
+      authorizationLog: () => undefined,
+    })
+    const input = manifest('run-hard-timeout', 'attempt-1', '[hang]')
+    const handle = await adapter.execute(input)
+    const events: RuntimeEvent[] = []
+    adapter.subscribe(input.run_id, event => events.push(event))
+    const result = await handle.done
+    assert.equal(result.status, 'failed')
+    assert.equal(result.errorCode, 'AUTHORIZATION_CHECK_UNAVAILABLE')
+    const failed = events.find(event => event.event_type === 'run.failed')
+    assert.equal(failed?.safe_metadata['authorization_phase'], 'setup')
+    assert.equal(failed?.safe_metadata['authorization_outcome'], 'timeout')
+    assert.equal(failed?.safe_metadata['authorization_timeout_ms'], 30)
+    assert.equal(failed?.safe_metadata['authorization_slow_ms'], 5)
+    assert.equal(typeof failed?.safe_metadata['authorization_check_ms'], 'number')
+  })
+
+  it('classifies synchronous permission_denied and generic throws like rejected promises', async () => {
+    // 同步 throw 必须在 Promise.resolve().then 内被规范化，与 reject 走同一分类路径。
+    const deniedLogs: AuthorizationCheckLogEntry[] = []
+    const denied = await createAdapter(200, undefined, undefined, {
+      authorizeExecution: () => { throw Object.assign(new Error('revoked'), { code: 'permission_denied' }) },
+      authorizationCheckTimeoutMs: 200,
+      authorizationCheckSlowMs: 100,
+      authorizationLog: entry => deniedLogs.push(entry),
+    })
+    const deniedInput = manifest('run-sync-denied', 'attempt-1', '[echo]')
+    const deniedHandle = await denied.execute(deniedInput)
+    const deniedEvents: RuntimeEvent[] = []
+    denied.subscribe(deniedInput.run_id, event => deniedEvents.push(event))
+    assert.equal((await deniedHandle.done).errorCode, 'AUTHORIZATION_REVOKED')
+    const deniedFailed = deniedEvents.find(event => event.event_type === 'run.failed')
+    assert.equal(deniedFailed?.safe_metadata['authorization_outcome'], 'denied')
+    assert.equal(deniedFailed?.safe_metadata['authorization_phase'], 'setup')
+    assert.ok(deniedLogs.some(entry => entry.outcome === 'denied' && entry.phase === 'setup'))
+
+    const errorLogs: AuthorizationCheckLogEntry[] = []
+    const broken = await createAdapter(200, undefined, undefined, {
+      authorizeExecution: () => { throw new Error('authorization database unavailable') },
+      authorizationCheckTimeoutMs: 200,
+      authorizationCheckSlowMs: 100,
+      authorizationLog: entry => errorLogs.push(entry),
+    })
+    const brokenInput = manifest('run-sync-error', 'attempt-1', '[echo]')
+    const brokenHandle = await broken.execute(brokenInput)
+    const brokenEvents: RuntimeEvent[] = []
+    broken.subscribe(brokenInput.run_id, event => brokenEvents.push(event))
+    assert.equal((await brokenHandle.done).errorCode, 'AUTHORIZATION_CHECK_UNAVAILABLE')
+    const brokenFailed = brokenEvents.find(event => event.event_type === 'run.failed')
+    assert.equal(brokenFailed?.safe_metadata['authorization_outcome'], 'error')
+    assert.equal(brokenFailed?.safe_metadata['authorization_phase'], 'setup')
+    assert.equal(brokenFailed?.safe_metadata['authorization_timeout_ms'], 200)
+    assert.ok(errorLogs.some(entry => entry.outcome === 'error'))
+  })
+
+  it('cancellation wins over a never-settling setup authorization check', async () => {
+    const logs: AuthorizationCheckLogEntry[] = []
+    const adapter = await createAdapter(200, undefined, undefined, {
+      authorizeExecution: () => new Promise<void>(() => undefined),
+      // 硬超时故意设长：若取消未优先，测试会等 10 秒而不是快速失败。
+      authorizationCheckTimeoutMs: 10_000,
+      authorizationCheckSlowMs: 5_000,
+      authorizationLog: entry => logs.push(entry),
+    })
+    const input = manifest('run-cancel-never-settling', 'attempt-1', '[hang]')
+    const handle = await adapter.execute(input)
+    const events: RuntimeEvent[] = []
+    adapter.subscribe(input.run_id, event => events.push(event))
+    await new Promise(resolve => setTimeout(resolve, 10))
+    const cancelledAt = performance.now()
+    assert.deepEqual(await adapter.cancel(input.run_id, 'usr-test'), { accepted: true })
+    // 无需 release 挂起的授权；取消必须在 2 秒内收敛。
+    const result = await Promise.race([
+      handle.done,
+      new Promise<never>((_resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error('cancellation did not converge')), 2_000)
+        timer.unref()
+      }),
+    ])
+    assert.equal(result.status, 'cancelled')
+    assert.ok(performance.now() - cancelledAt < 2_000)
+    assert.equal(events.some(event => event.event_type === 'run.failed'), false)
+    // 取消不得被记录成授权 timeout/error。
+    assert.equal(logs.some(entry => entry.outcome === 'timeout' || entry.outcome === 'error'), false)
+  })
+
+  it('starts periodic authorization checks only after run.started', async () => {
+    let authorizeCalls = 0
+    let callsAtRunStarted: number | undefined
+    const adapter = await createAdapter(200, undefined, undefined, {
+      // 初始化拉长到 2.5 秒：旧实现会在 init 前就开始 2 秒周期复核，run.started 时已多出一次调用。
+      process: {
+        command: process.execPath,
+        args: ['--experimental-strip-types', mockWorker, '--delay-init=2500'],
+        cwd: process.cwd(),
+      },
+      authorizeExecution: async () => { authorizeCalls += 1 },
+      authorizationCheckTimeoutMs: 10_000,
+      authorizationCheckSlowMs: 5_000,
+    })
+    const input = manifest('run-scheduled-after-started', 'attempt-1', '[echo]')
+    const handle = await adapter.execute(input)
+    adapter.subscribe(input.run_id, event => {
+      if (event.event_type === 'run.started') callsAtRunStarted = authorizeCalls
+    })
+    assert.equal((await handle.done).status, 'completed')
+    // run.started 之前只有 setup 与 pre_start；周期复核尚未开始。
+    assert.equal(callsAtRunStarted, 2)
+  })
+
+  it('records the adapter-side tool phase budget through the platform tool bridge', async () => {
+    // mock worker 的 [remote-exec] 会先 POST /authorize-execution（走真实 Platform Tool Bridge），
+    // 再调用 /subprocess/exec，因此能覆盖 Adapter 的 tool phase 与慢日志。
+    const logs: AuthorizationCheckLogEntry[] = []
+    const adapter = await createAdapter(200, undefined, undefined, {
+      remoteExecution: {
+        exec: async () => ({ exitCode: 0, stdout: 'a.txt\n', stderr: '', truncated: false, timedOut: false }),
+        waitUntilIdle: async () => 'idle' as const,
+        release: async () => undefined,
+      },
+      authorizeExecution: async () => { await new Promise(resolve => setTimeout(resolve, 40)) },
+      authorizationCheckTimeoutMs: 200,
+      authorizationCheckSlowMs: 10,
+      authorizationLog: entry => logs.push(entry),
+    })
+    const input = manifest('run-tool-phase', 'attempt-1', '[remote-exec]')
+    assert.equal((await (await adapter.execute(input)).done).status, 'completed')
+    assert.ok(logs.some(entry => entry.phase === 'tool' && entry.outcome === 'slow'))
+  })
+
+  it('commits an interrupted answer only once when a Run timeout lands inside an authorization check', async () => {
+    // [remote-exec] 先经 bridge 做两次 tool 探测，再产出文本；post_prompt 的授权复核挂住，
+    // 让执行 deadline 在 verify 内触发 timeout。verify 的 catch 与 run() 外层 catch 都会
+    // 调用 finishFromCancellationCause，terminal 守卫必须保证 assistant.completed 只发一次。
+    let calls = 0
+    const adapter = await createAdapter(100, undefined, undefined, {
+      remoteExecution: {
+        exec: async () => ({ exitCode: 0, stdout: 'a.txt\n', stderr: '', truncated: false, timedOut: false }),
+        waitUntilIdle: async () => 'idle' as const,
+        release: async () => undefined,
+      },
+      authorizeExecution: async () => {
+        calls += 1
+        // setup(1)、pre_start(2)、tool(3/4) 正常；post_prompt(5) 挂住。
+        if (calls >= 5) await new Promise<void>(() => undefined)
+      },
+      authorizationCheckTimeoutMs: 10_000,
+      authorizationCheckSlowMs: 5_000,
+    })
+    const input = manifest('run-timeout-in-verify', 'attempt-1', '[remote-exec]')
+    input.limits.timeout_seconds = 1
+    input.budget.reservation.duration_ms = 1000
+    const handle = await adapter.execute(input)
+    const events: RuntimeEvent[] = []
+    adapter.subscribe(input.run_id, event => events.push(event))
+    const result = await handle.done
+    assert.equal(result.status, 'failed')
+    assert.equal(result.errorCode, 'RUN_TIMEOUT')
+    const completed = events.filter(event => event.event_type === 'assistant.completed')
+    assert.equal(completed.length, 1)
+    assert.equal(completed[0]?.safe_metadata['interrupted'], 'timeout')
+    assert.equal(calls, 5)
   })
 })
 
