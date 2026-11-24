@@ -141,6 +141,8 @@ import { IdentityAdministrationService } from './modules/identity/administration
 import { IdentityDirectorySyncService } from './modules/identity/directory-sync-service.ts'
 import { RequestError, invalidRequest } from './domain/request-errors.ts'
 import { LocalObjectStorage } from './infrastructure/storage/local-object-storage.ts'
+import { installTimestampedConsole } from './observability/console-timestamps.ts'
+import { authorizationToolProbeTimeoutMs, resolveAuthorizationCheckTimeoutMs } from './modules/runtime/authorization-check.ts'
 
 const port = Number(process.env.DSH_WORK_SERVER_PORT ?? 4190)
 // server/package.json sits one level above both src/main.ts and dist/main.js.
@@ -151,6 +153,10 @@ async function start() {
   const databaseUrl = process.env.DSH_WORK_DATABASE_URL
   // Sessions, identities and all business data live in PostgreSQL; there is no in-memory mode.
   if (!databaseUrl) throw invalidRequest('必须配置 DSH_WORK_DATABASE_URL：服务端会话与业务数据都保存在 PostgreSQL 中')
+  // 授权复核硬超时：非法值必须在数据库迁移和监听端口之前让启动失败。
+  const authorizationCheckTimeoutMs = resolveAuthorizationCheckTimeoutMs(
+    process.env.DSH_WORK_AUTHORIZATION_CHECK_TIMEOUT_MS,
+  )
   // Validate authentication configuration before any database mutation.
   const identityConfiguration = loadStartupIdentityConfiguration()
   const database = createDatabase({ url: databaseUrl })
@@ -354,6 +360,8 @@ async function start() {
     protocolVersion: dshInstallation.protocolVersion,
     launchMode: dshInstallation.launchMode,
     process: dshInstallation.process,
+    authorizationCheckTimeoutMs,
+    authorizationToolProbeTimeoutMs: authorizationToolProbeTimeoutMs(authorizationCheckTimeoutMs),
     modelGateway,
     authorizeExecution: async manifest => {
       if (!orchestration) throw new Error('运行授权服务尚未就绪')
@@ -805,4 +813,6 @@ async function start() {
   process.once('SIGTERM', shutdown)
 }
 
+// 先安装单行时间戳：此后所有非结构化 console 调用（含迁移/启动失败）都是一个带 ISO 时间的物理行。
+installTimestampedConsole()
 await start()

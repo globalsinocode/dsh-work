@@ -426,6 +426,145 @@ bash "${DWP_BUNDLE}/scripts/deploy/release.sh" "${DWP_VERSION}" "${DWP_ROOT}"
 也不要重跑同版本 `release.sh`，脚本会拒绝覆盖活动 Release。`DSH_WORK_AUTO_DEPLOY_ENABLED=false`
 只暂停 watcher，不禁止这里明确执行的人工部署。
 
+### 8.1 发布前门禁：迁移账本一致与自动部署已停止
+
+发布前必须先证明 release 迁移与生产账本的完整 `(version, checksum)` 集合一致：没有待应用迁移、
+没有生产独有版本、没有已执行迁移被改过或 checksum 为 NULL。只比较文件名会漏过这些情况。
+
+```bash
+set -euo pipefail
+DWP_ROOT=<deploy_root>
+RUNTIME_ENV="${DWP_ROOT}/runtime.env"
+RELEASE_DIR=<clean-checkout-of-target-commit>
+LEDGER=$(mktemp)
+RELEASE_MIGRATIONS=$(mktemp)
+trap 'rm -f "${LEDGER}" "${RELEASE_MIGRATIONS}"' EXIT
+
+set -a
+# shellcheck disable=SC1090
+source "${RUNTIME_ENV}"
+set +a
+
+node --input-type=module - "${RELEASE_DIR}/server/migrations" > "${RELEASE_MIGRATIONS}" <<'NODE'
+import { createHash } from 'node:crypto'
+import { readdir, readFile } from 'node:fs/promises'
+import { resolve } from 'node:path'
+const directory = process.argv[2]
+const files = (await readdir(directory)).filter(name => /^\d{4}_[a-z0-9_]+\.sql$/.test(name)).sort()
+for (const version of files) {
+  const sql = await readFile(resolve(directory, version), 'utf8')
+  const checksum = createHash('sha256').update(sql.replaceAll('\r\n', '\n')).digest('hex')
+  process.stdout.write(`${version}\t${checksum}\n`)
+}
+NODE
+
+# 与 release.sh 的 run_compose 一致：base compose + 已生成端点 compose 两个 -f。
+docker compose --env-file "${RUNTIME_ENV}" \
+  -f "${RELEASE_DIR}/deploy/compose.yaml" \
+  -f "${DWP_ROOT}/generated/compose.endpoints.yaml" \
+  exec -T postgres \
+  psql -U "${DSH_WORK_POSTGRES_USER}" -d "${DSH_WORK_POSTGRES_DB}" -At -F $'\t' \
+  -c "select version, coalesce(checksum,'NULL') from schema_migrations order by version" \
+  > "${LEDGER}"
+
+! grep -q $'\tNULL$' "${LEDGER}"
+diff -u "${RELEASE_MIGRATIONS}" "${LEDGER}"
+```
+
+`diff` 无输出且退出 0 才继续；任何差异都停止发布并调查，不得为了放行而写库或修改已发布迁移。
+
+同时停止自动部署并排除在途竞态。只把 `DSH_WORK_AUTO_DEPLOY_ENABLED` 改成 `false` 或只 `grep`
+配置，不能中止已经越过入口检查的 watcher：
+
+```bash
+set -euo pipefail
+DWP_ROOT=<deploy_root>
+LABEL=com.company.dsh-work.release-watcher
+TARGET="gui/$(id -u)/${LABEL}"
+
+grep -E '^(DSH_WORK_GITHUB_REPOSITORY|DSH_WORK_AUTO_DEPLOY_ENABLED)=' "${DWP_ROOT}/runtime.env"
+grep -qx 'DSH_WORK_GITHUB_REPOSITORY=globalsinocode/dsh-work' "${DWP_ROOT}/runtime.env"
+grep -qx 'DSH_WORK_AUTO_DEPLOY_ENABLED=false' "${DWP_ROOT}/runtime.env"
+
+launchctl bootout "${TARGET}" 2>/dev/null || true
+if launchctl print "${TARGET}" >/dev/null 2>&1; then
+  echo "release watcher 仍在运行，停止发布" >&2
+  exit 1
+fi
+
+for lock in "${DWP_ROOT}/automation/.watch.lock" "${DWP_ROOT}/.release.lock"; do
+  if [[ -r "${lock}/pid" ]]; then
+    pid=$(<"${lock}/pid")
+    if [[ "${pid}" =~ ^[0-9]+$ ]] && kill -0 "${pid}" 2>/dev/null; then
+      echo "存在活动部署锁：${lock} (PID ${pid})，停止发布" >&2
+      exit 1
+    fi
+    echo "存在陈旧锁：${lock}；先按第 11 节调查和清理，不自动删除" >&2
+    exit 1
+  elif [[ -e "${lock}" ]]; then
+    echo "存在无法判定的锁：${lock}，停止发布" >&2
+    exit 1
+  fi
+done
+```
+
+恢复自动部署不是发布步骤：生产手动部署与验收完成后，由用户按第 10 节明确决定是否把
+`DSH_WORK_AUTO_DEPLOY_ENABLED` 改回 `true`，再从已验证 bundle 执行 `install-release-watcher.sh`
+并检查 `launchctl print`。
+
+### 8.2 授权复核超时热修（2026.11.24-01）的观测与验收
+
+该版本把平台授权复核从“5 秒硬失败”改为“5 秒慢日志 + 10 秒硬失败”，并补齐阶段/耗时/晚到的证据；
+发布与验收要点：
+
+1. 部署后立即记录 `DEPLOYED_AT`（UTC），例如 `date -u +%Y-%m-%dT%H:%M:%SZ`；后文查询必须用它作下界，
+   不能使用滚动 24 小时窗口混入部署前旧故障。
+2. 健康检查按第 9.1 节执行：公网工作台 Origin 使用生产自管 CA 检查 `/health`，宿主回环检查
+   `http://127.0.0.1:4190/health/ready`；不要从公网 Origin 断言 `/health/ready`（Nginx 未把它定义成外部就绪契约）。
+3. 观测：结构化授权日志写在 `server.stderr.log`，事件为 `authorization.check`（`slow` / `recovered` /
+   `late_success` / `late_error` / `timeout` / `error` / `denied`），带 `run_id`、`attempt_id`、`phase`、
+   `duration_ms`、`slow_ms`、`timeout_ms`。`run.failed` 事件额外带
+   `authorization_phase` / `authorization_check_ms` / `authorization_slow_ms` / `authorization_timeout_ms` / `authorization_outcome`。
+4. 以部署截点查询（psql 中先执行：`\set deployed_at '2026-11-24T...Z'`）：
+
+```sql
+select count(*) from run_attempts
+ where error_code = 'AUTHORIZATION_CHECK_UNAVAILABLE'
+   and created_at >= :'deployed_at'::timestamptz;
+
+select occurred_at, safe_metadata from run_events
+ where event_type = 'run.failed'
+   and safe_metadata->>'error_code' = 'AUTHORIZATION_CHECK_UNAVAILABLE'
+   and occurred_at >= :'deployed_at'::timestamptz
+ order by occurred_at desc limit 20;
+```
+
+期望自部署截点起计数为 0；若不为 0，每条失败事件都必须能由 `authorization_*` 元数据和同一
+run/attempt/phase 的 slow/timeout/late 日志解释。
+
+5. 诊断期需要数据库慢查询证据时，临时开启并记录后恢复（不要在排障后长期保留）：
+
+```bash
+docker compose --env-file "${DWP_ROOT}/runtime.env" \
+  -f "${DWP_ROOT}/current/deploy/compose.yaml" \
+  -f "${DWP_ROOT}/generated/compose.endpoints.yaml" exec -T postgres \
+  psql -U "${DSH_WORK_POSTGRES_USER}" -d "${DSH_WORK_POSTGRES_DB}" -c "alter system set log_min_duration_statement = 3000"
+docker compose --env-file "${DWP_ROOT}/runtime.env" \
+  -f "${DWP_ROOT}/current/deploy/compose.yaml" \
+  -f "${DWP_ROOT}/generated/compose.endpoints.yaml" exec -T postgres \
+  psql -U "${DSH_WORK_POSTGRES_USER}" -d "${DSH_WORK_POSTGRES_DB}" -c "select pg_reload_conf()"
+# 排查结束后恢复：alter system reset log_min_duration_statement; select pg_reload_conf();
+```
+
+6. 受控 5–10 秒慢授权验收（Task 9 Step 3）：普通业务 Run 成功只能算冒烟。必须在隔离/受控环境让一次
+   `setup` 或 `scheduled` 授权稳定延迟 6～8 秒且最终成功，确认 Run 未被工具侧旧 6 秒预算拒绝、
+   日志先 `slow` 后 `recovered`、同一 run/attempt/phase 可关联、Run 最终成功且没有第二个并发授权重试。
+   没有可安全使用的受控延迟设施时，标记“环境阻塞，待专用验收环境执行”，不得用普通快速 Run 替代。
+7. 一周复核：仍以 `DEPLOYED_AT` 为下界统计；0 次，或每条都能在慢日志/事件里看到 phase、耗时与 late 结果。
+   复核完成后由用户决定是否恢复自动 watcher（按 8.1 与第 10 节）。
+
+事件背景、根因与回滚见[授权复核超时事件记录](incident-2026-11-24-authorization-timeout.md)。
+
 ## 9. 完成首次验收与备份
 
 ### 9.1 服务和入口

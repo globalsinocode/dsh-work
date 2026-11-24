@@ -25,6 +25,8 @@ const readableImageExtensions = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp
  * Missing or malformed policy data intentionally produces an empty allow-list.
  */
 export function apply(ctx) {
+  // Adapter 为正式 Attempt 注入授权探测预算；缺省（目录探测/旧调用方）保持历史 6 秒。
+  const authorizationProbeTimeoutMs = parseAuthorizationProbeTimeoutMs(process.env.DSH_AUTHORIZATION_PROBE_TIMEOUT_MS)
   registerPlatformTools(ctx)
   publishRuntimeToolCatalog(
     ctx,
@@ -63,7 +65,7 @@ export function apply(ctx) {
     if (!Number.isInteger(maximumCalls) || maximumCalls < 0 || ++calls > maximumCalls) return { kind: 'deny', reason: '当前 Attempt 工具调用次数已达上限，请停止调用并报告原因' }
     const currentAuthorizationDenial = async () => {
       if (!requireCurrentAuthorization) return undefined
-      const result = await authorizeCurrentExecution(authorizationSocket, execution.signal, execution.name)
+      const result = await authorizeCurrentExecution(authorizationSocket, execution.signal, execution.name, authorizationProbeTimeoutMs)
       if (result === 'disabled') return disabledToolReason(execution.name)
       if (result === 'busy') return '执行容器仍在清理上一条命令，本次工具调用未执行，请稍后重试'
       return result === 'authorized' ? undefined : '当前执行授权不可用或已撤销'
@@ -256,6 +258,24 @@ function parseApprovalMode(value) {
 
 function parseApprovalLog(value) {
   return value && isAbsolute(value) ? resolve(value) : undefined
+}
+
+/**
+ * 工具侧授权探测预算。Adapter 为正式 Attempt 注入 authorization timeout + 5000ms（默认 15000），
+ * 必须严格大于旧实现固定的 6000，否则授权可能在 Adapter 硬超时之前先被客户端判死；
+ * 未注入时保持旧默认以兼容目录探测与旧调用方；非法值让插件加载失败（fail closed，不静默降级）。
+ */
+function parseAuthorizationProbeTimeoutMs(value) {
+  const LEGACY_PROBE_TIMEOUT_MS = 6000
+  if (value === undefined || value === '') return LEGACY_PROBE_TIMEOUT_MS
+  if (!/^\d+$/.test(value)) {
+    throw new Error(`DSH_AUTHORIZATION_PROBE_TIMEOUT_MS 必须是无外围空白的整数毫秒：${value}`)
+  }
+  const parsed = Number(value)
+  if (!Number.isSafeInteger(parsed) || parsed <= LEGACY_PROBE_TIMEOUT_MS) {
+    throw new Error(`DSH_AUTHORIZATION_PROBE_TIMEOUT_MS 必须大于 ${LEGACY_PROBE_TIMEOUT_MS}：${value}`)
+  }
+  return parsed
 }
 
 function recordApprovalRequest(path, execution) {
@@ -745,10 +765,10 @@ export function disabledToolReason(toolName) {
  * 执行授权探测。返回 'authorized'、'disabled'（Runtime 紧急停用了该内置工具，只拒绝本次调用）
  * 或 'denied'（授权已撤销或不可用）。
  */
-function authorizeCurrentExecution(socketPath, signal, toolName) {
+function authorizeCurrentExecution(socketPath, signal, toolName, probeTimeoutMs = 6000) {
   if (!socketPath) return Promise.resolve('denied')
   return new Promise(resolve => {
-    const timeout = globalThis.AbortSignal.timeout(6000)
+    const timeout = globalThis.AbortSignal.timeout(probeTimeoutMs)
     const req = request({ socketPath, path: '/authorize-execution', method: 'POST',
       headers: typeof toolName === 'string' && /^[A-Za-z0-9_.-]{1,200}$/.test(toolName) ? { 'x-dsh-tool-name': toolName } : {},
       signal: signal ? globalThis.AbortSignal.any([signal, timeout]) : timeout }, response => {

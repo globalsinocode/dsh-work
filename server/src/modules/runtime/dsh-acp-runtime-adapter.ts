@@ -11,6 +11,15 @@ import {
   type AcpSessionUpdate,
 } from './acp-json-rpc-client.ts'
 import { createPlatformToolBridge, type PlatformToolOperationLifecycle } from './platform-tool-bridge.ts'
+import {
+  AUTHORIZATION_CHECK_SLOW_MS,
+  AUTHORIZATION_CHECK_TIMEOUT_MS,
+  authorizationCheckLogEntry,
+  authorizationToolProbeTimeoutMs,
+  writeAuthorizationCheckLog,
+  type AuthorizationCheckLogEntry,
+  type AuthorizationCheckPhase,
+} from './authorization-check.ts'
 import { createRemoteSubprocessGateway, type ContainerCommandAudit } from './remote-subprocess-gateway.ts'
 import { assertRealWorkspaceDirectory } from '../../infrastructure/storage/workspace-directory.ts'
 import type { ContainerCommand, ContainerCommandResult } from './execution-backend.ts'
@@ -95,6 +104,9 @@ interface ExecutionRecord {
   timeout?: NodeJS.Timeout
   timeoutPhase?: 'setup' | 'execution'
   authorizationTimer?: NodeJS.Timeout
+  /** 一次性取消信号：cancel/timeout/close 首次写入 cancelCause 后 resolve，授权复核的 race 等它。 */
+  authorizationCancelled: Promise<void>
+  resolveAuthorizationCancelled: () => void
   cancelCause?: RuntimeCancelCause | 'timeout' | 'shutdown'
   assistantText: string
   outputTruncated: boolean
@@ -150,6 +162,14 @@ export interface DshAcpRuntimeAdapterConfiguration {
    * Loop deadline (and a hung spawn still fails fast).
    */
   setupTimeoutMs?: number
+  /** 平台授权复核硬超时。生产默认 10 秒；测试可直接注入短值。 */
+  authorizationCheckTimeoutMs?: number
+  /** 慢日志阈值；达到后记录但继续等待。默认 5 秒。 */
+  authorizationCheckSlowMs?: number
+  /** DSH 工具侧探测预算；默认 authorizationCheckTimeoutMs + 5 秒。 */
+  authorizationToolProbeTimeoutMs?: number
+  /** 测试注入；默认写 stderr JSON。 */
+  authorizationLog?: (entry: AuthorizationCheckLogEntry) => void
   /** Supplied by the production composition root; isolated adapter tests may omit it. */
   authorizeExecution?: (manifest: RuntimeManifest) => Promise<void>
   /**
@@ -366,6 +386,8 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
 
     let resolveDone: (snapshot: RuntimeExecutionSnapshot) => void = () => undefined
     const done = new Promise<RuntimeExecutionSnapshot>(resolve => { resolveDone = resolve })
+    let resolveAuthorizationCancelled: () => void = () => undefined
+    const authorizationCancelled = new Promise<void>(resolve => { resolveAuthorizationCancelled = resolve })
     const acceptedAt = this.now()
     const snapshot: RuntimeExecutionSnapshot = {
       runId: manifest.run_id,
@@ -386,6 +408,8 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
       listeners: new Set(),
       done,
       resolveDone,
+      authorizationCancelled,
+      resolveAuthorizationCancelled,
       assistantText: '',
       outputTruncated: false,
       terminal: false,
@@ -427,6 +451,7 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
     // is unchanged — only the recorded cause flows differently.
     record.bridge?.abort()
     record.cancelCause = cancelCause
+    record.resolveAuthorizationCancelled()
     this.setStatus(record, 'cancel_requested')
     this.emit(record, 'run.cancel_requested', '正在取消任务', { requested_by: requestedBy, cause: cancelCause })
     if (record.client !== undefined && record.acpSessionId !== undefined) {
@@ -570,6 +595,7 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
     for (const record of active) {
       record.bridge?.abort()
       record.cancelCause = 'shutdown'
+      record.resolveAuthorizationCancelled()
       this.setStatus(record, 'cancel_requested')
       this.emit(record, 'run.cancel_requested', 'Runtime 正在关闭任务', { requested_by: 'runtime-shutdown' })
       if (record.client !== undefined && record.acpSessionId !== undefined) {
@@ -603,7 +629,7 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
   private async run(record: ExecutionRecord, workspaceDirectory: string): Promise<void> {
     const runStartMono = performance.now()
     try {
-      await this.verifyExecutionAuthorization(record)
+      await this.verifyExecutionAuthorization(record, true, 'setup')
       if (record.terminal) return
       await this.mountOriginalFiles(record, workspaceDirectory)
       this.setStatus(record, 'starting')
@@ -713,9 +739,9 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
       const authorizeTool = remoteExecution
         ? async () => {
           await this.awaitExecutionContainerIdle(record, remoteExecution)
-          await this.verifyExecutionAuthorization(record)
+          await this.verifyExecutionAuthorization(record, true, 'tool')
         }
-        : this.configuration.authorizeExecution ? () => this.verifyExecutionAuthorization(record) : undefined
+        : this.configuration.authorizeExecution ? () => this.verifyExecutionAuthorization(record, true, 'tool') : undefined
       if (Object.keys(platformTools).length || this.configuration.authorizeExecution || remoteExecution) {
         record.bridge = await createPlatformToolBridge(platformTools as Record<string, PlatformToolRegistration>, record.manifest.limits.max_tool_calls,
           authorizeTool,
@@ -759,6 +785,13 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
             ...processConfiguration.env,
             ...(record.bridge ? { DSH_PLATFORM_TOOL_SOCKET: record.bridge.socket } : {}),
             DSH_REQUIRE_CURRENT_AUTHORIZATION: String(Boolean(this.configuration.authorizeExecution || this.configuration.remoteExecution)),
+            // 工具侧单次探测预算：3 秒容器静止等待 + 授权硬超时 + 2 秒 IPC 余量，不得先于 Adapter 判死。
+            DSH_AUTHORIZATION_PROBE_TIMEOUT_MS: String(
+              this.configuration.authorizationToolProbeTimeoutMs
+                ?? authorizationToolProbeTimeoutMs(
+                  this.configuration.authorizationCheckTimeoutMs ?? AUTHORIZATION_CHECK_TIMEOUT_MS,
+                ),
+            ),
             DSH_PERMISSION_MODE: 'workspace-write',
             DSH_SNAPSHOT: 'record',
             DSH_SNAPSHOT_SESSIONS_ROOT: join(record.snapshot.attemptDirectory, 'sessions'),
@@ -785,7 +818,6 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
       )
       record.client = client
       const spawnMono = performance.now()
-      this.scheduleAuthorizationCheck(record)
       await client.initialize()
       if (record.terminal) return
       const initializedMono = performance.now()
@@ -796,7 +828,7 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
         this.finishFromCancellationCause(record)
         return
       }
-      await this.verifyExecutionAuthorization(record)
+      await this.verifyExecutionAuthorization(record, true, 'pre_start')
       if (record.terminal) return
       this.armDeadline(record, 'execution', record.manifest.limits.timeout_seconds * 1000)
       this.setStatus(record, 'running')
@@ -809,12 +841,14 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
         worker_init_ms: Math.round(initializedMono - spawnMono),
         session_ready_ms: Math.round(sessionReadyMono - initializedMono),
       })
+      // 周期复核在 run.started 之后启动：Worker 初始化窗口由 pre_start 检查兜底。
+      this.scheduleAuthorizationCheck(record)
 
       record.promptStartMono = performance.now()
       const response = await client.prompt(record.acpSessionId, renderUserPrompt(record.manifest))
       const promptDoneMono = performance.now()
       if (record.terminal) return
-      await this.verifyExecutionAuthorization(record)
+      await this.verifyExecutionAuthorization(record, true, 'post_prompt')
       if (record.terminal) return
       const stopReason = response['stopReason']
       if (record.cancelCause !== undefined) {
@@ -859,7 +893,7 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
         record.manifest.mcp_connections?.map(connection => connection.server_name) ?? [],
       )
       await this.recordMcpInvocations(record, evidence)
-      await this.verifyExecutionAuthorization(record)
+      await this.verifyExecutionAuthorization(record, true, 'post_collect')
       if (record.terminal) return
       const toolCalls = this.reportToolCalls(record, evidence)
       if (record.assistantText.length > 0) {
@@ -1081,32 +1115,116 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
     }
   }
 
-  private async verifyExecutionAuthorization(record: ExecutionRecord, closeClientOnFailure = true): Promise<void> {
+  private writeAuthorizationLog(
+    record: ExecutionRecord,
+    phase: AuthorizationCheckPhase,
+    outcome: AuthorizationCheckLogEntry['outcome'],
+    durationMs: number,
+    slowMs: number,
+    timeoutMs: number,
+    error?: unknown,
+  ): void {
+    const entry = authorizationCheckLogEntry({
+      level: outcome === 'recovered' ? 'info' : 'warn',
+      runId: record.manifest.run_id,
+      attemptId: record.manifest.attempt_id,
+      phase,
+      outcome,
+      durationMs,
+      slowMs,
+      timeoutMs,
+      error,
+    })
+    const write = this.configuration.authorizationLog ?? writeAuthorizationCheckLog
+    try {
+      write(entry)
+    } catch {
+      // 观测不能覆盖真实的授权失败或影响 Run 终态。
+    }
+  }
+
+  /**
+   * 取消/超时/关闭优先于授权硬超时：等一次性 cancel 信号，避免为每次周期复核累积 AbortSignal listener。
+   * 底层授权 Promise 可以晚到完成，但 Run 终态不再被它阻塞。
+   */
+  private async waitForAuthorizationCancellation(record: ExecutionRecord): Promise<never> {
+    if (record.cancelCause !== undefined) throw Object.assign(new Error('Attempt 已取消'), { authorizationCancelled: true })
+    await record.authorizationCancelled
+    throw Object.assign(new Error('Attempt 已取消'), { authorizationCancelled: true })
+  }
+
+  private async verifyExecutionAuthorization(
+    record: ExecutionRecord,
+    closeClientOnFailure = true,
+    phase: AuthorizationCheckPhase = 'unknown',
+  ): Promise<void> {
     if (record.terminal) throw new Error('Attempt 已结束')
     const authorize = this.configuration.authorizeExecution
     if (!authorize) return
+    const timeoutMs = this.configuration.authorizationCheckTimeoutMs ?? AUTHORIZATION_CHECK_TIMEOUT_MS
+    const slowMs = Math.min(this.configuration.authorizationCheckSlowMs ?? AUTHORIZATION_CHECK_SLOW_MS, timeoutMs)
+    const started = performance.now()
+    let settled = false
     let timer: NodeJS.Timeout | undefined
+    // Promise.resolve().then 同时规范化同步 throw 与异步 reject，二者进入同一分类路径。
+    const authorizePromise = Promise.resolve().then(() => authorize(record.manifest))
+    // 晚到结果只作观测，绝不能改变终态；取消/超时/关闭后的晚到拒绝不进入 error/timeout 计数。
+    authorizePromise.then(
+      () => {
+        if (settled) this.writeAuthorizationLog(record, phase, 'late_success', performance.now() - started, slowMs, timeoutMs)
+      },
+      error => {
+        if (!settled || record.cancelCause !== undefined) return
+        this.writeAuthorizationLog(record, phase, 'late_error', performance.now() - started, slowMs, timeoutMs, error)
+      },
+    )
+    const slowTimer = setTimeout(() => {
+      if (!settled) this.writeAuthorizationLog(record, phase, 'slow', performance.now() - started, slowMs, timeoutMs)
+    }, slowMs)
+    slowTimer.unref()
     try {
       await Promise.race([
-        authorize(record.manifest),
+        authorizePromise,
         new Promise<never>((_resolve, reject) => {
           timer = setTimeout(() => reject(Object.assign(new Error('授权检查超时'), {
             code: 'AUTHORIZATION_CHECK_UNAVAILABLE',
-          })), 5000)
+            authorizationTimedOut: true,
+          })), timeoutMs)
         }),
+        this.waitForAuthorizationCancellation(record),
       ])
+      settled = true
+      const duration = performance.now() - started
+      if (duration >= slowMs) this.writeAuthorizationLog(record, phase, 'recovered', duration, slowMs, timeoutMs)
     } catch (error) {
+      settled = true
+      const duration = performance.now() - started
+      // 用户取消、Run 超时和服务关闭优先，不记录成授权失败。
+      if (record.cancelCause !== undefined) {
+        if (!record.terminal) this.finishFromCancellationCause(record)
+        throw error
+      }
+      const denied = typeof error === 'object' && error !== null && 'code' in error && error.code === 'permission_denied'
+      const timedOut = typeof error === 'object' && error !== null && 'authorizationTimedOut' in error
+      const outcome = denied ? 'denied' : timedOut ? 'timeout' : 'error'
+      this.writeAuthorizationLog(record, phase, outcome, duration, slowMs, timeoutMs, error)
       if (!record.terminal) {
         record.bridge?.abort()
-        const code = typeof error === 'object' && error !== null && 'code' in error && error.code === 'permission_denied'
-          ? 'AUTHORIZATION_REVOKED' : 'AUTHORIZATION_CHECK_UNAVAILABLE'
-        if (record.cancelCause !== undefined) this.finishFromCancellationCause(record)
-        else this.finishFailed(record, code, code === 'AUTHORIZATION_REVOKED' ? '当前执行授权已撤销' : '当前授权检查不可用')
+        const code = denied ? 'AUTHORIZATION_REVOKED' : 'AUTHORIZATION_CHECK_UNAVAILABLE'
+        this.finishFailed(record, code, denied ? '当前执行授权已撤销' : '当前授权检查不可用', {
+          authorization_phase: phase,
+          authorization_check_ms: Math.round(duration),
+          authorization_slow_ms: slowMs,
+          authorization_timeout_ms: timeoutMs,
+          authorization_outcome: outcome,
+        })
         if (closeClientOnFailure) void record.client?.close().catch(() => undefined)
       }
       throw error
     } finally {
+      settled = true
       if (timer) clearTimeout(timer)
+      if (slowTimer) clearTimeout(slowTimer)
     }
     if (record.cancelCause !== undefined && !record.terminal) this.finishFromCancellationCause(record)
     if (record.terminal) throw new Error('Attempt 已结束')
@@ -1187,7 +1305,7 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
   private scheduleAuthorizationCheck(record: ExecutionRecord): void {
     if (!this.configuration.authorizeExecution || record.terminal) return
     record.authorizationTimer = setTimeout(() => {
-      void this.verifyExecutionAuthorization(record).catch(() => undefined).finally(() => {
+      void this.verifyExecutionAuthorization(record, true, 'scheduled').catch(() => undefined).finally(() => {
         if (!record.terminal) this.scheduleAuthorizationCheck(record)
       })
     }, 2000)
@@ -1230,7 +1348,7 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
     try {
       // Let ACP receive a cancelled response before its client is closed.
       // The execution loop closes the client after the prompt settles.
-      await this.verifyExecutionAuthorization(record, false)
+      await this.verifyExecutionAuthorization(record, false, 'permission')
     } catch {
       return { outcome: { outcome: 'cancelled' } }
     }
@@ -1334,6 +1452,7 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
     if (record.terminal || record.cancelCause !== undefined) return
     record.bridge?.abort()
     record.cancelCause = 'timeout'
+    record.resolveAuthorizationCancelled()
     this.setStatus(record, 'cancel_requested')
     this.emit(
       record,
@@ -1377,6 +1496,8 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
   }
 
   private finishFromCancellationCause(record: ExecutionRecord): void {
+    // verify 的 catch 与 run() 的外层 catch 都会走到这里；terminal 守卫避免重复提交中断输出。
+    if (record.terminal) return
     if (record.cancelCause === 'timeout') {
       this.commitInterruptedOutput(record, 'timeout')
       this.finishFailed(record, 'RUN_TIMEOUT', 'Runtime execution timed out')
@@ -1406,7 +1527,7 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
     })
   }
 
-  private finishFailed(record: ExecutionRecord, code: string, message: string): void {
+  private finishFailed(record: ExecutionRecord, code: string, message: string, extra: Record<string, unknown> = {}): void {
     if (record.terminal) return
     record.snapshot.errorCode = code
     record.snapshot.errorMessage = message
@@ -1419,6 +1540,7 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
       ...(record.cancelCause === 'timeout' ? { timeout_phase: record.timeoutPhase ?? 'execution' } : {}),
       ...(record.firstOutputMs === undefined ? {} : { first_output_ms: Math.round(record.firstOutputMs) }),
       ...(record.outputTruncated ? { output_truncated: true } : {}),
+      ...extra,
     })
     this.finish(record)
   }

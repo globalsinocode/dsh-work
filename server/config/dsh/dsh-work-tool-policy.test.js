@@ -23,6 +23,7 @@ const originalEnvironment = {
   toolCatalogPath: process.env.DSH_TOOL_CATALOG_PATH,
   toolCatalogMode: process.env.DSH_WORK_TOOL_CATALOG_MODE,
   trialExternalEffects: process.env.DSH_WORK_TRIAL_EXTERNAL_EFFECTS,
+  authorizationProbeTimeout: process.env.DSH_AUTHORIZATION_PROBE_TIMEOUT_MS,
 }
 
 afterEach(() => {
@@ -38,6 +39,7 @@ afterEach(() => {
   restoreEnvironment('DSH_TOOL_CATALOG_PATH', originalEnvironment.toolCatalogPath)
   restoreEnvironment('DSH_WORK_TOOL_CATALOG_MODE', originalEnvironment.toolCatalogMode)
   restoreEnvironment('DSH_WORK_TRIAL_EXTERNAL_EFFECTS', originalEnvironment.trialExternalEffects)
+  restoreEnvironment('DSH_AUTHORIZATION_PROBE_TIMEOUT_MS', originalEnvironment.authorizationProbeTimeout)
 })
 
 test('DSH tool policy confines read and search paths to the immutable Run workspace', async () => {
@@ -490,4 +492,62 @@ test('while the execution container is still cleaning up, a tool call is refused
     cleaning = false
     assert.equal((await preExecute({ name: 'todo_write', arguments: {} }, next)).kind, 'allow')
   } finally { await bridge.close() }
+})
+
+// 慢授权探测：Adapter 为正式 Attempt 注入 15 秒预算；旧实现固定 6 秒会先判死。
+test('the probe budget accepts a slow authorization that outlives the legacy six seconds', { timeout: 30_000 }, async () => {
+  let probes = 0
+  const bridge = await createPlatformToolBridge({}, 0, async () => {
+    probes += 1
+    await new Promise(resolve => globalThis.setTimeout(resolve, 6_200))
+  })
+  try {
+    process.env.DSH_AUTHORIZATION_PROBE_TIMEOUT_MS = '15000'
+    process.env.DSH_PLATFORM_TOOL_SOCKET = bridge.socket
+    process.env.DSH_REQUIRE_CURRENT_AUTHORIZATION = 'true'
+    process.env.DSH_ALLOWED_TOOLS_JSON = '["read"]'
+    process.env.DSH_WORKSPACE_ROOT = await mkdtemp(join(tmpdir(), 'dsh-auth-probe-budget-'))
+    process.env.DSH_TOOL_APPROVAL_MODE = 'never'
+    const { preExecute } = capturePolicy()
+    const startedAt = Date.now()
+    const result = await preExecute(
+      { name: 'read', arguments: { file_path: 'inside.txt' } },
+      async () => ({ kind: 'allow' }),
+    )
+    assert.equal(result.kind, 'allow')
+    // before/after 各探测一次，两次都超过旧 6 秒预算。
+    assert.ok(Date.now() - startedAt >= 12_000, 'both probes waited out the legacy six seconds')
+    assert.equal(probes, 2)
+  } finally { await bridge.close() }
+})
+
+test('without an injected budget the probe keeps the legacy six-second bound', { timeout: 30_000 }, async () => {
+  const bridge = await createPlatformToolBridge({}, 0, async () => {
+    await new Promise(resolve => globalThis.setTimeout(resolve, 6_200))
+  })
+  try {
+    delete process.env.DSH_AUTHORIZATION_PROBE_TIMEOUT_MS
+    process.env.DSH_PLATFORM_TOOL_SOCKET = bridge.socket
+    process.env.DSH_REQUIRE_CURRENT_AUTHORIZATION = 'true'
+    process.env.DSH_ALLOWED_TOOLS_JSON = '["read"]'
+    process.env.DSH_WORKSPACE_ROOT = await mkdtemp(join(tmpdir(), 'dsh-auth-probe-default-'))
+    process.env.DSH_TOOL_APPROVAL_MODE = 'never'
+    const { preExecute } = capturePolicy()
+    const startedAt = Date.now()
+    const result = await preExecute(
+      { name: 'read', arguments: { file_path: 'inside.txt' } },
+      async () => ({ kind: 'allow' }),
+    )
+    assert.equal(result.kind, 'deny')
+    assert.ok(Date.now() - startedAt < 10_000, 'default budget rejects before waiting for the injected budget')
+  } finally { await bridge.close() }
+})
+
+test('invalid authorization probe budgets fail closed at plugin load', () => {
+  for (const value of [' ', '6000', '5999', '0', 'abc', '1.5', ' 15000 ', '15000.0']) {
+    process.env.DSH_AUTHORIZATION_PROBE_TIMEOUT_MS = value
+    assert.throws(() => capturePolicy(), /DSH_AUTHORIZATION_PROBE_TIMEOUT_MS/)
+  }
+  process.env.DSH_AUTHORIZATION_PROBE_TIMEOUT_MS = '6001'
+  assert.ok(capturePolicy().preExecute, 'budgets strictly above 6000 are accepted')
 })
