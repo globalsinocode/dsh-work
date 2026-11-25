@@ -72,7 +72,15 @@ describe('每 Attempt patch 生成器（模型路由方案 4.4）', () => {
           maxRetries: 2,
           retryableCodes: ['EMPTY_RESPONSE', 'RATE_LIMIT', 'SERVER', 'TIMEOUT', 'TRANSPORT'],
         },
-        models: [{ id: 'deepseek-v4-pro', compat: { thinkingFormat: 'deepseek' } }],
+        // 与 DSH 自带 DeepSeek 适配器一致：默认 high，声明可选档位并发送 reasoning_effort，容量不落到 pi-ai 兜底值。
+        reasoning: 'high',
+        models: [{
+          id: 'deepseek-v4-pro',
+          contextWindow: 1_000_000,
+          maxTokens: 256_000,
+          reasoningEfforts: { off: null, low: 'low', high: 'high', max: 'max' },
+          compat: { thinkingFormat: 'deepseek', supportsReasoningEffort: true, maxTokensField: 'max_tokens' },
+        }],
       })
       assert.deepEqual(byId.get('acp')?.config, { provider: routeName, model: 'deepseek-v4-pro' })
       assert.deepEqual(byId.get('web-search-deepseek')?.config, {
@@ -92,7 +100,7 @@ describe('每 Attempt patch 生成器（模型路由方案 4.4）', () => {
     })
   })
 
-  it('非 DeepSeek 官方的路由不设置 DeepSeek 思考格式', async () => {
+  it('非 DeepSeek 官方的路由不设置 DeepSeek 思考格式、推理档位与容量', async () => {
     await withDirectory(async (directory) => {
       const patchPath = join(directory, 'attempt.patch.yml')
       await prepareAttemptProcess(base, {
@@ -107,6 +115,7 @@ describe('每 Attempt patch 生成器（模型路由方案 4.4）', () => {
       const entries = parse(await readFile(patchPath, 'utf8')) as PatchEntry[]
       const providers = (entries.find(entry => entry.id === 'llm-pi-ai')?.config as { providers: Record<string, { models: unknown }> }).providers
       assert.deepEqual(providers['dshw-acme-llm']?.models, [{ id: 'acme-large' }])
+      assert.equal(Object.hasOwn(providers['dshw-acme-llm'] ?? {}, 'reasoning'), false)
     })
   })
 

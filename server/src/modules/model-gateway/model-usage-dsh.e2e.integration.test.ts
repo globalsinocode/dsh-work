@@ -78,17 +78,38 @@ interface UpstreamState {
   onArrive: (() => void) | null
 }
 
-/** 上游实际收到的请求：路径、返回状态与请求体中的模型。 */
-interface UpstreamHit { path: string; status: number; model: string }
+/** 上游实际收到的请求：路径、返回状态、请求体中的模型与推理参数（思考开关、档位、输出上限）。 */
+interface UpstreamHit {
+  path: string
+  status: number
+  model: string
+  thinking?: unknown
+  reasoningEffort?: unknown
+  maxTokens?: unknown
+  maxCompletionTokens?: unknown
+}
 
 function startFakeUpstream(state: UpstreamState) {
   const handle = async (request: IncomingMessage, response: ServerResponse) => {
     let body = ''
     for await (const chunk of request) body += chunk
-    const parsed = JSON.parse(body) as { model: string; messages?: Array<{ role: string }> }
+    const parsed = JSON.parse(body) as {
+      model: string
+      messages?: Array<{ role: string }>
+      thinking?: unknown
+      reasoning_effort?: unknown
+      max_tokens?: unknown
+      max_completion_tokens?: unknown
+    }
+    const reasoning = {
+      thinking: parsed.thinking,
+      reasoningEffort: parsed.reasoning_effort,
+      maxTokens: parsed.max_tokens,
+      maxCompletionTokens: parsed.max_completion_tokens,
+    }
     const path = request.url ?? ''
     const reply = (status: number, payload: unknown) => {
-      state.hits.push({ path, status, model: parsed.model })
+      state.hits.push({ path, status, model: parsed.model, ...reasoning })
       response.writeHead(status, { 'content-type': 'application/json' })
       response.end(JSON.stringify(payload))
     }
@@ -119,7 +140,7 @@ function startFakeUpstream(state: UpstreamState) {
     const delta = searching
       ? { role: 'assistant', content: null, tool_calls: [{ index: 0, id: 'call_search', type: 'function', function: { name: 'web_search', arguments: JSON.stringify({ queries: ['dsh-work 模型用量'] }) } }] }
       : { role: 'assistant', content: 'MR-S3 回答完成' }
-    state.hits.push({ path, status: 200, model: parsed.model })
+    state.hits.push({ path, status: 200, model: parsed.model, ...reasoning })
     response.writeHead(200, { 'content-type': 'text/event-stream' })
     const chunk = (choices: unknown[], extra: object = {}) => response.write(`data: ${JSON.stringify({ id: 'x', object: 'chat.completion.chunk', created: 0, model: parsed.model, choices, ...extra })}\n\n`)
     chunk([{ index: 0, delta, finish_reason: null }])
@@ -360,6 +381,14 @@ describe('MR-S3 与 MR-S2 P1：受控真实 DSH 下的用量计量与路由时�
     assert.deepEqual(upstreamState.hits.map(hit => `${hit.path} ${hit.status}`), [
       '/chat/completions 503', '/chat/completions 200', '/anthropic/v1/messages 200', '/chat/completions 200',
     ])
+    // DeepSeek 官方路由的对话请求与 DSH 自带 DeepSeek 适配器一致：开启思考、档位 high、输出上限 256,000（经网关原样转发）。
+    // 输出上限必须用 DeepSeek 文档列出的 max_tokens：网关地址不含 deepseek.com，pi-ai 默认会改发 max_completion_tokens。
+    for (const hit of upstreamState.hits.filter(candidate => candidate.path === '/chat/completions')) {
+      assert.deepEqual(
+        { thinking: hit.thinking, reasoningEffort: hit.reasoningEffort, maxTokens: hit.maxTokens, maxCompletionTokens: hit.maxCompletionTokens },
+        { thinking: { type: 'enabled' }, reasoningEffort: 'high', maxTokens: 256_000, maxCompletionTokens: undefined },
+      )
+    }
     const gatewayRecords = await gatewayRows(attemptId)
     const chat = totals(gatewayRecords, 'chat')
     const search = totals(gatewayRecords, 'search')
