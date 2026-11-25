@@ -62,6 +62,8 @@ export interface CapabilityProbeRetry {
   deadlineMs?: number
   /** Server-log only; called for every failed attempt, before deciding whether to retry. */
   onAttemptFailure?: (error: unknown, attempt: number) => void
+  /** Server-log only; called once when a retry after the first attempt succeeds. */
+  onRecovered?: (attempt: number) => void
 }
 
 /** Only use for optional execution dependencies, NEVER database/identity initialization. */
@@ -80,7 +82,11 @@ export async function probeExecutionCapability<T>(
   // A retry only absorbs startup races (profile rewrite, Docker briefly unavailable). It does not
   // relax fail-closed: after the attempt or deadline budget the capability still reports unavailable.
   for (let attempt = 1; ; attempt += 1) {
-    try { return { value: await initialize(), state: { status: 'available' } } }
+    try {
+      const value = await initialize()
+      if (attempt > 1) retry?.onRecovered?.(attempt)
+      return { value, state: { status: 'available' } }
+    }
     catch (error) {
       retry?.onAttemptFailure?.(error, attempt)
       if (attempt >= attempts || performance.now() - startedAt >= deadlineMs) {

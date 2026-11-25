@@ -627,6 +627,37 @@ docker compose --env-file "${DWP_ROOT}/runtime.env" \
 
 6. **回滚**：无 schema，可回退 `v2026.11.24-01`；注意回退后 502/503 缺陷会回来。
 
+### 8.4 2026.11.25-01 补充：启动重试与部署就绪门禁
+
+`v2026.11.24-02` 的启动探针“有界重试”因 `deadlineMs=20 s` 小于单次 DSH preflight 的
+`30 s` 超时而未生效：首超时后 `2/3`、`3/3` 永不执行，服务以 `UnavailableRuntime` 运行约
+15 小时，直到人工 `kickstart -k` 才恢复（详见
+[启动探针重试失效事件](incident-2026-11-24-startup-probe-retry-outage.md)）。本版本修复：
+
+1. **重试预算**：启动探针不再使用总 `deadlineMs`，由尝试次数约束（3 次、间隔 2 s）；单次
+   preflight 仍为 30 s，最坏约 94 s。第 2/3 或 3/3 次成功会输出
+   `startup probe <capability> recovered on attempt N/3`。
+2. **健康等待**：`release.sh` 的公网 `/health` 等待从 60 s 提高到 180 s，覆盖最坏启动时间。
+3. **部署就绪门禁**：`release.sh` 在 `/health` 之后检查宿主
+   `http://127.0.0.1:${DSH_WORK_SERVER_PORT:-4190}/health/ready`，要求
+   `executionCapabilities.dsh.status` 与 `executionCapabilities.executionContainer.status`
+   均为 `available`；`python` 不可用只告警。不满足时按 `fail_after_migration` 回滚/停止，
+   **不再把“能力不可用”判为部署成功**。
+
+   **部署脚本注意**：11-24-02 部署用的是 11-24-01 的偏离脚本（`release.sh` 副本），
+   因此本版本新增的就绪门禁不会自动生效。部署 11-25-01 前必须从新 release bundle
+   重新生成/更新 `deviations/` 脚本（或以新 bundle 的 `scripts/deploy/release.sh` 为准），
+   并在部署日志确认出现 `release readiness check passed`；只覆盖版本号而继续使用旧副本
+   会重新失去该门禁。
+4. **验收**：首次启动（不人工 kickstart）日志出现 `execution container toolchain: …`；
+   若能力不可用，部署日志必须出现 `release readiness check failed` 并回滚；
+   `/health/ready` 三项能力状态可见。
+5. **边界**：启动能力持续不可用时的自动恢复（后台重探或 fail-fast 交给 launchd）仍是 P1，
+   本版本不改变“核心 API 保持可用”的现有设计。
+
+迁移账本的生产独有历史版本按[登记偏离](migration-ledger-deviation-2026-11-24.md)处理，
+每次发布仍按 8.1 的四项不变量复核。
+
 ## 9. 完成首次验收与备份
 
 ### 9.1 服务和入口
