@@ -643,6 +643,12 @@ docker compose --env-file "${DWP_ROOT}/runtime.env" \
    `executionCapabilities.dsh.status` 与 `executionCapabilities.executionContainer.status`
    均为 `available`；`python` 不可用只告警。不满足时按 `fail_after_migration` 回滚/停止，
    **不再把“能力不可用”判为部署成功**。
+
+   **部署脚本注意**：11-24-02 部署用的是 11-24-01 的偏离脚本（`release.sh` 副本），
+   因此本版本新增的就绪门禁不会自动生效。部署 11-25-01 前必须从新 release bundle
+   重新生成/更新 `deviations/` 脚本（或以新 bundle 的 `scripts/deploy/release.sh` 为准），
+   并在部署日志确认出现 `release readiness check passed`；只覆盖版本号而继续使用旧副本
+   会重新失去该门禁。
 4. **验收**：首次启动（不人工 kickstart）日志出现 `execution container toolchain: …`；
    若能力不可用，部署日志必须出现 `release readiness check failed` 并回滚；
    `/health/ready` 三项能力状态可见。
