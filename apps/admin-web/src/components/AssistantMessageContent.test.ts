@@ -43,6 +43,53 @@ describe('AssistantMessageContent', () => {
     expect(wrapper.get('pre code').text()).toBe('Error: tool is not authorized')
   })
 
+  it('renders a table by the header column count when the delimiter row has more or fewer cells', () => {
+    const wrapper = mount(AssistantMessageContent, { props: { text: [
+      '| 部门 | 9月 | 10月 | 合计 | 笔数 |',
+      '|---|---|---|---:|---:|---:|',
+      '| 研发部 | 1 | 2 | 3 | 18 |',
+      '',
+      '| 部门 | 金额 | 笔数 |',
+      '|---|---:|',
+      '| 销售部 | 60,161.00 | 11 |',
+    ].join('\n') } })
+
+    const tables = wrapper.findAll('table')
+    expect(tables).toHaveLength(2)
+    expect(tables[0]!.findAll('th').map(item => item.text())).toEqual(['部门', '9月', '10月', '合计', '笔数'])
+    expect(tables[0]!.findAll('tbody td').map(item => item.text())).toEqual(['研发部', '1', '2', '3', '18'])
+    expect(tables[0]!.findAll('th')[4]!.attributes('style')).toContain('text-align: right')
+    expect(tables[1]!.findAll('th').map(item => item.attributes('style'))).toEqual([
+      expect.stringContaining('text-align: left'),
+      expect.stringContaining('text-align: right'),
+      expect.stringContaining('text-align: left'),
+    ])
+    expect(tables[1]!.findAll('tbody td').map(item => item.text())).toEqual(['销售部', '60,161.00', '11'])
+  })
+
+  it('keeps every data column when the header row is the one missing a cell', () => {
+    const wrapper = mount(AssistantMessageContent, { props: { text: [
+      '| 部门 | 9月 | 10月 | 合计 |',
+      '|---|---:|---:|---:|---:|',
+      '| 研发部 | 1 | 2 | 3 | 18 |',
+      '| 销售部 | 4 | 5 | 9 |',
+    ].join('\n') } })
+
+    expect(wrapper.findAll('th').map(item => item.text())).toEqual(['部门', '9月', '10月', '合计', ''])
+    expect(wrapper.findAll('th')[4]!.attributes('style')).toContain('text-align: right')
+    expect(wrapper.findAll('tbody tr').map(row => row.findAll('td').map(cell => cell.text()))).toEqual([
+      ['研发部', '1', '2', '3', '18'],
+      ['销售部', '4', '5', '9', ''],
+    ])
+  })
+
+  it('does not treat a pipe line followed by a bare horizontal rule as a table', () => {
+    const wrapper = mount(AssistantMessageContent, { props: { text: ['甲 | 乙', '---', '正文'].join('\n') } })
+
+    expect(wrapper.find('table').exists()).toBe(false)
+    expect(wrapper.text()).toContain('甲 | 乙')
+  })
+
   describe('EX-STYLE-01 表格工具栏', () => {
     const table = ['| 订单 | 说明 |', '|---|---|', '| **SO-1** | 缺料, "急" |', '| `SO-2` | 正常 |'].join('\n')
 
