@@ -482,9 +482,19 @@ describe('Runtime Manifest compiler', () => {
       artifact_revision: workbook.artifact_revision,
     }]
     const withOriginal = renderSystemPrompt(compileRuntimeManifest(input).manifest)
-    assert.match(withOriginal, /读取路径（解析文本）：input\/01-revenue\.txt/)
-    assert.match(withOriginal, /原始文件（只读.*input\/original\/01-revenue\.xlsx/)
+    // 表格附件有原始文件时：解析文本只用于浏览并说明丢失的内容，计算与核对以原始文件为准。
+    assert.match(withOriginal, /解析文本（只用于了解结构与快速浏览：可能丢失日期格式、公式、合并单元格等信息）：input\/01-revenue\.txt/)
+    assert.doesNotMatch(withOriginal, /读取路径（解析文本）：input\/01-revenue\.txt/)
+    assert.match(withOriginal, /原始文件（只读[^）]*；计算、汇总、统计或核对数据以它为准）：input\/original\/01-revenue\.xlsx/)
+    assert.match(withOriginal, /表格附件需要计算、汇总、统计、去重或核对数据时，先在 bash 中用程序（如 pandas、openpyxl）读取原始文件/)
     assert.match(withOriginal, /基于原始文件处理，把修改后的完整文件写入 output\/营收\.xlsx，平台会登记为第 2 版/)
+    // 文档类附件即使有原始文件也保持原来的说法，不追加表格引导。
+    input.input.file_mounts = [{ ...workbook, file_id: 'file-contract', source_name: '合同.docx', media_type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' }]
+    input.input.original_mounts = [{ ...input.input.original_mounts[0]!, file_id: 'file-contract', source_name: '合同.docx', mount_path: '/workspace/input/original/01-contract.docx' }]
+    const documentOnly = renderSystemPrompt(compileRuntimeManifest(input).manifest)
+    assert.match(documentOnly, /读取路径（解析文本）：input\/01-revenue\.txt/)
+    assert.doesNotMatch(documentOnly, /计算、汇总、统计或核对数据以它为准/)
+    assert.doesNotMatch(documentOnly, /表格附件需要计算/)
   })
 
   it('renders only the progressive Skill catalog when activate_skill is available', () => {

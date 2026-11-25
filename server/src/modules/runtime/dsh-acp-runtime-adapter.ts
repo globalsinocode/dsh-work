@@ -1553,6 +1553,12 @@ export function renderUserPrompt(manifest: RuntimeManifest) {
 
 /** Office, PDF and image inputs: revising them means writing a new binary file, which needs bash. */
 const BINARY_INPUT_PATTERN = /\.(xlsx|docx|pptx|pdf|png|jpe?g)$/i
+/**
+ * 表格附件：解析文本可能丢失日期格式、公式、合并单元格等信息（上传附件与平台生成的成果由不同解析器生成，
+ * 丢失的内容不同，说法取两者都成立的范围），计算与核对须以原始文件为准。只在同时挂载了
+ * 原始文件（有 bash 时，执行隔离 2b-4）才这样引导；没有原始文件时解析文本是唯一来源，说法不变。
+ */
+const SPREADSHEET_INPUT_PATTERN = /\.xlsx$/i
 
 /**
  * 发往外部厂商时网关会把敏感内容换成占位符（数据防护方案 5.4、D7）。不说明的话模型会对员工说
@@ -1648,13 +1654,20 @@ export function renderSystemPrompt(manifest: RuntimeManifest, options: { executi
     })
   }
   if (inputFiles.size > 0) {
+    const spreadsheetWithOriginal = (file: { sourceName: string; originalPath?: string }) =>
+      Boolean(file.originalPath) && SPREADSHEET_INPUT_PATTERN.test(file.sourceName)
     sections.push([
       '# 当前 Run 输入文件',
       '以下文件已经过权限校验，并以只读方式挂载到当前会话工作目录。需要读取附件时，必须直接使用给出的路径，不得猜测文件名或扫描未授权目录。',
+      ...([...inputFiles.values()].some(spreadsheetWithOriginal) ? [
+        '表格附件需要计算、汇总、统计、去重或核对数据时，先在 bash 中用程序（如 pandas、openpyxl）读取原始文件，以程序算出的结果作答，不要凭解析文本心算或估算；解析文本只用于了解表格结构、快速浏览或摘录少量内容。',
+      ] : []),
       ...[...inputFiles.values()].map((file, index) => [
         `${index + 1}. ${file.sourceName}`,
-        ...(file.textPath ? [`   - 读取路径（解析文本）：${file.textPath.slice('/workspace/'.length)}`] : []),
-        ...(file.originalPath ? [`   - 原始文件（只读，供 bash 中的程序或 python_execute 运行的 Skill 脚本处理，如 pandas、openpyxl、LibreOffice；传给 python_execute 时按“Python 脚本”一节拼成工作区绝对路径）：${file.originalPath.slice('/workspace/'.length)}`] : []),
+        ...(file.textPath ? [spreadsheetWithOriginal(file)
+          ? `   - 解析文本（只用于了解结构与快速浏览：可能丢失日期格式、公式、合并单元格等信息）：${file.textPath.slice('/workspace/'.length)}`
+          : `   - 读取路径（解析文本）：${file.textPath.slice('/workspace/'.length)}`] : []),
+        ...(file.originalPath ? [`   - 原始文件（只读，供 bash 中的程序或 python_execute 运行的 Skill 脚本处理，如 pandas、openpyxl、LibreOffice；传给 python_execute 时按“Python 脚本”一节拼成工作区绝对路径${spreadsheetWithOriginal(file) ? '；计算、汇总、统计或核对数据以它为准' : ''}）：${file.originalPath.slice('/workspace/'.length)}`] : []),
         `   - 媒体类型：${file.mediaType}`,
         ...(file.revision ? [!BINARY_INPUT_PATTERN.test(file.sourceName)
           ? `   - 这是此前生成的成果第 ${file.revision.version} 版；用户要求修改它时，把修改后的完整内容写入 output/${file.sourceName}（按成果文件一节选择工具），平台会登记为第 ${file.revision.version + 1} 版；只是参考时不要重写`
