@@ -11,7 +11,8 @@ import { invalidRequest } from '../../../domain/request-errors.ts'
 import type { JsonObject, RunRecord } from '../run-types.ts'
 import type { AttemptBudget } from './attempt-budget.ts'
 import type { AttemptScheduler } from './attempt-scheduler.ts'
-import { removeUnsupportedWebSearch, toCapabilityReference, toRuntimeManifestSkill, toRuntimeModelRoute } from './manifest-helpers.ts'
+import { removeProxiedWebFetch, removeUnsupportedWebSearch, toCapabilityReference, toRuntimeManifestSkill, toRuntimeModelRoute } from './manifest-helpers.ts'
+import { dshHomeProxyConfigured } from '../../runtime/dsh-home-proxy.ts'
 import type { ModelRouteSnapshot } from '../../model/model-types.ts'
 import { tenantId, runtimeId, type OrchestrationDependencies } from './orchestration-dependencies.ts'
 
@@ -206,7 +207,10 @@ export class AttemptDispatcher {
           })
         : []),
     ].filter(name => !disabledTools.has(name))
-    const unavailableTools = removeUnsupportedWebSearch(toolNames, route)
+    const unavailableTools = [
+      ...removeUnsupportedWebSearch(toolNames, route),
+      ...removeProxiedWebFetch(toolNames, toolNames.includes('web_fetch') && await dshHomeProxyConfigured()),
+    ]
     // 执行隔离 2b-4：有解析文本的输入照常挂文本；装配了 bash 时另挂原始文件。二进制成果没有解析文本，
     // bash 被 Runtime 紧急停用时无法使用，在创建 Attempt 之前拒绝并说明原因。
     const withBash = toolNames.includes('bash')

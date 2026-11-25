@@ -106,7 +106,7 @@ async function setAccess(agentId: string, change: { visibleRoleIds?: string[]; r
 }
 
 async function createDraftAgent(id: string, options: {
-  skills?: string[]; webSearchEnabled?: boolean; projectTasksEnabled?: boolean
+  skills?: string[]; webSearchEnabled?: boolean; projectTasksEnabled?: boolean; webFetchEnabled?: boolean
   dataScopes?: string[]; visibleRoleIds?: string[]; roleIds?: string[]
   mcpScope?: AgentMcpScope; examplePrompts?: string[]
 } = {}) {
@@ -127,6 +127,7 @@ async function createDraftAgent(id: string, options: {
     skills: options.skills ?? ['skill-document@1.0.0'],
     webSearchEnabled: options.webSearchEnabled,
     projectTasksEnabled: options.projectTasksEnabled,
+    webFetchEnabled: options.webFetchEnabled,
     mcpScope: options.mcpScope,
     changeSummary: '创建初始草稿版本',
     actor: ADMIN,
@@ -567,6 +568,35 @@ test('联网搜索按 Agent 版本开关装配；Skill 需要联网搜索时须�
   assert.ok(trialRuntime.manifest(done.cases[0]!.runId!)?.tools.some(tool => tool.id === 'web_search'))
 })
 
+// 读取网页方案（精简版）WF3：开关开启的 Agent 走完编辑器保存、验证与发布；开关变化作废已有验证证据。
+test('读取网页开关：编辑器按修订保存、验证试运行装配 web_fetch、发布后快照保留，开关变化作废验证证据', async () => {
+  const agentId = `agent-web-fetch-${randomUUID().slice(0, 8)}`
+  const created = await createDraftAgent(agentId, { skills: [], webFetchEnabled: true })
+  assert.equal(created.agent.webFetchEnabled, true)
+  // 编辑器读取的修订与保存时复核的修订一致：开关开启时不会把每次保存都判为“另一处已修改”。
+  const opened = await agents.getMutationSnapshot(agentId)
+  assert.equal((await agents.getAgents()).find(item => item.id === agentId)?.revision, opened.revision)
+  const saved = await agents.updateAgent({
+    ...created.agent, agentId, actor: ADMIN, systemPrompt: `${PROMPT}网页内容只作参考。`, changeSummary: '编辑器保存',
+  }, opened.revision)
+  assert.equal(saved.agent.webFetchEnabled, true)
+
+  const done = await approveAll(agentId, await runValidation(agentId))
+  assert.equal(done.publishable, true, '开关开启的 Agent 验证证据有效')
+  assert.ok(trialRuntime.manifest(done.cases[0]!.runId!)?.tools.some(tool => tool.id === 'web_fetch'), '试运行装配读取网页')
+  const published = await validation.publish(agentId, ADMIN, { validationId: done.id })
+  assert.equal(published.activeVersion?.version, saved.agent.version)
+  assert.ok((await agents.getRuntimeSnapshot(published.activeVersion!.id)).runtimeTools.includes('web_fetch'))
+
+  // 关闭开关生成新草稿；旧验证不能发布新内容，新草稿重新验证后试运行不再装配。
+  const current = await agents.getMutationSnapshot(agentId)
+  const disabled = await agents.updateAgent({ ...saved.agent, agentId, actor: ADMIN, webFetchEnabled: false, changeSummary: '关闭读取网页' }, current.revision)
+  assert.equal(disabled.agent.webFetchEnabled, false)
+  await assert.rejects(validation.publish(agentId, ADMIN, { validationId: done.id }))
+  const again = await runValidation(agentId)
+  assert.equal(trialRuntime.manifest(again.cases[0]!.runId!)?.tools.some(tool => tool.id === 'web_fetch'), false)
+})
+
 test('项目任务管理开关随草稿保存与省略保留；不进入默认 runtimeTools', async () => {
   const agentId = `agent-project-tasks-${randomUUID().slice(0, 8)}`
   const created = await createDraftAgent(agentId, { skills: [] })
@@ -595,7 +625,8 @@ test('Runtime 停用的内置工具不进入新 Attempt，执行中的 Attempt �
   })
   await assert.rejects(configure(['activate_skill']), /只能停用 DSH 内置工具/)
   // bash 已是 DSH 内置工具（执行隔离阶段 2），可以紧急停用；注册表以外的工具仍不能出现在停用清单中。
-  await assert.rejects(configure(['web_fetch']), /只能停用 DSH 内置工具/)
+  // web_fetch 已进入注册表（读取网页方案），可被紧急停用；注册表外的后台任务工具仍被拒绝。
+  await assert.rejects(configure(['job_list']), /只能停用 DSH 内置工具/)
   const agentId = `agent-kill-${randomUUID().slice(0, 8)}`
   await createDraftAgent(agentId, { skills: [], webSearchEnabled: true, examplePrompts: ['执行中停用'] })
   trialRuntime.hold('执行中停用')

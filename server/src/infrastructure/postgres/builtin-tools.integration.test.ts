@@ -66,9 +66,10 @@ test('注册表与 DSH 工具目录比对：缺失的 DSH 工具被报告，平�
   const dsh = builtinTools.filter(tool => tool.source === 'dsh').map(tool => tool.name)
   assert.deepEqual(missingDshBuiltinTools([...dsh, 'job_list']), [])
   assert.deepEqual(missingDshBuiltinTools(dsh.filter(name => name !== 'todo_write')), ['todo_write'])
-  // bash 是 DSH 工具（执行隔离阶段 2），同样参与目录比对；web_fetch 与后台任务工具仍不在注册表。
+  // bash 是 DSH 工具（执行隔离阶段 2），同样参与目录比对；读取网页（web_fetch）进入注册表后同样参与；后台任务工具仍不在注册表。
   assert.deepEqual(missingDshBuiltinTools(dsh.filter(name => name !== 'bash')), ['bash'])
-  assert.equal(builtinTools.some(tool => ['web_fetch', 'job_list', 'job_output', 'job_kill'].includes(tool.name)), false)
+  assert.deepEqual(missingDshBuiltinTools(dsh.filter(name => name !== 'web_fetch')), ['web_fetch'])
+  assert.equal(builtinTools.some(tool => ['job_list', 'job_output', 'job_kill'].includes(tool.name)), false)
 })
 
 test('Agent 运行装配默认内置工具，联网搜索按版本开关；Skill 依赖平台不提供的工具时拒绝', async () => {
@@ -97,6 +98,22 @@ test('Agent 运行装配默认内置工具，联网搜索按版本开关；Skill
   `
   assert.equal(stored?.webSearchEnabled, true)
   assert.ok((await agents.getRuntimeSnapshot(withSearch.version.id)).runtimeTools.includes('web_search'))
+  assert.ok(!(await agents.getRuntimeSnapshot(withSearch.version.id)).runtimeTools.includes('web_fetch'), '联网搜索不带上读取网页')
+
+  // 读取网页（读取网页方案 WF3）：独立开关，默认关闭；开启后保存、编辑保留、进入快照与定义。
+  assert.equal(created.agent.webFetchEnabled, false)
+  const withFetch = await agents.createAgent({ ...base, id: `agent-builtin-fetch-${randomUUID().slice(0, 8)}`, webFetchEnabled: true })
+  const [fetchFlag] = await database<{ webFetchEnabled: boolean; capability: boolean | null }[]>`
+    select web_fetch_enabled as "webFetchEnabled", (agent_spec #>> '{capabilities,webFetch}')::boolean as capability
+      from agent_versions where tenant_id = ${tenantId} and id = ${withFetch.version.id}
+  `
+  assert.deepEqual(fetchFlag, { webFetchEnabled: true, capability: true })
+  assert.equal(withFetch.agent.webFetchEnabled, true)
+  const fetchTools = (await agents.getRuntimeSnapshot(withFetch.version.id)).runtimeTools
+  assert.ok(fetchTools.includes('web_fetch'))
+  assert.ok(!fetchTools.includes('web_search'))
+  const edited = await agents.updateAgent({ ...withFetch.agent, agentId: withFetch.agent.id, actor: ADMIN, webFetchEnabled: undefined, description: '编辑描述，不动读取网页', changeSummary: '只改说明' })
+  assert.equal(edited.agent.webFetchEnabled, true, '编辑时省略则保留当前设置')
 
   const withTasks = await agents.createAgent({ ...base, id: `agent-builtin-tasks-${randomUUID().slice(0, 8)}`, projectTasksEnabled: true })
   const [taskFlag] = await database<{ projectTasksEnabled: boolean }[]>`

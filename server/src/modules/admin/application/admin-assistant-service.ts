@@ -93,7 +93,7 @@ type AgentSnapshot = Pick<AgentDefinition,
   'id' | 'name' | 'description' | 'owner' | 'department'
   | 'welcomeMessage' | 'examplePrompts' | 'systemPrompt' | 'workInstructions' | 'mcpScope'
   | 'maxOutputBytes' | 'maxToolCalls' | 'timeoutSeconds' | 'skills' | 'webSearchEnabled'
-  | 'projectTasksEnabled' | 'agentRecommendationEnabled' | 'skillCreationEnabled'
+  | 'projectTasksEnabled' | 'agentRecommendationEnabled' | 'skillCreationEnabled' | 'webFetchEnabled'
   | 'status' | 'version'
 > & { revision: string }
 
@@ -517,7 +517,7 @@ export class AdminAssistantService {
     }
 
     // Access (audience, roles, data scopes) is not draft content and is not changed through draft plans.
-    const allowed = ['name', 'description', 'welcomeMessage', 'examplePrompts', 'systemPrompt', 'maxOutputBytes', 'maxToolCalls', 'timeoutSeconds', 'skills', 'webSearchEnabled', 'projectTasksEnabled', 'agentRecommendationEnabled', 'skillCreationEnabled', 'changeSummary']
+    const allowed = ['name', 'description', 'welcomeMessage', 'examplePrompts', 'systemPrompt', 'maxOutputBytes', 'maxToolCalls', 'timeoutSeconds', 'skills', 'webSearchEnabled', 'projectTasksEnabled', 'agentRecommendationEnabled', 'skillCreationEnabled', 'webFetchEnabled', 'changeSummary']
     assertOnlyKeys(changes, allowed)
     const before = agentSnapshot(agent, mutation.revision)
     const after: Omit<UpdateAgentDraftInput, 'actor'> = {
@@ -539,6 +539,7 @@ export class AdminAssistantService {
       projectTasksEnabled: readChangedBoolean(changes, 'projectTasksEnabled', agent.projectTasksEnabled),
       agentRecommendationEnabled: readChangedBoolean(changes, 'agentRecommendationEnabled', agent.agentRecommendationEnabled),
       skillCreationEnabled: readChangedBoolean(changes, 'skillCreationEnabled', agent.skillCreationEnabled),
+      webFetchEnabled: readChangedBoolean(changes, 'webFetchEnabled', agent.webFetchEnabled),
       changeSummary: readChangedString(changes, 'changeSummary', summary, 1, 1000),
     }
     const comparableAfter = { ...after, id: after.agentId, status: agent.status, version: agent.version }
@@ -857,6 +858,7 @@ function agentSnapshot(agent: AgentDefinition, revision: string): AgentSnapshot 
     projectTasksEnabled: agent.projectTasksEnabled,
     agentRecommendationEnabled: agent.agentRecommendationEnabled,
     skillCreationEnabled: agent.skillCreationEnabled,
+    webFetchEnabled: agent.webFetchEnabled,
     status: agent.status,
     version: agent.version,
     revision,
@@ -883,6 +885,7 @@ function agentDraftMatchesPlan(agent: AgentDefinition, after: Extract<StoredActi
     && agent.projectTasksEnabled === after.projectTasksEnabled
     && agent.agentRecommendationEnabled === after.agentRecommendationEnabled
     && agent.skillCreationEnabled === after.skillCreationEnabled
+    && agent.webFetchEnabled === (after.webFetchEnabled ?? false)
 }
 
 function actionResultSummary(plan: StoredActionPlan) {

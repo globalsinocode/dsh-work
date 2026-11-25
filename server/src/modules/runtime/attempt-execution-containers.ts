@@ -406,8 +406,11 @@ function limitNotice(limit: 'workspace' | 'disk', usage: WorkspaceUsage) {
   return `命令已终止：工作区${used}，超过上限 ${formatBytes(WORKSPACE_LIMITS.maxBytes)}。请删除不需要的中间文件（例如 rm -rf work/临时目录）后再继续；删除文件的命令不受影响。`
 }
 
-/** The only registry tools DSH may run alongside others (plan 3.7, 4.1): they read but never start container code. */
-const PARALLEL_ALLOWED = new Set(['read', 'read_image', 'web_search'])
+/**
+ * The only registry tools DSH may run alongside others (plan 3.7, 4.1): they read but never start container code.
+ * web_fetch (web fetch plan) only reads the network and returns text; it never touches the workspace.
+ */
+const PARALLEL_ALLOWED = new Set(['read', 'read_image', 'web_search', 'web_fetch'])
 
 /**
  * Admission check for the quiescence guarantee (plan 3.7): in the DSH composition this

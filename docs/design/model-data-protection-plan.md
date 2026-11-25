@@ -55,6 +55,8 @@ D10 的理由：平台每一轮都会把会话历史随 Manifest 重新发给模
 | DSH 内置 `web_search`（`dsh-web-search-deepseek`） | Agent 勾选“联网搜索”后，DSH 以**一次模型调用**完成搜索：向 DeepSeek 的 Anthropic 兼容接口 `/anthropic/v1/messages` 发送 `Perform a web search for the query: <搜索词>`，模型 `deepseek-v4-flash`，凭据取 `DSH_HOME` 中的 `DEEPSEEK_API_KEY`，**不经网关**；插件的 `baseURL` 与 `apiKeyEnv` 可配置 | 经网关并遮盖（D12），随 DLP-S1 实施 |
 | dsh-work 服务端与前端 | DLP-S0 盘点：没有直接调用模型 API 的代码 | 无需处理 |
 
+**DSH 直连公网的取页（2026-11-25）：** `web_fetch` 不是发往模型的路径，但网址会由 DSH 进程直接发往公网、不经网关。按[读取网页方案](web-fetch-plan.md)（精简版），每次调用前由服务端复核：网址按本方案的检测器检查密钥、个人信息与保密词（命中即拒绝，只记类别），并且只能是员工消息或本 Attempt 搜索结果条目中的网址；取回的网页正文作为工具结果在下一次模型请求中经网关照常处理。
+
 ### 4.1 DLP-S0 探针结论（2026-11-06）
 
 在本机 DSH `0.1.2-rc.1`（`76fda72979`）上以 `--profile acp --patch <探针 patch>` 启动，patch 声明 pi-ai 路由 `dshw-probe`（`api: openai-completions`、`compat.thinkingFormat: deepseek`、显式 `retryPolicy`），`baseURL` 指向探针网关，`apiKeyEnv` 指向进程环境中的令牌变量，`settings.path` 指向独立文件。探针网关分两种：记录请求并返回固定流式回复的假网关；记录请求后原样转发到 DeepSeek 官方的透传网关（凭据由 DSH 按引用解析，探针不读取密钥值）。探针脚本保存在会话 scratchpad，未进入仓库。

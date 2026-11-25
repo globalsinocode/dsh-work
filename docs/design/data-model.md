@@ -252,6 +252,7 @@ Run 和 Attempt 的普通状态转换不能从终态回退。只有失败或取�
 - [知识引用来源](../../server/migrations/0128_knowledge_citation_source.sql)：引用快照增加 `source`，区分执行前检索与 Agent 检索工具（功能规则第 11 节，KO9）。
 - [补写 Skill 安装名称](../../server/migrations/0130_backfill_skill_installation_key.sql)：为经已删除的文本接口写入的 Skill 与种子 Skill 补写 `installation_key`（规则同 0035，审核中的员工提交、已被占用的名称除外，同名只补一行），使安装同名包生成其下一版本（功能规则 5.3）。
 - [MCP 发送员工身份](../../server/migrations/0131_mcp_employee_identity.sql)：Connector 的“发送员工身份”开关、每个 Attempt 下发的调用上下文与调用审计的 `call_context`（外部业务应用接入方案 EA-S1，功能规则第 14 节）。
+- [读取网页开关](../../server/migrations/0132_agent_web_fetch.sql)：`agent_versions.web_fetch_enabled`（默认关闭），见[读取网页方案](web-fetch-plan.md)。
 
 新增变更使用新的顺序迁移，保留已应用迁移；迁移运行器以咨询锁串行执行并校验已执行迁移的 SHA-256，修改已执行迁移会拒绝启动。应用回滚不会自动降低 Schema，至少保持上一版本兼容；破坏性清理需独立安排。操作流程见 [部署手册](../release/mac-mini-deployment-runbook.md)。
 

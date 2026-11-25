@@ -459,6 +459,8 @@ export interface AgentDefinition {
   agentRecommendationEnabled?: boolean
   /** 是否可创建 Skill（只在员工个人对话中生效，草稿由员工提交审核）。 */
   skillCreationEnabled?: boolean
+  /** 是否可读取网页（只能打开员工消息或联网搜索结果中的公网网址）。 */
+  webFetchEnabled?: boolean
   mcpScope?: AgentMcpScope
   updatedAt: string
   /** 草稿编辑的乐观并发修订，保存时回传为 expectedRevision；原型模式不提供。 */
@@ -593,6 +595,8 @@ export interface AgentDraftConfiguration {
   /** 编辑时省略则保留当前设置，新建时默认关闭。 */
   agentRecommendationEnabled?: boolean
   skillCreationEnabled?: boolean
+  /** 是否可读取网页（只能打开员工消息或联网搜索结果中的公网网址）。 */
+  webFetchEnabled?: boolean
   mcpScope?: AgentMcpScope
   changeSummary: string
 }
@@ -631,6 +635,8 @@ export interface AgentVersionRecord {
   projectTasksEnabled: boolean
   agentRecommendationEnabled?: boolean
   skillCreationEnabled?: boolean
+  /** 是否可读取网页（只能打开员工消息或联网搜索结果中的公网网址）。 */
+  webFetchEnabled?: boolean
   mcpScope?: AgentMcpScope
 }
 

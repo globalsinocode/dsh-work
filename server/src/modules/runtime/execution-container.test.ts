@@ -331,7 +331,8 @@ test('free space: no command starts on a low data volume, and a running one is s
 })
 
 test('admission: only plain reads may run alongside other tools; bash and writes must be exclusive', () => {
-  // What DSH 0.1.2-rc.1 reports (plan 3.7), including parallel tools the policy never allows.
+  // What DSH 0.1.2-rc.1 reports (plan 3.7). web_fetch is a registry tool now (web fetch plan) and may run in parallel;
+  // subagent stays outside the registry, so its parallel mode is irrelevant.
   const reported = [
     ['read', 'parallel'], ['read_image', 'parallel'], ['web_search', 'parallel'], ['glob', 'exclusive'], ['grep', 'exclusive'],
     ['write', 'exclusive'], ['edit', 'exclusive'], ['str_replace_editor', 'exclusive'], ['todo_write', 'exclusive'],

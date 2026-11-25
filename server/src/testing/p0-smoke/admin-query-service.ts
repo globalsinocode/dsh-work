@@ -219,6 +219,7 @@ export class AdminQueryService {
       projectTasksEnabled: input.projectTasksEnabled === true,
       agentRecommendationEnabled: input.agentRecommendationEnabled === true,
       skillCreationEnabled: input.skillCreationEnabled === true,
+      webFetchEnabled: input.webFetchEnabled === true,
     }
     assertDraftConfiguration(normalizedInput)
 
@@ -233,6 +234,7 @@ export class AdminQueryService {
       projectTasksEnabled: configuration.projectTasksEnabled === true,
       agentRecommendationEnabled: configuration.agentRecommendationEnabled === true,
       skillCreationEnabled: configuration.skillCreationEnabled === true,
+      webFetchEnabled: configuration.webFetchEnabled === true,
       roleIds: visibleRoleIds ?? [],
       visibility: visibleRoleIds?.length ? `指定 ${visibleRoleIds.length} 个角色` : '未设置',
       status: 'draft',
@@ -343,6 +345,7 @@ export class AdminQueryService {
       projectTasksEnabled: target.projectTasksEnabled,
       agentRecommendationEnabled: target.agentRecommendationEnabled,
       skillCreationEnabled: target.skillCreationEnabled,
+      webFetchEnabled: target.webFetchEnabled,
       updatedAt: timestamp,
     })
     await this.repository.updateAgentVersion(input.agentId, target.version, { status: 'published' })
@@ -570,6 +573,7 @@ function assertAgentReady(agent: AgentDefinition) {
     projectTasksEnabled: agent.projectTasksEnabled,
     agentRecommendationEnabled: agent.agentRecommendationEnabled,
     skillCreationEnabled: agent.skillCreationEnabled,
+    webFetchEnabled: agent.webFetchEnabled,
     changeSummary: '发布校验',
   })
   if (!agent.roleIds.length) throw invalidRequest('发布前必须配置员工可见角色')
@@ -628,5 +632,6 @@ function agentVersionSnapshot(agent: AgentDefinition) {
     projectTasksEnabled: agent.projectTasksEnabled,
     agentRecommendationEnabled: agent.agentRecommendationEnabled,
     skillCreationEnabled: agent.skillCreationEnabled,
+    webFetchEnabled: agent.webFetchEnabled,
   }
 }

@@ -74,6 +74,13 @@ export function apply(ctx) {
     if (downstream.kind === 'deny') return downstream
     const after = await currentAuthorizationDenial()
     if (after !== undefined) return { kind: 'deny', reason: after }
+    // 读取网页方案 6.2：每次读取前由服务端复核来源、数据防护、次数与地址；不受当前授权复核开关控制，
+    // 通道不可用、超时或回复无法解析时拒绝（失败即关闭）。放在其他拒绝（执行容器忙、工具停用、授权撤销）之后，
+    // 服务端只为确实要取页的调用计次。
+    if (execution.name === 'web_fetch') {
+      const verdict = await checkWebFetchUrl(authorizationSocket, execution.signal, execution.arguments?.url)
+      if (!verdict.allowed) return { kind: 'deny', reason: verdict.reason }
+    }
     const requiresApproval = downstream.kind === 'ask' || approvalMode !== 'never'
     if (!requiresApproval) return downstream
     if (!recordApprovalRequest(approvalLog, execution)) {
@@ -361,10 +368,15 @@ function validateExecution(execution, allowedTools, allowedMcpServers, approvedM
 }
 
 function validateWebExecution(execution) {
-  if (execution.name === 'web_fetch') {
-    return 'dsh-work 网页获取尚无连接层私网地址防护，暂不允许执行'
-  }
   const parameters = isRecord(execution.arguments) ? execution.arguments : {}
+  // 读取网页方案 6.2：是否放行由服务端复核（checkWebFetchUrl）决定，这里只挡住明显无效的参数。
+  if (execution.name === 'web_fetch') {
+    const url = parameters.url
+    if (typeof url !== 'string' || !url.trim() || url.length > 2048) {
+      return 'dsh-work 读取网页只接受一个不超过 2048 个字符的网址'
+    }
+    return undefined
+  }
   if (execution.name === 'web_search') {
     const queries = parameters.queries
     if (!Array.isArray(queries) || queries.length < 1 || queries.length > 4
@@ -745,6 +757,40 @@ export function disabledToolReason(toolName) {
  * 执行授权探测。返回 'authorized'、'disabled'（Runtime 紧急停用了该内置工具，只拒绝本次调用）
  * 或 'denied'（授权已撤销或不可用）。
  */
+const WEB_FETCH_CHECK_UNAVAILABLE = 'dsh-work 读取网页复核不可用，本次未打开网页'
+
+/**
+ * 读取网页方案 6.2：经平台工具通道请求服务端复核 web_fetch 的网址。只认 200 且 allowed === true；
+ * 其他一切情况（无通道、超时、错误码、无法解析）都按拒绝处理。
+ */
+export function checkWebFetchUrl(socketPath, signal, url) {
+  if (!socketPath) return Promise.resolve({ allowed: false, reason: WEB_FETCH_CHECK_UNAVAILABLE })
+  return new Promise(resolve => {
+    const timeout = globalThis.AbortSignal.timeout(10000)
+    const payload = JSON.stringify({ url: typeof url === 'string' ? url : null })
+    const req = request({ socketPath, path: '/web-fetch/check', method: 'POST',
+      headers: { 'content-type': 'application/json', 'content-length': Buffer.byteLength(payload) },
+      signal: signal ? globalThis.AbortSignal.any([signal, timeout]) : timeout }, response => {
+      let body = ''
+      response.setEncoding('utf8')
+      response.on('data', chunk => {
+        body += chunk
+        if (body.length > 4096) req.destroy()
+      })
+      response.on('error', () => resolve({ allowed: false, reason: WEB_FETCH_CHECK_UNAVAILABLE }))
+      response.on('end', () => {
+        try {
+          const parsed = JSON.parse(body)
+          if (response.statusCode === 200 && parsed.allowed === true) resolve({ allowed: true })
+          else resolve({ allowed: false, reason: typeof parsed.reason === 'string' && parsed.reason ? parsed.reason.slice(0, 500) : WEB_FETCH_CHECK_UNAVAILABLE })
+        } catch { resolve({ allowed: false, reason: WEB_FETCH_CHECK_UNAVAILABLE }) }
+      })
+    })
+    req.on('error', () => resolve({ allowed: false, reason: WEB_FETCH_CHECK_UNAVAILABLE }))
+    req.end(payload)
+  })
+}
+
 function authorizeCurrentExecution(socketPath, signal, toolName) {
   if (!socketPath) return Promise.resolve('denied')
   return new Promise(resolve => {

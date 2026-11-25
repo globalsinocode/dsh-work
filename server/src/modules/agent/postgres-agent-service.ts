@@ -67,6 +67,7 @@ interface AgentRow {
   projectTasksEnabled: boolean
   agentRecommendationEnabled: boolean
   skillCreationEnabled: boolean
+  webFetchEnabled: boolean
   mcpScope: AgentMcpScope
   updatedAt: Date
 }
@@ -83,6 +84,7 @@ export type AgentFingerprintSource = Omit<Pick<AgentRow,
   | 'projectTasksEnabled'
   | 'agentRecommendationEnabled'
   | 'skillCreationEnabled'
+  | 'webFetchEnabled'
   | 'mcpScope'
   | 'maxOutputBytes'
   | 'maxToolCalls'
@@ -114,6 +116,7 @@ interface VersionRow {
   projectTasksEnabled: boolean
   agentRecommendationEnabled: boolean
   skillCreationEnabled: boolean
+  webFetchEnabled: boolean
   mcpScope: AgentMcpScope
 }
 
@@ -261,6 +264,7 @@ export class PostgresAgentService {
              av.project_tasks_enabled as "projectTasksEnabled",
              av.agent_recommendation_enabled as "agentRecommendationEnabled",
              av.skill_creation_enabled as "skillCreationEnabled",
+             av.web_fetch_enabled as "webFetchEnabled",
              av.mcp_scope as "mcpScope",
              av.agent_spec as "agentSpec"
         from agent_versions av
@@ -316,14 +320,14 @@ export class PostgresAgentService {
           id, tenant_id, agent_id, version, name, description, welcome_message,
           example_prompts, system_prompt, max_output_bytes,
           max_tool_calls, timeout_seconds, skill_refs, web_search_enabled, project_tasks_enabled,
-          agent_recommendation_enabled, skill_creation_enabled, mcp_scope, agent_spec, status, created_by, change_summary
+          agent_recommendation_enabled, skill_creation_enabled, web_fetch_enabled, mcp_scope, agent_spec, status, created_by, change_summary
         ) values (
           ${versionId}, ${tenantId}, ${configuration.id}, ${version}, ${configuration.name},
           ${configuration.description}, ${configuration.welcomeMessage}, ${transaction.json(configuration.examplePrompts)},
           ${configuration.systemPrompt}, ${configuration.maxOutputBytes},
           ${configuration.maxToolCalls}, ${configuration.timeoutSeconds}, ${transaction.json(configuration.skills)},
           ${configuration.webSearchEnabled}, ${configuration.projectTasksEnabled},
-          ${configuration.agentRecommendationEnabled}, ${configuration.skillCreationEnabled},
+          ${configuration.agentRecommendationEnabled}, ${configuration.skillCreationEnabled}, ${configuration.webFetchEnabled},
           ${transaction.json(asJson(configuration.mcpScope))},
           ${transaction.json(asJson(spec))}, 'draft', ${actor.id}, ${configuration.changeSummary}
         )
@@ -380,6 +384,7 @@ export class PostgresAgentService {
         projectTasksEnabled: input.projectTasksEnabled ?? current.projectTasksEnabled,
         agentRecommendationEnabled: input.agentRecommendationEnabled ?? current.agentRecommendationEnabled,
         skillCreationEnabled: input.skillCreationEnabled ?? current.skillCreationEnabled,
+        webFetchEnabled: input.webFetchEnabled ?? current.webFetchEnabled,
       },
       current.owner,
       current.department,
@@ -414,6 +419,7 @@ export class PostgresAgentService {
                  project_tasks_enabled = ${configuration.projectTasksEnabled},
                  agent_recommendation_enabled = ${configuration.agentRecommendationEnabled},
                  skill_creation_enabled = ${configuration.skillCreationEnabled},
+                 web_fetch_enabled = ${configuration.webFetchEnabled},
                  mcp_scope = ${transaction.json(asJson(configuration.mcpScope))},
                  agent_spec = ${transaction.json(asJson(agentSpecFromConfiguration(configuration, locked.version, locked.agentSpec)))},
                  change_summary = ${configuration.changeSummary}
@@ -436,7 +442,7 @@ export class PostgresAgentService {
             id, tenant_id, agent_id, version, name, description, welcome_message,
             example_prompts, system_prompt, max_output_bytes,
             max_tool_calls, timeout_seconds, skill_refs, web_search_enabled, project_tasks_enabled,
-            agent_recommendation_enabled, skill_creation_enabled, mcp_scope, agent_spec, status, created_by, source_version, change_summary
+            agent_recommendation_enabled, skill_creation_enabled, web_fetch_enabled, mcp_scope, agent_spec, status, created_by, source_version, change_summary
           ) values (
             ${draftVersionId}, ${tenantId}, ${input.agentId}, ${newVersion},
             ${configuration.name}, ${configuration.description}, ${configuration.welcomeMessage},
@@ -444,7 +450,7 @@ export class PostgresAgentService {
             ${configuration.maxOutputBytes}, ${configuration.maxToolCalls}, ${configuration.timeoutSeconds},
             ${transaction.json(configuration.skills)}, ${configuration.webSearchEnabled},
             ${configuration.projectTasksEnabled}, ${configuration.agentRecommendationEnabled},
-            ${configuration.skillCreationEnabled},
+            ${configuration.skillCreationEnabled}, ${configuration.webFetchEnabled},
             ${transaction.json(asJson(configuration.mcpScope))},
             ${transaction.json(asJson(agentSpecFromConfiguration(configuration, newVersion, locked.agentSpec)))},
             'draft', ${actor.id}, ${locked.version}, ${configuration.changeSummary}
@@ -547,7 +553,8 @@ export class PostgresAgentService {
              av.web_search_enabled as "webSearchEnabled",
              av.project_tasks_enabled as "projectTasksEnabled",
              av.agent_recommendation_enabled as "agentRecommendationEnabled",
-             av.skill_creation_enabled as "skillCreationEnabled"
+             av.skill_creation_enabled as "skillCreationEnabled",
+             av.web_fetch_enabled as "webFetchEnabled"
         from agent_versions av
         join users creator on creator.tenant_id = av.tenant_id and creator.id = av.created_by
         left join users publisher on publisher.tenant_id = av.tenant_id and publisher.id = av.published_by
@@ -807,6 +814,7 @@ export class PostgresAgentService {
              av.project_tasks_enabled as "projectTasksEnabled",
              av.agent_recommendation_enabled as "agentRecommendationEnabled",
              av.skill_creation_enabled as "skillCreationEnabled",
+             av.web_fetch_enabled as "webFetchEnabled",
              a.visible_role_ids as "roleIds",
              av.max_output_bytes as "maxOutputBytes", av.max_tool_calls as "maxToolCalls",
              av.timeout_seconds as "timeoutSeconds",
@@ -836,11 +844,11 @@ export class PostgresAgentService {
           ...await this.skillService.resolveRuntimeSkills(selected),
         ])
       : []
-    // 内置工具按注册表装配：默认工具、Agent 开启的联网搜索、Skill 需要的 Python 执行。
+    // 内置工具按注册表装配：默认工具、Agent 开启的联网搜索与读取网页、Skill 需要的 Python 执行。
     // Runtime 停用清单在创建 Attempt 时扣除。
     const skillExecutionTools = skillInstructions.flatMap(skill => skill.tools)
       .flatMap(reference => parseBuiltinToolReference(reference)?.name === 'python_execute' ? ['python_execute'] : [])
-    const runtimeTools = unique([...agentBuiltinToolNames({ webSearchEnabled: row.webSearchEnabled }), ...skillExecutionTools])
+    const runtimeTools = unique([...agentBuiltinToolNames({ webSearchEnabled: row.webSearchEnabled, webFetchEnabled: row.webFetchEnabled }), ...skillExecutionTools])
     const approvalMode = 'never' as const
     const mcpConnections = await this.resolveMcpConnections(row.mcpScope)
     const runtimeSkills = this.skillService
@@ -893,7 +901,7 @@ export class PostgresAgentService {
              av.skill_refs as skills, av.web_search_enabled as "webSearchEnabled",
              av.project_tasks_enabled as "projectTasksEnabled",
              av.agent_recommendation_enabled as "agentRecommendationEnabled",
-             av.skill_creation_enabled as "skillCreationEnabled", av.mcp_scope as "mcpScope",
+             av.skill_creation_enabled as "skillCreationEnabled", av.web_fetch_enabled as "webFetchEnabled", av.mcp_scope as "mcpScope",
              av.agent_spec as "agentSpec", a.updated_at as "updatedAt"
         from agents a
         join users owner on owner.tenant_id = a.tenant_id and owner.id = a.owner_user_id
@@ -920,7 +928,7 @@ export class PostgresAgentService {
              av.skill_refs as skills, av.web_search_enabled as "webSearchEnabled",
              av.project_tasks_enabled as "projectTasksEnabled",
              av.agent_recommendation_enabled as "agentRecommendationEnabled",
-             av.skill_creation_enabled as "skillCreationEnabled", av.mcp_scope as "mcpScope",
+             av.skill_creation_enabled as "skillCreationEnabled", av.web_fetch_enabled as "webFetchEnabled", av.mcp_scope as "mcpScope",
              av.agent_spec as "agentSpec", a.updated_at as "updatedAt"
         from agents a
         join users owner on owner.tenant_id = a.tenant_id and owner.id = a.owner_user_id
@@ -969,7 +977,7 @@ function normalizeConfiguration(
   input: AgentDraftConfiguration,
   owner: string,
   department: string,
-): AgentDraftConfiguration & { webSearchEnabled: boolean; projectTasksEnabled: boolean; agentRecommendationEnabled: boolean; skillCreationEnabled: boolean } {
+): AgentDraftConfiguration & { webSearchEnabled: boolean; projectTasksEnabled: boolean; agentRecommendationEnabled: boolean; skillCreationEnabled: boolean; webFetchEnabled: boolean } {
   const welcomeMessage = input.welcomeMessage.trim()
     || `你好，我是${input.name.trim() || '企业 Agent'}。${input.description.trim() || '我会协助你完成工作。'}`.slice(0, 120)
   return {
@@ -987,12 +995,13 @@ function normalizeConfiguration(
     projectTasksEnabled: input.projectTasksEnabled === true,
     agentRecommendationEnabled: input.agentRecommendationEnabled === true,
     skillCreationEnabled: input.skillCreationEnabled === true,
+    webFetchEnabled: input.webFetchEnabled === true,
     mcpScope: normalizeAgentMcpScope(input.mcpScope),
     changeSummary: input.changeSummary.trim() || '更新 Agent 配置',
   }
 }
 
-function assertConfiguration(input: AgentDraftConfiguration & { webSearchEnabled: boolean; projectTasksEnabled: boolean; agentRecommendationEnabled: boolean; skillCreationEnabled: boolean }) {
+function assertConfiguration(input: AgentDraftConfiguration & { webSearchEnabled: boolean; projectTasksEnabled: boolean; agentRecommendationEnabled: boolean; skillCreationEnabled: boolean; webFetchEnabled: boolean }) {
   if (!/^[a-z][a-z0-9-]{2,47}$/.test(input.id)) throw invalidRequest('Agent 标识格式不正确')
   // 定义字段与包入口共用同一规范化校验（AgentSpec 内容边界）。
   assertAgentSpecContent(agentSpecFromConfiguration(input, ''))
@@ -1029,6 +1038,7 @@ function toAgentDefinition(row: AgentRow): AgentDefinition {
     projectTasksEnabled: row.projectTasksEnabled,
     agentRecommendationEnabled: row.agentRecommendationEnabled,
     skillCreationEnabled: row.skillCreationEnabled,
+    webFetchEnabled: row.webFetchEnabled,
     mcpScope: normalizeAgentMcpScope(row.mcpScope),
     updatedAt: formatDateTime(row.updatedAt),
     revision: agentMutationRevision(row),
@@ -1063,6 +1073,7 @@ function toVersionRecord(row: VersionRow): AgentVersionRecord {
     projectTasksEnabled: row.projectTasksEnabled,
     agentRecommendationEnabled: row.agentRecommendationEnabled,
     skillCreationEnabled: row.skillCreationEnabled,
+    webFetchEnabled: row.webFetchEnabled,
     mcpScope: normalizeAgentMcpScope(row.mcpScope),
   }
 }
@@ -1085,6 +1096,8 @@ export function configurationFingerprint(row: AgentFingerprintSource) {
     ...(row.agentRecommendationEnabled ? { agentRecommendationEnabled: true } : {}),
     // 可创建 Skill 同样晚于既有证据加入：关闭时不进入指纹。
     ...(row.skillCreationEnabled ? { skillCreationEnabled: true } : {}),
+    // 读取网页同样晚于既有证据加入：关闭时不进入指纹。
+    ...(row.webFetchEnabled ? { webFetchEnabled: true } : {}),
     mcpScope: normalizeAgentMcpScope(row.mcpScope),
     maxOutputBytes: row.maxOutputBytes,
     maxToolCalls: row.maxToolCalls,

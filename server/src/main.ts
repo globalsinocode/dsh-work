@@ -302,13 +302,14 @@ async function start() {
     routeTrustLevel: async () => (await modelGovernanceForPolicy.resolveDefaultRoute()).trustLevel,
     onError: message => { console.warn(message) },
   })
+  // 未配置主密钥时外部厂商的请求失败即关闭（数据防护方案 5.6.2）。
+  const modelGatewayDataProtection = new DataProtectionService(
+    dataProtectionStore,
+    process.env.DSH_CREDENTIAL_MASTER_KEY ? Buffer.from(process.env.DSH_CREDENTIAL_MASTER_KEY, 'base64') : undefined,
+  )
   const modelGateway = dshInstallation ? new ModelGateway({
     log: new PostgresModelGatewayRequestLog(database),
-    // 未配置主密钥时外部厂商的请求失败即关闭（数据防护方案 5.6.2）。
-    dataProtection: new DataProtectionService(
-      dataProtectionStore,
-      process.env.DSH_CREDENTIAL_MASTER_KEY ? Buffer.from(process.env.DSH_CREDENTIAL_MASTER_KEY, 'base64') : undefined,
-    ),
+    dataProtection: modelGatewayDataProtection,
     credentials: {
       readSecret: async (tenantId, credentialRefId) => {
         if (!credentialSecrets) throw new Error('服务未配置 DSH_CREDENTIAL_MASTER_KEY，无法解析模型厂商密钥')
@@ -333,6 +334,8 @@ async function start() {
     launchMode: dshInstallation.launchMode,
     process: dshInstallation.process,
     modelGateway,
+    // 读取网页方案 6.2：网址的数据防护检测（只返回类别）。
+    detectDataProtectionCategories: (tenantId, texts) => modelGatewayDataProtection.detectCategories(tenantId, texts),
     authorizeExecution: async manifest => {
       if (!orchestration) throw new Error('运行授权服务尚未就绪')
       await orchestration.assertCurrentRunAuthorization(manifest)

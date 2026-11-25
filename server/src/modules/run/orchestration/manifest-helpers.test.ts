@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 
 import type { ModelRouteSnapshot } from '../../model/model-types.ts'
-import { removeUnsupportedWebSearch, toRuntimeModelRoute } from './manifest-helpers.ts'
+import { removeProxiedWebFetch, removeUnsupportedWebSearch, toRuntimeModelRoute } from './manifest-helpers.ts'
 
 const snapshot: ModelRouteSnapshot = {
   routeId: 'route-default', routeKey: 'default', providerId: 'provider-deepseek', providerKey: 'deepseek-official',
@@ -21,6 +21,18 @@ describe('路由快照写入 Manifest（模型路由方案 4.2）', () => {
 
   it('首批只开放 openai-completions，其他协议按依赖不可用拒绝', () => {
     assert.throws(() => toRuntimeModelRoute({ ...snapshot, providerType: 'anthropic-messages' }), { code: 'dependency_unavailable' })
+  })
+})
+
+describe('读取网页在 DSH 有代理配置时不装配（读取网页方案 6.3）', () => {
+  it('有代理配置时移除 web_fetch 并说明原因，没有时保留', () => {
+    const proxied = ['read', 'web_fetch', 'web_search']
+    assert.deepEqual(removeProxiedWebFetch(proxied, true), [{ tool: 'web_fetch', reason: 'proxy_configured' }])
+    assert.deepEqual(proxied, ['read', 'web_search'])
+    const direct = ['read', 'web_fetch']
+    assert.deepEqual(removeProxiedWebFetch(direct, false), [])
+    assert.deepEqual(direct, ['read', 'web_fetch'])
+    assert.deepEqual(removeProxiedWebFetch(['read'], true), [], '没有开启读取网页时不写说明')
   })
 })
 

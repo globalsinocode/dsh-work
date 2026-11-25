@@ -242,7 +242,7 @@ DSH Worker（每 Attempt 一个，宿主进程）
   - 每条可能派生进程的命令（`bash`；1b② 后的 Python）结束后先清扫残留进程，确认失败、清扫命令无法执行或进程数耗尽时删除容器（下次命令再惰性创建）。清扫只是优化，“不干净就删除”才是保证。
   - 超时或取消时，平台在清理与静止确认完成前把执行容器标为忙；执行容器模式下工具桥的 `/authorize-execution`（策略每次工具调用前都会探测）先等待执行容器空闲，最多 3 秒（在策略 6 秒的探测时限之内；正常清理约 0.1–0.4 s），超时只拒绝本次工具调用。插件侧“取消后等待平台确认”未实施，由该等待替代。
   - 静止无法恢复（删除容器也失败）时，下一次授权探测即令 Attempt 以 `EXECUTION_CONTAINER_UNRECOVERABLE` 失败，不再执行任何工具；该 Attempt 的执行容器也拒绝后续命令。
-  - 在 dsh-work 内置工具注册表的工具与 `bash` 中，只有 `read`、`read_image`、`web_search` 可由 DSH 并行调度，其余必须独占（3.7）。这是安全不变量：工具策略在工具目录中发布 DSH 实际的调度方式（`dshScheduling`），执行容器模式启动检查据此准入，不满足或未报告即视为执行容器不可用。
+  - 在 dsh-work 内置工具注册表的工具与 `bash` 中，只有 `read`、`read_image`、`web_search`、`web_fetch`（2026-11-25 读取网页进入注册表；只读网络、返回文本，不触及工作区）可由 DSH 并行调度，其余必须独占（3.7）。这是安全不变量：工具策略在工具目录中发布 DSH 实际的调度方式（`dshScheduling`），执行容器模式启动检查据此准入，不满足或未报告即视为执行容器不可用。
 - **宿主侧读取工作区。** 产物收集、检查点复制、输入挂载等宿主侧操作只在静止期间进行：Attempt 结束时先让工具桥停止接收命令、等待清理结束并删除执行容器，再收集成果，任何一步失败都令 Attempt 以 `EXECUTION_CONTAINER_UNRECOVERABLE` 失败且不收集；持久化等待的检查点在读取 `output/` 前等待执行容器空闲，不空闲则不创建检查点。读取时并先确认 `output/` 等目录本身是工作区内的真实目录（`lstat` 与真实路径，3.7 发现现有代码未检查目录本身），文件只收普通文件，拒绝管道等特殊文件；macOS 上读取可再加 `O_NOFOLLOW_ANY`。
 - **remote subprocess 插件**按官方 `SubprocessRuntime` 接口实现，参照 KnowWork 的 `remote-subprocess`；DSH 官方 bash、文件工具与 `present` 原样使用。路径只认本 Attempt 工作区。
 - **acp Profile 调整：** 1b 停用 `subprocess`、`tool-jobs`，插入 remote subprocess，`tool-bash` 配置 `enableRunInBackground: false`（[执行容器叠加层](../../server/config/dsh/execution-container.cordis.patch.yml)，追加在部署 patch 之后，作用于 Attempt、工具目录探测、MCP 发现与预检的所有 DSH 进程）。阶段 2a 再停用 `bash-sandbox`、`permission` 并改挂 `dsh-bash-local`（`timeoutMs` 60000、`maxTimeoutMs` 600000，与平台单条命令上限一致；3.8）。`fs-sandbox` 保持不变（1c 不替换 `ctx.fs`）。patch 不能替换已有条目的包名，只能停用后插入。插件以 `ctx.provide('subprocess', …)` 注册，不引用 DSH 包，与工具策略插件一样以绝对路径装配。
@@ -501,7 +501,7 @@ B、C、D 的风险由执行容器姿态决定，隔离要求相同，不能因�
 | 前台单次 `bash`（含经 `bash` 运行模型写的脚本） | 执行世界 | 阶段 2，C 档（第 6 节） |
 | `bash` 的 `run_in_background`、`job_output`/`job_kill` | 生命周期随 Attempt 结束、收集模式无中途输出 | D 档暂缓（第 6 节、第 10 节） |
 | 持久化 bash、终端 | 执行世界 + 终端会话 | 第 10 节 |
-| `web_fetch` | 数据出口治理，与沙箱无关 | 第 10 节 |
+| `web_fetch` | 数据出口治理，与沙箱无关 | 2026-11-25 已按[读取网页方案](web-fetch-plan.md)（精简版）开放：服务端逐次复核，不经出口代理 |
 | Agent 协作、子 Agent | 委派已删除，需产品重设计 | 不在本方案 |
 | Runtime 控制类工具 | 越过平台边界 | 继续拒绝 |
 
@@ -547,5 +547,5 @@ Mock、探针或 P1 通过不能代替 P2。
 - **Worker 进容器：** 隔离 DSH 自身漏洞的纵深防御。可沿用 3.4 的加固姿态与预编译只读 `tsx` 缓存；macOS 上工具桥需经虚拟机内中继容器（3.3），Linux 可绑定挂载宿主 socket（未验证）。需解决 Worker 镜像体积（2.0 GB 源码检出）与禁止共享可写缓存的问题。
 - **独立账号的执行器组件与其他部署形态：** 出现 Linux 单机或 Kubernetes 部署时，执行器拆为独立组件（rootless Docker / Podman，或仅限本命名空间 Pod 的 RBAC），新增对应 `ExecutionBackend` 实现，可选 gVisor/Kata。Mac mini 上 Docker Desktop 按登录用户运行，账号隔离需专用账号运行容器运行时（如 colima），需单独验证。
 - **持久化 bash、终端：** remote 实现需补 `spawnTerminal`，可能需要会话级容器。
-- **受控联网：** `web_fetch` 与执行容器出网经平台出口代理，域名白名单与逐请求审计。
+- **受控联网：** 执行容器出网经平台出口代理，域名白名单与逐请求审计。`web_fetch` 已按[读取网页方案](web-fetch-plan.md)以服务端逐次复核开放（不经出口代理，2026-11-25）。
 - **D 档后台任务：** C 档稳定后另行评审（第 6 节）。

@@ -328,6 +328,8 @@ export interface AgentDefinition {
   agentRecommendationEnabled: boolean
   /** 是否可创建 Skill（功能规则 5.6）；仅个人对话的员工交互运行装配。 */
   skillCreationEnabled: boolean
+  /** 是否可读取网页（web_fetch，读取网页方案 WF3）；只能打开员工消息与联网搜索结果中的公网网址。 */
+  webFetchEnabled: boolean
   mcpScope?: AgentMcpScope
   updatedAt: string
   /** 草稿编辑的乐观并发修订：保存时原样回传为 expectedRevision（F-05）。原型模式不提供。 */
@@ -356,6 +358,8 @@ export interface AgentDraftConfiguration {
   agentRecommendationEnabled?: boolean
   /** 是否可创建 Skill；编辑时省略则保留当前设置，新建时默认关闭。 */
   skillCreationEnabled?: boolean
+  /** 是否可读取网页；编辑时省略则保留当前设置，新建时默认关闭。 */
+  webFetchEnabled?: boolean
   mcpScope?: AgentMcpScope
   changeSummary: string
 }
@@ -402,6 +406,8 @@ export interface AgentVersionRecord {
   agentRecommendationEnabled: boolean
   /** 是否可创建 Skill。 */
   skillCreationEnabled: boolean
+  /** 是否可读取网页。 */
+  webFetchEnabled: boolean
   mcpScope?: AgentMcpScope
 }
 

@@ -816,6 +816,7 @@ export const mockAgents: AgentDefinition[] = [
     projectTasksEnabled: false,
     agentRecommendationEnabled: false,
     skillCreationEnabled: false,
+    webFetchEnabled: false,
     updatedAt: '2026-08-27 17:42',
     allowWorkspaceJoin: true,
   },
@@ -840,6 +841,7 @@ export const mockAgents: AgentDefinition[] = [
     projectTasksEnabled: false,
     agentRecommendationEnabled: false,
     skillCreationEnabled: false,
+    webFetchEnabled: false,
     updatedAt: '2026-08-28 09:14',
     allowWorkspaceJoin: true,
   },
@@ -866,6 +868,7 @@ export const mockAgents: AgentDefinition[] = [
     projectTasksEnabled: false,
     agentRecommendationEnabled: false,
     skillCreationEnabled: true,
+    webFetchEnabled: false,
     updatedAt: '2026-10-31 10:00',
     allowWorkspaceJoin: false,
   },
@@ -894,6 +897,7 @@ export const mockAgentVersions: AgentVersionRecord[] = [
     projectTasksEnabled: false,
     agentRecommendationEnabled: false,
     skillCreationEnabled: false,
+    webFetchEnabled: false,
   },
   {
     id: 'agent-version-assistant-110',
@@ -917,6 +921,7 @@ export const mockAgentVersions: AgentVersionRecord[] = [
     projectTasksEnabled: false,
     agentRecommendationEnabled: false,
     skillCreationEnabled: false,
+    webFetchEnabled: false,
   },
   {
     id: 'agent-version-assistant-100',
@@ -939,6 +944,7 @@ export const mockAgentVersions: AgentVersionRecord[] = [
     projectTasksEnabled: false,
     agentRecommendationEnabled: false,
     skillCreationEnabled: false,
+    webFetchEnabled: false,
   },
   {
     id: 'agent-version-operations-040',
@@ -960,6 +966,7 @@ export const mockAgentVersions: AgentVersionRecord[] = [
     projectTasksEnabled: false,
     agentRecommendationEnabled: false,
     skillCreationEnabled: false,
+    webFetchEnabled: false,
   },
   {
     id: 'agent-version-operations-030',
@@ -982,6 +989,7 @@ export const mockAgentVersions: AgentVersionRecord[] = [
     projectTasksEnabled: false,
     agentRecommendationEnabled: false,
     skillCreationEnabled: false,
+    webFetchEnabled: false,
   },
   {
     id: 'agent-version-skill-creator-100',
@@ -1004,6 +1012,7 @@ export const mockAgentVersions: AgentVersionRecord[] = [
     projectTasksEnabled: false,
     agentRecommendationEnabled: false,
     skillCreationEnabled: true,
+    webFetchEnabled: false,
   },
 ]
 

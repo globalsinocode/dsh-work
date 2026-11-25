@@ -7,6 +7,23 @@ import {
   normalizeDisabledTools, skillCreationToolNames, skillToolName, unavailableSkillTools,
 } from './builtin-tools.ts'
 
+// 读取网页方案（精简版）：独立开关，与联网搜索互不影响；Skill 不能声明，allowed-tools 中的 WebFetch 保持忽略。
+test('web_fetch assembles only when its own version switch is on and cannot be declared by Skills', () => {
+  const tool = builtinTool('web_fetch')
+  assert.deepEqual({ source: tool?.source, effect: tool?.effect, assembly: tool?.assembly }, { source: 'dsh', effect: 'read', assembly: 'agent-opt-in' })
+  assert.equal(isDshBuiltinTool('web_fetch'), true, 'Runtime 可紧急停用')
+  assert.equal(agentBuiltinToolNames({ webSearchEnabled: false }).includes('web_fetch'), false)
+  assert.equal(agentBuiltinToolNames({ webSearchEnabled: true }).includes('web_fetch'), false)
+  const fetchOnly = agentBuiltinToolNames({ webSearchEnabled: false, webFetchEnabled: true })
+  assert.equal(fetchOnly.includes('web_fetch'), true)
+  assert.equal(fetchOnly.includes('web_search'), false)
+  assert.equal(agentBuiltinToolNames({ webSearchEnabled: false, webFetchEnabled: true, disabledTools: ['web_fetch'] }).includes('web_fetch'), false)
+  assert.equal(skillToolName('WebFetch'), undefined)
+  assert.equal(skillToolName('web_fetch'), undefined)
+  assert.deepEqual(invalidSkillToolReferences(['web_fetch@1.0.0']), ['web_fetch@1.0.0'])
+  assert.deepEqual(unavailableSkillTools(['web_fetch@1.0.0'], { webSearchEnabled: true }), ['web_fetch@1.0.0（平台不提供该工具）'])
+})
+
 // 执行隔离阶段 2：bash 由平台在执行容器可用时装配，不进入 Agent 快照，也不能由 Skill 声明。
 test('bash is a DSH tool assembled only when the execution container is available', () => {
   const bash = builtinTool('bash')

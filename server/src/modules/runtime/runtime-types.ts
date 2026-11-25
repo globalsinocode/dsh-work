@@ -106,10 +106,14 @@ export interface RuntimeManifest {
    * 平台工具本次未装配的原因（数据防护方案 D12 补充）：默认路由不是 DeepSeek 官方时联网搜索不可用。
    * 运行说明告知模型，避免假装已经搜索。
    */
-  unavailable_tools?: Array<{
-    tool: 'web_search'
-    reason: 'model_route_unsupported'
-  }>
+  /**
+   * Agent 开启了但本次没有装配的工具：默认路由不支持联网搜索（D12 补充），或 DSH 有代理配置时
+   * 不装配读取网页（读取网页方案 6.3：走代理时 DSH 不做公网地址校验）。
+   */
+  unavailable_tools?: Array<
+    | { tool: 'web_search'; reason: 'model_route_unsupported' }
+    | { tool: 'web_fetch'; reason: 'proxy_configured' }
+  >
   user_context: {
     user_id: string
     tenant_id: string
@@ -461,4 +465,6 @@ export interface RuntimeModelGatewayPort {
     failure: { code: string; message: string } | undefined
     chatRequests: number
   }>
+  /** 读取网页方案 6.2：本 Attempt 联网搜索回复中结构化结果条目的网址。 */
+  searchResultUrls?(attemptId: string): ReadonlySet<string>
 }

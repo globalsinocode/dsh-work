@@ -28,6 +28,7 @@ export interface AgentDraftForm {
   projectTasksEnabled: boolean
   agentRecommendationEnabled: boolean
   skillCreationEnabled: boolean
+  webFetchEnabled: boolean
   mcpScope: AgentMcpScope
   timeoutSeconds: number
   maxToolCalls: number
@@ -59,7 +60,7 @@ const editorKey: InjectionKey<AgentDraftEditor> = Symbol('agent-draft-editor')
 export function emptyAgentDraftForm(): AgentDraftForm {
   return {
     name: '', description: '', welcomeMessage: '', examplePrompts: ['请介绍你能提供哪些帮助'],
-    systemPrompt: '', workInstructions: '', skills: [], webSearchEnabled: false, projectTasksEnabled: false, agentRecommendationEnabled: false, skillCreationEnabled: false,
+    systemPrompt: '', workInstructions: '', skills: [], webSearchEnabled: false, projectTasksEnabled: false, agentRecommendationEnabled: false, skillCreationEnabled: false, webFetchEnabled: false,
     mcpScope: { mode: 'none', connectorIds: [] },
     timeoutSeconds: 300, maxToolCalls: 20, maxOutputBytes: 65536,
   }
@@ -78,6 +79,7 @@ export function draftFormFromAgent(agent: AgentDefinition): AgentDraftForm {
     projectTasksEnabled: agent.projectTasksEnabled,
     agentRecommendationEnabled: agent.agentRecommendationEnabled === true,
     skillCreationEnabled: agent.skillCreationEnabled === true,
+    webFetchEnabled: agent.webFetchEnabled === true,
     mcpScope: agent.mcpScope?.mode === 'selected'
       ? { mode: 'selected', connectorIds: [...agent.mcpScope.connectorIds] }
       : { mode: 'none', connectorIds: [] },
@@ -205,6 +207,7 @@ export function provideAgentDraftEditor(agent: Ref<AgentDefinition | undefined>,
           projectTasksEnabled: value.projectTasksEnabled,
           agentRecommendationEnabled: value.agentRecommendationEnabled,
           skillCreationEnabled: value.skillCreationEnabled,
+          webFetchEnabled: value.webFetchEnabled,
           mcpScope: value.mcpScope.mode === 'selected' ? value.mcpScope : { mode: value.mcpScope.mode, connectorIds: [] },
           timeoutSeconds: value.timeoutSeconds,
           maxToolCalls: value.maxToolCalls,

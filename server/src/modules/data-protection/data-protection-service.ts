@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 
 import type { DatabaseClient } from '../../infrastructure/postgres/database.ts'
+import { detectValues } from './data-protection-detectors.ts'
 import { PlaceholderRestorer, deriveTenantKey, maskTexts } from './data-protection-masking.ts'
 import { DataProtectionUnavailableError, type DataProtectionCounts, type DataProtectionPolicy } from './data-protection-types.ts'
 
@@ -117,5 +118,14 @@ export class DataProtectionService {
 
   recordGatewayEvent(event: DataProtectionGatewayEvent): Promise<void> {
     return this.store.recordGatewayEvent(event)
+  }
+
+  /**
+   * 读取网页方案 6.2：检测网址中的密钥、个人信息与保密词，只返回命中的类别（不返回原值，D8）。
+   * 不依赖主密钥：只检测，不生成占位符。
+   */
+  async detectCategories(tenantId: string, texts: readonly string[]) {
+    const policy = await this.store.loadPolicy(tenantId)
+    return [...new Set([...detectValues(texts, policy).values()].map(info => info.category))]
   }
 }

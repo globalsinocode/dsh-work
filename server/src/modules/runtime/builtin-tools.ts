@@ -13,7 +13,7 @@ export const BUILTIN_TOOL_VERSION = '1.0.0'
 export type BuiltinToolAssembly =
   /** 每个 Agent 运行都装配。 */
   | 'always'
-  /** Agent 版本显式开启才装配（联网搜索）。 */
+  /** Agent 版本显式开启才装配（联网搜索、读取网页，各有开关）。 */
   | 'agent-opt-in'
   /** 由 Skill 或运行内容触发：激活 Skill、Python 执行、经验申请。 */
   | 'runtime'
@@ -61,6 +61,8 @@ export const builtinTools: readonly BuiltinTool[] = [
   { name: 'bash', label: '运行命令', source: 'dsh', effect: 'write', risk: 'medium', assembly: 'execution-container', constraints: ['只在本次运行的执行容器中执行（断网、限时、限额）', '每次一条前台命令，不支持后台运行', workspace, '工作区合计不超过 2 GB，超出时终止命令'] },
   { name: 'todo_write', label: '任务进度清单', source: 'dsh', effect: 'write', risk: 'low', assembly: 'always', constraints: ['只记录本次会话的进度清单'] },
   { name: 'web_search', label: '联网搜索', source: 'dsh', effect: 'read', risk: 'medium', assembly: 'agent-opt-in', constraints: ['每次 1～4 个非空查询', '查询内容会发送到外部搜索服务'] },
+  // 读取网页方案（精简版）：调用前经平台复核来源、URL 数据防护与次数；DSH 只直连公网，有代理配置时不装配。
+  { name: 'web_fetch', label: '读取网页', source: 'dsh', effect: 'read', risk: 'medium', assembly: 'agent-opt-in', constraints: ['只能打开员工消息或联网搜索结果中的公网网址', '每次运行最多 10 次', '网址含密钥、个人信息或保密词时拒绝'] },
   { name: 'activate_skill', label: '激活 Skill', source: 'platform', effect: 'read', risk: 'low', assembly: 'runtime', constraints: ['只读取本次固定版本的 Skill 资源'] },
   { name: 'python_execute', label: 'Python 执行', source: 'platform', effect: 'write', risk: 'medium', assembly: 'runtime', constraints: ['仅在平台沙箱中执行 Skill 自带脚本', '无网络、限时、限额'] },
   { name: 'propose_memory', label: '提出经验申请', source: 'platform', effect: 'write', risk: 'low', assembly: 'runtime', constraints: ['只生成待管理员审核的申请'] },
@@ -148,17 +150,25 @@ export function knowledgeSearchToolNames(input: { personalConversation: boolean;
   return input.personalConversation && input.knowledgeStatus === 'ok' ? [knowledgeSearchToolName] : []
 }
 
+/** Agent 版本开关与它所开启的工具（assembly 为 agent-opt-in）。 */
+const optInSwitches: Record<string, 'webSearchEnabled' | 'webFetchEnabled'> = {
+  web_search: 'webSearchEnabled',
+  web_fetch: 'webFetchEnabled',
+}
+
 /**
- * Agent 运行装配的 DSH 工具名称：默认工具，加上 Agent 开启的联网搜索；去掉 Runtime 停用的工具。
+ * Agent 运行装配的 DSH 工具名称：默认工具，加上 Agent 开启的联网搜索与读取网页；去掉 Runtime 停用的工具。
  * `bash` 不在其中：它取决于本次启动的执行容器是否可用，由派发时装配（executionToolNames）。
  */
 export function agentBuiltinToolNames(input: {
   webSearchEnabled: boolean
+  webFetchEnabled?: boolean
   disabledTools?: readonly string[]
 }): string[] {
   const disabled = new Set(input.disabledTools ?? [])
   return builtinTools
-    .filter(tool => tool.assembly === 'always' || (tool.assembly === 'agent-opt-in' && input.webSearchEnabled))
+    .filter(tool => tool.assembly === 'always'
+      || (tool.assembly === 'agent-opt-in' && input[optInSwitches[tool.name]!] === true))
     .map(tool => tool.name)
     .filter(name => !disabled.has(name))
 }
@@ -170,7 +180,7 @@ export function agentBuiltinToolNames(input: {
 export function skillToolName(value: string): string | undefined {
   const key = value.trim().toLowerCase().replace(/[_\s-]/g, '')
   return builtinTools.find(tool => tool.source === 'dsh' && tool.assembly !== 'purpose' && tool.assembly !== 'execution-container'
-    && tool.name.replace(/_/g, '') === key)?.name
+    && tool.name !== 'web_fetch' && tool.name.replace(/_/g, '') === key)?.name
 }
 
 /**
@@ -181,7 +191,7 @@ export function unavailableSkillTools(references: readonly string[], agent: { we
   const problems: string[] = []
   for (const reference of new Set(references)) {
     const tool = parseBuiltinToolReference(reference)
-    if (!tool || tool.assembly === 'purpose' || tool.assembly === 'workspace' || tool.assembly === 'execution-container' || tool.assembly === 'personal-conversation') problems.push(`${reference}（平台不提供该工具）`)
+    if (!tool || tool.assembly === 'purpose' || tool.assembly === 'workspace' || tool.assembly === 'execution-container' || tool.assembly === 'personal-conversation' || tool.name === 'web_fetch') problems.push(`${reference}（平台不提供该工具）`)
     else if (tool.assembly === 'agent-opt-in' && !agent.webSearchEnabled) problems.push(`${reference}（Agent 未开启联网搜索）`)
   }
   return problems
@@ -192,7 +202,7 @@ export function invalidSkillToolReferences(references: readonly string[]): strin
   return [...new Set(references)].filter(reference => {
     const tool = parseBuiltinToolReference(reference)
     return !tool || tool.assembly === 'purpose' || tool.assembly === 'workspace' || tool.assembly === 'execution-container'
-      || tool.assembly === 'personal-conversation' || tool.name === 'propose_memory'
+      || tool.assembly === 'personal-conversation' || tool.name === 'propose_memory' || tool.name === 'web_fetch'
   })
 }
 
