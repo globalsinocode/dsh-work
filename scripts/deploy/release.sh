@@ -270,8 +270,10 @@ fi
 workbench_origin=${DSH_WORK_WORKBENCH_DEFAULT_ORIGIN:-${AI_HUB_WORKBENCH_PORTAL_URL:?Set the workbench default Origin}}
 admin_origin=${DSH_WORK_ADMIN_DEFAULT_ORIGIN:-${AI_HUB_ADMIN_PORTAL_URL:?Set the admin default Origin}}
 health_url="${workbench_origin%/}/health"
+# The server runs its execution-capability probes before it starts listening; with three 30s
+# attempts plus delays a cold start can take ~95s, so keep the public health wait above that.
 healthy=false
-for _attempt in {1..30}; do
+for _attempt in {1..90}; do
   if curl --fail --silent --show-error --cacert "${DSH_WORK_CA_CERT_FILE}" "${health_url}" >/dev/null; then
     healthy=true
     break
@@ -283,6 +285,43 @@ if [[ "${healthy}" != true ]]; then
   fail_after_migration
   exit 1
 fi
+
+# /health answers even when the server started as UnavailableRuntime, which is how the
+# 2026-11-24 deployment reported success while every run returned 503 for ~15 hours. A deployment
+# is only successful when the required execution capabilities are actually available.
+ready_url="http://127.0.0.1:${DSH_WORK_SERVER_PORT:-4190}/health/ready"
+ready=false
+ready_output=''
+for _attempt in {1..30}; do
+  if ready_output=$(curl --fail --silent --show-error --max-time 10 "${ready_url}"); then
+    if printf '%s' "${ready_output}" | "${node_bin}" -e '
+      let body = ""
+      process.stdin.setEncoding("utf8")
+      process.stdin.on("data", chunk => { body += chunk })
+      process.stdin.on("end", () => {
+        let ready
+        try { ready = JSON.parse(body) } catch { process.exit(1) }
+        const capabilities = ready.executionCapabilities ?? {}
+        const required = ["dsh", "executionContainer"]
+        if (!required.every(name => capabilities[name]?.status === "available")) process.exit(1)
+        if (capabilities.python?.status !== "available") {
+          process.stderr.write("python capability unavailable; python_execute tasks will be refused\n")
+        }
+      })
+    '; then
+      ready=true
+      break
+    fi
+  fi
+  sleep 2
+done
+if [[ "${ready}" != true ]]; then
+  echo "release readiness check failed: required execution capabilities unavailable (${ready_url})" >&2
+  printf '%s\n' "${ready_output}" >&2
+  fail_after_migration
+  exit 1
+fi
+echo "release readiness check passed: dsh and execution container capabilities are available"
 
 printf '%s\n' "${tag}" > "${deploy_root}/active-release.new"
 mv "${deploy_root}/active-release.new" "${deploy_root}/active-release"

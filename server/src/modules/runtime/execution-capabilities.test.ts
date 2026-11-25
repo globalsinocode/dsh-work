@@ -95,6 +95,31 @@ test('exhausted startup probe still fails closed and reports the final failure o
   assert.deepEqual(result, { value: null, state: { status: 'unavailable', code: 'PYTHON_UNAVAILABLE' } })
 })
 
+test('startup probe keeps retrying a slow attempt when no deadline is set', async () => {
+  let attempts = 0
+  const recovered: number[] = []
+  const result = await probeExecutionCapability('dsh', async () => {
+    attempts += 1
+    // A cold DSH preflight can take ~30s; the retry bound must be the attempt count, not a total
+    // deadline shorter than one attempt (the 2026-11-24 outage).
+    await new Promise(resolve => setTimeout(resolve, 25))
+    if (attempts < 3) throw new Error('slow preflight timeout')
+    return 'installation'
+  }, undefined, { attempts: 3, delayMs: 1, onRecovered: attempt => recovered.push(attempt) })
+  assert.equal(result.state.status, 'available')
+  assert.equal(attempts, 3)
+  assert.deepEqual(recovered, [3])
+})
+
+test('startup probe does not report recovery when the first attempt succeeds', async () => {
+  const recovered: number[] = []
+  const result = await probeExecutionCapability('dsh', async () => 'installation', undefined, {
+    attempts: 3, delayMs: 1, onRecovered: attempt => recovered.push(attempt),
+  })
+  assert.equal(result.state.status, 'available')
+  assert.deepEqual(recovered, [])
+})
+
 test('startup probe stops retrying after the deadline and defaults to a single attempt', async () => {
   let attempts = 0
   const expired = await probeExecutionCapability('dsh', async () => {

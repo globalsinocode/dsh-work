@@ -246,13 +246,19 @@ async function start() {
   // DSH rewrites $DSH_HOME/profiles/acp/cordis.yml on every boot, and Docker can be briefly busy
   // while the deployment recreates containers: retry a bounded number of times so a transient
   // startup race does not leave the whole service on UnavailableRuntime until an operator restarts it.
-  // The budget stays under the release health-check window; fail-closed behavior is unchanged.
+  // Each attempt is already bounded by preflightDshRuntime (30s) and the Docker backend timeouts,
+  // so the attempt count is the retry bound. Do NOT add a total deadline shorter than one attempt:
+  // the 2026-11-24 deployment used deadlineMs=20s < 30s, so 2/3 and 3/3 never ran after the first
+  // timeout and the service stayed unavailable for ~15 hours.
+  const startupProbeAttempts = 3
   const startupProbeRetry = (label: 'dsh' | 'execution-container') => ({
-    attempts: 3,
+    attempts: startupProbeAttempts,
     delayMs: 2_000,
-    deadlineMs: 20_000,
     onAttemptFailure: (error: unknown, attempt: number) => {
-      console.warn(`startup probe ${label} attempt ${attempt}/3 failed: ${redactSensitiveText(error instanceof Error ? error.message : String(error)).slice(0, 500)}`)
+      console.warn(`startup probe ${label} attempt ${attempt}/${startupProbeAttempts} failed: ${redactSensitiveText(error instanceof Error ? error.message : String(error)).slice(0, 500)}`)
+    },
+    onRecovered: (attempt: number) => {
+      console.warn(`startup probe ${label} recovered on attempt ${attempt}/${startupProbeAttempts}`)
     },
   })
   const dsh = await probeExecutionCapability('dsh', async () => {

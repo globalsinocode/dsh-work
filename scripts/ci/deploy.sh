@@ -97,6 +97,9 @@ grep -F 'bash "${DWP_BUNDLE}/scripts/deploy/release.sh" "${DWP_VERSION}" "${DWP_
 grep -F 'bash "${DWP_BUNDLE}/scripts/deploy/install-release-watcher.sh" "${DWP_ROOT}"' docs/release/mac-mini-deployment-runbook.md >/dev/null
 grep -F 'PATH=/opt/homebrew/bin:/usr/local/bin:/Applications/Docker.app/Contents/Resources/bin:/usr/bin:/bin:/usr/sbin:/sbin' deploy/runtime.env.example >/dev/null
 grep -F -- '--deny-self-hosted-runners' scripts/deploy/release.sh >/dev/null
+grep -F 'health/ready' scripts/deploy/release.sh >/dev/null
+grep -F 'executionContainer' scripts/deploy/release.sh >/dev/null
+grep -F 'required = ["dsh", "executionContainer"]' scripts/deploy/release.sh >/dev/null
 grep -F '/releases/latest' scripts/deploy/watch-release.sh >/dev/null
 if grep -Eq '^[[:space:]]+push:' .github/workflows/release.yml; then
   echo "manual release workflow must not run on push" >&2
