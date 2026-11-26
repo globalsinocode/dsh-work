@@ -144,6 +144,8 @@ import { installProcessFailureHandlers, serverFailureRecord } from './modules/ob
 import { createSourceMapStackResolver } from './modules/observability/source-map-resolver.ts'
 import { registerClientErrorRoutes } from './http/client-error-routes.ts'
 import { registerErrorRecordsRoutes } from './http/admin/error-records-routes.ts'
+import { registerUsageAnalyticsRoutes } from './http/admin/usage-analytics-routes.ts'
+import { PostgresUsageAnalyticsService } from './modules/observability/postgres-usage-analytics-service.ts'
 
 const port = Number(process.env.DSH_WORK_SERVER_PORT ?? 4190)
 // server/package.json sits one level above both src/main.ts and dist/main.js.
@@ -195,18 +197,23 @@ async function start() {
         .catch(error => console.error('error record write failed', error instanceof Error ? error.message : 'unknown'))
     },
   })
+  const usageAnalytics = new PostgresUsageAnalyticsService(database, resolvePlatformTimezone(process.env.DSH_WORK_TIMEZONE))
   registerClientErrorRoutes(router, {
     record: input => errorRecords.record(input),
+    recordPageViews: (userId, app, views) => usageAnalytics.recordPageViews(userId, app, views),
     authenticate: portalAuthenticator(localAuthentication),
     validateOrigin: (request, audience) => validateRequestOrigin(request, identityConfiguration.audiences[audience]),
   })
   registerErrorRecordsRoutes(router, errorRecords)
-  // 错误记录清理：启动后与每天一次，分批删除 90 天前的样本（与工作区清扫分开）。
+  registerUsageAnalyticsRoutes(router, usageAnalytics)
+  // 错误记录与页面访问清理：启动后与每天一次，分批删除 90 天前的错误样本与 180 天前的页面访问（与工作区清扫分开）。
   let errorRetentionRun: Promise<void> | null = null
   const purgeErrorRecords = () => {
     if (errorRetentionRun) return
-    errorRetentionRun = errorRecords.purgeExpired()
-      .then(result => { if (result.removed > 0) console.warn('error record retention sweep completed', result) })
+    errorRetentionRun = Promise.all([errorRecords.purgeExpired(), usageAnalytics.purgeExpired()])
+      .then(([errors, pageViews]) => {
+        if (errors.removed > 0 || pageViews.removed > 0) console.warn('error record retention sweep completed', { errors: errors.removed, pageViews: pageViews.removed })
+      })
       .catch(error => console.error('error record retention sweep failed', error instanceof Error ? error.message : 'unknown'))
       .finally(() => { errorRetentionRun = null })
   }

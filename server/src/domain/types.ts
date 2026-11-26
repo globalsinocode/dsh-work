@@ -702,11 +702,6 @@ export interface HealthComponent {
   checkedAt: string
 }
 
-export interface UsagePoint {
-  day: string
-  runs: number
-  tokens: number
-}
 
 export interface ListPage<T> {
   items: T[]

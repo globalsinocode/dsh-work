@@ -181,7 +181,6 @@ export function registerAdminRoutes(router: Router, service: AdminQueryService) 
   })))
   router.get(`${basePath}/operations/summary`, async () => envelope('admin', await service.getOperationsSummary()))
   router.get(`${basePath}/health`, async () => envelope('admin', await service.getHealth()))
-  router.get(`${basePath}/usage`, async () => envelope('admin', await service.getUsage()))
   router.get(`${basePath}/platform-status`, () => envelope('admin', service.getPlatformStatus()))
 }
 

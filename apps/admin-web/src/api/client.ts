@@ -75,7 +75,6 @@ import type {
   SkillVersionRecord,
   UpdateAgentDraftInput,
   UpdateRuntimeConfigurationInput,
-  UsagePoint,
   SkillSubmissionReviewDetail,
   SkillSubmissionReviewItem,
   ErrorGroupDetail,
@@ -84,6 +83,11 @@ import type {
   ErrorLookupResult,
   ErrorRange,
   RunProblemSummary,
+  UsageIdlePerson,
+  UsageOverview,
+  UsagePerson,
+  UsagePersonDetail,
+  UsageRange,
 } from '../types/domain'
 
 interface ApiEnvelope<T> {
@@ -425,7 +429,6 @@ export const adminApi = {
   getOperationsSummary: () => request<OperationsSummary>('/operations/summary'),
   getRunOperations: (runId: string) => request<AuditEvent[]>(`/operations/runs/${encodeURIComponent(runId)}`),
   getHealth: () => request<HealthComponent[]>('/health'),
-  getUsage: () => request<UsagePoint[]>('/usage'),
   getDataProtectionOverview: (filter: DataProtectionFilter) =>
     request<DataProtectionOverview>(`/data-protection/overview${listQuery({ ...filter })}`),
   getDataProtectionRecords: (filter: DataProtectionFilter, page: number, pageSize: number) =>
@@ -448,6 +451,12 @@ export const adminApi = {
     request<ModelUsageBreakdownRow[]>(`/model-usage/breakdown${listQuery({ ...filter, dimension })}`),
   getModelUsageExecutions: (filter: ModelUsageFilter, page: number, pageSize: number) =>
     request<ListPage<ModelUsageExecution>>(`/model-usage/executions${listQuery({ ...filter, page, pageSize })}`),
+  getUsageOverview: (range: UsageRange, department?: string) =>
+    request<UsageOverview>(`/usage-analytics/overview${listQuery({ range, department })}`),
+  getUsagePeople: (range: UsageRange, department?: string) =>
+    request<{ active: UsagePerson[]; idle: UsageIdlePerson[] }>(`/usage-analytics/people${listQuery({ range, department })}`),
+  getUsagePerson: (userId: string, range: UsageRange) =>
+    request<UsagePersonDetail>(`/usage-analytics/people/${encodeURIComponent(userId)}${listQuery({ range })}`),
   getErrorGroups: (filter: ErrorGroupFilter) =>
     request<{ items: ErrorGroupSummary[]; releases: string[] }>(`/error-records/groups${listQuery({
       range: filter.range, source: filter.source, release: filter.release, sort: filter.sort,

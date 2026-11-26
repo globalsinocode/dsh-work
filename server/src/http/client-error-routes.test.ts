@@ -5,7 +5,7 @@ import { after, before, beforeEach, test } from 'node:test'
 
 import type { RequestIdentity } from '../modules/identity/types.ts'
 import type { ErrorRecordInput } from '../modules/observability/client-error-report.ts'
-import { registerClientErrorRoutes } from './client-error-routes.ts'
+import { registerClientErrorRoutes, type PageView } from './client-error-routes.ts'
 import { Router } from './router.ts'
 
 /** 浏览器错误上报接口（OBS-E2E-03）：来源、内容类型、结构、限流与未登录接收。 */
@@ -13,11 +13,13 @@ const allowedOrigin = 'http://work.test'
 let server: Server
 let base: string
 let recorded: ErrorRecordInput[] = []
+let pageViews: Array<{ userId: string; app: string; views: PageView[] }> = []
 
 before(async () => {
   const router = new Router()
   registerClientErrorRoutes(router, {
     record: async input => { recorded.push(input) },
+    recordPageViews: async (userId, app, views) => { pageViews.push({ userId, app, views }); return views.length },
     authenticate: async request => {
       if (request.headers.cookie !== 'session=ok') throw new Error('not signed in')
       return { userId: 'U00001' } as RequestIdentity
@@ -32,7 +34,7 @@ before(async () => {
 })
 
 after(() => new Promise<void>(resolve => server.close(() => resolve())))
-beforeEach(() => { recorded = [] })
+beforeEach(() => { recorded = []; pageViews = [] })
 
 const report = (overrides: Record<string, unknown> = {}) => ({ kind: 'render', message: 'boom', route: 'conversation', ...overrides })
 
@@ -94,3 +96,36 @@ test('cross-site, wrong content type, malformed and oversized reports are reject
   assert.equal((await send({ app: 'workbench', reports: [report({ message: 'x'.repeat(40_000) })] })).status, 422)
   assert.equal(recorded.length, 0)
 })
+
+function sendViews(body: unknown, options: { cookie?: string; origin?: string } = {}) {
+  return fetch(`${base}/auth/workbench/page-views`, {
+    method: 'POST',
+    headers: { 'content-type': 'text/plain;charset=UTF-8', origin: options.origin ?? allowedOrigin, ...(options.cookie ? { cookie: options.cookie } : {}) },
+    body: JSON.stringify(body),
+  })
+}
+
+test('page views are recorded only for signed-in employees and only by route name', async () => {
+  const ok = await sendViews({ app: 'workbench', views: [{ page: 'workbench', inDingtalk: true }, { page: 'knowledge' }] }, { cookie: 'session=ok' })
+  assert.equal(ok.status, 202)
+  assert.deepEqual(pageViews, [{ userId: 'U00001', app: 'workbench', views: [{ page: 'workbench', inDingtalk: true }, { page: 'knowledge', inDingtalk: false }] }])
+  assert.equal((await sendViews({ app: 'workbench', views: [{ page: 'workbench' }] })).status, 401)
+  assert.equal((await sendViews({ app: 'workbench', views: [{ page: 'https://x/?q=1' }] }, { cookie: 'session=ok' })).status, 422)
+  assert.equal((await sendViews({ app: 'workbench', views: [{ page: 'workbench', title: '合同' }] }, { cookie: 'session=ok' })).status, 422)
+  assert.equal((await sendViews({ app: 'admin', views: [{ page: 'workbench' }] }, { cookie: 'session=ok' })).status, 422)
+  assert.equal((await sendViews({ app: 'workbench', views: [{ page: 'workbench' }] }, { cookie: 'session=ok', origin: 'http://evil.test' })).status, 403)
+  assert.equal(pageViews.length, 1)
+})
+
+test('page views are limited per address before the body is read or the session is checked', async () => {
+  const anonymous = () => fetch(`${base}/auth/workbench/page-views`, {
+    method: 'POST',
+    headers: { 'content-type': 'text/plain;charset=UTF-8', origin: allowedOrigin, 'x-real-ip': '10.7.0.1' },
+    body: JSON.stringify({ app: 'workbench', views: [{ page: 'workbench' }] }),
+  })
+  const statuses: number[] = []
+  for (let index = 0; index < 61; index += 1) statuses.push((await anonymous()).status)
+  assert.equal(statuses.filter(status => status === 401).length, 60)
+  assert.equal(statuses.at(-1), 202)
+})
+

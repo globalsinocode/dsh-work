@@ -37,6 +37,7 @@ Agent 通用设计与评审要求见 [Agent 设计规范](agent-design-standard.
 
 - [Workbench OpenAPI](openapi-workbench.json)：`/api/workbench/v1`。
 - [Admin OpenAPI](openapi-admin.json)：`/api/admin/v1`。
+- 页面访问（OBS-S2）：`POST /auth/{workbench|admin}/page-views`，只记已登录员工，结构与来源校验同错误上报；两端经上报器的 `trackRouter` 在路由切换后记录路由名。运营概览读 `GET /api/admin/v1/usage-analytics/*`（模块 `ops`），由 `modules/observability/postgres-usage-analytics-service.ts` 实现。
 - 浏览器错误上报（OBS-S1）：`POST /auth/{workbench|admin}/client-errors`，见[认证 OpenAPI](openapi-auth.json)。登录前的页面也要能上报，因此与登录同在 `/auth/{audience}/` 下、身份按需解析；校验 `Origin`、内容类型与固定结构，超出限额丢弃并返回 202。两端经 `@dsh-work/ui-core` 的 `setupErrorReporter` 接入（API 客户端报 5xx 与网络失败，员工端 `notifyActionFailure` 与管理端请求函数的 4xx 报“提示”类）；服务端 5xx 经 `Router` 的 `onServerFailure` 入库。脱敏共用 `security/safe-observability.ts` 的 `diagnosticMessage`，堆栈与个人信息遮盖见 `modules/observability/error-sanitize.ts`。
 - [Runtime Manifest](runtime-manifest.schema.json)：不可变输入、能力、文件、知识与权限快照；企业知识的检索结果见可选字段 `knowledge_status`（缺省表示本次执行不支持检索）、`knowledge_skipped_bases`、`knowledge_moved_bases`（因更换连接地址跳过的知识库名称，只用于页脚）与 `knowledge_skipped_reason`（`agent_not_permitted`：会话添加了知识库但 Agent 不具备查看级别，只用于页脚）。会话添加了知识库时，连接停用或 API Key 读不出记为 `unavailable`，`ok` 且没有片段时提示词与页脚说明“没有找到相关内容”（[功能规则第 11 节](feature-rules.md#11-企业知识库weknorawk-s1-起)）。
 - [Run Event](run-event.schema.json)：标准可展示事件，不包含隐藏推理和凭据。

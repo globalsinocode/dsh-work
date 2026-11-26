@@ -15,7 +15,6 @@ import type {
   SessionListPage,
   SessionListQuery,
   UpdateRuntimeConfigurationInput,
-  UsagePoint,
 } from '../../../domain/types.ts'
 import type { DatabaseClient, DatabaseTransaction } from '../../../infrastructure/postgres/database.ts'
 import type { RunAttemptRecord, RunRecord } from '../../run/run-types.ts'
@@ -563,18 +562,6 @@ export class PostgresOperationsService {
         checkedAt: '刚刚',
       },
     ]
-  }
-
-  async getUsage(): Promise<UsagePoint[]> {
-    const rows = await this.database<{ day: string; runs: number; tokens: number }[]>`
-      select to_char(days.day, 'MM-DD') as day, count(distinct r.id)::integer as runs,
-             coalesce(sum(mu.input_tokens + mu.output_tokens), 0)::integer as tokens
-        from generate_series(current_date - interval '6 days', current_date, interval '1 day') days(day)
-        left join runs r on r.tenant_id = ${tenantId} and r.created_at::date = days.day::date
-        left join model_usage_events mu on mu.tenant_id = r.tenant_id and mu.run_id = r.id
-       group by days.day order by days.day
-    `
-    return rows
   }
 
   async getPlatformStatus() {

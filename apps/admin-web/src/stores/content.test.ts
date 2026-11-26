@@ -20,7 +20,6 @@ const api = vi.hoisted(() => ({
   getSkills: vi.fn(),
   getSkillVersions: vi.fn(),
   getTasks: vi.fn(),
-  getUsage: vi.fn(),
   getWorkspaces: vi.fn(),
   reconcileGrantSources: vi.fn(),
   updateRuntimeConfiguration: vi.fn(),

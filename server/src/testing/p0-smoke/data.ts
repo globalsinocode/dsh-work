@@ -8,7 +8,6 @@ import type {
   RuntimeDefinition,
   SkillDefinition,
   TaskRun,
-  UsagePoint,
   UserProfile,
   Workspace,
 } from '../../domain/types.ts'
@@ -1317,13 +1316,4 @@ export const mockHealth: HealthComponent[] = [
   },
 ]
 
-export const mockUsage: UsagePoint[] = [
-  { day: '08/22', runs: 86, tokens: 520000 },
-  { day: '08/23', runs: 103, tokens: 680000 },
-  { day: '08/24', runs: 72, tokens: 430000 },
-  { day: '08/25', runs: 128, tokens: 880000 },
-  { day: '08/26', runs: 145, tokens: 1020000 },
-  { day: '08/27', runs: 132, tokens: 910000 },
-  { day: '08/28', runs: 96, tokens: 720000 },
-]
 

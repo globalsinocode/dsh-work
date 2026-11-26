@@ -88,7 +88,7 @@
     "test:local-auth": "node --experimental-strip-types --test src/modules/identity/local-auth.test.ts src/modules/identity/dingtalk/dingtalk.test.ts",
     "test:local-auth:integration": "node --env-file-if-exists=../.env --experimental-strip-types --test src/modules/identity/local-auth.integration.test.ts src/modules/identity/dingtalk-auth.integration.test.ts src/modules/identity/dingtalk-admin.integration.test.ts src/modules/identity/dingtalk-settings.integration.test.ts src/modules/identity/authentication-startup.integration.test.ts src/infrastructure/postgres/ai-hub-removal-migration.integration.test.ts",
     "test:observability": "node --env-file-if-exists=../.env --experimental-strip-types --test src/modules/observability/error-records.test.ts src/http/client-error-routes.test.ts",
-    "test:observability:integration": "node --env-file-if-exists=../.env --experimental-strip-types --test src/infrastructure/postgres/error-records.integration.test.ts"
+    "test:observability:integration": "node --env-file-if-exists=../.env --experimental-strip-types --test src/infrastructure/postgres/error-records.integration.test.ts src/infrastructure/postgres/usage-analytics.integration.test.ts"
   },
   "devDependencies": {
     "@types/node": "^24.7.2",

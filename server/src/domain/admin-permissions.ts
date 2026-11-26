@@ -217,9 +217,10 @@ const ROUTE_SEGMENT_RULES: Record<string, AdminRouteRule> = {
   sessions: { kind: 'module', module: 'ops' },
   workspaces: { kind: 'module', module: 'ops' },
   tasks: { kind: 'module', module: 'ops' },
-  usage: { kind: 'module', module: 'ops' },
   // 错误记录（错误记录方案 OB11）：安全与运维下的只读页面。
   'error-records': { kind: 'module', module: 'ops' },
+  // 运营概览的使用情况（OBS-S2）。
+  'usage-analytics': { kind: 'module', module: 'ops' },
   // 系统健康（含知识库检索、执行容器等组件状态）供各模块页面提示可用性，任一模块管理员可读。
   health: { kind: 'any-admin-read' },
   'platform-status': { kind: 'module', module: 'ops' },

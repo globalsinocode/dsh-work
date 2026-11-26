@@ -1,5 +1,8 @@
 import type { App } from 'vue'
 
+/** 只用到路由器的 afterEach（不让共享包依赖 vue-router）。 */
+interface RouterLike { afterEach(guard: (to: { name?: unknown; meta?: Record<string, unknown> }) => unknown): unknown }
+
 /**
  * 浏览器错误上报（错误记录方案 6.2，OBS-S1），员工端与管理端共用。
  *
@@ -31,6 +34,7 @@ export interface ErrorReporterOptions {
   app: 'workbench' | 'admin'
   release?: string
   endpoint?: string
+  pageViewEndpoint?: string
   /** 当前路由名（由路由器提供）。 */
   routeName?: () => string | undefined
   /** 测试替身；默认 `navigator.sendBeacon`，不可用时用 `fetch(keepalive)`。 */
@@ -46,6 +50,7 @@ const SAFE = /^[A-Za-z0-9_.:-]{1,120}$/
 const CODE = /^[A-Za-z0-9_]{1,80}$/
 const TEMPLATE = /^[\p{Script=Han}A-Za-z0-9 _.:-]{1,40}$/u
 const BATCH_SIZE = 20
+const PAGE_VIEW_DEDUPE_MS = 30 * 60_000
 
 function text(value: unknown, max: number): string | undefined {
   if (typeof value !== 'string' || !value) return undefined
@@ -64,15 +69,18 @@ function defaultTransport(url: string, body: string) {
 }
 
 export class ErrorReporter {
-  private readonly options: Required<Pick<ErrorReporterOptions, 'app' | 'endpoint' | 'flushDelayMs' | 'repeatDelayMs' | 'maxProblems'>> & ErrorReporterOptions
+  private readonly options: Required<Pick<ErrorReporterOptions, 'app' | 'endpoint' | 'pageViewEndpoint' | 'flushDelayMs' | 'repeatDelayMs' | 'maxProblems'>> & ErrorReporterOptions
   /** 本次页面加载见过的问题；`unsent` 为尚未发出的次数。 */
   private readonly entries = new Map<string, { report: QueuedReport; unsent: number; sent: boolean }>()
+  /** 页面访问（OBS-S2）：同一页面 30 分钟内只记一次，随错误一同批量发送到页面访问接口。 */
+  private readonly pageSeenAt = new Map<string, number>()
+  private pageViews: Array<{ page: string; inDingtalk: boolean }> = []
   private timer: ReturnType<typeof setTimeout> | undefined
   private repeatTimer: ReturnType<typeof setTimeout> | undefined
   private reporting = false
 
   constructor(options: ErrorReporterOptions) {
-    this.options = { endpoint: `/auth/${options.app}/client-errors`, flushDelayMs: 2_000, repeatDelayMs: 60_000, maxProblems: 20, ...options }
+    this.options = { endpoint: `/auth/${options.app}/client-errors`, pageViewEndpoint: `/auth/${options.app}/page-views`, flushDelayMs: 2_000, repeatDelayMs: 60_000, maxProblems: 20, ...options }
   }
 
   report(input: ErrorReport): void {
@@ -125,7 +133,32 @@ export class ErrorReporter {
     })
   }
 
-  /** 发出全部未发出的次数（首次上报与累计的重复次数）。 */
+  /** 记录一次页面访问（路由名）；未登录时服务端不记录。 */
+  reportPageView(page: string): void {
+    try {
+      if (!SAFE.test(page)) return
+      const now = Date.now()
+      const last = this.pageSeenAt.get(page)
+      if (last !== undefined && now - last < PAGE_VIEW_DEDUPE_MS) return
+      this.pageSeenAt.set(page, now)
+      const inDingtalk = typeof navigator !== 'undefined' && /DingTalk/i.test(navigator.userAgent)
+      this.pageViews.push({ page, inDingtalk })
+      this.schedule()
+    } catch {
+      // 不影响页面。
+    }
+  }
+
+  /** 路由切换后记录页面访问（只用路由名，不用网址）。 */
+  trackRouter(router: RouterLike): void {
+    router.afterEach(to => {
+      // 登录、改密等公开页面不记：此时未登录，服务端也不会记录，先记下反而会让登录后 30 分钟内漏记（PR #172 评审）。
+      if (to.meta?.public === true) return
+      if (typeof to.name === 'string') this.reportPageView(to.name)
+    })
+  }
+
+  /** 发出全部未发出的次数（首次上报与累计的重复次数）与页面访问。 */
   flush(): void {
     if (this.timer) clearTimeout(this.timer)
     if (this.repeatTimer) clearTimeout(this.repeatTimer)
@@ -137,6 +170,15 @@ export class ErrorReporter {
       queue.push({ ...entry.report, count: entry.unsent })
       entry.unsent = 0
       entry.sent = true
+    }
+    const transport = this.options.transport ?? defaultTransport
+    while (this.pageViews.length) {
+      const views = this.pageViews.splice(0, BATCH_SIZE)
+      try {
+        transport(this.options.pageViewEndpoint, JSON.stringify({ app: this.options.app, views }))
+      } catch {
+        // 丢弃。
+      }
     }
     while (queue.length) {
       const batch = queue.splice(0, BATCH_SIZE)

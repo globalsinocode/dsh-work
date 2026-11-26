@@ -870,11 +870,6 @@ export interface HealthComponent {
   checkedAt: string
 }
 
-export interface UsagePoint {
-  day: string
-  runs: number
-  tokens: number
-}
 
 export interface ListPage<T> {
   items: T[]
@@ -1287,4 +1282,61 @@ export interface ErrorLookupResult {
   serverFailures: Array<ErrorSample & { groupId: string; message: string }>
   clientReports: Array<ErrorSample & { groupId: string; message: string; source: ErrorSource }>
   runs: Array<{ runId: string; status: string; errorCode: string | null; agentName: string | null; requestedBy: string | null; createdAt: string }>
+}
+
+/** 运营概览的使用情况（OBS-S2），与 Admin OpenAPI 的 usage-analytics 接口对应。 */
+export type UsageRange = '7d' | '30d' | '90d'
+export type UsageEntry = 'personal' | 'project' | 'automation' | 'routine'
+
+export interface UsageOverview {
+  range: UsageRange
+  from: string
+  to: string
+  totals: {
+    employees: number
+    activeEmployees: number
+    averageDailyActive: number
+    newConversations: number
+    runs: number
+    succeededRuns: number
+    finishedRuns: number
+    tokens: number
+    dingtalkEmployees: number
+  }
+  daily: Array<{ day: string; activeEmployees: number; runs: number }>
+  agents: Array<{ name: string; runs: number; people: number }>
+  pages: Array<{ page: string; people: number; views: number }>
+  entries: Array<{ entry: UsageEntry; runs: number }>
+  failures: Array<{ code: string; runs: number }>
+  departments: Array<{ name: string; employees: number; activeEmployees: number }>
+  departmentOptions: string[]
+}
+
+export interface UsagePerson {
+  userId: string
+  name: string
+  department: string
+  lastActiveAt: string | null
+  activeDays: number
+  conversations: number
+  runs: number
+  succeededRuns: number
+  finishedRuns: number
+  tokens: number
+  topAgent: string | null
+  topPage: string | null
+}
+
+export interface UsageIdlePerson {
+  userId: string
+  name: string
+  department: string
+  createdAt: string
+  lastActiveAt: string | null
+}
+
+export interface UsagePersonDetail extends UsagePerson {
+  daily: Array<{ day: string; runs: number }>
+  pages: Array<{ page: string; views: number }>
+  entries: Array<{ entry: UsageEntry; runs: number }>
 }

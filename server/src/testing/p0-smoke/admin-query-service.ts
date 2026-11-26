@@ -487,10 +487,6 @@ export class AdminQueryService {
     return this.repository.read('health')
   }
 
-  getUsage() {
-    return this.repository.read('usage')
-  }
-
   getPlatformStatus(): PlatformStatus {
     return {
       architecture: 'node-modular-monolith',

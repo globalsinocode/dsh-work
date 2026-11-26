@@ -1,7 +1,7 @@
 # 错误记录与使用情况方案
 
-**状态：** 决策全部确认，原型已确认（2026-11-26）；OBS-S1 已实现（单元、PostgreSQL 集成、P0 冒烟通过），OBS-S2 未实施。
-**更新日期：** 2026-11-26（按 PR #171 评审修订：新增问题组上限按浏览器来源分别计数并加锁、服务端与进程异常不受限；重复问题累计后最多每分钟补报；消息中引号内容替换为“[内容]”、平台接口错误只报错误码；源码映射只读映射目录内文件；未登录全局额度只扣放行条数；详情次数与列表同周期并另给累计次数）；2026-11-26（OBS-S1 实施：上报接口改为 `POST /auth/{workbench|admin}/client-errors`，与登录同前缀以便登录前上报；迁移改名 `0133_error_tracking`，页面访问表随 OBS-S2 另建迁移；管理端失败提示在请求函数统一上报）；2026-11-26（原型确认：使用情况页替代现有“运营概览”并沿用其名称与位置；OB15 改为不做，取消 OBS-S3；详情改为右侧抽屉）；2026-11-26（按 PR #169 评审修订：进程异常处理后显式退出、未登录上报的 IP 来源与新增问题组上限、堆栈与说明脱敏、链路编号与运行的关联方式、页面与接口改名避开已有 `usage`、专用清理任务、上报来源校验、同步清单补全）；2026-11-26（OB11 改为“使用情况”放在导航分组“运行治理”、“错误记录”放在“安全与运维”；OB12～OB15 按建议确认）；2026-11-26（OB5 改为两个页面、OB9 改为按人出明细、OB11 归入“安全与运维”；去掉企业评审要求；OB4、OB6、OB7、OB8、OB10 按建议确认；补充第 7 节“覆盖范围”与 OB12～OB15）；2026-11-26（初稿；OB1 选自建上报接口、OB2 选管理端新增页面、OB3 告警第一期不做）
+**状态：** 决策全部确认，原型已确认（2026-11-26）；OBS-S1 已合入（#171）；OBS-S2 已实现（单元、PostgreSQL 集成、P0 冒烟通过）。
+**更新日期：** 2026-11-26（按 PR #172 评审修订：统计先按员工或按天聚合、新增 `runs` 按发起人的索引（迁移 0135）；未使用名单的最近一次活跃只看期间开始之前、与明细同口径的活动；页面访问接口先按来源地址限流、按员工与页面加锁去重，公开页面不记；筛选不存在的部门时报错）；2026-11-26（OBS-S2 实施：页面访问经 `POST /auth/{workbench|admin}/page-views` 上报（只记已登录员工），迁移 `0134_product_events`；“运营概览”改为使用情况页，删除旧 `/api/admin/v1/usage`；员工活动只计员工侧运行、新建的员工端对话与员工端页面访问，发布试运行与管理助手不计）；2026-11-26（按 PR #171 评审修订：新增问题组上限按浏览器来源分别计数并加锁、服务端与进程异常不受限；重复问题累计后最多每分钟补报；消息中引号内容替换为“[内容]”、平台接口错误只报错误码；源码映射只读映射目录内文件；未登录全局额度只扣放行条数；详情次数与列表同周期并另给累计次数）；2026-11-26（OBS-S1 实施：上报接口改为 `POST /auth/{workbench|admin}/client-errors`，与登录同前缀以便登录前上报；迁移改名 `0133_error_tracking`，页面访问表随 OBS-S2 另建迁移；管理端失败提示在请求函数统一上报）；2026-11-26（原型确认：使用情况页替代现有“运营概览”并沿用其名称与位置；OB15 改为不做，取消 OBS-S3；详情改为右侧抽屉）；2026-11-26（按 PR #169 评审修订：进程异常处理后显式退出、未登录上报的 IP 来源与新增问题组上限、堆栈与说明脱敏、链路编号与运行的关联方式、页面与接口改名避开已有 `usage`、专用清理任务、上报来源校验、同步清单补全）；2026-11-26（OB11 改为“使用情况”放在导航分组“运行治理”、“错误记录”放在“安全与运维”；OB12～OB15 按建议确认）；2026-11-26（OB5 改为两个页面、OB9 改为按人出明细、OB11 归入“安全与运维”；去掉企业评审要求；OB4、OB6、OB7、OB8、OB10 按建议确认；补充第 7 节“覆盖范围”与 OB12～OB15）；2026-11-26（初稿；OB1 选自建上报接口、OB2 选管理端新增页面、OB3 告警第一期不做）
 **依据：** 2026-11-26 对现有可观测能力的盘点（第 4 节）；[发往模型的数据防护方案](model-data-protection-plan.md) D8（审计不保存原值）；[管理端模块权限](../development/feature-rules.md)第 13 节。
 **关联：** [架构总览第 10 节](../development/overview.md#10-当前边界与独立开发)、[内部端口与契约](../development/internal-ports.md)、[数据模型](data-model.md)、验收目录 `e2e/catalog/admin-platform.md`。
 
@@ -85,7 +85,7 @@
 
 - **`error_groups`**：按指纹归并的问题。`tenant_id`、`fingerprint`、`source`（`workbench`、`admin`、`server`、`process`）、`kind`（`render`、`script`、`promise`、`api`、`notice`、`load`、`stream`、`http`、`uncaught`）、`message`（脱敏后首行，≤1,024 字符；失败提示只存错误码与提示模板编号，不存提示原文）、`first_seen_at`、`last_seen_at`、`occurrence_count`、`last_release`。唯一键 `(tenant_id, fingerprint)`。
 - **`error_occurrences`**：每次发生的样本。`group_id`、`occurred_at`、`user_id`（未登录为空）、`release`、`route`（前端路由名或服务端路由模板）、`trace_id`、`run_id`、`client`（浏览器与系统的简称，如“钉钉 iOS”“Chrome 131 / macOS”，不存完整 UA）、`stack`（按 6.3 只保留帧位置的堆栈，≤8,192 字符）、`repeat_count`。
-- **`product_events`**（OB8）：`tenant_id`、`user_id`、`app`（`workbench`/`admin`）、`page`（路由名）、`occurred_at`。同一员工同一页面 30 分钟内只记一次。
+- **`product_events`**（OB8，OBS-S2 迁移 `0134_product_events`）：`tenant_id`、`user_id`、`app`（`workbench`/`admin`）、`page`（路由名）、`in_dingtalk`、`occurred_at`。同一员工同一端同一页面 30 分钟内只记一次。
 - 索引：`error_occurrences (tenant_id, occurred_at)`、`error_occurrences (tenant_id, trace_id)`、`error_occurrences (tenant_id, run_id)`、`product_events (tenant_id, occurred_at)`、`product_events (tenant_id, user_id, occurred_at)`。
 - 清理（OB10）：新增专用清理任务（服务启动后与每天一次，不并入现有的工作区清扫定时器），错误样本 90 天、页面访问 180 天，每批最多删除 5,000 行、批间让出，直到删完；之后删除没有样本的 `error_groups`。
 
@@ -101,7 +101,7 @@
   - SSE 放弃重连时报一条。
 - 上报：批量发送到 `POST /auth/{workbench|admin}/client-errors`（与登录同前缀，登录前的页面也能上报），页面隐藏或关闭时用 `navigator.sendBeacon`；同一页面加载内同指纹只报一次并计数，每次加载最多 20 条。上报本身失败直接丢弃，不重试、不再触发上报。
 - 员工端构建也注入版本号（与管理端相同的 `__DSH_WORK_RELEASE_VERSION__`）。
-- 页面访问（OB8）：路由 `afterEach` 记录路由名，与错误一同批量发送。
+- 页面访问（OB8）：路由 `afterEach` 记录路由名与是否在钉钉内，与错误一同批量发送到 `POST /auth/{workbench|admin}/page-views`（只记已登录员工，未登录返回 401）。
 
 **服务端：**
 

@@ -25,7 +25,6 @@ import type {
   SkillReleaseRecord,
   SkillVersionRecord,
   UpdateRuntimeConfigurationInput,
-  UsagePoint,
 } from '../types/domain'
 
 export const useContentStore = defineStore('admin-content', () => {
@@ -44,7 +43,6 @@ export const useContentStore = defineStore('admin-content', () => {
   const auditEvents = ref<AuditEvent[]>([])
   const operationsSummary = ref<OperationsSummary | null>(null)
   const health = ref<HealthComponent[]>([])
-  const usage = ref<UsagePoint[]>([])
   const platformStatus = ref<PlatformStatus | null>(null)
   const agentJoinedWorkspaces = ref<Record<string, AgentJoinedWorkspaceRecord[]>>({})
   const grantReconciliation = ref<GrantSourceReconciliationView | null>(null)
@@ -95,7 +93,6 @@ export const useContentStore = defineStore('admin-content', () => {
       builtinToolData,
       builtinSkillData,
       healthData,
-      usageData,
       statusData,
     ] = await Promise.all([
       // 功能规则第 13 节：只请求有权限的模块，避免模块管理员首屏因无权数据报错。
@@ -112,7 +109,6 @@ export const useContentStore = defineStore('admin-content', () => {
       when(authStore.canRead('connector') || authStore.canRead('skill') || authStore.canWrite('agent'), adminApi.getBuiltinTools, null),
       when(authStore.canRead('skill') || authStore.canWrite('agent'), adminApi.getBuiltinSkills, null),
       adminApi.getHealth(),
-      when(authStore.canRead('ops'), adminApi.getUsage, []),
       when(authStore.canRead('ops'), adminApi.getPlatformStatus, null),
     ])
     tasks.value = taskData
@@ -127,7 +123,6 @@ export const useContentStore = defineStore('admin-content', () => {
     builtinTools.value = builtinToolData
     builtinSkills.value = builtinSkillData
     health.value = healthData
-    usage.value = usageData
     platformStatus.value = statusData
     adminInitialized.value = true
   }
@@ -356,7 +351,6 @@ export const useContentStore = defineStore('admin-content', () => {
     auditEvents,
     operationsSummary,
     health,
-    usage,
     platformStatus,
     agentJoinedWorkspaces,
     grantReconciliation,

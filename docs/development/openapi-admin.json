@@ -4684,20 +4684,6 @@
         }
       }
     },
-    "/usage": {
-      "get": {
-        "operationId": "getUsage",
-        "summary": "查询平台运行与资源用量汇总",
-        "responses": {
-          "200": {
-            "$ref": "#/components/responses/Ok"
-          },
-          "403": {
-            "$ref": "#/components/responses/Error"
-          }
-        }
-      }
-    },
     "/platform-status": {
       "get": {
         "operationId": "getPlatformStatus",
@@ -5885,6 +5871,114 @@
         "responses": {
           "200": {
             "$ref": "#/components/responses/Ok"
+          }
+        }
+      }
+    },
+    "/usage-analytics/overview": {
+      "get": {
+        "operationId": "getUsageOverview",
+        "summary": "运营概览（使用情况，模块 ops 只读）：周期内活跃员工与覆盖率、日均活跃、新建对话、运行数与成功率、Token、每日趋势（平台时区），AI 同事与页面访问排行、入口分布（个人对话、项目空间、定时任务、主动任务）、钉钉内访问人数、失败原因与部门覆盖。员工活动只计员工侧运行（不含发布试运行、管理助手与系统运行）、新建的员工端对话与员工端页面访问；不含对话内容",
+        "parameters": [
+          {
+            "name": "range",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "7d",
+                "30d",
+                "90d"
+              ]
+            }
+          },
+          {
+            "name": "department",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "主部门名称；不传为全部"
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/usage-analytics/people": {
+      "get": {
+        "operationId": "getUsagePeople",
+        "summary": "按人明细：期间内活跃员工的最近活跃、活跃天数、对话、运行与成功率、Token、常用 AI 同事与常访问页面；以及有账号但期间内未使用的员工（账号创建时间、期间开始之前、同一口径的最近一次活跃）",
+        "parameters": [
+          {
+            "name": "range",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "7d",
+                "30d",
+                "90d"
+              ]
+            }
+          },
+          {
+            "name": "department",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "主部门名称；不传为全部"
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/usage-analytics/people/{userId}": {
+      "get": {
+        "operationId": "getUsagePerson",
+        "summary": "员工使用详情：每日运行、入口与页面访问分布；期间内没有使用记录时 404。不含对话标题与内容",
+        "parameters": [
+          {
+            "name": "userId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "range",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "7d",
+                "30d",
+                "90d"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
           }
         }
       }

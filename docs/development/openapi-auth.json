@@ -932,6 +932,169 @@
           }
         }
       }
+    },
+    "/auth/{audience}/page-views": {
+      "parameters": [
+        {
+          "name": "audience",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "enum": [
+              "admin",
+              "workbench"
+            ]
+          }
+        }
+      ],
+      "post": {
+        "operationId": "recordPageViews",
+        "tags": [
+          "使用情况"
+        ],
+        "summary": "页面访问（只记已登录员工）",
+        "description": "错误记录与使用情况方案 OB8（OBS-S2）。只记路由名、所在端与是否在钉钉内，不记网址、查询参数与页面内容；同一员工同一端同一页面 30 分钟内只记一次；按员工每分钟 120 条限流，超出丢弃。未登录返回 401。",
+        "parameters": [
+          {
+            "name": "Origin",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "必须与当前受信入口同源"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "text/plain": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "app",
+                  "views"
+                ],
+                "properties": {
+                  "app": {
+                    "type": "string",
+                    "enum": [
+                      "workbench",
+                      "admin"
+                    ],
+                    "description": "必须与路径中的 audience 一致"
+                  },
+                  "views": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 20,
+                    "items": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "page"
+                      ],
+                      "properties": {
+                        "page": {
+                          "type": "string",
+                          "pattern": "^[A-Za-z0-9_.:/-]{1,120}$",
+                          "description": "前端路由名，不是网址"
+                        },
+                        "inDingtalk": {
+                          "type": "boolean"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "app",
+                  "views"
+                ],
+                "properties": {
+                  "app": {
+                    "type": "string",
+                    "enum": [
+                      "workbench",
+                      "admin"
+                    ],
+                    "description": "必须与路径中的 audience 一致"
+                  },
+                  "views": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 20,
+                    "items": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "page"
+                      ],
+                      "properties": {
+                        "page": {
+                          "type": "string",
+                          "pattern": "^[A-Za-z0-9_.:/-]{1,120}$",
+                          "description": "前端路由名，不是网址"
+                        },
+                        "inDingtalk": {
+                          "type": "boolean"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "已接收；recorded 为实际记录条数（去重后）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "data"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "recorded"
+                      ],
+                      "properties": {
+                        "recorded": {
+                          "type": "integer"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "未登录"
+          },
+          "403": {
+            "description": "来源校验失败"
+          },
+          "422": {
+            "description": "内容类型、结构或长度不符合要求"
+          }
+        }
+      }
     }
   },
   "components": {

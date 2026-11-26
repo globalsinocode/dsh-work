@@ -9,7 +9,6 @@ import {
   mockRuntimes,
   mockSkills,
   mockTasks,
-  mockUsage,
   mockWorkspaces,
   prototypeUsers,
 } from './data.ts'
@@ -138,7 +137,6 @@ const prototypeData = {
   runtimes: mockRuntimes,
   auditEvents: mockAuditEvents,
   health: mockHealth,
-  usage: mockUsage,
   users: prototypeUsers,
 }
 
