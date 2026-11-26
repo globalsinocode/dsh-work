@@ -34,6 +34,9 @@ import { SmokeDataProtectionService } from './data-protection-service.ts'
 import { SmokeModelUsageService } from './model-usage-service.ts'
 import { registerSmokeProjectRoutes } from './project-routes.ts'
 import { SmokeRepository } from './smoke-repository.ts'
+import { SmokeErrorRecordsService } from './error-records-service.ts'
+import { registerErrorRecordsRoutes } from '../../http/admin/error-records-routes.ts'
+import { registerClientErrorRoutes } from '../../http/client-error-routes.ts'
 import { registerUnavailableWorkbenchCommandRoutes } from './unavailable-routes.ts'
 import { WorkbenchQueryService } from './workbench-query-service.ts'
 import { registerPrototypeArtifactFileRoutes, registerWorkbenchRoutes } from './workbench-routes.ts'
@@ -71,6 +74,9 @@ export function createSmokeRouter() {
   const modelUsage = new SmokeModelUsageService()
   registerAdminRoutes(router, new AdminQueryService(repository, modelUsage))
   registerModelUsageRoutes(router, modelUsage, 'prototype-memory')
+  registerErrorRecordsRoutes(router, new SmokeErrorRecordsService(), 'prototype-memory')
+  // 冒烟只校验上报能发出并通过结构校验（OBS-E2E-03）；不入库，来源校验由服务端单测覆盖。
+  registerClientErrorRoutes(router, { record: async () => undefined, authenticate: testApiAuthenticator, validateOrigin: () => undefined })
   registerDataProtectionRoutes(router, new SmokeDataProtectionService(), 'prototype-memory')
   registerModelGovernanceRoutes(router, new ModelGovernanceService(new MemoryModelGovernanceRepository()))
   registerOrganizationRoutes(router, new MemoryOrganizationStore(), 'prototype-memory')

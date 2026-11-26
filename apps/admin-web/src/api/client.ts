@@ -1,3 +1,4 @@
+import { errorReporter } from '@dsh-work/ui-core'
 import type {
   KnowledgeAdminBaseList,
   KnowledgeAdminDepartment,
@@ -77,6 +78,12 @@ import type {
   UsagePoint,
   SkillSubmissionReviewDetail,
   SkillSubmissionReviewItem,
+  ErrorGroupDetail,
+  ErrorGroupFilter,
+  ErrorGroupSummary,
+  ErrorLookupResult,
+  ErrorRange,
+  RunProblemSummary,
 } from '../types/domain'
 
 interface ApiEnvelope<T> {
@@ -116,21 +123,43 @@ export class AdminApiError extends Error {
   }
 }
 
+/**
+ * 错误记录（OBS-S1）：管理端没有统一的失败提示入口，页面都经此请求函数拿到失败；
+ * 5xx 按接口失败上报，其余（401 跳登录除外）按“提示”类上报，模板取接口的第一段路径。
+ */
+function reportAdminFailure(path: string, error: AdminApiError) {
+  const reporter = errorReporter()
+  if (!reporter || error.status === 401) return
+  if (error.status >= 500) {
+    reporter.reportApiFailure({ status: error.status, code: error.code, traceId: error.traceId })
+    return
+  }
+  const segment = path.split('?')[0]!.split('/').filter(Boolean)[0] ?? 'admin'
+  reporter.reportNotice(segment.slice(0, 40), error)
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${baseUrl}${path}`, {
-    ...init,
-    credentials: 'include',
-    headers: {
-      Accept: 'application/json',
-      ...(init?.body ? { 'Content-Type': 'application/json' } : {}),
-      ...init?.headers,
-    },
-  })
+  let response: Response
+  try {
+    response = await fetch(`${baseUrl}${path}`, {
+      ...init,
+      credentials: 'include',
+      headers: {
+        Accept: 'application/json',
+        ...(init?.body ? { 'Content-Type': 'application/json' } : {}),
+        ...init?.headers,
+      },
+    })
+  } catch (cause) {
+    if (!(cause instanceof DOMException && cause.name === 'AbortError')) errorReporter()?.reportApiFailure({ networkError: true })
+    throw cause
+  }
 
   if (!response.ok) {
     const fallback = `管理后台接口请求失败（${response.status}）`
     const payload = await response.json().catch(() => undefined) as { error?: ApiErrorPayload } | undefined
     const error = new AdminApiError(payload?.error ?? {}, response.status, fallback)
+    reportAdminFailure(path, error)
     if (response.status === 401 && path !== '/session') redirectToLogin()
     throw error
   }
@@ -419,6 +448,14 @@ export const adminApi = {
     request<ModelUsageBreakdownRow[]>(`/model-usage/breakdown${listQuery({ ...filter, dimension })}`),
   getModelUsageExecutions: (filter: ModelUsageFilter, page: number, pageSize: number) =>
     request<ListPage<ModelUsageExecution>>(`/model-usage/executions${listQuery({ ...filter, page, pageSize })}`),
+  getErrorGroups: (filter: ErrorGroupFilter) =>
+    request<{ items: ErrorGroupSummary[]; releases: string[] }>(`/error-records/groups${listQuery({
+      range: filter.range, source: filter.source, release: filter.release, sort: filter.sort,
+      include_notice: filter.includeNotice ? 'true' : undefined,
+    })}`),
+  getErrorGroup: (id: string, range: ErrorRange) => request<ErrorGroupDetail>(`/error-records/groups/${encodeURIComponent(id)}${listQuery({ range })}`),
+  getRunProblems: (range: ErrorRange) => request<RunProblemSummary>(`/error-records/run-problems${listQuery({ range })}`),
+  lookupErrorRecords: (query: string) => request<ErrorLookupResult>(`/error-records/lookup${listQuery({ q: query })}`),
   getModelProviders: () => request<ModelProvider[]>('/model-providers'),
   createModelProvider: (input: {
     key: string

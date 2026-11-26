@@ -676,6 +676,262 @@
           }
         }
       }
+    },
+    "/auth/{audience}/client-errors": {
+      "parameters": [
+        {
+          "name": "audience",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "enum": [
+              "admin",
+              "workbench"
+            ]
+          }
+        }
+      ],
+      "post": {
+        "operationId": "reportClientErrors",
+        "tags": [
+          "错误记录"
+        ],
+        "summary": "浏览器错误上报（登录前后都可调用）",
+        "description": "错误记录方案 6.2（OBS-S1）。请求体 ≤32 KB、每批 ≤20 条，结构严格校验，多余字段整批拒绝（422）；消息与堆栈在服务端脱敏后入库，不保存请求体、页面文字与查询参数。已登录时记员工，未登录不记身份、按来源 IP 更严格限流；超出限额的条目丢弃，仍返回 202。",
+        "parameters": [
+          {
+            "name": "Origin",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "必须与当前受信入口同源；其他网站发起的上报返回 403"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "text/plain": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "app",
+                  "reports"
+                ],
+                "properties": {
+                  "app": {
+                    "type": "string",
+                    "enum": [
+                      "workbench",
+                      "admin"
+                    ],
+                    "description": "必须与路径中的 audience 一致"
+                  },
+                  "reports": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 20,
+                    "items": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "kind"
+                      ],
+                      "properties": {
+                        "kind": {
+                          "type": "string",
+                          "enum": [
+                            "render",
+                            "script",
+                            "promise",
+                            "api",
+                            "notice",
+                            "load",
+                            "stream"
+                          ]
+                        },
+                        "message": {
+                          "type": "string",
+                          "maxLength": 2000,
+                          "description": "失败提示（notice）不得携带"
+                        },
+                        "stack": {
+                          "type": "string",
+                          "maxLength": 16000,
+                          "description": "服务端只保留帧位置；失败提示不得携带"
+                        },
+                        "route": {
+                          "type": "string",
+                          "pattern": "^[A-Za-z0-9_.:/-]{1,120}$",
+                          "description": "前端路由名，不是网址"
+                        },
+                        "traceId": {
+                          "type": "string",
+                          "pattern": "^trace-http-[0-9a-fA-F-]{36}$"
+                        },
+                        "runId": {
+                          "type": "string",
+                          "pattern": "^[A-Za-z0-9_.:-]{1,128}$"
+                        },
+                        "code": {
+                          "type": "string",
+                          "pattern": "^[A-Za-z0-9_]{1,80}$",
+                          "description": "失败提示必填"
+                        },
+                        "template": {
+                          "type": "string",
+                          "maxLength": 40,
+                          "description": "仅失败提示：动作名等固定文案"
+                        },
+                        "release": {
+                          "type": "string",
+                          "maxLength": 64
+                        },
+                        "count": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 1000
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "app",
+                  "reports"
+                ],
+                "properties": {
+                  "app": {
+                    "type": "string",
+                    "enum": [
+                      "workbench",
+                      "admin"
+                    ],
+                    "description": "必须与路径中的 audience 一致"
+                  },
+                  "reports": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 20,
+                    "items": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "kind"
+                      ],
+                      "properties": {
+                        "kind": {
+                          "type": "string",
+                          "enum": [
+                            "render",
+                            "script",
+                            "promise",
+                            "api",
+                            "notice",
+                            "load",
+                            "stream"
+                          ]
+                        },
+                        "message": {
+                          "type": "string",
+                          "maxLength": 2000,
+                          "description": "失败提示（notice）不得携带"
+                        },
+                        "stack": {
+                          "type": "string",
+                          "maxLength": 16000,
+                          "description": "服务端只保留帧位置；失败提示不得携带"
+                        },
+                        "route": {
+                          "type": "string",
+                          "pattern": "^[A-Za-z0-9_.:/-]{1,120}$",
+                          "description": "前端路由名，不是网址"
+                        },
+                        "traceId": {
+                          "type": "string",
+                          "pattern": "^trace-http-[0-9a-fA-F-]{36}$"
+                        },
+                        "runId": {
+                          "type": "string",
+                          "pattern": "^[A-Za-z0-9_.:-]{1,128}$"
+                        },
+                        "code": {
+                          "type": "string",
+                          "pattern": "^[A-Za-z0-9_]{1,80}$",
+                          "description": "失败提示必填"
+                        },
+                        "template": {
+                          "type": "string",
+                          "maxLength": 40,
+                          "description": "仅失败提示：动作名等固定文案"
+                        },
+                        "release": {
+                          "type": "string",
+                          "maxLength": 64
+                        },
+                        "count": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 1000
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "已接收；accepted 为入库条数，dropped 为超出限额丢弃的条数",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "data"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "accepted",
+                        "dropped"
+                      ],
+                      "properties": {
+                        "accepted": {
+                          "type": "integer"
+                        },
+                        "dropped": {
+                          "type": "integer"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "来源校验失败"
+          },
+          "422": {
+            "description": "内容类型、结构或长度不符合要求"
+          }
+        }
+      }
     }
   },
   "components": {

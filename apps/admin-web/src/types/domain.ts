@@ -1224,3 +1224,67 @@ export interface DingTalkSettingsInput {
   adminDailyBindLimit: number
   timeoutMs: number
 }
+
+/** 错误记录（错误记录方案 6.5，OBS-S1），与 Admin OpenAPI 的 error-records 接口对应。 */
+export type ErrorSource = 'workbench' | 'admin' | 'server' | 'process'
+export type ErrorKind = 'render' | 'script' | 'promise' | 'api' | 'notice' | 'load' | 'stream' | 'http' | 'uncaught' | 'overflow'
+export type ErrorRange = '7d' | '30d' | '90d'
+
+export interface ErrorGroupFilter {
+  range: ErrorRange
+  source?: ErrorSource
+  includeNotice: boolean
+  release?: string
+  sort: 'recent' | 'count'
+}
+
+export interface ErrorGroupSummary {
+  id: string
+  source: ErrorSource
+  kind: ErrorKind
+  message: string
+  route: string | null
+  count: number
+  people: number
+  anonymous: boolean
+  firstSeenAt: string
+  lastSeenAt: string
+  lastRelease: string | null
+}
+
+export interface ErrorSample {
+  occurredAt: string
+  userId: string | null
+  userName: string | null
+  route: string | null
+  client: string | null
+  release: string | null
+  traceId: string | null
+  runId: string | null
+  repeatCount: number
+}
+
+export interface ErrorGroupDetail extends ErrorGroupSummary {
+  totalCount: number
+  stack: string | null
+  stackResolved: boolean
+  samples: ErrorSample[]
+}
+
+export interface RunProblemSummary {
+  failed: number
+  timedOut: number
+  cancelled: number
+  emptyAnswer: number
+  totalRuns: number
+  reasons: Array<{ code: string; label: string; runs: number; people: number; lastAt: string }>
+  tools: Array<{ tool: string; failed: number; denied: number; topReason: string }>
+}
+
+export interface ErrorLookupResult {
+  query: string
+  kind: 'trace' | 'run' | 'unknown'
+  serverFailures: Array<ErrorSample & { groupId: string; message: string }>
+  clientReports: Array<ErrorSample & { groupId: string; message: string; source: ErrorSource }>
+  runs: Array<{ runId: string; status: string; errorCode: string | null; agentName: string | null; requestedBy: string | null; createdAt: string }>
+}

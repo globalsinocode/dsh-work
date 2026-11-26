@@ -138,10 +138,19 @@ import { portalAuthenticator } from './modules/identity/portal-authenticator.ts'
 import { IdentityAdministrationService } from './modules/identity/administration-service.ts'
 import { RequestError, invalidRequest } from './domain/request-errors.ts'
 import { LocalObjectStorage } from './infrastructure/storage/local-object-storage.ts'
+import { validateRequestOrigin } from './modules/identity/request-security.ts'
+import { PostgresErrorRecordsService } from './modules/observability/postgres-error-records-service.ts'
+import { installProcessFailureHandlers, serverFailureRecord } from './modules/observability/server-failure-records.ts'
+import { createSourceMapStackResolver } from './modules/observability/source-map-resolver.ts'
+import { registerClientErrorRoutes } from './http/client-error-routes.ts'
+import { registerErrorRecordsRoutes } from './http/admin/error-records-routes.ts'
 
 const port = Number(process.env.DSH_WORK_SERVER_PORT ?? 4190)
 // server/package.json sits one level above both src/main.ts and dist/main.js.
-const serverVersion = (JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as { version: string }).version
+const serverPackage = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as { version: string; releaseVersion?: string }
+const serverVersion = serverPackage.version
+/** 错误记录样本中的服务端版本（与前端构建注入的版本号同源）。 */
+const releaseVersion = serverPackage.releaseVersion ?? null
 const host = process.env.DSH_WORK_SERVER_HOST ?? '127.0.0.1'
 
 async function start() {
@@ -174,7 +183,36 @@ async function start() {
   await dingtalkSettings.ensureBootstrap()
   const localAuthentication = new LocalAuthService(identityConfiguration, database, dingtalkSettings)
   const dingtalkAuthentication = new DingTalkAuthService(identityConfiguration, database, dingtalkSettings)
-  const router = new Router({ authenticateApi: portalAuthenticator(localAuthentication) })
+  // 错误记录（错误记录方案 OBS-S1）：服务端 5xx、进程异常与浏览器上报写入同一组表。
+  const errorRecords = new PostgresErrorRecordsService(database, {
+    resolveStack: createSourceMapStackResolver(process.env.DSH_WORK_SOURCE_MAP_DIR),
+  })
+  installProcessFailureHandlers({ record: input => errorRecords.record(input), release: releaseVersion })
+  const router = new Router({
+    authenticateApi: portalAuthenticator(localAuthentication),
+    onServerFailure: failure => {
+      void errorRecords.record(serverFailureRecord(failure, releaseVersion))
+        .catch(error => console.error('error record write failed', error instanceof Error ? error.message : 'unknown'))
+    },
+  })
+  registerClientErrorRoutes(router, {
+    record: input => errorRecords.record(input),
+    authenticate: portalAuthenticator(localAuthentication),
+    validateOrigin: (request, audience) => validateRequestOrigin(request, identityConfiguration.audiences[audience]),
+  })
+  registerErrorRecordsRoutes(router, errorRecords)
+  // 错误记录清理：启动后与每天一次，分批删除 90 天前的样本（与工作区清扫分开）。
+  let errorRetentionRun: Promise<void> | null = null
+  const purgeErrorRecords = () => {
+    if (errorRetentionRun) return
+    errorRetentionRun = errorRecords.purgeExpired()
+      .then(result => { if (result.removed > 0) console.warn('error record retention sweep completed', result) })
+      .catch(error => console.error('error record retention sweep failed', error instanceof Error ? error.message : 'unknown'))
+      .finally(() => { errorRetentionRun = null })
+  }
+  purgeErrorRecords()
+  const errorRetentionSweep = setInterval(purgeErrorRecords, 24 * 60 * 60 * 1000)
+  errorRetentionSweep.unref()
   registerLocalAuthRoutes(router, localAuthentication)
   registerDingTalkAuthRoutes(router, dingtalkAuthentication, localAuthentication)
   const dingtalkAdministration = new DingTalkAdministrationService(database, dingtalkSettings, {
@@ -773,6 +811,8 @@ async function start() {
         if (memoryProposalSweep) clearInterval(memoryProposalSweep)
         if (notificationRetentionSweep) clearInterval(notificationRetentionSweep)
         await notificationRetentionRun
+        clearInterval(errorRetentionSweep)
+        await errorRetentionRun
         if (workspaceSweep) clearInterval(workspaceSweep)
         if (automationSweep) await automationSweep.close()
         if (revocationSweep) await revocationSweep.close()

@@ -16,6 +16,7 @@ import {
   Key,
   Menu,
   Monitor,
+  Warning,
   Notebook,
   Reading,
   OfficeBuilding,
@@ -123,6 +124,7 @@ const navigationGroups: Array<{ label: string; items: NavigationItem[] }> = [
       { label: '数据防护', path: '/data-protection', icon: Lock, permission: 'dlp' },
       { label: '审计记录', path: '/audit', icon: Tickets, permission: 'audit' },
       { label: '系统健康', path: '/health', icon: Monitor, permission: 'ops' },
+      { label: '错误记录', path: '/error-records', icon: Warning, permission: 'ops' },
     ],
   },
   {

@@ -5751,6 +5751,143 @@
           }
         ]
       }
+    },
+    "/error-records/groups": {
+      "get": {
+        "operationId": "listErrorGroups",
+        "summary": "错误记录（安全与运维，模块 ops 只读）：周期内按问题归并的员工端、管理端与服务端错误，含次数、影响人数、首次与最近发生、最近版本；默认不含“提示”类；最多 200 个问题",
+        "parameters": [
+          {
+            "name": "range",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "7d",
+                "30d",
+                "90d"
+              ]
+            }
+          },
+          {
+            "name": "source",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "workbench",
+                "admin",
+                "server",
+                "process"
+              ]
+            }
+          },
+          {
+            "name": "include_notice",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "true"
+              ]
+            }
+          },
+          {
+            "name": "release",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "recent",
+                "count"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          }
+        }
+      }
+    },
+    "/error-records/groups/{groupId}": {
+      "get": {
+        "operationId": "getErrorGroup",
+        "summary": "问题详情：最近 20 个样本（时间、员工或未登录、页面或路由、客户端简称、版本、链路编号、运行编号）与最近样本的堆栈（浏览器堆栈按源码映射还原）",
+        "parameters": [
+          {
+            "name": "groupId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/error-records/run-problems": {
+      "get": {
+        "operationId": "getRunProblems",
+        "summary": "运行问题：周期内失败、超时、取消与“成功但没有回答”的运行数，按原因汇总，以及按工具统计的调用失败与被拒绝次数（读取已有运行记录）",
+        "parameters": [
+          {
+            "name": "range",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "7d",
+                "30d",
+                "90d"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          }
+        }
+      }
+    },
+    "/error-records/lookup": {
+      "get": {
+        "operationId": "lookupErrorRecords",
+        "summary": "编号查询：输入接口链路编号（trace-http-…）列出同一编号的服务端失败与浏览器上报，以及样本中记下的运行；输入运行编号或运行侧链路编号（trace-<runId>）列出该运行与带此运行编号的样本",
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "maxLength": 128
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          }
+        }
+      }
     }
   },
   "components": {

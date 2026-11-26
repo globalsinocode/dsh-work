@@ -234,6 +234,12 @@ const router = createRouter({
       meta: { title: '审计记录', requiresAdmin: true, module: 'audit' },
     },
     {
+      path: '/error-records',
+      name: 'error-records',
+      component: () => import('@/views/ErrorRecordsView.vue'),
+      meta: { title: '错误记录', subtitle: '员工端、管理端与服务端的错误按问题归并，可按链路编号查到关联运行', requiresAdmin: true, module: 'ops' },
+    },
+    {
       path: '/health',
       name: 'health',
       component: () => import('@/views/SystemHealthView.vue'),

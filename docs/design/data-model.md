@@ -206,6 +206,8 @@ flowchart LR
 | `mcp_invocation_audits` | MCP 调用审计 | 按 Attempt + 调用 ID 唯一；参数只存摘要；结果未知需管理员核对登记；登记未生效才解除重试拦截，登记已生效继续拦截 |
 | `mcp_attempt_call_contexts` | 每个 Attempt 向各 Connector 实际下发的调用上下文（EA-S1） | 主键 Attempt + Connector；只存 `personal`/`shared`，不存员工标识；`mcp_invocation_audits.call_context` 据此记录每次调用带的调用上下文（迁移 0131） |
 | `model_usage_events` | 模型用量 | 每个 Attempt 对话一行、联网搜索另一行（迁移 0122，按 `(attempt, endpoint)` 唯一）。有网关记录时 `measurement = gateway`：实际模型取厂商成功返回的请求，记录请求次数（含重试）、失败次数与缓存读写 token（厂商未返回为空，不记为 0）；没有网关记录时为 `session-log`（DSH 会话日志）或 `estimated`（按文本长度估算），`estimated` 与之一致。取消的运行有网关记录时也记录。按执行计数的聚合用 `count(distinct attempt_id)` |
+| `error_groups` | 错误记录：按指纹归并的问题（OBS-S1，迁移 0133） | 来源为员工端、管理端、服务端或服务进程；按 `(tenant, fingerprint)` 唯一；消息在服务端脱敏后保存（失败提示只存错误码与动作名）；浏览器上报每个租户每个来源每小时新增超过 200 个时并入该来源的汇总组（按租户与来源加锁计数），服务端与进程异常不受此限 |
+| `error_occurrences` | 错误记录样本 | 同一员工同一问题 1 分钟内的重复只累加 `repeat_count`；不存请求体、对话正文、查询参数与完整 User-Agent，堆栈只留帧位置；`run_id` 只来自路由参数或浏览器上报，接口链路编号经它关联运行；保留 90 天，专用任务每天分批清理 |
 | `operational_events`（视图） | 运营事件投影 | 只读投影，不含业务正文 |
 
 ## 数据库触发器

@@ -1,3 +1,4 @@
+import { errorReporter } from '@dsh-work/ui-core'
 import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
 
@@ -326,6 +327,8 @@ export const useTaskStore = defineStore('tasks', () => {
     }
     stream.onerror = () => {
       if (isTerminal(getTask(runId)?.status)) closeStream(runId)
+      // 服务端拒绝时 EventSource 置 CLOSED、不再自动重连：员工看不到后续进度，按“实时流”问题上报。
+      else if (stream.readyState === EventSource.CLOSED) errorReporter()?.report({ kind: 'stream', message: '运行进度实时流已断开且不再重连', runId })
     }
   }
 

@@ -316,6 +316,7 @@ openssl x509 -in "${DWP_ROOT}/certs/server.crt" -noout -checkend 2592000
 | `DSH_WORK_SESSION_SECRET` | 另一份独立高熵随机值，至少 32 字符，不与数据库密码共用 |
 | `DSH_WORK_WORKBENCH_ORIGINS`、`DSH_WORK_ADMIN_ORIGINS` | 初次分别填 `https://<Mac mini IP>:4174`、`https://<Mac mini IP>:4180`；后续可追加已批准 IP/域名 Origin |
 | `DSH_WORK_WORKBENCH_DEFAULT_ORIGIN`、`DSH_WORK_ADMIN_DEFAULT_ORIGIN` | 初次与上述单入口相同；启用固定域名后可改为相应域名 Origin |
+| `DSH_WORK_SOURCE_MAP_DIR` | 可选，通常不设置。错误记录还原前端堆栈所用源码映射的目录，缺省为发布包内的 `sourcemaps/`（打包时从前端产物移出，按版本分目录，不经 Nginx 提供） |
 
 密码可在受控本地终端用 `openssl rand -hex 32` 分别生成，或由密码管理器生成；不要让
 Agent 把生成值输出到对话。非十六进制数据库密码需正确 URL 编码后再放入连接串。

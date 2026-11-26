@@ -10,6 +10,9 @@ import type {
 } from '../modules/identity/types.ts'
 import { invalidRequest, stateConflict } from '../domain/request-errors.ts'
 import { decideAdminRouteAccess, type AdminRouteView } from '../domain/admin-permissions.ts'
+import type { ServerFailure } from '../domain/error-records.ts'
+
+export type { ServerFailure }
 
 export interface ApiMeta {
   api: 'workbench' | 'admin' | 'system'
@@ -67,10 +70,17 @@ export class Router {
    * 默认拒绝不认识这些路径）。生产入口不得传入，架构检查会拦截。
    */
   private readonly testOnlyAdminPaths?: (path: string) => boolean
+  private readonly onServerFailure?: (failure: ServerFailure) => void
 
-  constructor(options: { authenticateApi?: ApiAuthenticator; testOnlyAdminPaths?: (path: string) => boolean } = {}) {
+  constructor(options: {
+    authenticateApi?: ApiAuthenticator
+    testOnlyAdminPaths?: (path: string) => boolean
+    /** 服务端 5xx 时调用（错误记录入库）；必须自行吞掉异常，不得影响响应。 */
+    onServerFailure?: (failure: ServerFailure) => void
+  } = {}) {
     this.authenticateApi = options.authenticateApi
     this.testOnlyAdminPaths = options.testOnlyAdminPaths
+    this.onServerFailure = options.onServerFailure
   }
 
   get(path: string, handler: RouteHandler) {
@@ -136,13 +146,15 @@ export class Router {
       return
     }
 
+    let params: Record<string, string> = {}
+    let identity: RequestIdentity | undefined
     try {
       const match = route.pattern.exec(url.pathname)
-      const params = Object.fromEntries(
+      params = Object.fromEntries(
         route.parameterNames.map((name, index) => [name, decodeURIComponent(match?.[index + 1] ?? '')]),
       )
       const audience = apiAudience(url.pathname)
-      const identity = audience && this.authenticateApi
+      identity = audience && this.authenticateApi
         ? await this.authenticateApi(request, audience)
         : undefined
       const adminView = !identity || this.testOnlyAdminPaths?.(url.pathname)
@@ -151,7 +163,10 @@ export class Router {
       const result = await route.handler(request, { params, url, identity, adminView }, response)
       if (response.headersSent || response.writableEnded) return
       if (isHttpResult(result)) {
-        if (result.status >= 400 && result.status <= 599) logErrorResult(result, method, route.path)
+        if (result.status >= 400 && result.status <= 599) {
+          const logged = logErrorResult(result, method, route.path)
+          if (result.status >= 500) this.reportServerFailure({ ...logged, method, routePath: route.path, status: result.status, params, userId: identity?.userId ?? null })
+        }
         writeJson(response, result.status, result.body)
       } else writeJson(response, 200, result)
     } catch (error) {
@@ -159,11 +174,25 @@ export class Router {
       logHttpFailure({ traceId: failure.error.traceId, method, path: route.path,
         status: failure.status, code: failure.error.code, error,
         safeMessage: failure.error.message, responseStarted: response.headersSent || response.writableEnded })
+      if (failure.status >= 500) {
+        this.reportServerFailure({ traceId: failure.error.traceId, method, routePath: route.path, status: failure.status,
+          code: failure.error.code, errorMessage: error instanceof Error ? error.message : failure.error.message,
+          params, userId: identity?.userId ?? null })
+      }
       if (response.headersSent || response.writableEnded) {
         response.end()
         return
       }
       writeJson(response, failure.status, { error: failure.error })
+    }
+  }
+
+  private reportServerFailure(failure: ServerFailure) {
+    if (!this.onServerFailure) return
+    try {
+      this.onServerFailure(failure)
+    } catch {
+      // 错误记录不得替代原有响应。
     }
   }
 }
@@ -362,7 +391,7 @@ export function routePermissionDenied(message: string) {
 /** Explicit httpResult errors also get a diagnostic, without logging the surrounding payload.
  * Existing response bodies are not changed; absent trace IDs are server-side correlations only.
  */
-function logErrorResult(result: HttpResult, method: string, path: string) {
+function logErrorResult(result: HttpResult, method: string, path: string): { traceId: string; code: string; errorMessage: string } {
   const body = result.body
   const detail = body && typeof body === 'object' && 'error' in body
     && body.error && typeof body.error === 'object' ? body.error as Record<string, unknown> : {}
@@ -373,4 +402,5 @@ function logErrorResult(result: HttpResult, method: string, path: string) {
   const message = typeof detail.message === 'string' ? detail.message : '接口返回错误状态'
   logHttpFailure({ traceId, method, path, status: result.status, code,
     error: new Error(message), safeMessage: '接口返回错误状态', responseStarted: false })
+  return { traceId, code, errorMessage: message }
 }

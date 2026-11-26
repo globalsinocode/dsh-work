@@ -1,3 +1,4 @@
+import { errorReporter } from '@dsh-work/ui-core'
 import type {
   NewSpaceDisclosureImpact,
   PersonalFile,
@@ -105,18 +106,25 @@ export class WorkbenchApiError extends Error {
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${baseUrl}${path}`, {
-    ...init,
-    credentials: 'include',
-    headers: {
-      Accept: 'application/json',
-      ...(init?.body ? { 'Content-Type': 'application/json' } : {}),
-      ...init?.headers,
-    },
-  })
+  let response: Response
+  try {
+    response = await fetch(`${baseUrl}${path}`, {
+      ...init,
+      credentials: 'include',
+      headers: {
+        Accept: 'application/json',
+        ...(init?.body ? { 'Content-Type': 'application/json' } : {}),
+        ...init?.headers,
+      },
+    })
+  } catch (cause) {
+    if (!(cause instanceof DOMException && cause.name === 'AbortError')) errorReporter()?.reportApiFailure({ networkError: true })
+    throw cause
+  }
 
   if (!response.ok) {
     const error = await parseApiError(response, `员工工作台接口请求失败（${response.status}）`)
+    errorReporter()?.reportApiFailure({ status: response.status, code: error.code, traceId: error.traceId })
     if (response.status === 401 && path !== '/session') redirectToLogin()
     throw error
   }

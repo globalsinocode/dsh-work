@@ -81,6 +81,9 @@ cp -R "${project_root}/server/config/agent-presets" "${bundle}/server/config/age
 cp -R "${server_stage}/node_modules" "${bundle}/server/node_modules"
 cp -R "${project_root}/apps/workbench-web/dist" "${bundle}/apps/workbench-web/dist"
 cp -R "${project_root}/apps/admin-web/dist" "${bundle}/apps/admin-web/dist"
+# 错误记录（OB7）：源码映射不随前端发布，移到 sourcemaps/<版本>/，只供服务端还原错误堆栈。
+mkdir -p "${bundle}/sourcemaps/${version}"
+find "${bundle}/apps/workbench-web/dist" "${bundle}/apps/admin-web/dist" -name '*.map' -exec mv {} "${bundle}/sourcemaps/${version}/" \;
 
 deployment_scripts=(
   backup.sh
