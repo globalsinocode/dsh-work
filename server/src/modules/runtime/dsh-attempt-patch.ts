@@ -24,6 +24,22 @@ export const MODEL_ROUTE_RETRY_POLICY = Object.freeze({
   retryableCodes: Object.freeze(['EMPTY_RESPONSE', 'RATE_LIMIT', 'SERVER', 'TIMEOUT', 'TRANSPORT']),
 })
 
+/**
+ * DeepSeek 官方路由的推理与容量默认值，与 DSH 自带的 `dsh-llm-deepseek` 适配器一致（0.1.2-rc.1：
+ * 默认思考档位 `high`，单次输出上限 256,000，上下文 1,000,000）。平台改经 pi-ai 接入后，手工声明的
+ * 模型不带这些值：不声明档位时 pi-ai 视为不支持推理，请求既不开启思考也不带 `reasoning_effort`，
+ * 由厂商服务端默认决定；输出上限与上下文则落到 pi-ai 的兜底值（32,768 与 262,144）。
+ * pi-ai 只按地址含 `deepseek.com` 识别 DeepSeek 并改用 `max_tokens`；patch 的地址是平台网关，
+ * 不显式指定时输出上限以 DeepSeek 文档未列出的 `max_completion_tokens` 发出。
+ * `off` 不写协议值：显式关闭思考的请求（如会话标题）发送 `thinking: {type: disabled}`。
+ */
+export const DEEPSEEK_ROUTE_DEFAULTS = Object.freeze({
+  reasoning: 'high',
+  reasoningEfforts: Object.freeze({ off: null, low: 'low', high: 'high', max: 'max' }),
+  contextWindow: 1_000_000,
+  maxTokens: 256_000,
+})
+
 /** 平台声明的 pi-ai 路由名统一加前缀，避免与 DSH 内置路由同名（模型路由方案 4.3）。 */
 export function dshRouteName(providerKey: string): string {
   return `dshw-${providerKey}`
@@ -118,9 +134,21 @@ function modelRouteRows(input: AttemptModelRoutePatch): string[] {
     `          mode: ${q(MODEL_ROUTE_RETRY_POLICY.mode)}`,
     `          maxRetries: ${MODEL_ROUTE_RETRY_POLICY.maxRetries}`,
     `          retryableCodes: [${MODEL_ROUTE_RETRY_POLICY.retryableCodes.map(q).join(', ')}]`,
+    // 路由级默认档位：请求未点名档位时使用（pi-ai 取 `options.reasoningEffort ?? profile.reasoning`）。
+    ...(deepSeek ? [`        reasoning: ${q(DEEPSEEK_ROUTE_DEFAULTS.reasoning)}`] : []),
     '        models:',
     `          - id: ${q(route.model_key)}`,
-    ...(deepSeek ? ['            compat:', '              thinkingFormat: deepseek'] : []),
+    ...(deepSeek ? [
+      `            contextWindow: ${DEEPSEEK_ROUTE_DEFAULTS.contextWindow}`,
+      `            maxTokens: ${DEEPSEEK_ROUTE_DEFAULTS.maxTokens}`,
+      '            reasoningEfforts:',
+      ...Object.entries(DEEPSEEK_ROUTE_DEFAULTS.reasoningEfforts)
+        .map(([level, wire]) => `              ${level}:${wire === null ? '' : ` ${q(wire)}`}`),
+      '            compat:',
+      '              thinkingFormat: deepseek',
+      '              supportsReasoningEffort: true',
+      '              maxTokensField: max_tokens',
+    ] : []),
     '',
     '- id: acp',
     "  name: '@deepseek-ai/dsh-acp'",

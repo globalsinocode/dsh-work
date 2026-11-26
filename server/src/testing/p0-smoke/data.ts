@@ -8,7 +8,6 @@ import type {
   RuntimeDefinition,
   SkillDefinition,
   TaskRun,
-  UsagePoint,
   UserProfile,
   Workspace,
 } from '../../domain/types.ts'
@@ -816,6 +815,7 @@ export const mockAgents: AgentDefinition[] = [
     projectTasksEnabled: false,
     agentRecommendationEnabled: false,
     skillCreationEnabled: false,
+    webFetchEnabled: false,
     updatedAt: '2026-08-27 17:42',
     allowWorkspaceJoin: true,
   },
@@ -840,11 +840,12 @@ export const mockAgents: AgentDefinition[] = [
     projectTasksEnabled: false,
     agentRecommendationEnabled: false,
     skillCreationEnabled: false,
+    webFetchEnabled: false,
     updatedAt: '2026-08-28 09:14',
     allowWorkspaceJoin: true,
   },
   {
-    // Skill 创建专家（方案 5.1）：开启“可创建 Skill”，供 Skill 广场“创建 Skill”入口的冒烟（SKC-04）。
+    // Skill 创建专家（功能规则 5.6）：开启“可创建 Skill”，供 Skill 广场“创建 Skill”入口的冒烟（SKC-04）。
     // 默认停用，以免改变其他用例“只有一位 AI 同事”的前提；SKC-04 经管理端接口启用。
     id: 'skill-creator',
     name: 'Skill 创建专家',
@@ -866,6 +867,7 @@ export const mockAgents: AgentDefinition[] = [
     projectTasksEnabled: false,
     agentRecommendationEnabled: false,
     skillCreationEnabled: true,
+    webFetchEnabled: false,
     updatedAt: '2026-10-31 10:00',
     allowWorkspaceJoin: false,
   },
@@ -894,6 +896,7 @@ export const mockAgentVersions: AgentVersionRecord[] = [
     projectTasksEnabled: false,
     agentRecommendationEnabled: false,
     skillCreationEnabled: false,
+    webFetchEnabled: false,
   },
   {
     id: 'agent-version-assistant-110',
@@ -917,6 +920,7 @@ export const mockAgentVersions: AgentVersionRecord[] = [
     projectTasksEnabled: false,
     agentRecommendationEnabled: false,
     skillCreationEnabled: false,
+    webFetchEnabled: false,
   },
   {
     id: 'agent-version-assistant-100',
@@ -939,6 +943,7 @@ export const mockAgentVersions: AgentVersionRecord[] = [
     projectTasksEnabled: false,
     agentRecommendationEnabled: false,
     skillCreationEnabled: false,
+    webFetchEnabled: false,
   },
   {
     id: 'agent-version-operations-040',
@@ -960,6 +965,7 @@ export const mockAgentVersions: AgentVersionRecord[] = [
     projectTasksEnabled: false,
     agentRecommendationEnabled: false,
     skillCreationEnabled: false,
+    webFetchEnabled: false,
   },
   {
     id: 'agent-version-operations-030',
@@ -982,6 +988,7 @@ export const mockAgentVersions: AgentVersionRecord[] = [
     projectTasksEnabled: false,
     agentRecommendationEnabled: false,
     skillCreationEnabled: false,
+    webFetchEnabled: false,
   },
   {
     id: 'agent-version-skill-creator-100',
@@ -1004,6 +1011,7 @@ export const mockAgentVersions: AgentVersionRecord[] = [
     projectTasksEnabled: false,
     agentRecommendationEnabled: false,
     skillCreationEnabled: true,
+    webFetchEnabled: false,
   },
 ]
 
@@ -1103,6 +1111,7 @@ export const mockConnectors: ConnectorDefinition[] = [
       discoveredAt: '2026-09-22T00:00:00.000Z',
       reviewedAt: '2026-09-22T00:05:00.000Z',
       reviewedBy: '陈默',
+      employeeIdentity: { enabled: false, available: true },
     },
   },
   {
@@ -1307,13 +1316,4 @@ export const mockHealth: HealthComponent[] = [
   },
 ]
 
-export const mockUsage: UsagePoint[] = [
-  { day: '08/22', runs: 86, tokens: 520000 },
-  { day: '08/23', runs: 103, tokens: 680000 },
-  { day: '08/24', runs: 72, tokens: 430000 },
-  { day: '08/25', runs: 128, tokens: 880000 },
-  { day: '08/26', runs: 145, tokens: 1020000 },
-  { day: '08/27', runs: 132, tokens: 910000 },
-  { day: '08/28', runs: 96, tokens: 720000 },
-]
 

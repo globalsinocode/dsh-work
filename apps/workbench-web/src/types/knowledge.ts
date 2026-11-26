@@ -1,4 +1,4 @@
-/** 员工端“知识库”（weknora-knowledge-plan 第 8 节，WK-S2），与工作台 OpenAPI 的 Knowledge* 结构一致。 */
+/** 员工端“知识库”（功能规则第 11 节，WK-S2），与工作台 OpenAPI 的 Knowledge* 结构一致。 */
 export type KnowledgeLevel = 'none' | 'view' | 'docs' | 'bases'
 
 export interface KnowledgeStatus {

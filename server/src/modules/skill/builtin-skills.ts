@@ -1,5 +1,5 @@
 /**
- * 平台内置 Skill（docs/design/builtin-skills-plan.md）：随代码发布的基线方法。
+ * 平台内置 Skill（功能规则 5.5）：随代码发布的基线方法。
  *
  * 内容在 server/config/builtin-skills/<id>/，本文件的注册表是唯一来源，与内置工具注册表同一治理方式：
  * 不写入 Skill 表，不经安装、发布或授权；员工侧运行以内联 Skill 写入 Manifest，正文随 Manifest 留存。

@@ -1,7 +1,7 @@
 import { defineConfig, devices } from '@playwright/test'
 
 // The default suite is P0: a test-only smoke server with in-memory data and test
-// identities (scripts/testing/p0-smoke-server.ts). It never reads PostgreSQL/OIDC
+// identities (scripts/testing/p0-smoke-server.ts). It never reads PostgreSQL
 // settings. Publish the chosen ports to test workers as well as the three processes.
 const workbenchPort = process.env.DSH_WORK_WORKBENCH_PORT ||= '4274'
 const adminPort = process.env.DSH_WORK_ADMIN_PORT ||= '4280'

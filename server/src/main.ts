@@ -36,7 +36,6 @@ import { registerUserNotificationRoutes } from './http/workbench/user-notificati
 import { registerKnowledgeRoutes } from './http/workbench/knowledge-routes.ts'
 import { registerKnowledgeAdminRoutes } from './http/admin/knowledge-admin-routes.ts'
 import { registerWorkspaceTimelineRoutes } from './http/workbench/workspace-timeline-routes.ts'
-import { registerOidcRoutes } from './http/auth-routes.ts'
 import { registerLocalAuthRoutes } from './http/local-auth-routes.ts'
 import { registerDingTalkAuthRoutes } from './http/dingtalk-auth-routes.ts'
 import { registerDingTalkAdminRoutes } from './http/admin/dingtalk-admin-routes.ts'
@@ -134,43 +133,41 @@ import { registerPersistentApprovalRoutes } from './http/admin/persistent-approv
 import { registerAdminExperienceIterationRoutes } from './http/admin/experience-iteration-routes.ts'
 import { PostgresControlledMemoryService } from './modules/memory/postgres-controlled-memory-service.ts'
 import { PostgresTaskQueryService } from './modules/run/postgres-task-query-service.ts'
-import { loadStartupIdentityConfiguration, localIdentityConfiguration } from './modules/identity/config.ts'
+import { loadStartupIdentityConfiguration } from './modules/identity/config.ts'
 import { portalAuthenticator } from './modules/identity/portal-authenticator.ts'
-import { OidcAuthService } from './modules/identity/auth-service.ts'
 import { IdentityAdministrationService } from './modules/identity/administration-service.ts'
-import { IdentityDirectorySyncService } from './modules/identity/directory-sync-service.ts'
 import { RequestError, invalidRequest } from './domain/request-errors.ts'
 import { LocalObjectStorage } from './infrastructure/storage/local-object-storage.ts'
+import { validateRequestOrigin } from './modules/identity/request-security.ts'
+import { PostgresErrorRecordsService } from './modules/observability/postgres-error-records-service.ts'
+import { installProcessFailureHandlers, serverFailureRecord } from './modules/observability/server-failure-records.ts'
+import { createSourceMapStackResolver } from './modules/observability/source-map-resolver.ts'
+import { registerClientErrorRoutes } from './http/client-error-routes.ts'
+import { registerErrorRecordsRoutes } from './http/admin/error-records-routes.ts'
+import { registerUsageAnalyticsRoutes } from './http/admin/usage-analytics-routes.ts'
+import { PostgresUsageAnalyticsService } from './modules/observability/postgres-usage-analytics-service.ts'
 import { installTimestampedConsole } from './observability/console-timestamps.ts'
-import { authorizationToolProbeTimeoutMs, resolveAuthorizationCheckTimeoutMs } from './modules/runtime/authorization-check.ts'
 
 const port = Number(process.env.DSH_WORK_SERVER_PORT ?? 4190)
 // server/package.json sits one level above both src/main.ts and dist/main.js.
-const serverVersion = (JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as { version: string }).version
+const serverPackage = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as { version: string; releaseVersion?: string }
+const serverVersion = serverPackage.version
+/** 错误记录样本中的服务端版本（与前端构建注入的版本号同源）。 */
+const releaseVersion = serverPackage.releaseVersion ?? null
 const host = process.env.DSH_WORK_SERVER_HOST ?? '127.0.0.1'
 
 async function start() {
   const databaseUrl = process.env.DSH_WORK_DATABASE_URL
   // Sessions, identities and all business data live in PostgreSQL; there is no in-memory mode.
   if (!databaseUrl) throw invalidRequest('必须配置 DSH_WORK_DATABASE_URL：服务端会话与业务数据都保存在 PostgreSQL 中')
-  // 授权复核硬超时：非法值必须在数据库迁移和监听端口之前让启动失败。
-  const authorizationCheckTimeoutMs = resolveAuthorizationCheckTimeoutMs(
-    process.env.DSH_WORK_AUTHORIZATION_CHECK_TIMEOUT_MS,
-  )
   // Validate authentication configuration before any database mutation.
   const identityConfiguration = loadStartupIdentityConfiguration()
   const database = createDatabase({ url: databaseUrl })
   await runMigrations(database)
-  if (identityConfiguration.mode === 'local' && identityConfiguration.aiHubConfigurationIssue) {
-    console.warn(`AI Hub 登录未启用：${identityConfiguration.aiHubConfigurationIssue}。独立账号登录仍可用。`)
+  if (identityConfiguration.ignoredLegacySettings?.length) {
+    console.warn(`AI Hub 登录已删除，以下旧配置不再读取，可从运行配置中删除：${identityConfiguration.ignoredLegacySettings.join('、')}`)
   }
 
-  const oidcAuthentication = identityConfiguration.mode === 'oidc'
-    ? new OidcAuthService(identityConfiguration, database)
-    : null
-  const directorySync = identityConfiguration.mode === 'oidc'
-    ? new IdentityDirectorySyncService(identityConfiguration, database)
-    : null
   // 平台加密凭据（DSH_CREDENTIAL_MASTER_KEY）：钉钉 AppSecret、MCP Bearer Token 与模型厂商密钥共用一个实例；
   // 未配置主密钥时为 undefined，对应功能明确拒绝保存密钥。
   const credentialSecrets = process.env.DSH_CREDENTIAL_MASTER_KEY
@@ -187,16 +184,49 @@ async function start() {
     ...(credentialSecrets ? { credentials: credentialSecrets } : {}),
   })
   await dingtalkSettings.ensureBootstrap()
-  const localAuthentication = new LocalAuthService(localIdentityConfiguration(identityConfiguration), database, dingtalkSettings)
-  const dingtalkAuthentication = new DingTalkAuthService(localIdentityConfiguration(identityConfiguration), database, dingtalkSettings)
-  const router = new Router({ authenticateApi: portalAuthenticator(localAuthentication, oidcAuthentication) })
-  if (oidcAuthentication) registerOidcRoutes(router, oidcAuthentication, localAuthentication)
-  registerLocalAuthRoutes(router, localAuthentication, oidcAuthentication)
-  registerDingTalkAuthRoutes(router, dingtalkAuthentication, localAuthentication, oidcAuthentication)
+  const localAuthentication = new LocalAuthService(identityConfiguration, database, dingtalkSettings)
+  const dingtalkAuthentication = new DingTalkAuthService(identityConfiguration, database, dingtalkSettings)
+  // 错误记录（错误记录方案 OBS-S1）：服务端 5xx、进程异常与浏览器上报写入同一组表。
+  const errorRecords = new PostgresErrorRecordsService(database, {
+    resolveStack: createSourceMapStackResolver(process.env.DSH_WORK_SOURCE_MAP_DIR),
+  })
+  installProcessFailureHandlers({ record: input => errorRecords.record(input), release: releaseVersion })
+  const router = new Router({
+    authenticateApi: portalAuthenticator(localAuthentication),
+    onServerFailure: failure => {
+      void errorRecords.record(serverFailureRecord(failure, releaseVersion))
+        .catch(error => console.error('error record write failed', error instanceof Error ? error.message : 'unknown'))
+    },
+  })
+  const usageAnalytics = new PostgresUsageAnalyticsService(database, resolvePlatformTimezone(process.env.DSH_WORK_TIMEZONE))
+  registerClientErrorRoutes(router, {
+    record: input => errorRecords.record(input),
+    recordPageViews: (userId, app, views) => usageAnalytics.recordPageViews(userId, app, views),
+    authenticate: portalAuthenticator(localAuthentication),
+    validateOrigin: (request, audience) => validateRequestOrigin(request, identityConfiguration.audiences[audience]),
+  })
+  registerErrorRecordsRoutes(router, errorRecords)
+  registerUsageAnalyticsRoutes(router, usageAnalytics)
+  // 错误记录与页面访问清理：启动后与每天一次，分批删除 90 天前的错误样本与 180 天前的页面访问（与工作区清扫分开）。
+  let errorRetentionRun: Promise<void> | null = null
+  const purgeErrorRecords = () => {
+    if (errorRetentionRun) return
+    errorRetentionRun = Promise.all([errorRecords.purgeExpired(), usageAnalytics.purgeExpired()])
+      .then(([errors, pageViews]) => {
+        if (errors.removed > 0 || pageViews.removed > 0) console.warn('error record retention sweep completed', { errors: errors.removed, pageViews: pageViews.removed })
+      })
+      .catch(error => console.error('error record retention sweep failed', error instanceof Error ? error.message : 'unknown'))
+      .finally(() => { errorRetentionRun = null })
+  }
+  purgeErrorRecords()
+  const errorRetentionSweep = setInterval(purgeErrorRecords, 24 * 60 * 60 * 1000)
+  errorRetentionSweep.unref()
+  registerLocalAuthRoutes(router, localAuthentication)
+  registerDingTalkAuthRoutes(router, dingtalkAuthentication, localAuthentication)
   const dingtalkAdministration = new DingTalkAdministrationService(database, dingtalkSettings, {
     manager: dingtalkSettings,
     secret: identityConfiguration.sessionSecret,
-    workbenchOrigins: localIdentityConfiguration(identityConfiguration).audiences.workbench.allowedOrigins,
+    workbenchOrigins: identityConfiguration.audiences.workbench.allowedOrigins,
   })
   registerDingTalkAdminRoutes(router, dingtalkAdministration)
   // 每日离职检查（钉钉接入方案 4.2）：每次检查前读取当前配置，未配置时跳过；单进程部署，进行中的检查由唯一索引互斥。
@@ -206,17 +236,15 @@ async function start() {
   registerAuthConfigurationRoutes(router, async audience => {
     const dingtalk = audience === 'workbench' ? await dingtalkSettings.current() : null
     return {
-      mode: identityConfiguration.mode, localEnabled: true, aiHubEnabled: Boolean(oidcAuthentication),
+      mode: identityConfiguration.mode, localEnabled: true,
       ...(dingtalk ? { dingtalk: { corpId: dingtalk.corpId } } : {}),
     }
   })
   registerIdentityAdministrationRoutes(
     router,
-    new IdentityAdministrationService(database, true),
-    directorySync,
+    new IdentityAdministrationService(database),
   )
   registerOrganizationRoutes(router, new PostgresOrganizationService(database))
-  const directorySyncTimer = directorySync?.startScheduler() ?? null
   // 管理端录入的厂商密钥以 DSH_CREDENTIAL_MASTER_KEY 加密保存；未配置主密钥时不能录入，模型网关也无法转发。
   const modelRepository = new PostgresModelGovernanceRepository(database, credentialSecrets)
 
@@ -235,9 +263,9 @@ async function start() {
   let executionContainerCapability: CapabilityState = { status: 'unavailable', code: 'EXECUTION_CONTAINER_UNAVAILABLE' }
   const projectRoot = fileURLToPath(new URL('../..', import.meta.url))
   const dataRoot = resolve(projectRoot, process.env.DSH_WORK_DATA_ROOT ?? '.runtime')
-  // 平台内置 Skill 随代码发布；内容与版本锁不一致属于发布缺陷，服务不启动（builtin-skills-plan 5.1）。
+  // 平台内置 Skill 随代码发布；内容与版本锁不一致属于发布缺陷，服务不启动（功能规则 5.5）。
   const builtinSkills = loadBuiltinSkillCatalog(resolve(projectRoot, 'server/config/builtin-skills'))
-  // Agent 预置定义同样随代码发布，缺失或格式错误属于发布缺陷，服务不启动（Skill 创建专家方案 5.1）。
+  // Agent 预置定义同样随代码发布，缺失或格式错误属于发布缺陷，服务不启动（功能规则 5.6）。
   const skillCreatorPreset = loadSkillCreatorPreset(resolve(projectRoot, 'server/config/agent-presets'))
   const skillArtifacts = new SkillArtifactStore(new LocalObjectStorage(resolve(dataRoot, 'skills'), { fileMode: 0o400 }))
   await migrateSkillFilesToFileSystem(database, skillArtifacts)
@@ -310,16 +338,6 @@ async function start() {
   const conversations = new PostgresConversationRepository(database)
   const authorization = new PostgresAuthorizationService(database, {
     knownBuiltinSkill: builtinSkills.isKnown,
-    // AI Hub 身份的后台任务必须复核目录；配置降级为 local 时传 null，
-    // 授权服务仍按用户来源拒绝 AI Hub 后台执行，独立账号不受影响。
-    // 信任窗口 = 同步间隔 ×2（interval=0 即关闭同步 → 兜底 60s 后 fail-closed）。
-    automationDirectory: identityConfiguration.mode === 'oidc'
-      ? {
-          applicationId: identityConfiguration.applicationId,
-          environment: identityConfiguration.environment,
-          maxSyncAgeMs: Math.max(identityConfiguration.directorySyncIntervalSeconds * 2, 60) * 1000,
-        }
-      : null,
   })
   const content = new PostgresContentService(database, new LocalObjectStorage(resolve(dataRoot, 'storage')), authorization, undefined, undefined, {
     artifactTextExtractor: extractionExecutor && attemptContainers
@@ -350,13 +368,14 @@ async function start() {
     routeTrustLevel: async () => (await modelGovernanceForPolicy.resolveDefaultRoute()).trustLevel,
     onError: message => { console.warn(message) },
   })
+  // 未配置主密钥时外部厂商的请求失败即关闭（数据防护方案 5.6.2）。
+  const modelGatewayDataProtection = new DataProtectionService(
+    dataProtectionStore,
+    process.env.DSH_CREDENTIAL_MASTER_KEY ? Buffer.from(process.env.DSH_CREDENTIAL_MASTER_KEY, 'base64') : undefined,
+  )
   const modelGateway = dshInstallation ? new ModelGateway({
     log: new PostgresModelGatewayRequestLog(database),
-    // 未配置主密钥时外部厂商的请求失败即关闭（数据防护方案 5.6.2）。
-    dataProtection: new DataProtectionService(
-      dataProtectionStore,
-      process.env.DSH_CREDENTIAL_MASTER_KEY ? Buffer.from(process.env.DSH_CREDENTIAL_MASTER_KEY, 'base64') : undefined,
-    ),
+    dataProtection: modelGatewayDataProtection,
     credentials: {
       readSecret: async (tenantId, credentialRefId) => {
         if (!credentialSecrets) throw new Error('服务未配置 DSH_CREDENTIAL_MASTER_KEY，无法解析模型厂商密钥')
@@ -380,9 +399,9 @@ async function start() {
     protocolVersion: dshInstallation.protocolVersion,
     launchMode: dshInstallation.launchMode,
     process: dshInstallation.process,
-    authorizationCheckTimeoutMs,
-    authorizationToolProbeTimeoutMs: authorizationToolProbeTimeoutMs(authorizationCheckTimeoutMs),
     modelGateway,
+    // 读取网页方案 6.2：网址的数据防护检测（只返回类别）。
+    detectDataProtectionCategories: (tenantId, texts) => modelGatewayDataProtection.detectCategories(tenantId, texts),
     authorizeExecution: async manifest => {
       if (!orchestration) throw new Error('运行授权服务尚未就绪')
       await orchestration.assertCurrentRunAuthorization(manifest)
@@ -506,7 +525,7 @@ async function start() {
     database,
     runtime,
     authorization,
-    identityConfiguration.mode === 'oidc' ? 'ai-hub-oidc' : identityConfiguration.mode === 'local' ? 'local-password' : 'mock',
+    'local-password',
     builtinSkills,
   )
   const runtimePolicy = await operations.getRuntimePolicy('runtime-local-01')
@@ -523,7 +542,12 @@ async function start() {
     builtinCatalog = { checkedAt: new Date().toISOString(), error: error instanceof Error ? error.message : String(error) }
     console.warn('DSH built-in tool catalog check skipped:', error)
   })
-  const executionContainerStatus = () => executionContainerCapability.status === 'available' ? 'available' as const : 'unavailable' as const
+  // 启动检查通过后仍复查执行镜像：镜像被删除时报告不可用，重新拉取后自动恢复（结果按短间隔缓存）。
+  const currentExecutionContainerCapability = async (): Promise<CapabilityState> =>
+    executionContainerCapability.status === 'available' && attemptContainers && !(await attemptContainers.imageAvailable())
+      ? { status: 'unavailable', code: 'EXECUTION_CONTAINER_UNAVAILABLE' }
+      : executionContainerCapability
+  const executionContainerStatus = async () => (await currentExecutionContainerCapability()).status === 'available' ? 'available' as const : 'unavailable' as const
   // 方案 4.7：执行容器可用时报告数据卷剩余空间是否低于阈值（低时不运行命令）。
   const executionDiskLow = async () => attemptContainers
     ? (await freeSpace(dataRoot).catch(() => null))?.low ?? false
@@ -532,7 +556,7 @@ async function start() {
     tools: builtinTools,
     disabledTools: [...(await operations.getRuntimePolicy('runtime-local-01')).disabledTools],
     catalog: builtinCatalog,
-    executionContainer: { status: executionContainerStatus(), ...((await executionDiskLow()) ? { diskLow: true } : {}) },
+    executionContainer: { status: await executionContainerStatus(), ...((await executionDiskLow()) ? { diskLow: true } : {}) },
   })
   const skills = new PostgresSkillService(database, operations, skillArtifacts)
   // C7 only inspects execution capability; it never starts a Worker/model call.
@@ -548,7 +572,7 @@ async function start() {
   }
   skills.setPublicationAvailabilityChecker(checkInstallationRuntime)
   const agents = new PostgresAgentService(database, operations, skills, mcpService)
-  // 企业知识库（weknora-knowledge-plan）：连接由管理端配置（WK-S3），API Key 加密保存；部署配置 WEKNORA_*
+  // 企业知识库（功能规则第 11 节）：连接由管理端配置（WK-S3），API Key 加密保存；部署配置 WEKNORA_*
   // 只在管理员保存 API Key 之前提供初始连接。执行前检索、员工端与管理端共用同一连接，保存后立即生效。
   const knowledgeConnection = new PostgresKnowledgeConnection(database, {
     credentials: credentialSecrets,
@@ -624,7 +648,7 @@ async function start() {
   // 依赖登记（2026-11-04）：按当前执行镜像复查已发布 Skill 的 Python 依赖；缺包的在管理端标出并在运行前被拒绝。
   skills.setPythonEnvironment(containerPythonRunner && attemptContainers ? { image: attemptContainers.image, packages: pythonPackages, modules: pythonModules } : null)
   await skills.recheckPublishedPythonDependencies().catch(error => console.error('skill python dependency recheck failed', error))
-  // Skill 创建专家：草稿用与安装相同的包规则与 Python 环境核对（skill-creator-plan 4.2）。
+  // Skill 创建专家：草稿用与安装相同的包规则与 Python 环境核对（功能规则 5.6）。
   skillSubmissionsRef.current = new SkillSubmissionService({
     database, skills, authorization, artifactStore: skillArtifacts, builtinSkills,
     pythonSandboxAvailable: Boolean(containerPythonRunner), pythonPackages, pythonModules,
@@ -742,7 +766,7 @@ async function start() {
   registerWorkspaceAgentMemberRoutes(router, workspaceAgentMembers, authorization)
   registerProjectRoutes(router, projects, authorization, projectArchive)
   registerOperationsRoutes(router, operations, new PostgresGrantReconciliationService(database, operations))
-  registerDataProtectionRoutes(router, new PostgresDataProtectionAdminService(database, resolvePlatformTimezone(process.env.DSH_WORK_TIMEZONE)))
+  registerDataProtectionRoutes(router, new PostgresDataProtectionAdminService(database, resolvePlatformTimezone(process.env.DSH_WORK_TIMEZONE)), 'postgres', authorization)
   registerModelUsageRoutes(router, new PostgresModelUsageService(database, resolvePlatformTimezone(process.env.DSH_WORK_TIMEZONE)))
   registerAgentRoutes(router, agents, new PostgresAgentAccessService(database))
   const agentValidation = new PostgresAgentValidationService(database, agents, skills, orchestration, mcpService)
@@ -750,7 +774,7 @@ async function start() {
   // 已在运行的案例 Run 由重启恢复收敛，读取验证时折叠为同一状态。
   const validationRecovery = await agentValidation.recoverInterruptedValidations()
   if (validationRecovery.interrupted > 0) console.warn('agent validation recovery completed', validationRecovery)
-  // Skill 创建专家方案 5.1（SKC-05）：环境中还没有专家时预置未发布草稿；写库失败只记录，不阻止启动。
+  // 功能规则 5.6（SKC-05）：环境中还没有专家时预置未发布草稿；写库失败只记录，不阻止启动。
   try {
     const seeded = await seedSkillCreatorDraft(database, agents, agentValidation, skillCreatorPreset)
     if (seeded.status !== 'skipped') console.info('skill creator preset', seeded)
@@ -766,7 +790,7 @@ async function start() {
   const providerModelCatalog = credentialSecrets
     ? new HttpProviderModelCatalog({ readSecret: (tenantId, credentialRefId) => credentialSecrets.readBearerToken(tenantId, credentialRefId) })
     : undefined
-  registerModelGovernanceRoutes(router, new ModelGovernanceService(modelRepository, undefined, providerModelCatalog))
+  registerModelGovernanceRoutes(router, new ModelGovernanceService(modelRepository, undefined, providerModelCatalog), authorization)
 
   router.get('/health/live', () => ({
     status: 'ok',
@@ -779,7 +803,7 @@ async function start() {
     // is intentionally separate; a DB outage never reports core readiness.
     try {
       await checkDatabase(database)
-      return { status: 'ready', core: true, executionCapabilities: { dsh: dshCapability, python: pythonCapability, executionContainer: executionContainerCapability } }
+      return { status: 'ready', core: true, executionCapabilities: { dsh: dshCapability, python: pythonCapability, executionContainer: await currentExecutionContainerCapability() } }
     } catch {
       return httpResult(503, { status: 'not-ready', core: false, code: 'DATABASE_UNAVAILABLE' })
     }
@@ -794,7 +818,7 @@ async function start() {
       executionCapabilities: {
         dsh: { status: dshCapability.status },
         python: { status: pythonCapability.status },
-        executionContainer: { status: executionContainerStatus(), ...((await executionDiskLow()) ? { diskLow: true } : {}) },
+        executionContainer: { status: await executionContainerStatus(), ...((await executionDiskLow()) ? { diskLow: true } : {}) },
       },
       dshRuntime: {
         status: executionRuntime ? (await executionRuntime.health()).status : dshInstallation ? 'connected' : 'not-configured',
@@ -811,11 +835,12 @@ async function start() {
   const shutdown = () => {
     server.close(() => {
       void (async () => {
-        if (directorySyncTimer) clearInterval(directorySyncTimer)
         if (dingtalkDepartureTimer) clearInterval(dingtalkDepartureTimer)
         if (memoryProposalSweep) clearInterval(memoryProposalSweep)
         if (notificationRetentionSweep) clearInterval(notificationRetentionSweep)
         await notificationRetentionRun
+        clearInterval(errorRetentionSweep)
+        await errorRetentionRun
         if (workspaceSweep) clearInterval(workspaceSweep)
         if (automationSweep) await automationSweep.close()
         if (revocationSweep) await revocationSweep.close()

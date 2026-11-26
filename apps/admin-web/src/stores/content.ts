@@ -21,12 +21,10 @@ import type {
   OperationsSummary,
   PlatformStatus,
   RuntimeDefinition,
-  SkillConfiguration,
   SkillDefinition,
   SkillReleaseRecord,
   SkillVersionRecord,
   UpdateRuntimeConfigurationInput,
-  UsagePoint,
 } from '../types/domain'
 
 export const useContentStore = defineStore('admin-content', () => {
@@ -45,7 +43,6 @@ export const useContentStore = defineStore('admin-content', () => {
   const auditEvents = ref<AuditEvent[]>([])
   const operationsSummary = ref<OperationsSummary | null>(null)
   const health = ref<HealthComponent[]>([])
-  const usage = ref<UsagePoint[]>([])
   const platformStatus = ref<PlatformStatus | null>(null)
   const agentJoinedWorkspaces = ref<Record<string, AgentJoinedWorkspaceRecord[]>>({})
   const grantReconciliation = ref<GrantSourceReconciliationView | null>(null)
@@ -96,23 +93,23 @@ export const useContentStore = defineStore('admin-content', () => {
       builtinToolData,
       builtinSkillData,
       healthData,
-      usageData,
       statusData,
     ] = await Promise.all([
-      adminApi.getTasks(),
-      adminApi.getRuntimes(),
-      adminApi.getWorkspaces(),
-      adminApi.getAgents(),
-      adminApi.getAgentVersions(),
-      adminApi.getSkills(),
-      adminApi.getSkillVersions(),
-      adminApi.getSkillReleaseRecords(),
-      adminApi.getMcpConnectors(),
-      adminApi.getBuiltinTools(),
-      adminApi.getBuiltinSkills(),
+      // 功能规则第 13 节：只请求有权限的模块，避免模块管理员首屏因无权数据报错。
+      // Agent 修改权限可读取 Skill、连接器与内置工具的精简候选列表（功能规则第 13 节）。
+      when(authStore.canRead('ops'), adminApi.getTasks, []),
+      when(authStore.canRead('connector'), adminApi.getRuntimes, []),
+      when(authStore.canRead('ops'), adminApi.getWorkspaces, []),
+      when(authStore.canRead('agent'), adminApi.getAgents, []),
+      when(authStore.canRead('agent'), adminApi.getAgentVersions, []),
+      when(authStore.canRead('skill') || authStore.canWrite('agent'), adminApi.getSkills, []),
+      when(authStore.canRead('skill'), adminApi.getSkillVersions, []),
+      when(authStore.canRead('skill'), adminApi.getSkillReleaseRecords, []),
+      when(authStore.canRead('connector') || authStore.canWrite('agent'), adminApi.getMcpConnectors, []),
+      when(authStore.canRead('connector') || authStore.canRead('skill') || authStore.canWrite('agent'), adminApi.getBuiltinTools, null),
+      when(authStore.canRead('skill') || authStore.canWrite('agent'), adminApi.getBuiltinSkills, null),
       adminApi.getHealth(),
-      adminApi.getUsage(),
-      adminApi.getPlatformStatus(),
+      when(authStore.canRead('ops'), adminApi.getPlatformStatus, null),
     ])
     tasks.value = taskData
     runtimes.value = runtimeData
@@ -126,7 +123,6 @@ export const useContentStore = defineStore('admin-content', () => {
     builtinTools.value = builtinToolData
     builtinSkills.value = builtinSkillData
     health.value = healthData
-    usage.value = usageData
     platformStatus.value = statusData
     adminInitialized.value = true
   }
@@ -207,21 +203,6 @@ export const useContentStore = defineStore('admin-content', () => {
     const result = await adminApi.reconcileGrantSources({ sourceIds })
     await loadGrantSourceReconciliation()
     return result
-  }
-
-  async function createSkill(input: Omit<SkillConfiguration, 'id'>) {
-    const result = await adminApi.createSkill(input)
-    skills.value.unshift(result.skill)
-    skillVersions.value.unshift(result.version)
-    return result.skill
-  }
-
-  async function updateSkill(input: SkillConfiguration) {
-    const { id, ...configuration } = input
-    const result = await adminApi.updateSkill({ skillId: id, ...configuration })
-    replaceById(skills.value, result.skill)
-    replaceById(skillVersions.value, result.version)
-    return result.skill
   }
 
   function testSkill(skillId: string, prompt: string) {
@@ -331,6 +312,12 @@ export const useContentStore = defineStore('admin-content', () => {
     return connector
   }
 
+  async function setMcpEmployeeIdentity(connectorId: string, enabled: boolean) {
+    const connector = await adminApi.setMcpEmployeeIdentity({ connectorId, enabled })
+    replaceById(connectors.value, connector)
+    return connector
+  }
+
   function getMcpInvocationAudits(connectorId: string) {
     return adminApi.getMcpInvocationAudits(connectorId)
   }
@@ -364,7 +351,6 @@ export const useContentStore = defineStore('admin-content', () => {
     auditEvents,
     operationsSummary,
     health,
-    usage,
     platformStatus,
     agentJoinedWorkspaces,
     grantReconciliation,
@@ -380,8 +366,6 @@ export const useContentStore = defineStore('admin-content', () => {
     loadAgentJoinedWorkspaces,
     loadGrantSourceReconciliation,
     reconcileGrantSources,
-    createSkill,
-    updateSkill,
     setSkillStatus,
     testSkill,
     startSkillTestRun,
@@ -396,6 +380,7 @@ export const useContentStore = defineStore('admin-content', () => {
     deleteMcpConnector,
     rotateMcpCredential,
     setMcpConnectorStatus,
+    setMcpEmployeeIdentity,
     approveMcpCapabilities,
     getMcpInvocationAudits,
     checkRuntime,
@@ -407,4 +392,8 @@ function replaceById<T extends { id: string }>(collection: T[], item: T) {
   const index = collection.findIndex((candidate) => candidate.id === item.id)
   if (index >= 0) collection.splice(index, 1, item)
   else collection.unshift(item)
+}
+
+function when<T, E>(allowed: boolean, load: () => Promise<T>, empty: E): Promise<T | E> {
+  return allowed ? load() : Promise.resolve(empty)
 }

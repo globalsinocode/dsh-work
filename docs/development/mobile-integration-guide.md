@@ -11,7 +11,7 @@
 - 服务端只提供 Workbench API（`/api/workbench/v1`），不为移动端新增第二套执行链路。
 - 所有 Agent 交互必须经 Run/Attempt API 发起；禁止绕过 dsh-work 直连模型 API。
 - 管理平台 API（`/api/admin/v1`）不属于移动端接入范围。
-- **认证优先使用平台独立账号（账号密码）**；移动端接入**不集成 AI Hub**，不配置、不引导、不依赖 OIDC 回调。员工端在钉钉客户端内运行时，另可用钉钉免登（附加方式，见 §9）。
+- **认证使用平台独立账号（账号密码）**。员工端在钉钉客户端内运行时，另可用钉钉免登（附加方式，见 §9）。
 
 ## 2. 部署形态与同源访问
 
@@ -23,20 +23,20 @@
 ### 部署清单
 
 1. nginx 为移动端 origin 新增 server block：`/` 指移动端静态产物；`location /api/`、`location /auth/` proxy_pass 到 dsh-work 服务端，并 `proxy_buffering off`（SSE 必需）。
-2. 服务端 `DSH_WORK_WORKBENCH_ORIGINS` 追加移动端 origin。只有配置了 AI Hub（`AI_HUB_PLATFORM_URL`、`AI_HUB_OIDC_ISSUER`、`AI_HUB_APPLICATION_ID`、`AI_HUB_CLIENT_ID`、`AI_HUB_CLIENT_SECRET` 任一项）时才要求所有员工端 origin 与 `DSH_WORK_WORKBENCH_PORT` 同端口；校验不过时服务**不报错，而是静默回退为本地模式并关闭 AI Hub 登录**（启动日志 `AI Hub 登录未启用：…`）。不使用 AI Hub 时删除上述接入变量，或让移动端 origin 使用与 `DSH_WORK_WORKBENCH_PORT` 相同的端口。
-3. **不要**为移动端配置 AI Hub 应用回调；独立登录不依赖 OIDC。账号由平台管理员在管理端「员工与权限」开通，详见 [独立账号登录](../release/local-authentication.md)。
+2. 服务端 `DSH_WORK_WORKBENCH_ORIGINS` 追加移动端 origin；不同端口或公网域名的 origin 可以同时登记。
+3. 账号由平台管理员在管理端「员工与权限」开通，详见 [独立账号登录](../release/local-authentication.md)。
 
 ## 3. 认证与会话
 
-- 能力探测（可选）：`GET /auth/workbench/configuration`。移动端应以 `localEnabled === true` 为接入前提；**忽略或不展示** `aiHubEnabled` 入口。
+- 能力探测（可选）：`GET /auth/workbench/configuration`。移动端应以 `localEnabled === true` 为接入前提。
 - 发起登录：浏览器跳转 `GET /auth/workbench/login?return_to=…` → 同源本地登录页（`/login`），或在移动端自建账号密码表单后 `POST /auth/workbench/login`（JSON：`username`、`password`，可选 `returnTo`；必须带与当前入口同源的 `Origin`）。
 - 会话凭证：服务端签发 HttpOnly Cookie `dsh_work_local_session`（SameSite=Lax, Path=/；生产多为 Secure / `__Host-` 前缀）。客户端不持有 token。
 - 后续请求自动携带 Cookie；同源部署下无需任何 Authorization header。
 - 首次登录或管理员重置后可能要求改密：`POST /auth/workbench/password`，或引导到同源 `/change-password`；改密成功会轮换会话，无需再登一次。
 - 会话失效返回 `401`，error.code 为 `authentication_required`：引导用户重新走独立登录。
-- 登出：`POST /auth/workbench/logout`（GET 亦可）；切换账号走 `/auth/workbench/switch-account`。
+- 登出：`POST /auth/workbench/logout`；切换账号走 `/auth/workbench/switch-account`。
 - 角色、权限、数据范围由服务端裁决，客户端传入的任何权限字段都会被忽略。
-- **明确不做：** 调用 `/auth/workbench/oidc/login`、登记 AI Hub 回调、在 UI 提供「使用 AI Hub 账号登录」。企业 SSO 若将来需要，按桌面端能力另行评估，不属于本规范的默认接入路径。
+- 企业 SSO 若将来需要，另行设计，不属于本规范的接入路径。
 
 ## 4. 请求与响应
 
@@ -73,7 +73,7 @@ data: {"runId":"run-…","step":"…"}
 ## 7. 联调环境
 
 - P0 冒烟服务（内存数据、测试身份）仅用于自动化冒烟，不能作为验收依据。
-- 验收使用 PostgreSQL + **独立账号**完整环境（见 [开发与测试](development.md)、[独立账号登录](../release/local-authentication.md)）；**不要求**配置 AI Hub / OIDC。
+- 验收使用 PostgreSQL + **独立账号**完整环境（见 [开发与测试](development.md)、[独立账号登录](../release/local-authentication.md)）。
 - 移动端发现的服务端缺陷回 dsh-work 仓库修复，不在客户端绕过。
 
 ## 8. 最小接入路径
@@ -85,7 +85,7 @@ data: {"runId":"run-…","step":"…"}
 
 ## 9. 钉钉容器内（H5 微应用，钉钉接入 DT-S1）
 
-钉钉作为移动端时，员工端本身以 H5 微应用运行在钉钉客户端内（[钉钉接入方案](../design/dingtalk-integration-plan.md) 4.3）。这是本规范“认证优先使用独立账号”之外的**附加方式**，只在钉钉客户端内生效；其余约束（同源、只用 Workbench API、经 Run/Attempt 执行、不集成 AI Hub）不变。
+钉钉作为移动端时，员工端本身以 H5 微应用运行在钉钉客户端内（[钉钉接入方案](../design/dingtalk-integration-plan.md) 4.3）。这是本规范“认证使用独立账号”之外的**附加方式**，只在钉钉客户端内生效；其余约束（同源、只用 Workbench API、经 Run/Attempt 执行）不变。
 
 - **公网入口：** 员工端独立域名 + 公网受信证书（Mac mini 部署下公网 origin 使用员工端端口 4174，例如 `https://m.example.com:4174`，入口脚本据此生成 `server_name`；网关须保留原始 Host），反向代理只转发员工端页面、`/api/workbench/` 与 `/auth/workbench/` 下显式列出的路径（登录、钉钉免登、绑定登录、改密、退出、配置查询），按客户端 IP 限流；管理端不上公网。公网 origin 加入 `DSH_WORK_WORKBENCH_ORIGINS`。操作见 [Mac mini 部署手册第 14 节](../release/mac-mini-deployment-runbook.md#14-钉钉移动端公网员工端入口与钉钉应用dt-s1)。
 - **免登：** `GET /auth/workbench/configuration` 在已配置钉钉时返回 `dingtalk.corpId`；页面用钉钉 JSAPI `requestAuthCode` 取一次性授权码，`POST /auth/workbench/dingtalk/login`（`authCode`、`returnTo`）。有效绑定时签发员工端会话（来源 `dingtalk`，默认 12 小时，Cookie 名不变）；否则返回 `binding_required` 与服务端保存的单次待绑定凭证（约 5 分钟）、钉钉姓名与部门，页面显示账号密码登录并说明“登录后将绑定此钉钉账号”，提交 `POST /auth/workbench/dingtalk/bind-login`（`username`、`password`、`bindingToken`）。客户端不能提交或指定钉钉 userid。

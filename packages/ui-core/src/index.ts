@@ -1,4 +1,5 @@
 export { default as AppLogo } from './components/AppLogo.vue'
+export { ErrorReporter, errorReporter, setupErrorReporter, type ErrorReport, type ErrorReporterOptions, type ReportKind } from './error-reporting.ts'
 export { default as LocalAuthPage } from './components/LocalAuthPage.vue'
 export { default as AssistantMessageContent } from './components/AssistantMessageContent.vue'
 export { default as ArtifactCard } from './components/ArtifactCard.vue'

@@ -1,6 +1,6 @@
 /**
  * P0 browser smoke server for `pnpm test:e2e`: in-memory data and test identities,
- * no PostgreSQL, AI Hub or DSH. Test-only; it is not part of a release and always
+ * no PostgreSQL or DSH. Test-only; it is not part of a release and always
  * binds to 127.0.0.1.
  */
 import { createServer } from 'node:http'

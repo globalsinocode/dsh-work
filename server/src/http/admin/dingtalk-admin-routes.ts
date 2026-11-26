@@ -1,6 +1,6 @@
 import type { IncomingMessage } from 'node:http'
 
-import { IdentityAccessError } from '../../modules/identity/auth-service.ts'
+import { IdentityAccessError } from '../../modules/identity/request-security.ts'
 import type { DingTalkAdministrationService } from '../../modules/identity/dingtalk/dingtalk-admin-service.ts'
 import { envelope, readJsonBody, requireRequestIdentity, type Router } from '../router.ts'
 
@@ -27,6 +27,11 @@ export function registerDingTalkAdminRoutes(router: Router, dingtalk: DingTalkAd
   router.get(`${root}/unbound`, async (_request, context) => envelope('admin', await dingtalk.listUnbound({
     page: Number(context.url.searchParams.get('page') ?? undefined),
     pageSize: Number(context.url.searchParams.get('page_size') ?? undefined),
+  }, actor(context)), 'postgres'))
+  router.get(`${root}/bound`, async (_request, context) => envelope('admin', await dingtalk.listBound({
+    page: Number(context.url.searchParams.get('page') ?? undefined),
+    pageSize: Number(context.url.searchParams.get('page_size') ?? undefined),
+    query: context.url.searchParams.get('query') ?? '',
   }, actor(context)), 'postgres'))
   router.post(`${root}/reminders`, async (request, context) => envelope('admin', await dingtalk.remind(await readObject(request), actor(context)), 'postgres'))
   router.post(`${root}/departure-checks/:runId/decision`, async (request, context) =>

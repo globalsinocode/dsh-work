@@ -9,6 +9,7 @@ import { setTimeout as delay } from 'node:timers/promises'
 import type { RuntimeSkillConfiguration } from './postgres-skill-service.ts'
 import { randomUUID } from 'node:crypto'
 import type { DatabaseClient, DatabaseTransaction } from '../../infrastructure/postgres/database.ts'
+import { acceptedAdminPermissions } from '../../domain/admin-permissions.ts'
 import type { AdminRunLauncher } from './admin-run-launcher.ts'
 import type { RuntimeManifest } from '../runtime/runtime-types.ts'
 import type { PostgresAuthorizationService } from '../authorization/postgres-authorization-service.ts'
@@ -81,7 +82,7 @@ export class AdminSkillInstallationService {
   }
 
   async startPackageTest(userId: string, skill: RuntimeSkillConfiguration, prompt: string): Promise<PackageTestProgress> {
-    await this.authorization.requirePlatformAdmin(userId)
+    await this.authorization.requireAdminModule(userId, 'skill', 'write')
     const sessionId = `admin-session-${randomUUID()}`
     await this.db`insert into sessions (id, tenant_id, created_by, title, status, audience, workspace_id, agent_version_id)
       values (${sessionId}, ${tenant}, ${userId}, ${`Skill 试运行 ${skill.id}`}, 'active', 'admin', null, null)`
@@ -90,7 +91,7 @@ export class AdminSkillInstallationService {
   }
 
   async packageTestProgress(userId: string, skill: RuntimeSkillConfiguration, runId: string): Promise<PackageTestProgress> {
-    await this.authorization.requirePlatformAdmin(userId)
+    await this.authorization.requireAdminModule(userId, 'skill', 'write')
     const owned = await this.requireRun(userId, runId)
     const [attempt] = await this.db<{ id: string; status: string; runStatus: string; manifest: RuntimeManifest; createdAt: Date; startedAt: Date | null; endedAt: Date | null }[]>`
       select ra.id, ra.status, r.status as "runStatus", ra.manifest,
@@ -166,7 +167,7 @@ export class AdminSkillInstallationService {
   }
 
   async send(userId: string, input: { sessionId: string; message: string; requestId: string }) {
-    await this.authorization.requirePlatformAdmin(userId)
+    await this.authorization.requireAdminModule(userId, 'skill', 'write')
     if (!input || typeof input.message !== 'string' || !input.message.trim() || input.message.length > 20000) throw new RequestError(422, 'invalid_message', '消息长度必须为 1～20000 个字符')
     if (!/^admin-session-[a-f0-9-]{36}$/.test(input.sessionId) || !/^[a-zA-Z0-9-]{16,80}$/.test(input.requestId)) throw invalidRequest('请求标识无效')
     // Validate before persisting: rejected credential-bearing commands never enter history.
@@ -230,7 +231,7 @@ export class AdminSkillInstallationService {
   async prepare(manifest: RuntimeManifest, signal: AbortSignal) {
     if (manifest.purpose !== 'admin-skill-install') throw accessDenied('当前运行没有安装权限')
     const userId = manifest.user_context.user_id
-    await this.authorization.requirePlatformAdmin(userId)
+    await this.authorization.requireAdminModule(userId, 'skill', 'write')
     await this.requireActiveAttempt(manifest)
     if (!manifest.installation_source) return { message: '未提供已有 Skill 来源，请向管理员索取链接或支持的安装命令。' }
     const source = JSON.parse(manifest.installation_source) as SkillSource
@@ -241,7 +242,7 @@ export class AdminSkillInstallationService {
       const acquired = await this.acquire(source, AbortSignal.any([signal, AbortSignal.timeout(60000)]))
       signal.throwIfAborted()
       const { plan, pkg } = await this.prepareBundle(acquired.bytes, source.selected, source.directory)
-      await this.authorization.requirePlatformAdmin(userId)
+      await this.authorization.requireAdminModule(userId, 'skill', 'write')
       await this.db.begin(async tx => {
         await this.requireActiveAttempt(manifest, tx, true)
         signal.throwIfAborted()
@@ -265,13 +266,13 @@ export class AdminSkillInstallationService {
   }
 
   async prepareZip(userId: string, input: { fileName: string; bytes: Uint8Array }) {
-    await this.authorization.requirePlatformAdmin(userId)
+    await this.authorization.requireAdminModule(userId, 'skill', 'write')
     if (!input.fileName.toLowerCase().endsWith('.zip')) throw invalidRequest('仅支持 ZIP 格式的 Skill 包')
     if (!input.bytes.byteLength) throw stateConflict('Skill 包不能为空')
     const { plan, pkg } = await this.prepareBundle(input.bytes)
     const id = `installation-${randomUUID()}`
     const source: InstallationSource = { kind: 'zip', fileName: input.fileName }
-    await this.authorization.requirePlatformAdmin(userId)
+    await this.authorization.requireAdminModule(userId, 'skill', 'write')
     await this.db`
       insert into skill_installations (id, tenant_id, run_id, created_by, source, resolved_url, resolved_ref, package, plan, plan_sha256, compatibility_status, channel)
       values (${id}, ${tenant}, null, ${userId}, ${this.db.json(source)}, null, null, ${this.db.json(JSON.parse(JSON.stringify(pkg)))}, ${this.db.json(JSON.parse(JSON.stringify(plan)))}, ${plan.sha256}, ${plan.compatibility.status}, 'zip')
@@ -281,7 +282,7 @@ export class AdminSkillInstallationService {
 
   /** No model, Session, Run or shell: acquire once, validate, snapshot, then await an explicit draft-save confirmation. */
   async prepareLink(userId: string, input: { url: string; selected?: string }, signal?: AbortSignal) {
-    await this.authorization.requirePlatformAdmin(userId)
+    await this.authorization.requireAdminModule(userId, 'skill', 'write')
     const source = parseSkillLink(input)
     const bounded = AbortSignal.any([...(signal ? [signal] : []), AbortSignal.timeout(60_000)])
     bounded.throwIfAborted()
@@ -301,7 +302,7 @@ export class AdminSkillInstallationService {
   }
 
   async confirm(userId: string, runId: string, sha256: string) {
-    await this.authorization.requirePlatformAdmin(userId)
+    await this.authorization.requireAdminModule(userId, 'skill', 'write')
     const owned = await this.requireRun(userId, runId)
     try {
       await this.db.begin(async tx => {
@@ -336,7 +337,7 @@ export class AdminSkillInstallationService {
   }
 
   async confirmDirect(userId: string, installationId: string, sha256: string, expectedChannel?: 'zip') {
-    await this.authorization.requirePlatformAdmin(userId)
+    await this.authorization.requireAdminModule(userId, 'skill', 'write')
     if (typeof sha256 !== 'string' || !/^[a-f0-9]{64}$/.test(sha256)) throw requestInvalid('安装计划摘要无效')
     await this.db.begin(async tx => {
       await requireAdminInTransaction(tx, userId)
@@ -354,7 +355,7 @@ export class AdminSkillInstallationService {
   }
 
   async cancelDirect(userId: string, installationId: string) {
-    await this.authorization.requirePlatformAdmin(userId)
+    await this.authorization.requireAdminModule(userId, 'skill', 'write')
     await this.db.begin(async tx => {
       await requireAdminInTransaction(tx, userId)
       const [row] = await tx<{ status: string }[]>`select status from skill_installations where tenant_id = ${tenant} and id = ${installationId}
@@ -367,7 +368,7 @@ export class AdminSkillInstallationService {
   }
 
   async cancel(userId: string, runId: string) {
-    await this.authorization.requirePlatformAdmin(userId)
+    await this.authorization.requireAdminModule(userId, 'skill', 'write')
     const run = await this.requireRun(userId, runId)
     await this.db.begin(async tx => {
       await tx`select id from runs where tenant_id = ${tenant} and id = ${runId} for update`
@@ -383,7 +384,7 @@ export class AdminSkillInstallationService {
   }
 
   async retry(userId: string, runId: string) {
-    await this.authorization.requirePlatformAdmin(userId)
+    await this.authorization.requireAdminModule(userId, 'skill', 'write')
     const run = await this.requireRun(userId, runId)
     if (!['failed', 'cancelled'].includes(run.status)) throw stateConflict('只有失败或已取消的运行可以重试')
     await this.db`delete from skill_installations where tenant_id = ${tenant} and run_id = ${runId} and status <> 'installed'`
@@ -439,7 +440,7 @@ export class AdminSkillInstallationService {
   }
 
   async getDirectInstallation(userId: string, installationId: string, expectedChannel?: 'zip') {
-    await this.authorization.requirePlatformAdmin(userId)
+    await this.authorization.requireAdminModule(userId, 'skill', 'write')
     const [row] = await this.db<InstallationRow[]>`
       select id, channel, run_id as "runId", source, resolved_url as "resolvedUrl", resolved_ref as "resolvedRef", package, plan,
         plan_sha256 as "planSha256", compatibility_status as "compatibilityStatus", status, skill_id as "skillId", version_id as "versionId",
@@ -662,8 +663,8 @@ async function requireAdminInTransaction(tx: DatabaseTransaction, userId: string
     select u.id from users u join user_roles ur on ur.tenant_id = u.tenant_id and ur.user_id = u.id
     join roles r on r.tenant_id = ur.tenant_id and r.id = ur.role_id
     where u.tenant_id = ${tenant} and u.id = ${userId} and u.status = 'active' and ur.source_key = 'local' and r.status = 'active'
-      and (ur.valid_until is null or ur.valid_until > now()) and (r.permissions ? 'admin:*' or r.permissions ? 'admin:write')
+      and (ur.valid_until is null or ur.valid_until > now()) and r.permissions ?| ${acceptedAdminPermissions('skill', 'write')}::text[]
     for share of u, ur, r
   `
-  if (!actor) throw authorizationDenied('当前用户没有管理写权限')
+  if (!actor) throw authorizationDenied('当前用户没有 Skill 的修改权限')
 }

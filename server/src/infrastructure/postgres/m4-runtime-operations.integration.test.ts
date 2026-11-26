@@ -92,7 +92,7 @@ test('Runtime configuration controls timeout, capacity and scheduling with versi
       schedulingStatus: 'accepting',
       actor: '林岚',
     }),
-    /不是平台管理员/,
+    /没有.*的修改权限/,
   )
 
   const accepting = await operations.updateRuntimeConfiguration({

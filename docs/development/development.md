@@ -25,10 +25,8 @@ pnpm test:e2e
 1. 准备独立的开发 PostgreSQL 数据库。
 2. 若没有 `.env`，从 [配置模板](../../.env.example) 创建；已有配置只修改所需字段。设置实际 `DSH_WORK_DATABASE_URL`。
 3. 按 [Runtime 指南](../release/dsh-runtime-delivery.md) 配置独立 DSH checkout、精确版本与模型凭据；模板里的开发电脑路径需替换。
-4. 不设置 `DSH_WORK_AUTH_MODE`。按 [独立登录指南](../release/local-authentication.md) 初始化首个管理员账号；AI Hub 按 [接入指南](../release/ai-hub-sso-integration.md) 配置后自动可用。
+4. 不设置 `DSH_WORK_AUTH_MODE`。按 [独立登录指南](../release/local-authentication.md) 初始化首个管理员账号。
 5. 执行 `pnpm dev:all`，默认入口为员工端 `http://localhost:4174/workbench`、管理端 `http://localhost:4180/overview`、后端 `http://localhost:4190/health`。服务启动会自动运行 SQL 迁移并预检 DSH/Python；执行能力故障隔离见 [内部契约](internal-ports.md#执行能力故障隔离c9)；也可单独执行 `pnpm --filter @dsh-work/server db:migrate`。
-
-授权复核超时：`DSH_WORK_AUTHORIZATION_CHECK_TIMEOUT_MS` 只影响平台授权复核的硬超时（默认 `10000`ms，生产只接受 7000–30000 的无外围空白整数），不改变撤销语义；DSH 工具侧授权探测预算自动为该值 +5000ms，无需单独配置。单元测试通过 `authorizationCheckTimeoutMs` / `authorizationToolProbeTimeoutMs` 注入短值，不放宽生产 env。超时与晚到的观测说明见 [授权复核超时事件记录](../release/incident-2026-11-24-authorization-timeout.md)。
 
 使用 Bearer 认证的 MCP Connector 前，开发和生产都必须配置 `DSH_CREDENTIAL_MASTER_KEY`。执行 `openssl rand -base64 32` 生成 32 字节 Base64 密钥，并设置 `DSH_CREDENTIAL_MASTER_KEY_ID`（默认 `v1`）。密钥不进入 PostgreSQL 或 Git；数据库只保存 AES-256-GCM 密文、随机 nonce、认证标签和密钥版本。备份或恢复数据库时必须同时通过独立安全渠道备份或恢复对应主密钥，否则已有 Token 无法解密。
 
@@ -39,7 +37,7 @@ pnpm test:e2e
 
 不要把生产 `runtime.env` 直接复制到本地，也不要把本地 `.env` 当作生产模板。两者的 DSH 路径、版本锁、认证入口和端口约束都不同。
 
-只做业务功能升级无需启动或修改 AI Hub。SSO、目录、Bootstrap、凭据及身份映射修改必须另外联调；冒烟测试身份不能证明生产权限正确。
+冒烟测试身份不能证明生产权限正确。
 
 ## 自动化验证
 
@@ -60,13 +58,16 @@ pnpm test:e2e
 | 类型、UI 与代码规范 | `pnpm typecheck`（含 `scripts/` 下的 TypeScript 脚本，见 `server/tsconfig.scripts.json`）、`pnpm lint` |
 | 前端组件、Store 和 API 体验 | `pnpm test:m5:frontend`、`pnpm test:m5:api` |
 | Runtime 与模型治理 | `pnpm test:m1`、`pnpm test:m2` |
-| 身份 | `pnpm test:sso`、`pnpm test:sso:integration`、`pnpm test:local-auth`、`pnpm test:local-auth:integration`；独立账号浏览器旅程运行 `pnpm test:e2e:local-auth`，登录能力与账号来源运行 `pnpm test:e2e:login-options` |
+| 身份 | `pnpm test:identity`、`pnpm test:local-auth`、`pnpm test:local-auth:integration`；独立账号浏览器旅程运行 `pnpm test:e2e:local-auth`，登录入口与员工授权列表运行 `pnpm test:e2e:login-options` |
 | 权限与安全 | `pnpm test:m5:security`、`pnpm test:m5:security:integration` |
 | 故障与恢复 | `pnpm test:m5:faults`、`pnpm test:m5:faults:integration` |
 | 容量 | `pnpm test:m5:capacity:integration` |
 | 执行容器（真实 Docker 与真实 DSH，opt-in，不进 CI） | `DSH_WORK_EXECUTION_E2E_IMAGE=<执行镜像引用> pnpm --filter @dsh-work/server test:execution-container:e2e`；需要 `DSH_RUNTIME_HOME`、本机 Docker 与 `DSH_WORK_TEST_DATABASE_URL`，镜像用[执行镜像工作流](../../.github/workflows/execution-image.yml)产出的引用（先按摘要拉取）。其中成果解析用例（2b-3）只需要镜像与 Docker。DSH 要求 Node 22.19+ 或 24+，更低版本会在建会话时报 `no adapter registered for provider` |
 | 钉钉接入（DT-S1） | 钉钉开放平台测试替身覆盖的单元与集成测试随 `pnpm test:local-auth`、`pnpm test:local-auth:integration` 运行（`dingtalk.test.ts`、`dingtalk-auth.integration.test.ts`、`dingtalk-admin.integration.test.ts`）。浏览器旅程 `pnpm test:e2e:dingtalk`（P1，需要 `DSH_WORK_TEST_DATABASE_URL`）：夹具 `scripts/testing/dingtalk-browser.ts` 启动真实应用、可丢弃数据库与假钉钉 HTTP 服务，生产实现经 `DSH_WORK_DINGTALK_API_BASE_URL` 访问；钉钉容器用钉钉 User-Agent 与页面注入的 `window.dd` 模拟。本地手动预演可单独运行该夹具（`node --env-file-if-exists=.env --experimental-strip-types scripts/testing/dingtalk-browser.ts`，端口 4691/4681/4675 与 `playwright.dingtalk.config.ts` 一致，账号见夹具）。这些都不能代替真实钉钉验收（验收目录 `DT-P2`）。本地接真实钉钉应用：在 `.env` 配置 `DSH_CREDENTIAL_MASTER_KEY` 后，在管理端“钉钉集成 › 应用配置”填写（`DSH_WORK_DINGTALK_*` 只作初始配置，见 `.env.example`）；钉钉客户端只能打开公网受信证书的地址 |
-| 模型网关与路由生效（P1，受控 DSH） | opt-in，不进 CI：`pnpm --filter @dsh-work/server test:model-gateway:e2e`。需要 `.env` 的 `DSH_RUNTIME_HOME` 指向锁定版本的 DSH；真实 DSH 经平台模型网关调用本地记录请求的假上游（不连接真实厂商），覆盖路由生效、共享 settings.yaml 隔离、401/400/402 不重试、429 与 5xx 重试后分类、联网搜索经网关。升级 DSH 或修改每 Attempt patch、网关转发时必须跑 |
+| 模型网关与路由生效（P1，受控 DSH） | opt-in，不进 CI：`pnpm --filter @dsh-work/server test:model-gateway:e2e`。需要 `.env` 的 `DSH_RUNTIME_HOME` 指向锁定版本的 DSH；真实 DSH 经平台模型网关调用本地记录请求的假上游（不连接真实厂商），覆盖路由生效、共享 settings.yaml 隔离、401/400/402 不重试、429 与 5xx 重试后分类、联网搜索经网关，以及工具目录探测与 MCP 连接检查不发出模型请求（探测用的默认 Provider 指向假上游，并以不经网关的正式执行作对照；只拦这一个 Provider）。升级 DSH 或修改每 Attempt patch、网关转发时必须跑 |
+| 模型用量计量（MR-S3，P1，受控 DSH） | opt-in，不进 CI：`pnpm --filter @dsh-work/server test:model-usage:e2e`。需要 `.env` 的 `DSH_RUNTIME_HOME`、`DSH_WORK_EXECUTION_IMAGE`（已按摘要拉取）与回环地址的 `DSH_WORK_TEST_DATABASE_URL`；一次性库中经员工对话启动 Run，真实 DSH 经模型网关调用返回缓存用量的假上游，一次 503 重试加联网搜索时核对用量记录、“模型用量”执行明细与预算结算都等于网关记录之和，实际模型取厂商成功返回的请求；厂商 401 失败时核对一次失败请求、零 token 与预算结算；另核对 DeepSeek 官方路由的对话请求开启思考、`reasoning_effort` 为 `high`、输出上限以 `max_tokens` 发送 256,000（与 DSH 自带 DeepSeek 适配器一致）；另覆盖 MR-S2 的路由时机：停用默认路由后进行中 Attempt 的联网搜索与下一轮对话仍按固定路由放行并完成（之后新建的运行被拒绝），更换默认路由后重试的新 Attempt 使用新路由。执行容器启动检查会清扫遗留的 `dsh-exec-*` 容器，不要在本机服务有运行中的任务时执行。修改网关计量、用量写入、预算结算、路由解析时机或升级 DSH 时必须跑 |
+| 读取网页（P1，受控 DSH） | opt-in，不进 CI：`pnpm --filter @dsh-work/server test:web-fetch:e2e`。需要 `.env` 的 `DSH_RUNTIME_HOME`、`DSH_WORK_EXECUTION_IMAGE`（已按摘要拉取）与回环地址的 `DSH_WORK_TEST_DATABASE_URL`；一次性库中开启联网搜索与读取网页的 AI 同事经员工对话运行，真实 DSH 经模型网关调用按脚本先搜索、再读取网址的假上游，核对搜索结果条目与员工消息中的网址交给 DSH 取页、只在搜索文字中的网址与含个人信息的网址被平台拒绝（原因不回显网址）。DSH 拒绝非公网地址，放行后的真实取页不在本层验证（读取网页方案第 7 节第 5 项）。执行容器启动检查会清扫遗留的 `dsh-exec-*` 容器，不要在本机服务有运行中的任务时执行。修改读取网页复核、搜索结果网址收集、工具策略或升级 DSH 时必须跑 |
+| 外部应用调用上下文（EA-S1，P1，受控 DSH） | opt-in，不进 CI：`pnpm --filter @dsh-work/server test:ea:e2e`。需要 `.env` 的 `DSH_RUNTIME_HOME`、`DSH_WORK_EXECUTION_IMAGE`（已按摘要拉取）与回环地址的 `DSH_WORK_TEST_DATABASE_URL`；一次性库中经平台真实入口（个人/项目空间对话、定时任务、主动任务、发布验证）启动 Run，真实 DSH 经模型网关调用按脚本发起 MCP 调用的假上游，假外部应用记录线路上实际收到的 `X-DSH-Work-*` 请求头。执行容器启动检查会清扫遗留的 `dsh-exec-*` 容器，不要在本机服务有运行中的任务时执行。修改调用上下文计算、MCP 请求头注入或升级 DSH 时必须跑 |
 | 企业知识库（WeKnora） | 测试替身覆盖的单元与集成测试随 `pnpm test:unit`、`pnpm test:integration` 运行。真实 WeKnora 契约测试（opt-in，不进 CI，升级 WeKnora、更换嵌入模型或启用重排序前必须跑）：在 `.env` 配置 `WEKNORA_CONTRACT_URL`、`WEKNORA_CONTRACT_API_KEY`（能力 `retrieve`、`ingest`、`manage_kbs`）、`WEKNORA_CONTRACT_EMBEDDING_MODEL_ID` 后执行 `cd server && node --env-file-if-exists=../.env --experimental-strip-types --test src/modules/knowledge/weknora-contract.test.ts`，含最低相关度校准用例，并断言平台新建的知识库没有摘要模型、检索响应带重排序结果。Key 须按上述三项能力单独创建，不要用全权限或带 `manage_models` 等多余能力的 Key，否则测不出能力不足。启用重排序后复核最低相关度前，先确认管理端健康状态的“最近重排序”不是降级。本机代理若把外部域名解析到 198.18.0.0/15 等虚拟 IP，WeKnora 的 SSRF 检查会拦截在线嵌入模型、文档解析失败，须把模型主机加入 WeKnora 的 `SSRF_WHITELIST` |
 | 浏览器冒烟 | `pnpm exec playwright install chromium`、`pnpm test:e2e` |
 | Agent 验证与发布（冻结、后台并行验证、判定、发布、回滚、重启收敛与车道容量；隔离 PostgreSQL） | `pnpm test:agent-release:integration` |
@@ -80,7 +81,7 @@ pnpm test:e2e
 - `runtime`：版本锁、环境模板、生产兼容限制与探针入口。
 - `security`：身份与授权边界、子进程凭据隔离及安全迁移约束。
 
-历史 `verify:m*` 命令已替换为这个入口；函数名、页面文案等重复字符串校验由对应行为测试覆盖。原有 `test:m*` 等具名测试命令继续保留，便于针对性运行；CI 统一使用按文件名归类的 `test:unit` 与 `test:integration`，不再逐个登记。静态检查不代表行为测试成功；`pnpm test:scripts` 验证检查器的拒绝场景和探针流程，不连接 AI Hub、数据库或真实模型。
+历史 `verify:m*` 命令已替换为这个入口；函数名、页面文案等重复字符串校验由对应行为测试覆盖。原有 `test:m*` 等具名测试命令继续保留，便于针对性运行；CI 统一使用按文件名归类的 `test:unit` 与 `test:integration`，不再逐个登记。静态检查不代表行为测试成功；`pnpm test:scripts` 验证检查器的拒绝场景和探针流程，不连接数据库或真实模型。
 
 ### scripts 目录约定
 
@@ -98,17 +99,17 @@ pnpm test:e2e
 PostgreSQL 集成测试必须使用专用可丢弃测试库，禁止使用开发业务库或生产库。测试脚本统一经 `--env-file-if-exists=../.env` 读取 `.env` 中的 `DSH_WORK_TEST_DATABASE_URL`（本地指向 `dsh-work-postgres-local` 的 `postgres` 维护库即可，各套件自建一次性库）；也可在命令行显式覆盖：
 
 ```bash
-DSH_WORK_TEST_DATABASE_URL='postgres://<test-user>:<test-password>@127.0.0.1:5432/dsh_work_test' pnpm test:sso:integration
+DSH_WORK_TEST_DATABASE_URL='postgres://<test-user>:<test-password>@127.0.0.1:5432/dsh_work_test' pnpm test:local-auth:integration
 ```
 
-`pnpm test:integration [目录...]` 与其他 `test:*:integration` 使用同一测试变量，按修改模块选择；集成测试逐个文件串行执行。`pnpm ci:check` 不包含 PostgreSQL 集成测试和浏览器 E2E；GitHub Actions 在 `integration` 与 `browser` 两个 Job 中各自启动 PostgreSQL Service 运行它们。
+`pnpm test:integration [目录...]` 与其他 `test:*:integration` 使用同一测试变量，按修改模块选择；集成测试逐个文件串行执行。`pnpm ci:check` 不包含 PostgreSQL 集成测试和浏览器 E2E；GitHub Actions 在 `integration` 与 `browser` 两个 Job 中各自启动 PostgreSQL Service 运行它们。`browser` Job 中任一套件失败时，上传制品 `browser-test-results-<重跑序号>`（取 `github.run_attempt`，首次运行为 1），保留 14 天。失败用例的 trace 与截图在 `test-results/` 下；钉钉、本地账号、登录选项三套分别在子目录 `dingtalk/`、`local-auth/`、`login-options/` 下。失败摘要看 Job 日志。`playwright-report/` 只是 P0 冒烟的 HTML 报告；P1 套件失败时，里面是 P0 的结果，与这次失败无关。下载后先解压，再用 `pnpm exec playwright show-trace <trace.zip>` 查看点击前后的页面、网络请求与控制台。偶发失败先看 trace，再决定修复还是重跑。仓库是公开的，制品在保留期内任何登录 GitHub 的用户都能下载，trace 含完整的请求与响应；因此 `browser` Job 只能使用测试夹具数据，不得引入真实密钥。
 
 PF-03 MCP Connector 治理使用 `pnpm test:mcp:integration`，在一次性数据库中验证平台生成标识、Bearer Token 加密存储/运行时解析/轮换、整体发现、按 Agent 选定解析、能力变更待确认与确认后摘要变化、取消租户容量上限、逐调用审计以及停用和删除门禁；该命令使用合成 Runtime，不替代真实 Streamable HTTP MCP 与目标 DSH 的 P2 验收。
 
 
-PF-07 使用 `pnpm test:pf07:matrix` 校验版本化能力矩阵，`pnpm test:pf07:p1` 执行 PF-01～PF-05 的隔离 PostgreSQL 服务回归；真实环境证据与门禁按 [PF-07 验收手册](pf07-platform-acceptance.md) 单独记录。矩阵静态检查或 P1 绿灯不表示 P2 通过，PF-07 通过也不代表任何目标环境已验收；其中 PF-04 的 P1 套件只作代码回归，不是持久化等待的发布依据。
+PF-07 使用 `pnpm test:pf07:matrix` 校验版本化能力矩阵，`pnpm test:pf07:p1` 执行门禁内能力（PF-01、PF-02、PF-03、PF-05）的隔离 PostgreSQL 服务回归；真实环境证据与门禁按 [PF-07 验收手册](pf07-platform-acceptance.md) 单独记录。矩阵静态检查或 P1 绿灯不表示 P2 通过，PF-07 通过也不代表任何目标环境已验收。PF-04 持久化等待不属于 PF-07，它的集成套件（`pnpm test:pf04:integration`，CI 经 `pnpm test:integration` 运行）只作代码回归。
 
-默认 `pnpm test:e2e` 始终新建上述 P0 冒烟服务，不连接开发数据库，也不复用已登录的开发实例。数据库和真实权限旅程使用各自的 `test:e2e:*` P1 配置与专用可丢弃测试库；P0 通过不表示真实 DSH/OIDC 验收通过。HTTP/SSO 测试需要临时监听本机端口；`listen EPERM` 表示执行环境限制，应在允许本地监听的环境重跑。
+默认 `pnpm test:e2e` 始终新建上述 P0 冒烟服务，不连接开发数据库，也不复用已登录的开发实例。数据库和真实权限旅程使用各自的 `test:e2e:*` P1 配置与专用可丢弃测试库；P0 通过不表示真实 DSH 验收通过。HTTP/登录测试需要临时监听本机端口；`listen EPERM` 表示执行环境限制，应在允许本地监听的环境重跑。
 
 ## 必测场景与数据
 
@@ -130,16 +131,16 @@ PF-07 使用 `pnpm test:pf07:matrix` 校验版本化能力矩阵，`pnpm test:pf
 
 ## 发布与业务验收条件
 
-自动化通过只证明相应工程范围。每个目标环境仍需提供以下验收证据，不沿用历史报告的“已完成”状态：
+自动化通过只证明相应工程范围。项目当前只做功能开发与本机验证，不跟踪目标环境验收；日后恢复目标环境上线时，每个环境需提供以下验收证据，不沿用历史报告的“已完成”状态：
 
 | 领域 | 必须验证 |
 | --- | --- |
-| 企业 SSO | 真实员工首登、Bootstrap 幂等、目录停用、至少两名管理员、本地收权、Token 刷新、Platform API 与 OIDC 分别停机后的恢复 |
+| 账号与登录 | 首位管理员初始化、至少两名管理员、员工首次改密、停用与本地收权立即生效、钉钉容器内免登与绑定 |
 | 企业连接器与知识 | 真实只读接口、Owner、Schema、权限过滤、版本/生效时间、来源引用；合成知识不能替代 |
 | 文件与数据出口 | 企业级恶意文件扫描、正式存储、数据分级、模型出口、保留和清理规则 |
 | 生产容量 | 目标硬件上的真实模型、20 MB 文件并发、长对话、真实 Connector 延迟；重新确定并发和超时 |
 | 网络与运行故障 | 真实断网、代理/Provider 故障、Worker 与服务重启、宿主机恢复；故障注入单测不替代现场演练 |
-| 运维 | TLS、密钥、磁盘/证书/身份依赖告警、异机备份与恢复、应用回滚兼容性、RTO/RPO 和维护窗口 |
+| 运维 | TLS、密钥、磁盘/证书告警、异机备份与恢复、应用回滚兼容性、RTO/RPO 和维护窗口 |
 
 主分支要求 CI 的四个 Job（Static checks and build、Unit tests、PostgreSQL integration tests、Browser tests）全部成功，人工发布按同一组检查放行。普通 push 只运行 CI；人工发布、Release watcher、首次安装及回滚统一按 [部署手册](../release/mac-mini-deployment-runbook.md) 执行。已发布 Release、主分支 CI 成功和远端部署完成是三个独立事实。
 

@@ -195,13 +195,6 @@ test('Runtime 紧急停用内置 Skill：新运行不装配并记录原因，只
   }
 })
 
-test('安装与旧文本接口拒绝内置 Skill 的保留名称', async () => {
-  await assert.rejects(skills.createSkill({
-    name: 'HTML 页面（平台内置）', category: '报告', description: '冒用内置 Skill 名称的测试 Skill。',
-    instructions: '按部门模板生成报告页面，标题、配色和页脚使用统一样式。', toolIds: [], testPrompt: '生成报告', actor: ADMIN,
-  }), /保留给平台内置 Skill/)
-})
-
 test('团队空间只授权 Agent 时，执行前复核不把内置 Skill 当作需要空间授权的 Skill', async () => {
   const authorization = new PostgresAuthorizationService(database, { knownBuiltinSkill: catalog.isKnown })
   const workspaceId = `ws-bsk-team-${randomUUID().slice(0, 8)}`

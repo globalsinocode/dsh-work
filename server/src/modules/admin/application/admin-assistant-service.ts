@@ -7,6 +7,7 @@ import { authorizationDenied, requestInvalid } from '../../../domain/authorizati
 import type { PostgresAgentService } from '../../agent/postgres-agent-service.ts'
 import type { PostgresAuthorizationService } from '../../authorization/postgres-authorization-service.ts'
 import type { RuntimeManifest } from '../../runtime/runtime-types.ts'
+import { ADMIN_MODULE_LABELS, adminModuleForAction, hasAdminModuleAccess, type AdminModule } from '../../../domain/admin-permissions.ts'
 import { canonicalJson, sha256 } from '../../runtime/canonical-json.ts'
 import type { RunOrchestrationService } from '../../run/run-orchestration-service.ts'
 import type { AdminSkillInstallationService } from '../../skill/admin-skill-installation-service.ts'
@@ -92,7 +93,7 @@ type AgentSnapshot = Pick<AgentDefinition,
   'id' | 'name' | 'description' | 'owner' | 'department'
   | 'welcomeMessage' | 'examplePrompts' | 'systemPrompt' | 'workInstructions' | 'mcpScope'
   | 'maxOutputBytes' | 'maxToolCalls' | 'timeoutSeconds' | 'skills' | 'webSearchEnabled'
-  | 'projectTasksEnabled' | 'agentRecommendationEnabled' | 'skillCreationEnabled'
+  | 'projectTasksEnabled' | 'agentRecommendationEnabled' | 'skillCreationEnabled' | 'webFetchEnabled'
   | 'status' | 'version'
 > & { revision: string }
 
@@ -140,12 +141,12 @@ export class AdminAssistantService {
   }
 
   async list(userId: string) {
-    await this.authorization.requireAdminReader(userId)
+    await this.authorization.requireAdminAccess(userId)
     return this.installation.list(userId)
   }
 
   async detail(userId: string, sessionId: string) {
-    await this.authorization.requireAdminReader(userId)
+    await this.authorization.requireAdminAccess(userId)
     const conversation = await this.installation.detail(userId, sessionId)
     const [proposals, actions] = await Promise.all([
       this.readProposals(sessionId),
@@ -159,7 +160,7 @@ export class AdminAssistantService {
   }
 
   async send(userId: string, input: { sessionId: string; message: string; requestId: string }) {
-    await this.authorization.requireAdminReader(userId)
+    await this.authorization.requireAdminAccess(userId)
     assertMessageInput(input)
     // Validate before persistence so credential-bearing sources never enter conversation history.
     let source = parseSkillSource(input.message)
@@ -196,6 +197,12 @@ export class AdminAssistantService {
     await this.requireActiveAttempt(manifest)
     const domain = readEnum(input, 'domain', ['overview', 'skills', 'agents', 'operations'] as const)
     const query = readOptionalString(input, 'query', 200)
+    // 功能规则第 13 节：只返回操作人有查看权限的模块，无权分区注明“无权查看”。
+    const permissions = await this.authorization.localAdminPermissions(manifest.user_context.user_id)
+    const canRead = (module: AdminModule) => hasAdminModuleAccess(permissions, module, 'read')
+    const denied = (module: AdminModule) => ({ unavailable: `无权查看${ADMIN_MODULE_LABELS[module]}` })
+    if (domain === 'skills' && !canRead('skill')) return { domain, ...denied('skill') }
+    if (domain === 'agents' && !canRead('agent')) return { domain, ...denied('agent') }
     if (domain === 'skills') {
       const { items, ...snapshot } = selectAdminItems(await this.skills.getSkills(), query, 50)
       return { domain, ...snapshot, items: items.map(item => ({ id: item.id, name: item.name, status: item.status, version: item.version, category: item.category, toolIds: item.toolIds, updatedAt: item.updatedAt })) }
@@ -205,28 +212,31 @@ export class AdminAssistantService {
       return { domain, ...snapshot, items: items.map(agent => omitKeys(agentSnapshot(agent, ''), ['revision'])) }
     }
     if (domain === 'operations') {
-      const { items: runtimes, ...snapshot } = selectAdminItems(await this.operations.getRuntimes(), query, 20)
-      return { domain, ...snapshot, runtimes, recentTasks: (await this.operations.getTaskSummaries()).slice(0, 30) }
+      if (!canRead('connector') && !canRead('ops')) return { domain, ...denied('connector') }
+      const { items: runtimes, ...snapshot } = canRead('connector')
+        ? selectAdminItems(await this.operations.getRuntimes(), query, 20)
+        : { items: denied('connector') }
+      return { domain, ...snapshot, runtimes, recentTasks: canRead('ops') ? (await this.operations.getTaskSummaries()).slice(0, 30) : denied('ops') }
     }
     const [skills, agents, runtimes, tasks] = await Promise.all([
-      this.skills.getSkills(),
-      this.agents.getAgents(),
-      this.operations.getRuntimes(),
-      this.operations.getTaskSummaries(),
+      canRead('skill') ? this.skills.getSkills() : null,
+      canRead('agent') ? this.agents.getAgents() : null,
+      canRead('connector') ? this.operations.getRuntimes() : null,
+      canRead('ops') ? this.operations.getTaskSummaries() : null,
     ])
     return {
       domain,
-      skills: summarizeStatuses(skills),
-      agents: summarizeStatuses(agents),
-      runtimes: runtimes.map(item => ({ id: item.id, status: item.status, schedulingStatus: item.schedulingStatus, activeWorkers: item.activeWorkers, queuedRuns: item.queuedRuns })),
-      recentTasks: tasks.slice(0, 20),
+      skills: skills ? summarizeStatuses(skills) : denied('skill'),
+      agents: agents ? summarizeStatuses(agents) : denied('agent'),
+      runtimes: runtimes ? runtimes.map(item => ({ id: item.id, status: item.status, schedulingStatus: item.schedulingStatus, activeWorkers: item.activeWorkers, queuedRuns: item.queuedRuns })) : denied('connector'),
+      recentTasks: tasks ? tasks.slice(0, 20) : denied('ops'),
     }
   }
 
   async proposeTask(input: Record<string, unknown>, manifest: RuntimeManifest, signal: AbortSignal) {
     signal.throwIfAborted()
     if (manifest.purpose !== 'admin-assistant') throw authorizationDenied('当前 Run 不能创建管理任务提案')
-    await this.authorization.requireAdminReader(manifest.user_context.user_id)
+    await this.authorization.requireAdminAccess(manifest.user_context.user_id)
     await this.requireActiveAttempt(manifest)
     const kind = readEnum(input, 'kind', ['skill-install', 'agent-management', 'platform-operations'] as const)
     const summary = readString(input, 'summary', 4, 240)
@@ -253,8 +263,10 @@ export class AdminAssistantService {
   }
 
   async confirmProposal(userId: string, proposalId: string, proposalSha256: string) {
-    await this.authorization.requirePlatformAdmin(userId)
+    await this.authorization.requireAdminAccess(userId)
     const proposal = await this.requireProposal(userId, proposalId)
+    // 功能规则第 13 节：按提案的目标专用 Run 检查所属模块的修改权限。
+    await this.authorization.requireAdminRunPurpose(userId, proposal.purpose)
     if (proposal.proposalSha256 !== proposalSha256) throw notFound('任务提案不存在或已变化，请重新查看')
     if (proposal.status === 'cancelled') throw stateConflict('任务提案已取消，请重新发起')
     if (proposal.status === 'confirmed' && proposal.delegatedRunId) {
@@ -285,7 +297,8 @@ export class AdminAssistantService {
   }
 
   async cancelProposal(userId: string, proposalId: string) {
-    await this.authorization.requirePlatformAdmin(userId)
+    // 取消只会减少操作：发起人本人持有任一管理权限即可（功能规则第 13 节）。
+    await this.authorization.requireAdminAccess(userId)
     const proposal = await this.requireProposal(userId, proposalId)
     if (proposal.status === 'confirmed') throw stateConflict('专用助手已经启动，不能再取消任务提案')
     await this.database`
@@ -302,9 +315,9 @@ export class AdminAssistantService {
     assertOnlyKeys(input, ['actionType', 'target', 'summary', 'changes'])
     const single = manifest.purpose === 'admin-assistant'
     if (!single && manifest.purpose !== 'admin-agent-manage' && manifest.purpose !== 'admin-platform-operations') throw authorizationDenied('当前 Run 不能创建管理操作计划')
-    await this.authorization.requirePlatformAdmin(manifest.user_context.user_id)
-    await this.requireActiveAttempt(manifest)
     const actionType = readEnum(input, 'actionType', ['agent-update-draft', 'agent-set-status', 'runtime-update-configuration'] as const)
+    await this.requireActionModule(manifest.user_context.user_id, actionType)
+    await this.requireActiveAttempt(manifest)
     const changes = readRecord(input, 'changes')
     if (single) {
       if (actionType !== 'agent-update-draft') throw authorizationDenied('权限、发布和 Runtime 操作必须经过专用助手的两次确认')
@@ -339,8 +352,9 @@ export class AdminAssistantService {
   }
 
   async confirmAction(userId: string, actionId: string, planSha256: string) {
-    await this.authorization.requirePlatformAdmin(userId)
+    await this.authorization.requireAdminAccess(userId)
     const action = await this.requireAction(userId, actionId)
+    await this.requireActionModule(userId, action.actionType)
     if (action.planSha256 !== planSha256 || sha256(canonicalJson(action.plan)) !== planSha256) throw notFound('操作计划不存在或已变化，请重新查看')
     if (action.status === 'executed') return this.detail(userId, action.sessionId)
     if (action.status !== 'pending') throw actionConflict(action.status === 'executing' ? '操作计划正在执行，请稍后刷新' : '操作计划已取消或失败，请重新生成')
@@ -434,7 +448,7 @@ export class AdminAssistantService {
   }
 
   async cancelAction(userId: string, actionId: string) {
-    await this.authorization.requirePlatformAdmin(userId)
+    await this.authorization.requireAdminAccess(userId)
     const action = await this.requireAction(userId, actionId)
     if (action.status === 'executing' || action.status === 'executed') throw stateConflict('操作已经开始或完成，不能取消')
     await this.database`
@@ -453,8 +467,7 @@ export class AdminAssistantService {
   async cancel(userId: string, runId: string) {
     const owned = await this.requireRun(userId, runId)
     if (owned.purpose === 'admin-skill-install') return this.installation.cancel(userId, runId)
-    if (owned.purpose === 'admin-assistant') await this.authorization.requireAdminReader(userId)
-    else await this.authorization.requirePlatformAdmin(userId)
+    await this.authorization.requireAdminRunPurpose(userId, owned.purpose ?? 'admin-skill-install')
     await this.orchestration.cancelAdminRun(runId, userId)
     await this.database`update admin_assistant_task_proposals set status = 'cancelled', resolved_at = now() where tenant_id = ${tenantId} and run_id = ${runId} and status = 'pending'`
     await this.database`update admin_assistant_action_plans set status = 'cancelled', resolved_at = now(), updated_at = now() where tenant_id = ${tenantId} and run_id = ${runId} and status = 'pending'`
@@ -465,8 +478,7 @@ export class AdminAssistantService {
   async retry(userId: string, runId: string) {
     const owned = await this.requireRun(userId, runId)
     if (owned.purpose === 'admin-skill-install') return this.installation.retry(userId, runId)
-    if (owned.purpose === 'admin-assistant') await this.authorization.requireAdminReader(userId)
-    else await this.authorization.requirePlatformAdmin(userId)
+    await this.authorization.requireAdminRunPurpose(userId, owned.purpose ?? 'admin-skill-install')
     await this.database`delete from admin_assistant_task_proposals where tenant_id = ${tenantId} and run_id = ${runId} and status <> 'confirmed'`
     await this.database`delete from admin_assistant_action_plans where tenant_id = ${tenantId} and run_id = ${runId} and status <> 'executed'`
     await this.orchestration.retryAdminRun(runId, userId)
@@ -505,7 +517,7 @@ export class AdminAssistantService {
     }
 
     // Access (audience, roles, data scopes) is not draft content and is not changed through draft plans.
-    const allowed = ['name', 'description', 'welcomeMessage', 'examplePrompts', 'systemPrompt', 'maxOutputBytes', 'maxToolCalls', 'timeoutSeconds', 'skills', 'webSearchEnabled', 'projectTasksEnabled', 'agentRecommendationEnabled', 'skillCreationEnabled', 'changeSummary']
+    const allowed = ['name', 'description', 'welcomeMessage', 'examplePrompts', 'systemPrompt', 'maxOutputBytes', 'maxToolCalls', 'timeoutSeconds', 'skills', 'webSearchEnabled', 'projectTasksEnabled', 'agentRecommendationEnabled', 'skillCreationEnabled', 'webFetchEnabled', 'changeSummary']
     assertOnlyKeys(changes, allowed)
     const before = agentSnapshot(agent, mutation.revision)
     const after: Omit<UpdateAgentDraftInput, 'actor'> = {
@@ -527,6 +539,7 @@ export class AdminAssistantService {
       projectTasksEnabled: readChangedBoolean(changes, 'projectTasksEnabled', agent.projectTasksEnabled),
       agentRecommendationEnabled: readChangedBoolean(changes, 'agentRecommendationEnabled', agent.agentRecommendationEnabled),
       skillCreationEnabled: readChangedBoolean(changes, 'skillCreationEnabled', agent.skillCreationEnabled),
+      webFetchEnabled: readChangedBoolean(changes, 'webFetchEnabled', agent.webFetchEnabled),
       changeSummary: readChangedString(changes, 'changeSummary', summary, 1, 1000),
     }
     const comparableAfter = { ...after, id: after.agentId, status: agent.status, version: agent.version }
@@ -586,9 +599,17 @@ export class AdminAssistantService {
   }
 
   private async requireManifestAuthorization(manifest: RuntimeManifest) {
-    if (manifest.purpose === 'admin-assistant') return this.authorization.requireAdminReader(manifest.user_context.user_id)
-    if (manifest.purpose === 'admin-agent-manage' || manifest.purpose === 'admin-platform-operations') return this.authorization.requirePlatformAdmin(manifest.user_context.user_id)
+    if (manifest.purpose === 'admin-assistant' || manifest.purpose === 'admin-agent-manage' || manifest.purpose === 'admin-platform-operations') {
+      return this.authorization.requireAdminRunPurpose(manifest.user_context.user_id, manifest.purpose)
+    }
     throw authorizationDenied('当前 Run 不能查询管理状态')
+  }
+
+  /** 操作计划按目标模块复核修改权限（功能规则第 13 节），生成与确认共用。 */
+  private async requireActionModule(userId: string, actionType: string) {
+    const module = adminModuleForAction(actionType)
+    if (!module) throw authorizationDenied(`未登记权限归属的管理操作：${actionType}`)
+    return this.authorization.requireAdminModule(userId, module, 'write')
   }
 
   private async requireSession(userId: string, sessionId: string) {
@@ -837,6 +858,7 @@ function agentSnapshot(agent: AgentDefinition, revision: string): AgentSnapshot 
     projectTasksEnabled: agent.projectTasksEnabled,
     agentRecommendationEnabled: agent.agentRecommendationEnabled,
     skillCreationEnabled: agent.skillCreationEnabled,
+    webFetchEnabled: agent.webFetchEnabled,
     status: agent.status,
     version: agent.version,
     revision,
@@ -863,6 +885,7 @@ function agentDraftMatchesPlan(agent: AgentDefinition, after: Extract<StoredActi
     && agent.projectTasksEnabled === after.projectTasksEnabled
     && agent.agentRecommendationEnabled === after.agentRecommendationEnabled
     && agent.skillCreationEnabled === after.skillCreationEnabled
+    && agent.webFetchEnabled === (after.webFetchEnabled ?? false)
 }
 
 function actionResultSummary(plan: StoredActionPlan) {

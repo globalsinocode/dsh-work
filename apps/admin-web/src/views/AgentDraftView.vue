@@ -35,7 +35,7 @@ const agent = computed(() => contentStore.agents.find(item => item.id === agentI
 const activeVersion = computed(() => activeVersionOf(agent.value))
 const pendingVersion = computed(() => pendingVersionOf(agent.value, contentStore.agentVersions))
 const loadFailed = computed(() => Boolean(contentStore.error) && !agent.value)
-const canManage = computed(() => authStore.canManage)
+const canManage = computed(() => authStore.canWrite('agent'))
 const editor = provideAgentDraftEditor(agent, { canEdit: canManage })
 
 const profileFields: AgentDraftField[] = ['name', 'description', 'welcomeMessage', 'systemPrompt', 'workInstructions', 'examplePrompts']
@@ -250,7 +250,6 @@ onBeforeUnmount(() => window.removeEventListener('beforeunload', warnBeforeUnloa
         </div>
       </header>
       <el-alert v-if="canManage && editor.message.value && (editor.state.value === 'conflict' || editor.state.value === 'error' || editor.state.value === 'invalid')" :type="editor.state.value === 'invalid' ? 'warning' : 'error'" :closable="false" show-icon :title="editor.message.value" />
-      <el-alert v-if="authStore.isAuditor" type="info" show-icon :closable="false" title="当前为安全审计员视图，只能查看，不能修改。" />
 
       <div class="draft-layout">
         <nav class="content-panel draft-steps" aria-label="编辑步骤">

@@ -9,7 +9,7 @@ export interface NotificationTextPart {
 }
 
 /**
- * 通知正文（方案第 4 节）：只写“谁、在哪个项目/对象、做了什么”，名称由服务端按本人当前权限解析。
+ * 通知正文（功能规则 3.7）：只写“谁、在哪个项目/对象、做了什么”，名称由服务端按本人当前权限解析。
  * 已不可见的通知不显示任何名称。
  */
 export function notificationText(item: UserNotification): NotificationTextPart[] {

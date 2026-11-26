@@ -265,32 +265,22 @@ test('prototype admin exposes the operations summary required by the global stor
 })
 
 test('prototype admin exposes the asynchronous Skill test progress contract', async () => {
-  const createResponse = await fetch(`${baseUrl}/api/admin/v1/skills`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      name: '试运行进度测试',
-      category: '测试',
-      description: '用于验证异步 Skill 试运行进度接口。',
-      instructions: '读取测试输入，执行确定性配置校验，并返回简明结果。',
-      toolIds: ['read@1.0.0'],
-      testPrompt: '验证试运行进度',
-    }),
-  })
-  const created = await createResponse.json() as { data: { skill: { id: string } } }
-  assert.equal(createResponse.status, 200, JSON.stringify(created))
+  const skills = await getJson<{ data: Array<{ id: string }> }>('/api/admin/v1/skills')
+  const skillId = skills.body.data[0]!.id
+  const removed = await fetch(`${baseUrl}/api/admin/v1/skills`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })
+  assert.equal(removed.status, 404)
 
   const startResponse = await fetch(`${baseUrl}/api/admin/v1/skills/test-runs`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ skillId: created.data.skill.id, prompt: '验证试运行进度' }),
+    body: JSON.stringify({ skillId, prompt: '验证试运行进度' }),
   })
   const started = await startResponse.json() as SkillTestProgressEnvelope
   assert.equal(startResponse.status, 202)
   assert.equal(started.data.status, 'passed')
   assert.ok(started.data.steps.some(step => step.status === 'completed'))
 
-  const progress = await getJson<SkillTestProgressEnvelope>(`/api/admin/v1/skills/${created.data.skill.id}/test-runs/${started.data.runId}`)
+  const progress = await getJson<SkillTestProgressEnvelope>(`/api/admin/v1/skills/${skillId}/test-runs/${started.data.runId}`)
   assert.equal(progress.response.status, 200)
   assert.equal(progress.body.data.runId, started.data.runId)
   assert.equal(progress.body.data.status, 'passed')

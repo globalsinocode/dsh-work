@@ -150,6 +150,6 @@ function headerAuthenticator(request: IncomingMessage): Promise<RequestIdentity>
     permissions: ['workbench:use'],
     dataScopes: ['enterprise:authorized'],
     authorizationVersion: 1,
-    identityProvider: 'ai-hub-oidc',
+    identityProvider: 'local-password',
   })
 }

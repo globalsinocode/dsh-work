@@ -15,13 +15,12 @@ import type {
   SessionListPage,
   SessionListQuery,
   UpdateRuntimeConfigurationInput,
-  UsagePoint,
 } from '../../../domain/types.ts'
 import type { DatabaseClient, DatabaseTransaction } from '../../../infrastructure/postgres/database.ts'
 import type { RunAttemptRecord, RunRecord } from '../../run/run-types.ts'
 import type { AgentRuntimePort } from '../../runtime/runtime-types.ts'
 import type { PostgresAuthorizationService } from '../../authorization/postgres-authorization-service.ts'
-import { authorizationDenied } from '../../../domain/authorization-errors.ts'
+import { requireAdminModuleActor } from '../../authorization/admin-actor.ts'
 import { redactSensitiveText, sanitizeSafeMetadata } from '../../../security/safe-observability.ts'
 import { dependencyUnavailable, invalidRequest, notFound, stateConflict } from '../../../domain/request-errors.ts'
 
@@ -42,14 +41,14 @@ export class PostgresOperationsService {
   private readonly database: DatabaseClient
   private readonly runtime?: AgentRuntimePort
   private readonly authorization?: PostgresAuthorizationService
-  private readonly sso: 'mock' | 'ai-hub-oidc' | 'local-password'
+  private readonly sso: 'mock' | 'local-password'
   private readonly builtinSkills?: BuiltinSkillCatalog
 
   constructor(
     database: DatabaseClient,
     runtime?: AgentRuntimePort,
     authorization?: PostgresAuthorizationService,
-    sso: 'mock' | 'ai-hub-oidc' | 'local-password' = 'mock',
+    sso: 'mock' | 'local-password' = 'mock',
     builtinSkills?: BuiltinSkillCatalog,
   ) {
     this.database = database
@@ -122,7 +121,7 @@ export class PostgresOperationsService {
   }
 
   async checkRuntime(input: { runtimeId: string; actor: string }) {
-    const actor = await this.requirePlatformAdmin(input.actor)
+    const actor = await this.requireConnectorAdmin(input.actor)
     await this.requireRuntime(input.runtimeId)
     const health = await this.runtime?.health()
     const status = health?.runtimeId === input.runtimeId ? health.status : 'offline'
@@ -149,7 +148,7 @@ export class PostgresOperationsService {
   }
 
   async updateRuntimeConfiguration(input: UpdateRuntimeConfigurationInput, expected?: RuntimeMutationSnapshot) {
-    const actor = await this.requirePlatformAdmin(input.actor)
+    const actor = await this.requireConnectorAdmin(input.actor)
     assertRuntimeConfiguration(input)
     let disabledTools: string[] | undefined
     try { disabledTools = input.disabledTools === undefined ? undefined : normalizeDisabledTools(input.disabledTools) }
@@ -565,18 +564,6 @@ export class PostgresOperationsService {
     ]
   }
 
-  async getUsage(): Promise<UsagePoint[]> {
-    const rows = await this.database<{ day: string; runs: number; tokens: number }[]>`
-      select to_char(days.day, 'MM-DD') as day, count(distinct r.id)::integer as runs,
-             coalesce(sum(mu.input_tokens + mu.output_tokens), 0)::integer as tokens
-        from generate_series(current_date - interval '6 days', current_date, interval '1 day') days(day)
-        left join runs r on r.tenant_id = ${tenantId} and r.created_at::date = days.day::date
-        left join model_usage_events mu on mu.tenant_id = r.tenant_id and mu.run_id = r.id
-       group by days.day order by days.day
-    `
-    return rows
-  }
-
   async getPlatformStatus() {
     const health = await this.runtime?.health()
     return { architecture: 'node-modular-monolith', persistence: 'postgres', sso: this.sso, dshRuntime: health && health.status !== 'offline' ? 'connected' : 'not-connected', database: 'configured', artifactStorage: 'local-mvp' }
@@ -672,22 +659,10 @@ export class PostgresOperationsService {
     `.then(() => undefined)
   }
 
-  private async requirePlatformAdmin(userId: string) {
-    if (this.authorization) return this.authorization.requirePlatformAdmin(userId)
-    const [actor] = await this.database<{ id: string; displayName: string }[]>`
-      select u.id, u.display_name as "displayName" from users u
-       where u.tenant_id = ${tenantId} and u.id = ${userId} and u.status = 'active'
-         and exists (
-           select 1 from user_roles ur
-           join roles r on r.tenant_id = ur.tenant_id and r.id = ur.role_id
-            where ur.tenant_id = u.tenant_id and ur.user_id = u.id
-              and ur.source_key = 'local' and r.status = 'active'
-              and (ur.valid_until is null or ur.valid_until > now())
-              and (r.permissions ? 'admin:*' or r.permissions ? 'admin:write')
-         )
-    `
-    if (!actor) throw authorizationDenied(`操作人不存在、已停用或不是平台管理员：${userId}`)
-    return actor
+  /** Runtime 配置与检查属于“工具与连接”模块（功能规则第 13 节）。 */
+  private async requireConnectorAdmin(userId: string) {
+    if (this.authorization) return this.authorization.requireAdminModule(userId, 'connector', 'write')
+    return requireAdminModuleActor(this.database, userId, 'connector', 'write')
   }
 
   private async requireRuntime(runtimeId: string) {

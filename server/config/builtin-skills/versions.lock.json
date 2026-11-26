@@ -1,11 +1,14 @@
 {
   "dsh-work-file-analysis": {
-    "1.0.0": "8870f3a42bc27f3ce0f7c0fbeb4787afbeb7d31de8551fc91cfa1c7142106704"
+    "1.0.0": "8870f3a42bc27f3ce0f7c0fbeb4787afbeb7d31de8551fc91cfa1c7142106704",
+    "1.1.0": "042bc7d8ab105c1d55260137b149e73e307cdfe7db24b63c4104dde07c6aaecd"
   },
   "dsh-work-html-page": {
-    "1.0.0": "151d9535ac573e1220f7a2a6c2b64967eb1e5c22d6480dde92516e279d819206"
+    "1.0.0": "151d9535ac573e1220f7a2a6c2b64967eb1e5c22d6480dde92516e279d819206",
+    "1.1.0": "e9baaa892cb1a2bdc28e05009ff372ff87953c1e4cc6c8f0016e65727cb6f015"
   },
   "dsh-work-office-document": {
-    "1.0.0": "2de1baf3de0874c609b9cfe590bf9978726d8a723518ef2f1abae8dcb8b9bfa5"
+    "1.0.0": "2de1baf3de0874c609b9cfe590bf9978726d8a723518ef2f1abae8dcb8b9bfa5",
+    "1.1.0": "63ab3e3251911b5a71bf82b51b05c7fb8a39a252116fce546283b7dff7bbfe0a"
   }
 }

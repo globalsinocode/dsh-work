@@ -3,6 +3,7 @@ import { createHash, randomUUID } from 'node:crypto'
 
 import type { DatabaseClient, DatabaseTransaction } from '../../infrastructure/postgres/database.ts'
 import type { PostgresAuthorizationService, RuntimeAuthorizationDecision } from '../authorization/postgres-authorization-service.ts'
+import { assertAgentCapabilityWithinActor } from '../agent/agent-access-service.ts'
 import { authorizationDenied, isAuthorizationDenial, requestInvalid } from '../../domain/authorization-errors.ts'
 import type { PostgresRunRepository } from '../run/postgres-run-repository.ts'
 import type { RunOrchestrationService } from '../run/run-orchestration-service.ts'
@@ -163,7 +164,7 @@ export class AgentRoutineService {
   }
 
   async list(agentId: string, actorUserId: string): Promise<AgentRoutine[]> {
-    await this.authorization.requirePlatformAdmin(actorUserId)
+    await this.authorization.requireAdminModule(actorUserId, 'agent', 'read')
     const rows = await this.database<RoutineRow[]>`
       select ${this.database.unsafe(routineColumns)}, latest.admission_status as "lastAdmissionStatus",
              latest.reason_code as "lastReasonCode"
@@ -183,7 +184,9 @@ export class AgentRoutineService {
     agentId: string; agentVersionId: string; workspaceId: string; recipientUserId: string
     name: string; schedule: AgentRoutineSchedule; inputTemplate: { prompt: string; budget?: AutomationBudget; fileIds?: string[] }
   }): Promise<AgentRoutine> {
-    await this.authorization.requirePlatformAdmin(actorUserId)
+    await this.authorization.requireAdminModule(actorUserId, 'agent', 'write')
+    // 接收人获得 Agent 的交付：Agent 能力不能超过设置接收人的操作人（功能规则第 13 节）。
+    await assertAgentCapabilityWithinActor(this.database, actorUserId, input.agentId)
     const schedule = normalizeRoutineSchedule(input.schedule)
     const template = normalizeInput(input.inputTemplate)
     await this.assertPromptAllowed(actorUserId, template.prompt)
@@ -210,10 +213,14 @@ export class AgentRoutineService {
     recipientUserId?: string; schedule?: AgentRoutineSchedule
     inputTemplate?: { prompt: string; budget?: AutomationBudget; fileIds?: string[] }
   }): Promise<AgentRoutine> {
-    await this.authorization.requirePlatformAdmin(actorUserId)
+    await this.authorization.requireAdminModule(actorUserId, 'agent', 'write')
     const current = await this.get(id)
     if (current.agentId !== agentId) throw missing()
     if (!['draft', 'paused'].includes(current.status) || current.revision !== patch.expectedRevision) throw conflict('任务修订或状态已变化')
+    if ((patch.recipientUserId !== undefined && patch.recipientUserId !== current.recipientUserId)
+      || (patch.workspaceId !== undefined && patch.workspaceId !== current.workspaceId)) {
+      await assertAgentCapabilityWithinActor(this.database, actorUserId, agentId)
+    }
     const versionId = patch.agentVersionId ?? current.agentVersionId
     const [version] = await this.database<{ id: string }[]>`
       select av.id from agent_versions av join agents a on a.tenant_id = av.tenant_id and a.id = av.agent_id
@@ -243,9 +250,11 @@ export class AgentRoutineService {
 
   async enable(actorUserId: string, agentId: string, id: string,
     approved: { roleIds: string[]; dataScopes: string[]; expectedRevision: number }): Promise<AgentRoutine> {
-    await this.authorization.requirePlatformAdmin(actorUserId)
+    await this.authorization.requireAdminModule(actorUserId, 'agent', 'write')
     const routine = await this.get(id)
     if (routine.agentId !== agentId) throw missing()
+    // 启用与执行把 Agent 的能力交付给接收人：能力不能超过操作人（功能规则第 13 节）。
+    await assertAgentCapabilityWithinActor(this.database, actorUserId, agentId)
     if (!['draft', 'paused'].includes(routine.status) || routine.revision !== approved.expectedRevision) {
       throw conflict('任务修订或状态已变化')
     }
@@ -280,7 +289,7 @@ export class AgentRoutineService {
   }
 
   async setStatus(actorUserId: string, agentId: string, id: string, next: 'paused' | 'disabled'): Promise<AgentRoutine> {
-    await this.authorization.requirePlatformAdmin(actorUserId)
+    await this.authorization.requireAdminModule(actorUserId, 'agent', 'write')
     const current = await this.get(id)
     if (current.agentId !== agentId) throw missing()
     const [row] = await this.database<{ id: string }[]>`
@@ -296,7 +305,7 @@ export class AgentRoutineService {
   }
 
   async executions(actorUserId: string, agentId: string, id: string): Promise<AgentRoutineExecution[]> {
-    await this.authorization.requirePlatformAdmin(actorUserId)
+    await this.authorization.requireAdminModule(actorUserId, 'agent', 'read')
     const routine = await this.get(id)
     if (routine.agentId !== agentId) throw missing()
     const rows = await this.database<ExecutionRow[]>`
@@ -352,9 +361,11 @@ export class AgentRoutineService {
   }
 
   async runNow(actorUserId: string, agentId: string, id: string, idempotencyKey: string): Promise<AgentRoutineExecution> {
-    await this.authorization.requirePlatformAdmin(actorUserId)
+    await this.authorization.requireAdminModule(actorUserId, 'agent', 'write')
     const routine = await this.get(id)
     if (routine.agentId !== agentId) throw missing()
+    // 启用与执行把 Agent 的能力交付给接收人：能力不能超过操作人（功能规则第 13 节）。
+    await assertAgentCapabilityWithinActor(this.database, actorUserId, agentId)
     if (routine.status !== 'enabled') throw conflict('Agent 主动任务未启用')
     if (typeof idempotencyKey !== 'string' || !idempotencyKey.trim() || idempotencyKey.length > 128) {
       throw requestInvalid('idempotencyKey 必须是 1～128 字符')
@@ -367,9 +378,11 @@ export class AgentRoutineService {
   async triggerEvent(actorUserId: string, agentId: string, id: string, input: {
     eventType: string; source: string; eventId: string
   }): Promise<AgentRoutineExecution> {
-    await this.authorization.requirePlatformAdmin(actorUserId)
+    await this.authorization.requireAdminModule(actorUserId, 'agent', 'write')
     const routine = await this.get(id)
     if (routine.agentId !== agentId) throw missing()
+    // 启用与执行把 Agent 的能力交付给接收人：能力不能超过操作人（功能规则第 13 节）。
+    await assertAgentCapabilityWithinActor(this.database, actorUserId, agentId)
     if (routine.status !== 'enabled') throw conflict('Agent 主动任务未启用')
     if (routine.schedule.kind !== 'event' || routine.schedule.eventType !== input.eventType) {
       throw requestInvalid('事件类型与已批准规则不匹配')

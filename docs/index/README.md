@@ -14,22 +14,16 @@
 | 设计和评审 Agent，区分现行规则与扩展门槛 | [Agent 设计规范](../development/agent-design-standard.md) |
 | 按统一阶段定义、发布、运行和退役 Agent | [通用 Agent 全生命周期模板](../development/agent-lifecycle-template.md) |
 | 移动端 H5 接入 | [移动端接入规范](../development/mobile-integration-guide.md) |
-| 已评审、未实施：平台路由决定实际模型，与模型网关同批交付 | [模型路由方案](../design/model-routing-plan.md) |
-| 决策已确认、未实施：模型网关与发往模型的数据防护（敏感值遮盖与还原、密钥拦截、按 Provider 信任级别分策略） | [发往模型的数据防护方案](../design/model-data-protection-plan.md) |
-| 待评审：钉钉工作通知、工作台免登与机器人对话 | [钉钉接入方案](../design/dingtalk-integration-plan.md) |
-| 决策已确认（SP1～SP16）、未实施：场景包（独立于 Skill 的平台对象，由工作规则固定版本）+ 共享数据服务 + 主动任务的程序编排，按人交付的跟进项；首个场景欠料风险预警 | [场景包与跟进项方案](../design/scene-package-plan.md) |
-| 一期已实施（WK-S1～S4；生产切换前按发布流程复核）：企业知识库改用 WeKnora，员工端管理知识库与文档，按角色与部门授权 | [企业知识库接入 WeKnora 方案](../design/weknora-knowledge-plan.md) |
-| 部分实施（O1～O3、O5～O12、KO9 与 KO10 已完成；KO8、O4 经对比后不实施，篇数上限未检验；O8 校验按钮未做）：知识库检索提示、连接更换、授权修正与后续方向 | [企业知识库优化方案](../design/weknora-knowledge-optimization-plan.md) |
-| 已实施（KS-S1、KS-S2；本机追问场景与装配对比已验收）：给 Agent 提供只读知识检索工具（KO9） | [Agent 知识检索工具方案](../design/knowledge-search-tool-plan.md) |
-| 已实施（NC-S1～S4，P2 待验收）：员工端统一站内通知（与我相关的事件、未读与跳转） | [站内通知方案](../design/notification-center-plan.md) |
-| 实施中：员工经 Skill 创建专家新建 Skill、管理员审核发布 | [Skill 创建专家方案](../design/skill-creator-plan.md) |
-| 平台内置 Skill（文件分析、HTML、Office 基线方法；代码级已实施，P2 待验收） | [平台内置 Skill 方案](../design/builtin-skills-plan.md) |
-| dsh-work 助手推荐 AI 同事（代码级已实施，P2 待验收） | [推荐 AI 同事方案](../design/agent-recommendation-plan.md) |
+| 代码级已实施（MR-S1～S3），P1 受控 DSH 通过，本机与 Mac mini 人工验收通过，P2 已于 2026-11-23 决定删除：平台路由决定实际模型、模型网关与用量 | [模型路由方案](../design/model-routing-plan.md) |
+| 代码级已实施（DLP-S1～S3），P2 已于 2026-11-23 以本机真实厂商验收结项（未按 PF-07 留证）：发往模型的敏感值遮盖与还原、密钥拦截 | [发往模型的数据防护方案](../design/model-data-protection-plan.md) |
+| DT-S1 账号绑定与钉钉内免登已实施到代码级，真实钉钉验收（P2）未做；DT-S2 工作通知与群组提醒未实施 | [钉钉接入方案](../design/dingtalk-integration-plan.md) |
+| EA-S1 已实施（发送员工身份、调用上下文请求头），未真实验收：外部业务应用经 MCP 接入所需的调用上下文 | [外部业务应用接入方案](../design/external-app-integration-plan.md) |
+| 草案，未执行：完整 dsh-work 与 DeepSeek Harness 应用在办公场景上的效果对比，以及治理与安全行为对比 | [产品对比测评方案](../design/product-comparison-evaluation-plan.md) |
 | 平台基线真实验收（PF-07） | [PF-07 验收手册](../development/pf07-platform-acceptance.md) |
+| 已实施（阶段 1～3，C 档 P2 已于 2026-10-28 在 Mac mini 通过）：执行容器、受控 Shell 与 Office 工具链的设计依据 | [执行隔离方案](../design/execution-isolation-plan.md) |
 | 进行中：执行观测、上下文延续与性能 | [Runtime 执行架构渐进优化方案](../design/runtime-execution-optimization-plan.md) |
-| 项目空间产品决策与切片背景（S0～S6 已实现；现行规则以功能规则为准，P2/OIDC 与部分 P1 旅程仍开放） | [项目空间方案](../design/project-space-plan.md) |
+| 项目空间产品决策与切片背景（S0～S6 已实现；现行规则以功能规则为准，P2 与部分 P1 旅程仍开放） | [项目空间方案](../design/project-space-plan.md) |
 | 独立账号登录 | [独立登录](../release/local-authentication.md) |
-| 配置 AI Hub 登录、员工目录和首位管理员 | [AI Hub 身份接入](../release/ai-hub-sso-integration.md) |
 | 安装、验证与升级执行内核 | [DSH Runtime](../release/dsh-runtime-delivery.md) |
 | 发布、首次安装、升级、备份、恢复及地址变更 | [Mac mini 部署手册](../release/mac-mini-deployment-runbook.md) |
 

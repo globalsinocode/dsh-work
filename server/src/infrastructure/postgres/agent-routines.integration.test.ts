@@ -47,7 +47,7 @@ before(async () => {
   database = throwaway.client
   await database`
     insert into users (id, tenant_id, external_subject, display_name, status, identity_provider, business_user)
-    values ('U00002', ${tenantId}, 'directory:routine-recipient-U00002', '主动任务新接收人', 'active', 'ai-hub', true)
+    values ('U00002', ${tenantId}, 'directory:routine-recipient-U00002', '主动任务新接收人', 'active', 'local', true)
   `
   await database`
     insert into user_roles (tenant_id, user_id, role_id, source_key)

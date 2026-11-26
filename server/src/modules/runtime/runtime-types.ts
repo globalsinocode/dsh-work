@@ -89,7 +89,7 @@ export interface RuntimeManifest {
       files?: Array<{ path: string; content?: string; sha256: string; size: number }>
     }>
   }
-  /** 平台内置 Skill 中本次未装配的：被本次 Skill 覆盖或被 Runtime 紧急停用（builtin-skills-plan 5.3）。 */
+  /** 平台内置 Skill 中本次未装配的：被本次 Skill 覆盖或被 Runtime 紧急停用（功能规则 5.5）。 */
   builtin_skill_exclusions?: Array<{
     skill: string
     reason: 'covered' | 'disabled'
@@ -106,10 +106,14 @@ export interface RuntimeManifest {
    * 平台工具本次未装配的原因（数据防护方案 D12 补充）：默认路由不是 DeepSeek 官方时联网搜索不可用。
    * 运行说明告知模型，避免假装已经搜索。
    */
-  unavailable_tools?: Array<{
-    tool: 'web_search'
-    reason: 'model_route_unsupported'
-  }>
+  /**
+   * Agent 开启了但本次没有装配的工具：默认路由不支持联网搜索（D12 补充），或 DSH 有代理配置时
+   * 不装配读取网页（读取网页方案 6.3：走代理时 DSH 不做公网地址校验）。
+   */
+  unavailable_tools?: Array<
+    | { tool: 'web_search'; reason: 'model_route_unsupported' }
+    | { tool: 'web_fetch'; reason: 'proxy_configured' }
+  >
   user_context: {
     user_id: string
     tenant_id: string
@@ -134,17 +138,17 @@ export interface RuntimeManifest {
   data_scopes: string[]
   knowledge_context: RuntimeKnowledgeDocument[]
   /**
-   * 企业知识检索结果（weknora-knowledge-plan 4.5）。缺省即 not_applicable：本次执行不支持检索。
+   * 企业知识检索结果（功能规则第 11 节）。缺省即 not_applicable：本次执行不支持检索。
    */
   knowledge_status?: Exclude<RuntimeKnowledgeStatus, 'not_applicable'>
   /** 所选但已删除或对员工不可见、本次跳过的知识库名称；只用于回答页脚，不进入提示词。 */
   knowledge_skipped_bases?: string[]
   /**
-   * 跳过原因（企业知识库优化方案 O2）：agent_not_permitted 表示会话添加了知识库，但当前 Agent 不具备查看级别；
+   * 跳过原因（功能规则第 11 节）：agent_not_permitted 表示会话添加了知识库，但当前 Agent 不具备查看级别；
    * 只用于回答页脚，不进入提示词。只与 knowledge_status = skipped 同时出现。
    */
   knowledge_skipped_reason?: 'agent_not_permitted'
-  /** 所选但因更换连接地址标为“原连接已更换”而跳过的知识库名称（优化方案 O9）；只用于回答页脚，不进入提示词。 */
+  /** 所选但因更换连接地址标为“原连接已更换”而跳过的知识库名称（功能规则第 11 节）；只用于回答页脚，不进入提示词。 */
   knowledge_moved_bases?: string[]
   /** PF-05 reviewed, ACL-filtered memory versions fixed for this Attempt. */
   memory_context?: RuntimeControlledMemory[]
@@ -461,4 +465,6 @@ export interface RuntimeModelGatewayPort {
     failure: { code: string; message: string } | undefined
     chatRequests: number
   }>
+  /** 读取网页方案 6.2：本 Attempt 联网搜索回复中结构化结果条目的网址。 */
+  searchResultUrls?(attemptId: string): ReadonlySet<string>
 }

@@ -59,6 +59,12 @@ export async function createPlatformToolBridge(
    * 不计入工具调用次数；每次都复核当前授权，DSH 断开时中止命令。
    */
   subprocess?: (body: Record<string, unknown>, signal: AbortSignal) => Promise<unknown>,
+  /**
+   * 读取网页方案 6.2：`web_fetch` 调用前的服务端复核。不是 Agent 工具，不计入工具调用次数；
+   * 回调自行复核当前授权（不等执行容器空闲：取页不在容器中），再按本 Attempt 的来源、数据防护、
+   * 次数与地址规则判断。未提供时一律拒绝。
+   */
+  webFetchCheck?: (url: unknown) => Promise<{ allowed: true } | { allowed: false; reason: string }>,
 ) {
   const prepared = Object.fromEntries(Object.entries(tools).map(([name, registration]) => [
     name,
@@ -108,6 +114,24 @@ export async function createPlatformToolBridge(
         }
         return
       }
+      if (request.url === '/web-fetch/check') {
+        if (request.method !== 'POST' || !webFetchCheck || controller.signal.aborted) {
+          response.writeHead(403).end(JSON.stringify({ allowed: false, reason: '读取网页复核不可用，本次未打开网页' }))
+          return
+        }
+        try {
+          const body = await readBody(request)
+          const decision = await webFetchCheck(body['url'])
+          response.end(JSON.stringify(decision.allowed ? { allowed: true } : { allowed: false, reason: decision.reason }))
+        } catch (error) {
+          const revoked = isAuthorizationDenied(error)
+          response.writeHead(revoked ? 403 : 503).end(JSON.stringify({
+            allowed: false,
+            reason: revoked ? '当前执行授权已撤销，本次未打开网页' : '读取网页复核暂不可用，本次未打开网页',
+          }))
+        }
+        return
+      }
       if (request.url === '/subprocess/exec') {
         if (request.method !== 'POST' || !subprocess || controller.signal.aborted) {
           writeError(response, new PlatformToolError({ status: 403, code: 'SUBPROCESS_DENIED', message: '执行容器不可用或 Attempt 已结束' }))
@@ -151,7 +175,7 @@ export async function createPlatformToolBridge(
         if (!registration.validators.input(input)) throw toolInputInvalid(ajvErrors(registration.validators.input.errors))
         await authorizeTool(authorize, 'not_started', registration.contract.retryPolicy === 'safe')
         controller.signal.throwIfAborted()
-        if (registration.contract.effect === 'write' && operations) {
+        if (registration.contract.effect === 'write' && registration.contract.writeScope !== 'attempt-workspace' && operations) {
           const callIdHeader = request.headers['x-dsh-tool-call-id']
           const callId = (Array.isArray(callIdHeader) ? callIdHeader[0] : callIdHeader)?.trim()
           if (!callId) throw toolInputInvalid('写入工具缺少 DSH tool call id')

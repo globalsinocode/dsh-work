@@ -50,7 +50,7 @@ before(async () => {
   dingtalk = new DingTalkDirectoryDouble('ding-corp-test').addDepartment(11, '销售部').addDepartment(12, '华东区')
   const settings = staticDingTalkSettings(dingtalkConfig, dingtalk)
   local = new LocalAuthService(config, database.client, settings)
-  administration = new IdentityAdministrationService(database.client, true)
+  administration = new IdentityAdministrationService(database.client)
   adminId = (await local.bootstrap({ username: 'dt.admin@example.invalid', name: '钉钉管理员', password })).userId
   registerLocalAuthRoutes(router, local)
   registerDingTalkAuthRoutes(router, new DingTalkAuthService(config, database.client, settings), local)

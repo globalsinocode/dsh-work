@@ -1,7 +1,7 @@
 # 平台模型路由生效方案
 
-**状态：** 已评审（2026-11-06）。MR-S1 已达到代码级（2026-11-06，迁移 `0120_model_routing_governance.sql`）；MR-S2 与数据防护方案 DLP-S1 已达到代码级（2026-11-07，迁移 `0121_model_gateway_requests.sql`；单元、PostgreSQL 集成与 Worker 替身用例），第 8 节 P1 已在本机受控 DSH `0.1.2-rc.1` 上执行主要场景（`test:model-gateway:e2e`：路由生效、共享 settings.yaml 隔离、401/400/402 不重试、429 与 5xx 重试后分类、联网搜索经网关），“停用路由不影响进行中 Attempt”“更换默认路由后重试与 PF-04 恢复”“探测路径不发出模型请求”尚无受控 DSH 用例；P2 未执行，不得视为已验收。MR-S3 的用量归属已达到代码级（2026-11-08，迁移 `0122_model_usage_gateway_metering.sql`：网关计量写入用量记录与预算结算；单元与 PostgreSQL 集成用例），管理端“模型用量”页已改版（时间范围、按模型/Agent/员工/部门/来源统计并可下钻、执行明细，不含导出；P0 浏览器冒烟与 PostgreSQL 集成用例），第 8 节 P1（MR-S3）的受控 DSH 用例尚未执行。<br>
-**更新日期：** 2026-11-06（DLP-S0：R4 验证可行，补充 `compat.thinkingFormat` 与 `web_search` 风险）；2026-11-06（简化：路由用途只保留 `default`，取消备用路由与备用重试；DeepSeek 统一以 `openai-completions` 接入；模型校验只保留网关一道，取消 `currentValue` 校验与会话日志核对；快照去掉 `data_policy_version`；移除推理强度）；2026-11-06（网关计量增加缓存读写 token；PR 81 评审修订：升级前 Manifest 不再按默认模型执行、按用途解析路由、重试重新解析而恢复沿用快照、复用 `postgres-encrypted` 凭据、错误按网关记录分类；不做 DSH 持有凭据的阶段，路由生效与模型网关同批实施）；2026-10-26（第 7 节与执行隔离方案对齐）<br>
+**状态：** 已评审（2026-11-06）。MR-S1 已达到代码级（2026-11-06，迁移 `0120_model_routing_governance.sql`）；MR-S2 与数据防护方案 DLP-S1 已达到代码级（2026-11-07，迁移 `0121_model_gateway_requests.sql`；单元、PostgreSQL 集成与 Worker 替身用例），第 8 节 P1 已在本机受控 DSH `0.1.2-rc.1` 上执行主要场景（`test:model-gateway:e2e`：路由生效、共享 settings.yaml 隔离、401/400/402 不重试、429 与 5xx 重试后分类、联网搜索经网关）；2026-11-23 补齐其余三项受控 DSH 用例：“探测路径不发出模型请求”（`test:model-gateway:e2e`，探测用的默认 Provider 指向记录请求的假上游，并以不经网关的正式执行作对照证明能抓到请求；只拦这一个 Provider，联网搜索与其他 Provider 未拦）、“停用路由不影响进行中 Attempt”（停用发生在第一轮对话返回前，之后的联网搜索与第二轮对话仍按固定路由放行，运行完成；之后新建的运行以 `MODEL_ROUTE_NOT_READY` 被拒）与“更换默认路由后重试使用新路由”（`test:model-usage:e2e`，一次性库与真实 Run/Attempt 链路）；P1 行中其余四项不再补受控 DSH 用例（2026-11-23 验收人决定），现有覆盖：连接失败由网关单元测试覆盖（厂商不可达返回 502、归为 `MODEL_UPSTREAM_UNAVAILABLE`）；`key` 不为 `default` 的默认路由由 PostgreSQL 集成测试覆盖；模型未声明（patch 未声明路由模型时 DSH 在 `session/new` 报错）不做负向测试，由 patch 单元测试证明平台生成的 patch 总会声明路由模型；令牌越权由网关单元测试覆盖令牌缺失、无效、过期、吊销、重新签发与请求模型不符，令牌按 Attempt 签发、一令牌只对应一个 Attempt；“PF-04 恢复沿用快照”随持久化等待移出 PF-07、不开放给 Agent 而从 P1 待办删除（代码仍复制快照，只作回归）；P2 于 2026-11-23 由验收人决定删除、不再执行：真实厂商调用以 2026-11-08 本机验收（阿里百炼、DeepSeek）为准；该次未专门核对切换默认路由后用量随之切换、未逐项核对各家缓存 token，也未按 PF-07 手册留证；前两点只有假上游证据。MR-S3 的用量归属已达到代码级（2026-11-08，迁移 `0122_model_usage_gateway_metering.sql`：网关计量写入用量记录与预算结算；单元与 PostgreSQL 集成用例），管理端“模型用量”页已改版（时间范围、按模型/Agent/员工/部门/来源统计并可下钻、执行明细，不含导出；P0 浏览器冒烟与 PostgreSQL 集成用例），第 8 节 P1（MR-S3）已于 2026-11-23 在本机受控 DSH 上通过（`test:model-usage:e2e`：一次性 PostgreSQL、执行容器中的真实 DSH、网关记录写入 PostgreSQL；一次 503 重试加联网搜索时用量记录对话与搜索各一行，实际模型、请求与失败次数、缓存读与“模型用量”执行明细、预算结算均等于网关记录之和；厂商 401 失败时记一次失败请求、零 token，预算结算一致）。<br>
+**更新日期：** 2026-11-25（DeepSeek 官方路由补齐与 DSH 自带 DeepSeek 适配器一致的推理与容量默认值，见 4.3）；2026-11-06（DLP-S0：R4 验证可行，补充 `compat.thinkingFormat` 与 `web_search` 风险）；2026-11-06（简化：路由用途只保留 `default`，取消备用路由与备用重试；DeepSeek 统一以 `openai-completions` 接入；模型校验只保留网关一道，取消 `currentValue` 校验与会话日志核对；快照去掉 `data_policy_version`；移除推理强度）；2026-11-06（网关计量增加缓存读写 token；PR 81 评审修订：升级前 Manifest 不再按默认模型执行、按用途解析路由、重试重新解析而恢复沿用快照、复用 `postgres-encrypted` 凭据、错误按网关记录分类；不做 DSH 持有凭据的阶段，路由生效与模型网关同批实施）；2026-10-26（第 7 节与执行隔离方案对齐）<br>
 **依据：** 当前 Model 模块、Run 编排与 Runtime Adapter 代码；DSH `0.1.2-rc.1`（`76fda72979`）的 `dsh-acp`、`dsh-llm-pi-ai`、`dsh-settings-file`、`dsh-credentials-local` 源码与 README；2026-10-25 本地探针（第 3 节）；[发往模型的数据防护方案](model-data-protection-plan.md)。<br>
 **执行基线：** 每个 Attempt 一个独立 DSH ACP Worker（`--profile acp --patch`），不改变进程模型。
 
@@ -23,7 +23,7 @@
 | --- | --- |
 | R1 | **不做 DSH 持有凭据的阶段。** 原方案中由 Adapter 检查 `DSH_HOME` 凭据引用的做法不实施；路由生效（MR-S2）与[数据防护方案](model-data-protection-plan.md) DLP-S1 的模型网关同批交付 |
 | R2 | **路由用途只保留 `default`**（同日简化，取代“保留 `default` 与 `fallback`”）。不设备用路由与“换用备用模型重试”；模型故障时管理员更换默认路由，员工普通重试即可生效（重试会重新解析路由，4.2）。按 Agent、项目空间或部门选择路由的规则以后另行设计 |
-| R3 | **P2 真实验收**在现有 DeepSeek 官方与另一家外部厂商之间切换默认路由；具体厂商与凭据在 P2 前确定 |
+| R3 | ~~**P2 真实验收**在现有 DeepSeek 官方与另一家外部厂商之间切换默认路由；具体厂商与凭据在 P2 前确定~~（2026-11-23 随 P2 删除，见状态行） |
 | R4 | **DeepSeek 统一以 `openai-completions` 经 pi-ai 接入**，不使用 DSH 自带的 `dsh-llm-deepseek` 适配器；全部路由只有一条接入路径 |
 | R5 | **模型校验只保留网关一道。** 网关是唯一的转发者，按快照逐请求校验模型；不在 `session/new` 后校验 `currentValue`，也不用会话日志核对实际模型 |
 
@@ -34,7 +34,7 @@
 - **不做自动切换。** 路由失败即 Attempt 失败，不在 Attempt 内或自动重试中换用其他路由（R2）。
 - **`model_requirements` 保持拒绝。** Adapter 继续对声明了模型能力要求的运行返回 `MODEL_CAPABILITY_UNAVAILABLE`；目录标注的能力不能证明真实支持，另行设计。
 - **不升级 DSH。** 方案基于锁定的 `0.1.2-rc.1`；2026-10-25 核对 `0.2.1-rc.3`，ACP 对外协议未变化，升级不是本方案前提。
-- **不做推理强度配置。** 需要按路由设定推理档位时另行立项。
+- **不做推理强度配置。** 需要按路由设定推理档位时另行立项。DeepSeek 官方路由固定使用与 DSH 自带适配器相同的默认档位（4.3），不可配置，不属于本条。
 
 ## 3. 探针结论（2026-10-25）
 
@@ -105,10 +105,11 @@ DSH patch 中的 `baseURL` 固定为网关地址，`apiKeyEnv` 为令牌环境�
 
 | `provider_type` | 首批 | 生成内容 |
 | --- | --- | --- |
-| `openai-completions` | 开放 | 声明 pi-ai 路由：`api`、`baseURL`（网关）、`apiKeyEnv`（令牌变量）、`models`、`retryPolicy`；DeepSeek 模型条目另设 `compat.thinkingFormat: deepseek`（DLP-S0 验证） |
+| `openai-completions` | 开放 | 声明 pi-ai 路由：`api`、`baseURL`（网关）、`apiKeyEnv`（令牌变量）、`models`、`retryPolicy`；DeepSeek 模型条目另设 `compat.thinkingFormat: deepseek`（DLP-S0 验证）及推理与容量默认值（见下） |
 | `openai-responses`、`anthropic-messages` | 不开放 | 同上；探针覆盖后再加入 |
 
 - **DeepSeek 官方**配置为 `openai-completions`，`base_url` 为 DeepSeek 官方的 OpenAI 兼容地址，模型条目设置 `compat.thinkingFormat: deepseek`。现有种子数据中 `provider_type = 'deepseek-official'` 的 Provider 迁移为 `openai-completions`。不再使用 DSH 自带的 `dsh-llm-deepseek` 适配器；DLP-S0 已用真实 `deepseek-v4-pro` 验证推理内容与工具调用兼容（[数据防护方案 4.1](model-data-protection-plan.md#41-dlp-s0-探针结论2026-11-06)），DSH 升级时须复验。
+- **DeepSeek 推理与容量默认值（2026-11-25）：** 手工声明的 pi-ai 模型不带推理档位与容量：不声明 `reasoningEfforts` 时 pi-ai 视为不支持推理，请求既不开启思考也不带 `reasoning_effort`（由厂商服务端默认决定），输出上限与上下文落到 pi-ai 兜底值 32,768 与 262,144，且输出上限以 `max_completion_tokens` 发出。DeepSeek 官方路由因此在 patch 中补齐与 DSH 自带 `dsh-llm-deepseek` 适配器（`0.1.2-rc.1`）一致的默认值：路由级 `reasoning: high`；模型条目 `reasoningEfforts`（`off` 不写协议值，`low`、`high`、`max` 原样发送）、`compat.supportsReasoningEffort: true`、`compat.maxTokensField: max_tokens`（pi-ai 只按地址含 `deepseek.com` 识别 DeepSeek，patch 地址是网关，不指定时输出上限会以 DeepSeek 文档未列出的 `max_completion_tokens` 发出）、`maxTokens: 256000`、`contextWindow: 1000000`。请求因此带 `thinking: {type: enabled}` 与 `reasoning_effort: high`，显式关闭思考的请求发送 `thinking: {type: disabled}`；网关对这两个字段不遮盖、原样转发。默认值写在 `DEEPSEEK_ROUTE_DEFAULTS`，不可配置；DSH 升级时须对照其 DeepSeek 适配器的默认值复核。其他厂商的路由不设这些字段，保持厂商默认。这些默认值按 `base_url` 套用到 DeepSeek 官方的任何模型，不区分模型能力，与 DSH 自带适配器对未知模型的处理一致；接入不支持思考或输出上限更小的 DeepSeek 模型时须另行处理。MR-S3 P1 受控 DSH 用例核对上游实际收到的这三个参数（输出上限须为 `max_tokens`）。
 - 平台声明的 pi-ai 路由名统一加前缀 `dshw-<provider_key>`，避免与 DSH 内置路由同名（pi-ai 对重复注册的路由名在加载时失败）。
 - `retryPolicy` 由平台显式给出：`mode: normal`、有限的 `maxRetries`，并显式列出 `retryableCodes`（限流、服务端错误、超时、传输错误、空回复），**不重试其他 4xx**（含网关的令牌拒绝与数据防护拒绝），避免与平台 Attempt 重试叠加放大。DLP-S0 已确认 403、400 不被重试；408 是否归入超时未验证。
 
@@ -212,10 +213,10 @@ Adapter 目前有三条启动 DSH 的路径，只有正式执行使用路由：
 | 路由生效要等网关建好（R1 的代价） | MR-S1 可先行；MR-S2 与 DLP-S1 同批交付，分期见第 9 节 |
 | 没有备用路由，默认模型故障时需管理员介入（R2 的代价） | 四类错误码让员工端提示与管理员排障清楚区分；管理员更换默认路由后员工重试即生效 |
 | 配置错误在首个模型请求时才暴露（R5 的代价） | 由网关以 `MODEL_ROUTE_UNAVAILABLE` 明确失败，延迟仅为一次请求 |
-| pi-ai 协议兼容性差异（流式、工具调用、思考格式） | 首批只开放 `openai-completions`；每接入一个厂商须 P2 留证 |
+| pi-ai 协议兼容性差异（流式、工具调用、思考格式） | 首批只开放 `openai-completions`；P2 已删除，接入新厂商时由管理员在本机用真实密钥走通对话、工具调用与思考格式，并核对用量页 |
 | DSH 内置 `workflow` 工具参数允许按阶段覆盖 provider/model | 该工具不在[内置工具注册表](../../server/src/modules/runtime/builtin-tools.ts)，现被策略拒绝；放行前须评审；网关按快照校验模型，越权请求会被拒绝 |
 | 双层重试放大请求量 | 路由 `retryPolicy` 由平台显式设置，不重试其他 4xx |
-| 厂商错误文本各异，细分不准 | 以网关记录的状态码与错误码为准；无法归类时保留 `MODEL_INVOCATION_FAILED`；P2 补充真实厂商样本 |
+| 厂商错误文本各异，细分不准 | 以网关记录的状态码与错误码为准；无法归类时保留 `MODEL_INVOCATION_FAILED`；P2 已删除，真实厂商错误样本在实际使用中遇到时补充 |
 | DSH 升级后插件 id 或配置字段变化 | 纳入 DSH 升级准入检查：pi-ai 路由声明、`settings.path`、网关地址与令牌变量 |
 
 ## 7. 模型网关（与路由生效同批实施）
@@ -229,11 +230,11 @@ pi-ai 路由的 `baseURL` 指向平台模型网关，`apiKeyEnv` 为本 Attempt 
 | 层级 | 内容 |
 | --- | --- |
 | 单元 | patch 生成（带路由与无路由模式、有/无 MCP、缺 `--profile` 拒绝）、令牌注入不含值、网关令牌与模型校验、按网关记录的错误分类（含网关 403 与厂商 403 区分）、按用途解析默认路由、旧 Manifest 在升级后失败、用途与信任级别校验、各协议缓存 token 字段解析与缺失时记为 `null` |
-| P1 集成（MR-S2） | 受控 DSH + 网关 + 本地 OpenAI 兼容假上游（或 `dsh-llm-mock-server`）：路由生效、`key` 不为 `default` 的默认路由可被解析、模型未声明、共享 `settings.yaml` 存在同名路由、令牌越权与请求模型不符被拒、厂商 401 以 `MODEL_CREDENTIAL_INVALID` 结束、429 经 `retryPolicy` 重试仍失败后以 `MODEL_RATE_LIMITED` 结束、额度类错误以 `MODEL_QUOTA_EXHAUSTED` 结束且不被重试、5xx 与连接失败以 `MODEL_UPSTREAM_UNAVAILABLE` 结束、除 408/429/5xx 外的 4xx 不被重试、探测路径不发出模型请求、停用路由不影响进行中 Attempt、更换默认路由后重试使用新路由而 PF-04 恢复沿用快照 |
+| P1 集成（MR-S2） | 受控 DSH + 网关 + 本地 OpenAI 兼容假上游（或 `dsh-llm-mock-server`）：路由生效、`key` 不为 `default` 的默认路由可被解析、模型未声明、共享 `settings.yaml` 存在同名路由、令牌越权与请求模型不符被拒、厂商 401 以 `MODEL_CREDENTIAL_INVALID` 结束、429 经 `retryPolicy` 重试仍失败后以 `MODEL_RATE_LIMITED` 结束、额度类错误以 `MODEL_QUOTA_EXHAUSTED` 结束且不被重试、5xx 与连接失败以 `MODEL_UPSTREAM_UNAVAILABLE` 结束、除 408/429/5xx 外的 4xx 不被重试、探测路径不发出模型请求、停用路由不影响进行中 Attempt、更换默认路由后重试使用新路由（PF-04 恢复沿用快照 2026-11-23 起不列入，持久化等待不开放给 Agent） |
 | P1 集成（MR-S3） | `effective_model` 与用量归属、假上游返回缓存用量时计量记录与运行详情一致 |
-| P2 真实验收 | 目标 DSH 版本下，在 DeepSeek 官方与另一家外部厂商（R3，P2 前确定）之间切换默认路由：新 Attempt 的上游请求、网关记录与用量统计均指向新模型，两家厂商的缓存读写 token 被正确记录（或明确为未返回）；按 [PF-07 验收手册](../development/pf07-platform-acceptance.md) 留证 |
+| P2 真实验收（2026-11-23 删除，不执行，见状态行） | 目标 DSH 版本下，在 DeepSeek 官方与另一家外部厂商（R3，P2 前确定）之间切换默认路由：新 Attempt 的上游请求、网关记录与用量统计均指向新模型，两家厂商的缓存读写 token 被正确记录（或明确为未返回）；按 [PF-07 验收手册](../development/pf07-platform-acceptance.md) 留证 |
 
-Mock 或 P1 通过不能代替 P2，未完成 P2 前总览仍须标注路由生效“未真实验收”。
+Mock 或 P1 通过不能代替 P2。2026-11-23 验收人决定删除 P2（见状态行），总览不再标注路由生效“未真实验收”，改为写明验收范围。
 
 ## 9. 分期
 
@@ -241,8 +242,8 @@ Mock 或 P1 通过不能代替 P2，未完成 P2 前总览仍须标注路由生�
 | --- | --- | --- | --- |
 | MR-S1 治理数据补强（代码级已完成） | `provider_type` 枚举与历史取值迁移、`trust_level`、用途收敛与按用途解析、路由编辑与模型启停、管理端录入厂商密钥（加密保存，MR-S2 起生效）；不改变执行行为 | 无，可先行 | 管理端与接口用例通过；执行仍按 Profile 默认模型 |
 | DLP-S0 探针（已完成，2026-11-06） | 见数据防护方案 4.1：pi-ai 接 DeepSeek 的推理内容与工具调用兼容、4xx 不重试、429 与 5xx 按次数重试 | 无 | R4 可行；`web_search` 经网关（D12） |
-| MR-S2 + DLP-S1 路由生效与网关（代码级，2026-11-07） | Manifest `model_route`、统一 patch 生成器、令牌、网关校验转发与计量、平台加密凭据、模型错误细分 | MR-S1、DLP-S0（`web_search` 按数据防护方案 D12 经网关） | 所有正式执行经网关，路由决定实际模型；第 8 节 P1（MR-S2）通过（主要场景已在受控 DSH 通过，余项见状态行） |
-| MR-S3 证据与展示 | `effective_model` 与用量归属、运行详情、文档更新 | MR-S2 | 第 8 节 P1（MR-S3）与管理端用例通过 |
-| MR-P2 真实验收 | 第 8 节 P2 | MR-S3 | 留证完成，总览去掉“未真实验收” |
+| MR-S2 + DLP-S1 路由生效与网关（代码级，2026-11-07） | Manifest `model_route`、统一 patch 生成器、令牌、网关校验转发与计量、平台加密凭据、模型错误细分 | MR-S1、DLP-S0（`web_search` 按数据防护方案 D12 经网关） | 所有正式执行经网关，路由决定实际模型；第 8 节 P1（MR-S2）通过（方案点名的受控 DSH 余项 2026-11-23 补齐；其余四项不再补受控 DSH 用例，现有覆盖见状态行） |
+| MR-S3 证据与展示（P1 已通过，2026-11-23） | `effective_model` 与用量归属、运行详情、文档更新 | MR-S2 | 第 8 节 P1（MR-S3）与管理端用例通过 |
+| MR-P2 真实验收（2026-11-23 删除，不执行） | 第 8 节 P2 | MR-S3 | 以 2026-11-08 本机真实厂商验收结项，见状态行 |
 
 数据防护的识别与还原（DLP-S2）在网关链路上叠加，不阻塞 MR-S2/S3。

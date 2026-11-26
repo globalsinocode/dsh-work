@@ -4,7 +4,7 @@ import { envelope, readJsonBody, requireRequestIdentity, routeValidationFailed, 
 const basePath = '/api/workbench/v1'
 
 /**
- * Skill 创建专家方案 4.3：员工在草稿卡片上提交审核、撤回、预览文件。只操作本人的提交；
+ * 功能规则 5.6：员工在草稿卡片上提交审核、撤回、预览文件。只操作本人的提交；
  * 提交只能由员工在界面上发起（SC2），模型没有对应工具。
  */
 export function registerSkillSubmissionRoutes(router: Router, submissions: SkillSubmissionService) {

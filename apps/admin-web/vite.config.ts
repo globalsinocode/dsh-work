@@ -40,6 +40,8 @@ export default defineConfig({
     __DSH_WORK_DSH_COMMIT__: JSON.stringify(runtimeLock.commit ?? '—'),
     __DSH_WORK_DSH_PROTOCOL_VERSION__: JSON.stringify(runtimeLock.protocolVersion ?? '—'),
   },
+  // 源码映射只供服务端还原错误堆栈：不在产物中引用，发布时移出前端目录（错误记录方案 6.4）。
+  build: { sourcemap: 'hidden' },
   resolve: {
     alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) },
   },

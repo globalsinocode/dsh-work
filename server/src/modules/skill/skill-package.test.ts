@@ -132,7 +132,15 @@ test('resolves delegated Skills from the same archive and detects Python sandbox
   assert.ok(scripted.toolIds.includes('python_execute@1.0.0'))
   const scriptedBundle = { root: scripted, packages: [scripted], edges: [] }
   assert.equal(buildSkillInstallationPlan(scriptedBundle, { pythonSandboxAvailable: false }).compatibility.status, 'incompatible')
-  assert.equal(buildSkillInstallationPlan(scriptedBundle, { pythonSandboxAvailable: true }).compatibility.status, 'compatible')
+  // 未登记 python-entries 只给警告；登记后计划恢复为兼容。
+  const undeclared = buildSkillInstallationPlan(scriptedBundle, { pythonSandboxAvailable: true })
+  assert.equal(undeclared.compatibility.status, 'needs_review')
+  assert.deepEqual(undeclared.compatibility.issues.map(issue => [issue.code, issue.severity]), [['python_entries_undeclared', 'warning']])
+  const declaredSkill = sampleSkill.replace('description:', 'python-entries: [scripts/check.py]\ndescription:')
+  const declared = parseSkillPackage(zipSync({ 'SKILL.md': strToU8(declaredSkill), 'references/example.txt': strToU8('marker'), 'scripts/check.py': strToU8('print("ok")') }))
+  assert.equal(buildSkillInstallationPlan({ root: declared, packages: [declared], edges: [] }, { pythonSandboxAvailable: true }).compatibility.status, 'compatible')
+  assert.throws(() => parseSkillPackage(zipSync({ 'SKILL.md': strToU8(declaredSkill.replace('scripts/check.py]', 'scripts/gone.py]')), 'references/example.txt': strToU8('marker'), 'scripts/check.py': strToU8('print("ok")') })), /python-entries 登记的入口 scripts\/gone\.py 不在 Skill 目录中/)
+  assert.throws(() => parseSkillPackage(zipSync({ 'SKILL.md': strToU8(declaredSkill.replace('[scripts/check.py]', '[]')), 'references/example.txt': strToU8('marker'), 'scripts/check.py': strToU8('print("ok")') })), /python-entries 必须列出/)
 
   // 1b② (plan 4.8): scripts that hard-code the per-call sandbox mounts need review; env variables are fine.
   const fixedPaths = parseSkillPackage(zipSync({
@@ -166,7 +174,7 @@ test('continues only an explicit selection from a known source', () => {
 
 const pythonIndex = { stdlib: ['csv', 'os', 'sys', 'datetime', 'json'], modules: { pandas: ['pandas'], openpyxl: ['openpyxl'], docx: ['python-docx'] } }
 const scripted = (script: string, extra: Record<string, string> = {}) => parseSkillPackage(zipSync({
-  'SKILL.md': strToU8(sampleSkill), 'references/example.txt': strToU8('marker'), 'scripts/run.py': strToU8(script),
+  'SKILL.md': strToU8(sampleSkill.replace('description:', 'python-entries: [scripts/run.py]\ndescription:')), 'references/example.txt': strToU8('marker'), 'scripts/run.py': strToU8(script),
   ...Object.fromEntries(Object.entries(extra).map(([path, content]) => [path, strToU8(content)])),
 }))
 const planFor = (pkg: ReturnType<typeof parseSkillPackage>, pythonModules: typeof pythonIndex | null = pythonIndex) =>

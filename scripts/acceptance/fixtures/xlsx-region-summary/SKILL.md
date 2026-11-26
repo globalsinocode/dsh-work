@@ -1,7 +1,8 @@
 ---
 name: xlsx-region-summary
 description: 按分组列汇总员工上传的 Excel 或 CSV 表格（默认按“区域”汇总“金额”），输出汇总表 xlsx 与说明 md。用于验收脚本型 Skill 读取原始表格文件。
-version: 1.0.2
+version: 1.0.3
+python-entries: [scripts/summarize.py]
 ---
 
 # 表格分组汇总

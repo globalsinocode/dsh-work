@@ -93,7 +93,7 @@ function recommendationsForMessage(message: ChatMessage) {
   return (task.value.recommendations ?? []).filter(item => item.runId === message.runId)
 }
 
-/** Skill 草稿卡片同样挂在该 Run 最后一条助手回复下（Skill 创建专家方案 4.3）。 */
+/** Skill 草稿卡片同样挂在该 Run 最后一条助手回复下（功能规则 5.6）。 */
 function skillDraftsForMessage(message: ChatMessage) {
   if (message.role !== 'assistant' || !message.runId) return []
   if (lastAssistantIdByRun.value.get(message.runId) !== message.id) return []

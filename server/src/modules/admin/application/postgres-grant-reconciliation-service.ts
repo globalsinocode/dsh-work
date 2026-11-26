@@ -1,5 +1,5 @@
 import type { DatabaseClient, DatabaseTransaction } from '../../../infrastructure/postgres/database.ts'
-import { authorizationDenied } from '../../../domain/authorization-errors.ts'
+import { requireAdminModuleActor } from '../../authorization/admin-actor.ts'
 import type { PostgresOperationsService } from './postgres-operations-service.ts'
 import { invalidRequest, notFound, stateConflict } from '../../../domain/request-errors.ts'
 
@@ -147,7 +147,7 @@ export class PostgresGrantReconciliationService {
    */
   async reconcile(input: { sourceIds: string[]; actor: string }): Promise<ReconcileGrantSourcesResult> {
     const sourceIds = normalizeSourceIds(input.sourceIds)
-    await this.requirePlatformAdmin(input.actor)
+    await this.requireConnectorAdmin(input.actor)
 
     const reconciled = await this.database.begin(async transaction => {
       // Lock order matters: the member service takes the workspace row lock and
@@ -225,21 +225,9 @@ export class PostgresGrantReconciliationService {
     }
   }
 
-  private async requirePlatformAdmin(userId: string) {
-    const [row] = await this.database<{ id: string }[]>`
-      select u.id from users u
-       where u.tenant_id = ${tenantId} and u.id = ${userId} and u.status = 'active'
-         and exists (
-           select 1 from user_roles ur
-           join roles r on r.tenant_id = ur.tenant_id and r.id = ur.role_id
-            where ur.tenant_id = u.tenant_id and ur.user_id = u.id
-              and ur.source_key = 'local' and r.status = 'active'
-              and (ur.valid_until is null or ur.valid_until > now())
-              and (r.permissions ? 'admin:*' or r.permissions ? 'admin:write')
-         )
-    `
-    if (!row) throw authorizationDenied('操作人不存在、已停用或不是平台管理员')
-    return row.id
+  /** 授权来源对账属于“工具与连接”模块（功能规则第 13 节）。 */
+  private async requireConnectorAdmin(userId: string) {
+    return (await requireAdminModuleActor(this.database, userId, 'connector', 'write')).id
   }
 }
 

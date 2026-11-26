@@ -4,31 +4,26 @@ import { createServer } from 'node:http'
 import { test } from 'node:test'
 
 import type { DatabaseClient } from '../infrastructure/postgres/database.ts'
-import { IdentityAccessError, OidcAuthService } from '../modules/identity/auth-service.ts'
+import { IdentityAccessError } from '../modules/identity/request-security.ts'
 import { loadIdentityConfiguration } from '../modules/identity/config.ts'
-import { registerOidcRoutes } from './auth-routes.ts'
+import { LocalAuthService } from '../modules/identity/local-auth-service.ts'
+import { registerLocalAuthRoutes } from './local-auth-routes.ts'
 import { classifyHttpError, Router } from './router.ts'
 
-/** Real origin validation, no provider, credentials, database or network stub for the decision. */
+/** Real origin validation, no credentials, database or network stub for the decision. */
 function originRouter() {
   const configuration = loadIdentityConfiguration({
-    NODE_ENV: 'development', DSH_WORK_AUTH_MODE: 'oidc',
+    NODE_ENV: 'development',
     DSH_WORK_SESSION_SECRET: 'origin-test-only-session-key-with-32-characters', DSH_WORK_COOKIE_SECURE: 'false',
-    AI_HUB_PLATFORM_URL: 'http://platform.localhost:8088', AI_HUB_APPLICATION_ID: 'origin-test-app',
-    AI_HUB_OIDC_ISSUER: 'http://issuer.localhost:8088', AI_HUB_CLIENT_ID: 'origin-test-client',
-    AI_HUB_CLIENT_SECRET: 'origin-test-only-client-secret',
-    AI_HUB_WORKBENCH_PORTAL_URL: 'http://localhost:4174',
-    AI_HUB_WORKBENCH_REDIRECT_URI: 'http://localhost:4190/auth/workbench/callback',
-    AI_HUB_ADMIN_PORTAL_URL: 'http://localhost:4180',
-    AI_HUB_ADMIN_REDIRECT_URI: 'http://localhost:4190/auth/admin/callback',
+    DSH_WORK_WORKBENCH_ORIGINS: 'http://localhost:4174',
+    DSH_WORK_ADMIN_ORIGINS: 'http://localhost:4180',
   })
-  assert.equal(configuration.mode, 'oidc')
-  // Origin rejection must happen before any database/provider call.
+  // Origin rejection must happen before any database call.
   const database = new Proxy(() => { throw new Error('unexpected database call') }, {
     get() { throw new Error('unexpected database access') },
   }) as unknown as DatabaseClient
   const router = new Router()
-  registerOidcRoutes(router, new OidcAuthService(configuration, database))
+  registerLocalAuthRoutes(router, new LocalAuthService(configuration, database))
   return router
 }
 

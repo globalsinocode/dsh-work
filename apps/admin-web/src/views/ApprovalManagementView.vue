@@ -84,7 +84,7 @@ onMounted(load)
         <el-table-column label="有效期" min-width="165"><template #default="{ row }">{{ formatTime(row.expiresAt) }}</template></el-table-column>
         <el-table-column label="操作" fixed="right" width="150">
           <template #default="{ row }">
-            <template v-if="row.status === 'pending' && auth.canManage">
+            <template v-if="row.status === 'pending' && auth.canWrite('agent')">
               <el-button link type="primary" @click="resolve(row, 'approved')">批准</el-button>
               <el-button link type="danger" @click="resolve(row, 'rejected')">拒绝</el-button>
             </template>

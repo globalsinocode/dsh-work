@@ -124,8 +124,7 @@ test('候选人搜索支持按姓名过滤，离职/停用/非业务/无应用�
   await createDirectoryUser('user-1a-filter-disabled', '员工停用张伟', { status: 'disabled' })
   await createDirectoryUser('user-1a-filter-nonbusiness', '员工平台张伟', { business: false })
   await createDirectoryUser('user-1a-filter-no-access', '员工无权张伟', { grantWorkbench: false })
-  // 独立账号（本地）员工与 AI Hub 员工同等可选。
-  await createDirectoryUser('user-1a-filter-local', '员工本地张伟', { provider: 'local' })
+  await createDirectoryUser('user-1a-filter-local', '员工本地张伟')
 
   const search = await api('GET', `/api/workbench/v1/workspaces/${workspaceId}/member-candidates?query=${encodeURIComponent('张伟')}`, { as: ownerId })
   assert.equal(search.status, 200)
@@ -348,7 +347,7 @@ test('停用、非业务员工、无应用访问资格与未知员工均不能�
   await createDirectoryUser('user-1a-add-inv-disabled', '停用员工', { status: 'disabled' })
   await createDirectoryUser('user-1a-add-inv-nonbusiness', '平台员工', { business: false })
   await createDirectoryUser('user-1a-add-inv-noaccess', '无权员工', { grantWorkbench: false })
-  await createDirectoryUser('user-1a-add-inv-local', '本地员工', { provider: 'local' })
+  await createDirectoryUser('user-1a-add-inv-local', '本地员工')
 
   const disabled = await api('POST', `/api/workbench/v1/workspaces/${workspaceId}/members`, {
     as: ownerId,
@@ -1245,7 +1244,7 @@ function testApiAuthenticator(request: import('node:http').IncomingMessage): Pro
     permissions: ['workbench:use'],
     dataScopes: ['enterprise:authorized'],
     authorizationVersion: 1,
-    identityProvider: 'ai-hub-oidc',
+    identityProvider: 'local-password',
   })
 }
 
@@ -1255,7 +1254,6 @@ async function createDirectoryUser(
   options: {
     status?: 'active' | 'disabled'
     business?: boolean
-    provider?: 'ai-hub' | 'local'
     department?: string | null
     grantWorkbench?: boolean
   } = {},
@@ -1267,7 +1265,7 @@ async function createDirectoryUser(
     ) values (
       ${id}, ${tenantId}, ${`directory:${id}`}, ${displayName},
       ${options.department ?? null}, ${options.status ?? 'active'},
-      ${options.provider ?? 'ai-hub'}, ${options.business ?? true}
+      'local', ${options.business ?? true}
     )
   `
   if (options.grantWorkbench ?? true) {

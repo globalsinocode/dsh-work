@@ -1,7 +1,7 @@
 /**
  * P0 browser smoke API: deterministic in-memory data and test identities.
  * Test-only. The application entry point (main.ts) never imports this module;
- * production always uses PostgreSQL with password or AI Hub sessions.
+ * production always uses PostgreSQL with password or DingTalk sessions.
  */
 import { registerAssistantRoutes } from '../../http/admin/assistant-routes.ts'
 import { registerModelGovernanceRoutes } from '../../http/admin/model-routes.ts'
@@ -34,6 +34,11 @@ import { SmokeDataProtectionService } from './data-protection-service.ts'
 import { SmokeModelUsageService } from './model-usage-service.ts'
 import { registerSmokeProjectRoutes } from './project-routes.ts'
 import { SmokeRepository } from './smoke-repository.ts'
+import { SmokeErrorRecordsService } from './error-records-service.ts'
+import { registerErrorRecordsRoutes } from '../../http/admin/error-records-routes.ts'
+import { registerClientErrorRoutes } from '../../http/client-error-routes.ts'
+import { registerUsageAnalyticsRoutes } from '../../http/admin/usage-analytics-routes.ts'
+import { SmokeUsageAnalyticsService } from './usage-analytics-service.ts'
 import { registerUnavailableWorkbenchCommandRoutes } from './unavailable-routes.ts'
 import { WorkbenchQueryService } from './workbench-query-service.ts'
 import { registerPrototypeArtifactFileRoutes, registerWorkbenchRoutes } from './workbench-routes.ts'
@@ -44,7 +49,7 @@ export function createSmokeRouter() {
   const router = new Router({ authenticateApi: testApiAuthenticator })
   // The login pages treat this mode as "already signed in with a test identity".
   for (const audience of ['workbench', 'admin']) {
-    router.get(`/auth/${audience}/configuration`, () => ({ mode: 'prototype', localEnabled: false, aiHubEnabled: false }))
+    router.get(`/auth/${audience}/configuration`, () => ({ mode: 'prototype', localEnabled: false }))
   }
   // Same registration order as the former in-memory server mode.
   registerUnavailableWorkbenchCommandRoutes(router)
@@ -71,6 +76,10 @@ export function createSmokeRouter() {
   const modelUsage = new SmokeModelUsageService()
   registerAdminRoutes(router, new AdminQueryService(repository, modelUsage))
   registerModelUsageRoutes(router, modelUsage, 'prototype-memory')
+  registerErrorRecordsRoutes(router, new SmokeErrorRecordsService(), 'prototype-memory')
+  // 冒烟只校验上报能发出并通过结构校验（OBS-E2E-03）；不入库，来源校验由服务端单测覆盖。
+  registerClientErrorRoutes(router, { record: async () => undefined, recordPageViews: async (...args) => args[2].length, authenticate: testApiAuthenticator, validateOrigin: () => undefined })
+  registerUsageAnalyticsRoutes(router, new SmokeUsageAnalyticsService(), 'prototype-memory')
   registerDataProtectionRoutes(router, new SmokeDataProtectionService(), 'prototype-memory')
   registerModelGovernanceRoutes(router, new ModelGovernanceService(new MemoryModelGovernanceRepository()))
   registerOrganizationRoutes(router, new MemoryOrganizationStore(), 'prototype-memory')

@@ -126,8 +126,7 @@ export class ExecutionAuthorizationGate {
     if (isAdminRunPurpose(manifest.purpose)) {
       if (!this.deps.authorization) return { denied: true, reason: '管理授权服务不可用' }
       try {
-        if (manifest.purpose === 'admin-assistant') await this.deps.authorization.requireAdminReader(manifest.user_context.user_id)
-        else await this.deps.authorization.requirePlatformAdmin(manifest.user_context.user_id)
+        await this.deps.authorization.requireAdminRunPurpose(manifest.user_context.user_id, manifest.purpose)
         if (manifest.agent_version_id) await this.deps.authorization.assertAgentPrincipalSnapshot(
           manifest.agent_version_id, manifest.user_context.role_ids, manifest.data_scopes,
         )

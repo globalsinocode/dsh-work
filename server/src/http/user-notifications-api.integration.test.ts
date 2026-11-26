@@ -37,7 +37,7 @@ import { registerWorkspaceActivityRoutes } from './workbench/workspace-activity-
 import { registerWorkspaceMemberRoutes } from './workbench/workspace-member-routes.ts'
 import { registerWorkspaceAgentMemberRoutes } from './workbench/workspace-agent-member-routes.ts'
 
-// NC-01、NC-02（e2e/catalog/notifications.md，站内通知方案 NC-S1）：与本人相关的四类事件各产生一条通知，
+// NC-01、NC-02（e2e/catalog/notifications.md，功能规则 3.7）：与本人相关的四类事件各产生一条通知，
 // 读取时按当前权限解析名称；未读、已读、静音与打开群组时 @ 通知一并已读。
 
 const tenantId = 'tenant-dsh-work'
@@ -471,7 +471,7 @@ function pick(value: unknown, keys: string[]) {
 async function createDirectoryUser(id: string, displayName: string) {
   await database`
     insert into users (id, tenant_id, external_subject, display_name, department_id, status, identity_provider, business_user)
-    values (${id}, ${tenantId}, ${`directory:${id}`}, ${displayName}, null, 'active', 'ai-hub', true)
+    values (${id}, ${tenantId}, ${`directory:${id}`}, ${displayName}, null, 'active', 'local', true)
   `
   await database`
     insert into user_roles (tenant_id, user_id, role_id, source_key)
@@ -494,7 +494,7 @@ function testApiAuthenticator(request: import('node:http').IncomingMessage): Pro
     subject: `directory:${userId}`,
     profile: { id: userId, name: userId, title: '员工', department: '测试部门', avatarText: '测', role: 'employee', dataScopes: [] },
     roleIds: ['role-employee'], permissions: ['workbench:use'], dataScopes: [], authorizationVersion: 1,
-    identityProvider: 'ai-hub-oidc',
+    identityProvider: 'local-password',
   })
 }
 

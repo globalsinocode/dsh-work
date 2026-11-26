@@ -58,7 +58,7 @@ export interface OrchestrationDependencies {
   /** 项目空间 S2：项目档案与档案员整理批次。 */
   readonly projectArchive?: ProjectArchivePort
   readonly toolChecks?: ExecutionToolCheckPort
-  /** 平台内置 Skill：员工侧 Agent 运行按覆盖与紧急停用装配（builtin-skills-plan 5.3）。 */
+  /** 平台内置 Skill：员工侧 Agent 运行按覆盖与紧急停用装配（功能规则 5.5）。 */
   readonly builtinSkills?: BuiltinSkillCatalog
   readonly tasks?: TaskRepository
   readonly automationMaxConcurrent: number

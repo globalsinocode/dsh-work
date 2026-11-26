@@ -31,7 +31,7 @@ export interface ExecutionToolCheckPort {
 }
 
 type AuthorizationPort = Pick<PostgresAuthorizationService,
-  'workspaceTypeOf' | 'authorizeRuntime' | 'authorizeTeamRunExecution' | 'requireAdminReader' | 'requirePlatformAdmin' | 'requireActiveAgentPrincipal' | 'assertAgentPrincipalSnapshot'>
+  'workspaceTypeOf' | 'authorizeRuntime' | 'authorizeTeamRunExecution' | 'requireAdminRunPurpose' | 'requireActiveAgentPrincipal' | 'assertAgentPrincipalSnapshot'>
   & Partial<Pick<PostgresAuthorizationService, 'assertAgentRoutineRun' | 'sessionSelectedSkillReference' | 'installedSkillReferences'>>
 
 /** All checks use live grants and pinned versions. This never rewrites the Manifest. */
@@ -52,8 +52,7 @@ export async function assertCurrentExecutionAuthorization(
     // 前缀但同样是管理侧（无工作空间绑定），漏判会落入下方通用分支被
     // 「缺少固定工作空间」误拒；automation 不在集合内，继续走工作空间复核。
     if (isAdminRunPurpose(manifest.purpose)) {
-      if (manifest.purpose === 'admin-assistant') await authorization.requireAdminReader(manifest.user_context.user_id)
-      else await authorization.requirePlatformAdmin(manifest.user_context.user_id)
+      await authorization.requireAdminRunPurpose(manifest.user_context.user_id, manifest.purpose)
       if (manifest.agent_version_id) {
         await authorization.assertAgentPrincipalSnapshot(
           manifest.agent_version_id, manifest.user_context.role_ids, manifest.data_scopes,

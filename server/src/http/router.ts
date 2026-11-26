@@ -9,6 +9,10 @@ import type {
   RequestIdentity,
 } from '../modules/identity/types.ts'
 import { invalidRequest, stateConflict } from '../domain/request-errors.ts'
+import { decideAdminRouteAccess, type AdminRouteView } from '../domain/admin-permissions.ts'
+import type { ServerFailure } from '../domain/error-records.ts'
+
+export type { ServerFailure }
 
 export interface ApiMeta {
   api: 'workbench' | 'admin' | 'system'
@@ -25,6 +29,8 @@ export interface RouteContext {
   params: Record<string, string>
   url: URL
   identity?: RequestIdentity
+  /** 管理端读取的数据视图（功能规则第 13 节）；未设置等同 `full`。 */
+  adminView?: AdminRouteView
 }
 
 export interface HttpResult {
@@ -59,8 +65,22 @@ export class Router {
   private readonly routes: RouteDefinition[] = []
   private readonly authenticateApi?: ApiAuthenticator
 
-  constructor(options: { authenticateApi?: ApiAuthenticator } = {}) {
+  /**
+   * 只供浏览器测试夹具使用：放行夹具自建的 `/api/admin/v1/test/...` 取证接口（功能规则第 13 节的
+   * 默认拒绝不认识这些路径）。生产入口不得传入，架构检查会拦截。
+   */
+  private readonly testOnlyAdminPaths?: (path: string) => boolean
+  private readonly onServerFailure?: (failure: ServerFailure) => void
+
+  constructor(options: {
+    authenticateApi?: ApiAuthenticator
+    testOnlyAdminPaths?: (path: string) => boolean
+    /** 服务端 5xx 时调用（错误记录入库）；必须自行吞掉异常，不得影响响应。 */
+    onServerFailure?: (failure: ServerFailure) => void
+  } = {}) {
     this.authenticateApi = options.authenticateApi
+    this.testOnlyAdminPaths = options.testOnlyAdminPaths
+    this.onServerFailure = options.onServerFailure
   }
 
   get(path: string, handler: RouteHandler) {
@@ -126,20 +146,27 @@ export class Router {
       return
     }
 
+    let params: Record<string, string> = {}
+    let identity: RequestIdentity | undefined
     try {
       const match = route.pattern.exec(url.pathname)
-      const params = Object.fromEntries(
+      params = Object.fromEntries(
         route.parameterNames.map((name, index) => [name, decodeURIComponent(match?.[index + 1] ?? '')]),
       )
       const audience = apiAudience(url.pathname)
-      const identity = audience && this.authenticateApi
+      identity = audience && this.authenticateApi
         ? await this.authenticateApi(request, audience)
         : undefined
-      if (identity) assertApiRouteAccess(identity, url.pathname, request.method)
-      const result = await route.handler(request, { params, url, identity }, response)
+      const adminView = !identity || this.testOnlyAdminPaths?.(url.pathname)
+        ? 'full'
+        : assertApiRouteAccess(identity, url.pathname, request.method)
+      const result = await route.handler(request, { params, url, identity, adminView }, response)
       if (response.headersSent || response.writableEnded) return
       if (isHttpResult(result)) {
-        if (result.status >= 400 && result.status <= 599) logErrorResult(result, method, route.path)
+        if (result.status >= 400 && result.status <= 599) {
+          const logged = logErrorResult(result, method, route.path)
+          if (result.status >= 500) this.reportServerFailure({ ...logged, method, routePath: route.path, status: result.status, params, userId: identity?.userId ?? null })
+        }
         writeJson(response, result.status, result.body)
       } else writeJson(response, 200, result)
     } catch (error) {
@@ -147,11 +174,25 @@ export class Router {
       logHttpFailure({ traceId: failure.error.traceId, method, path: route.path,
         status: failure.status, code: failure.error.code, error,
         safeMessage: failure.error.message, responseStarted: response.headersSent || response.writableEnded })
+      if (failure.status >= 500) {
+        this.reportServerFailure({ traceId: failure.error.traceId, method, routePath: route.path, status: failure.status,
+          code: failure.error.code, errorMessage: error instanceof Error ? error.message : failure.error.message,
+          params, userId: identity?.userId ?? null })
+      }
       if (response.headersSent || response.writableEnded) {
         response.end()
         return
       }
       writeJson(response, failure.status, { error: failure.error })
+    }
+  }
+
+  private reportServerFailure(failure: ServerFailure) {
+    if (!this.onServerFailure) return
+    try {
+      this.onServerFailure(failure)
+    } catch {
+      // 错误记录不得替代原有响应。
     }
   }
 }
@@ -180,8 +221,8 @@ export function classifyHttpError(error: unknown, path: string): { status: numbe
       421: '请从已配置的前端入口访问；请管理员检查允许入口及反向代理 Host/协议转发配置。',
       422: '按提示调整输入内容后重新提交。',
       500: `稍后重试；若问题持续，请将链路编号 ${traceId} 提供给管理员。`,
-      502: '稍后重试；若问题持续，请检查 AI Hub 与身份服务健康状态。',
-      503: '稍后重试；若问题持续，请检查 AI Hub 与身份服务健康状态。',
+      502: '稍后重试；若问题持续，请检查服务与数据库健康状态。',
+      503: '稍后重试；若问题持续，请检查服务与数据库健康状态。',
       504: '稍后重试；若持续发生，请管理员检查运行时或连接器健康状态。',
     }
     const explicit = 'suggestion' in error && typeof error.suggestion === 'string' ? error.suggestion : undefined
@@ -264,42 +305,20 @@ export function sessionAuthorizationContext(identity: RequestIdentity) {
   }
 }
 
+/**
+ * 管理端路由入口的模块权限判定（功能规则第 13 节）。对照表与判定在
+ * `domain/admin-permissions.ts`；未登记的管理端路径一律拒绝。返回本次请求的数据视图：
+ * 只凭 Agent 修改权限读取跨模块候选列表时为 `selector`，处理函数只返回精简字段。
+ */
 export function assertApiRouteAccess(
   identity: RequestIdentity,
   path: string,
   method: string | undefined,
-) {
-  if (identity.audience !== 'admin') return
-  const permissions = new Set(identity.permissions)
-  const isPlatformAdmin = permissions.has('admin:*')
-  if (path === '/api/admin/v1/session') return
-  if (!['GET', 'HEAD', 'OPTIONS'].includes(method ?? 'GET')) {
-    const isAssistantConversationCommand = path === '/api/admin/v1/assistant/messages'
-      || /^\/api\/admin\/v1\/assistant\/runs\/[^/]+\/(cancel|retry)$/.test(path)
-    if (path.startsWith('/api/admin/v1/identity/') && !isPlatformAdmin) {
-      throw routePermissionDenied('只有平台管理员可以修改员工授权和身份同步配置')
-    }
-    if (!isPlatformAdmin
-      && !permissions.has('admin:write')
-      && !(isAssistantConversationCommand && permissions.has('admin:read'))) {
-      throw routePermissionDenied('当前用户没有管理写权限')
-    }
-    return
-  }
-  const auditRoute = path === '/api/admin/v1/audit-events'
-    || path === '/api/admin/v1/operations/summary'
-    || path.startsWith('/api/admin/v1/operations/runs/')
-  const allowed = auditRoute
-    ? isPlatformAdmin
-      || permissions.has('audit:read')
-    : isPlatformAdmin
-      || permissions.has('admin:read')
-      || permissions.has('admin:write')
-  if (!allowed) {
-    throw routePermissionDenied(
-      auditRoute ? '当前用户没有审计读取权限' : '当前用户没有管理读取权限',
-    )
-  }
+): AdminRouteView {
+  if (identity.audience !== 'admin') return 'full'
+  const decision = decideAdminRouteAccess(identity.permissions, path, method)
+  if (!decision.allowed) throw routePermissionDenied(decision.message)
+  return decision.view
 }
 
 export async function readJsonBody<T>(request: IncomingMessage, limitBytes = 1024 * 1024): Promise<T> {
@@ -372,7 +391,7 @@ export function routePermissionDenied(message: string) {
 /** Explicit httpResult errors also get a diagnostic, without logging the surrounding payload.
  * Existing response bodies are not changed; absent trace IDs are server-side correlations only.
  */
-function logErrorResult(result: HttpResult, method: string, path: string) {
+function logErrorResult(result: HttpResult, method: string, path: string): { traceId: string; code: string; errorMessage: string } {
   const body = result.body
   const detail = body && typeof body === 'object' && 'error' in body
     && body.error && typeof body.error === 'object' ? body.error as Record<string, unknown> : {}
@@ -383,4 +402,5 @@ function logErrorResult(result: HttpResult, method: string, path: string) {
   const message = typeof detail.message === 'string' ? detail.message : '接口返回错误状态'
   logHttpFailure({ traceId, method, path, status: result.status, code,
     error: new Error(message), safeMessage: '接口返回错误状态', responseStarted: false })
+  return { traceId, code, errorMessage: message }
 }

@@ -3,7 +3,7 @@
   "info": {
     "title": "dsh-work 登录 API",
     "version": "1.0.0",
-    "description": "正式部署始终提供账号密码；AI Hub 配置有效时自动提供显式入口，无登录模式选择。无自助注册或公开独立账号 Bootstrap；生产要求 HTTPS。"
+    "description": "正式部署只提供账号密码登录（员工端在钉钉客户端内另可免登），无登录模式选择。无自助注册或公开独立账号 Bootstrap；生产要求 HTTPS。AI Hub 登录已删除（迁移 0129）。"
   },
   "servers": [
     {
@@ -38,25 +38,20 @@
                   "additionalProperties": false,
                   "required": [
                     "mode",
-                    "localEnabled",
-                    "aiHubEnabled"
+                    "localEnabled"
                   ],
                   "properties": {
                     "mode": {
                       "type": "string",
                       "enum": [
                         "local",
-                        "oidc",
                         "prototype"
-                      ]
+                      ],
+                      "description": "正式部署恒为 local；prototype 只出现在测试专用 P0 冒烟服务"
                     },
                     "localEnabled": {
                       "type": "boolean",
                       "description": "是否提供账号密码登录"
-                    },
-                    "aiHubEnabled": {
-                      "type": "boolean",
-                      "description": "是否允许用户主动选择 AI Hub 登录"
                     },
                     "dingtalk": {
                       "type": "object",
@@ -403,19 +398,6 @@
           }
         },
         "description": "注销对应 audience 的 Cookie；没有有效会话也可清理本机 Cookie。"
-      },
-      "get": {
-        "operationId": "logoutAiHubSession",
-        "summary": "仅启用 AI Hub 时提供；撤销当前门户会话并跳转 AI Hub 退出页",
-        "description": "跨站请求（Sec-Fetch-Site: cross-site）被拒绝；同时清理本地独立账号会话。",
-        "responses": {
-          "302": {
-            "description": "转到 AI Hub 退出页或本地登录页"
-          },
-          "403": {
-            "description": "跨站请求被拒绝"
-          }
-        }
       }
     },
     "/auth/{audience}/switch-account": {
@@ -438,151 +420,6 @@
         "responses": {
           "302": {
             "description": "转到本地登录页；新登录成功后使用新身份"
-          }
-        }
-      }
-    },
-    "/auth/{audience}/oidc/login": {
-      "parameters": [
-        {
-          "name": "audience",
-          "in": "path",
-          "required": true,
-          "schema": {
-            "type": "string",
-            "enum": [
-              "admin",
-              "workbench"
-            ]
-          }
-        }
-      ],
-      "get": {
-        "operationId": "startAiHubLogin",
-        "summary": "仅启用 AI Hub 时提供；用户主动选择后进入企业授权页面",
-        "parameters": [
-          {
-            "name": "return_to",
-            "in": "query",
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "302": {
-            "description": "转到 AI Hub；上游暂不可用时返回本地登录页并保留安全的 return_to"
-          },
-          "421": {
-            "description": "请求入口不在允许列表"
-          }
-        }
-      }
-    },
-    "/auth/admin/bootstrap": {
-      "get": {
-        "operationId": "startAdminBootstrapLogin",
-        "summary": "仅启用 AI Hub 且应用初始管理员尚未认领时提供；经 AI Hub 登录后认领初始管理员",
-        "parameters": [
-          {
-            "name": "return_to",
-            "in": "query",
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "302": {
-            "description": "转到 AI Hub 授权页"
-          },
-          "409": {
-            "description": "初始管理员已被认领"
-          }
-        }
-      }
-    },
-    "/auth/{audience}/oidc/switch-account": {
-      "parameters": [
-        {
-          "name": "audience",
-          "in": "path",
-          "required": true,
-          "schema": {
-            "type": "string",
-            "enum": [
-              "admin",
-              "workbench"
-            ]
-          }
-        }
-      ],
-      "get": {
-        "operationId": "switchAiHubAccount",
-        "summary": "仅启用 AI Hub 时提供；清除当前会话后要求 AI Hub 重新选择账号",
-        "parameters": [
-          {
-            "name": "return_to",
-            "in": "query",
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "302": {
-            "description": "转到 AI Hub；上游暂不可用时返回本地登录页"
-          },
-          "421": {
-            "description": "请求入口不在允许列表"
-          }
-        }
-      }
-    },
-    "/auth/{audience}/callback": {
-      "parameters": [
-        {
-          "name": "audience",
-          "in": "path",
-          "required": true,
-          "schema": {
-            "type": "string",
-            "enum": [
-              "admin",
-              "workbench"
-            ]
-          }
-        }
-      ],
-      "get": {
-        "operationId": "completeAiHubLogin",
-        "summary": "AI Hub 授权回调：校验 state 与事务 Cookie，签发当前门户的 Session",
-        "parameters": [
-          {
-            "name": "code",
-            "in": "query",
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "state",
-            "in": "query",
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "error",
-            "in": "query",
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "302": {
-            "description": "登录成功回到 return_to；失败转到带错误码的登录页"
           }
         }
       }
@@ -836,6 +673,425 @@
           },
           "503": {
             "description": "钉钉应用未配置（dingtalk_not_configured）或暂时无法连接钉钉（dingtalk_unavailable）；不降级为其他登录方式"
+          }
+        }
+      }
+    },
+    "/auth/{audience}/client-errors": {
+      "parameters": [
+        {
+          "name": "audience",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "enum": [
+              "admin",
+              "workbench"
+            ]
+          }
+        }
+      ],
+      "post": {
+        "operationId": "reportClientErrors",
+        "tags": [
+          "错误记录"
+        ],
+        "summary": "浏览器错误上报（登录前后都可调用）",
+        "description": "错误记录方案 6.2（OBS-S1）。请求体 ≤32 KB、每批 ≤20 条，结构严格校验，多余字段整批拒绝（422）；消息与堆栈在服务端脱敏后入库，不保存请求体、页面文字与查询参数。已登录时记员工，未登录不记身份、按来源 IP 更严格限流；超出限额的条目丢弃，仍返回 202。",
+        "parameters": [
+          {
+            "name": "Origin",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "必须与当前受信入口同源；其他网站发起的上报返回 403"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "text/plain": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "app",
+                  "reports"
+                ],
+                "properties": {
+                  "app": {
+                    "type": "string",
+                    "enum": [
+                      "workbench",
+                      "admin"
+                    ],
+                    "description": "必须与路径中的 audience 一致"
+                  },
+                  "reports": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 20,
+                    "items": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "kind"
+                      ],
+                      "properties": {
+                        "kind": {
+                          "type": "string",
+                          "enum": [
+                            "render",
+                            "script",
+                            "promise",
+                            "api",
+                            "notice",
+                            "load",
+                            "stream"
+                          ]
+                        },
+                        "message": {
+                          "type": "string",
+                          "maxLength": 2000,
+                          "description": "失败提示（notice）不得携带"
+                        },
+                        "stack": {
+                          "type": "string",
+                          "maxLength": 16000,
+                          "description": "服务端只保留帧位置；失败提示不得携带"
+                        },
+                        "route": {
+                          "type": "string",
+                          "pattern": "^[A-Za-z0-9_.:/-]{1,120}$",
+                          "description": "前端路由名，不是网址"
+                        },
+                        "traceId": {
+                          "type": "string",
+                          "pattern": "^trace-http-[0-9a-fA-F-]{36}$"
+                        },
+                        "runId": {
+                          "type": "string",
+                          "pattern": "^[A-Za-z0-9_.:-]{1,128}$"
+                        },
+                        "code": {
+                          "type": "string",
+                          "pattern": "^[A-Za-z0-9_]{1,80}$",
+                          "description": "失败提示必填"
+                        },
+                        "template": {
+                          "type": "string",
+                          "maxLength": 40,
+                          "description": "仅失败提示：动作名等固定文案"
+                        },
+                        "release": {
+                          "type": "string",
+                          "maxLength": 64
+                        },
+                        "count": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 1000
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "app",
+                  "reports"
+                ],
+                "properties": {
+                  "app": {
+                    "type": "string",
+                    "enum": [
+                      "workbench",
+                      "admin"
+                    ],
+                    "description": "必须与路径中的 audience 一致"
+                  },
+                  "reports": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 20,
+                    "items": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "kind"
+                      ],
+                      "properties": {
+                        "kind": {
+                          "type": "string",
+                          "enum": [
+                            "render",
+                            "script",
+                            "promise",
+                            "api",
+                            "notice",
+                            "load",
+                            "stream"
+                          ]
+                        },
+                        "message": {
+                          "type": "string",
+                          "maxLength": 2000,
+                          "description": "失败提示（notice）不得携带"
+                        },
+                        "stack": {
+                          "type": "string",
+                          "maxLength": 16000,
+                          "description": "服务端只保留帧位置；失败提示不得携带"
+                        },
+                        "route": {
+                          "type": "string",
+                          "pattern": "^[A-Za-z0-9_.:/-]{1,120}$",
+                          "description": "前端路由名，不是网址"
+                        },
+                        "traceId": {
+                          "type": "string",
+                          "pattern": "^trace-http-[0-9a-fA-F-]{36}$"
+                        },
+                        "runId": {
+                          "type": "string",
+                          "pattern": "^[A-Za-z0-9_.:-]{1,128}$"
+                        },
+                        "code": {
+                          "type": "string",
+                          "pattern": "^[A-Za-z0-9_]{1,80}$",
+                          "description": "失败提示必填"
+                        },
+                        "template": {
+                          "type": "string",
+                          "maxLength": 40,
+                          "description": "仅失败提示：动作名等固定文案"
+                        },
+                        "release": {
+                          "type": "string",
+                          "maxLength": 64
+                        },
+                        "count": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 1000
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "已接收；accepted 为入库条数，dropped 为超出限额丢弃的条数",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "data"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "accepted",
+                        "dropped"
+                      ],
+                      "properties": {
+                        "accepted": {
+                          "type": "integer"
+                        },
+                        "dropped": {
+                          "type": "integer"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "来源校验失败"
+          },
+          "422": {
+            "description": "内容类型、结构或长度不符合要求"
+          }
+        }
+      }
+    },
+    "/auth/{audience}/page-views": {
+      "parameters": [
+        {
+          "name": "audience",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "enum": [
+              "admin",
+              "workbench"
+            ]
+          }
+        }
+      ],
+      "post": {
+        "operationId": "recordPageViews",
+        "tags": [
+          "使用情况"
+        ],
+        "summary": "页面访问（只记已登录员工）",
+        "description": "错误记录与使用情况方案 OB8（OBS-S2）。只记路由名、所在端与是否在钉钉内，不记网址、查询参数与页面内容；同一员工同一端同一页面 30 分钟内只记一次；按员工每分钟 120 条限流，超出丢弃。未登录返回 401。",
+        "parameters": [
+          {
+            "name": "Origin",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "必须与当前受信入口同源"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "text/plain": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "app",
+                  "views"
+                ],
+                "properties": {
+                  "app": {
+                    "type": "string",
+                    "enum": [
+                      "workbench",
+                      "admin"
+                    ],
+                    "description": "必须与路径中的 audience 一致"
+                  },
+                  "views": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 20,
+                    "items": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "page"
+                      ],
+                      "properties": {
+                        "page": {
+                          "type": "string",
+                          "pattern": "^[A-Za-z0-9_.:/-]{1,120}$",
+                          "description": "前端路由名，不是网址"
+                        },
+                        "inDingtalk": {
+                          "type": "boolean"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "app",
+                  "views"
+                ],
+                "properties": {
+                  "app": {
+                    "type": "string",
+                    "enum": [
+                      "workbench",
+                      "admin"
+                    ],
+                    "description": "必须与路径中的 audience 一致"
+                  },
+                  "views": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 20,
+                    "items": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "page"
+                      ],
+                      "properties": {
+                        "page": {
+                          "type": "string",
+                          "pattern": "^[A-Za-z0-9_.:/-]{1,120}$",
+                          "description": "前端路由名，不是网址"
+                        },
+                        "inDingtalk": {
+                          "type": "boolean"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "已接收；recorded 为实际记录条数（去重后）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "data"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "recorded"
+                      ],
+                      "properties": {
+                        "recorded": {
+                          "type": "integer"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "未登录"
+          },
+          "403": {
+            "description": "来源校验失败"
+          },
+          "422": {
+            "description": "内容类型、结构或长度不符合要求"
           }
         }
       }

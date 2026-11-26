@@ -239,7 +239,6 @@ onMounted(() => contentStore.load())
 <template>
   <div class="ops-page runtime-page">
     <el-alert v-if="contentStore.error" :title="contentStore.error" type="error" show-icon @close="contentStore.error = ''" />
-    <el-alert v-if="authStore.isAuditor" type="info" show-icon :closable="false" title="当前为安全审计员视图，只能查看 Runtime 配置及健康状态。" />
 
     <section class="content-panel filter-panel">
       <div class="filter-bar">
@@ -289,7 +288,7 @@ onMounted(() => contentStore.load())
         <el-table-column label="操作" width="128" fixed="right">
           <template #default="scope">
             <el-button link type="primary" :icon="View" data-action="view-runtime" @click.stop="inspect(scope.row)">查看</el-button>
-            <el-button v-if="authStore.canManage" link type="primary" :icon="Setting" data-action="configure-runtime" @click.stop="openConfiguration(scope.row)">配置</el-button>
+            <el-button v-if="authStore.canWrite('connector')" link type="primary" :icon="Setting" data-action="configure-runtime" @click.stop="openConfiguration(scope.row)">配置</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -336,8 +335,8 @@ onMounted(() => contentStore.load())
           </el-table>
         </section>
         <div class="runtime-detail__actions">
-          <el-button v-if="authStore.canManage" :icon="Setting" data-action="configure-runtime-detail" @click="openConfiguration(selectedRuntime)">配置 Runtime</el-button>
-          <el-button v-if="authStore.canManage" type="primary" :loading="checkingId === selectedRuntime.id" data-action="check-runtime" @click="check(selectedRuntime)">执行健康检查</el-button>
+          <el-button v-if="authStore.canWrite('connector')" :icon="Setting" data-action="configure-runtime-detail" @click="openConfiguration(selectedRuntime)">配置 Runtime</el-button>
+          <el-button v-if="authStore.canWrite('connector')" type="primary" :loading="checkingId === selectedRuntime.id" data-action="check-runtime" @click="check(selectedRuntime)">执行健康检查</el-button>
         </div>
       </template>
     </el-drawer>

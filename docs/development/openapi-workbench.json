@@ -3,7 +3,7 @@
   "info": {
     "title": "dsh-work 员工工作台 API",
     "version": "0.8.0-agent-routine-results",
-    "description": "请求使用独立账号密码或 AI Hub OIDC 登录后由 dsh-work 签发的 HttpOnly 服务端 Session；认证模式由部署配置显式选择，工作台角色、权限和数据范围由 dsh-work 本地配置且不接受浏览器传入。每位用户具有唯一默认个人工作空间，所有 Session、文件与成果均归属个人或团队工作空间。"
+    "description": "请求使用独立账号密码（或钉钉容器内免登）登录后由 dsh-work 签发的 HttpOnly 服务端 Session；工作台角色、权限和数据范围由 dsh-work 本地配置且不接受浏览器传入。每位用户具有唯一默认个人工作空间，所有 Session、文件与成果均归属个人或团队工作空间。"
   },
   "servers": [
     {
@@ -11,9 +11,6 @@
     }
   ],
   "security": [
-    {
-      "enterpriseSession": []
-    },
     {
       "localWorkbenchSession": []
     }
@@ -40,7 +37,7 @@
         }
       }
     },
-    "/me/dingtalk-binding": {"get": {"operationId": "getMyDingTalkBinding", "summary": "用户中心 › 钉钉：本人的钉钉绑定（钉钉接入 DT-S1）。enabled 为部署是否配置了钉钉应用（AI Hub 账号恒为 false）；status 为 bound / unbound / invalid，含钉钉姓名与部门、绑定方式（本人 / 管理员及其姓名）、失效原因与是否被锁定自行绑定", "responses": {"200": {"$ref": "#/components/responses/Ok"}}}, "delete": {"operationId": "unbindMyDingTalk", "summary": "员工自行解除钉钉绑定：绑定失效并在同一事务中按 binding_id 撤销钉钉会话（含当前的钉钉会话），写审计；不锁定自行绑定，之后在钉钉内登录一次可重新绑定。没有有效绑定时返回 404", "responses": {"200": {"$ref": "#/components/responses/Ok"}, "404": {"$ref": "#/components/responses/Error"}}}},
+    "/me/dingtalk-binding": {"get": {"operationId": "getMyDingTalkBinding", "summary": "用户中心 › 钉钉：本人的钉钉绑定（钉钉接入 DT-S1）。enabled 为部署是否配置了钉钉应用；status 为 bound / unbound / invalid，含钉钉姓名与部门、绑定方式（本人 / 管理员及其姓名）、失效原因与是否被锁定自行绑定", "responses": {"200": {"$ref": "#/components/responses/Ok"}}}, "delete": {"operationId": "unbindMyDingTalk", "summary": "员工自行解除钉钉绑定：绑定失效并在同一事务中按 binding_id 撤销钉钉会话（含当前的钉钉会话），写审计；不锁定自行绑定，之后在钉钉内登录一次可重新绑定。没有有效绑定时返回 404", "responses": {"200": {"$ref": "#/components/responses/Ok"}, "404": {"$ref": "#/components/responses/Error"}}}},
     "/me/preferences": {
       "get": {
         "operationId": "getMyPreferences",
@@ -374,7 +371,7 @@
       "get": {
         "operationId": "listMyNotifications",
         "summary": "本人的站内通知",
-        "description": "站内通知方案 NC-S1：与本人相关的事件（@ 我、任务指派给我、我创建的任务完成、被加入项目、定时执行暂停或停止、定时任务没成功、Skill 审核结论），按时间倒序，只含最近 90 天。每条读取时按本人当前权限重新判断：不可见时 visible=false，且不返回名称与跳转目标。",
+        "description": "功能规则 3.7：与本人相关的事件（@ 我、任务指派给我、我创建的任务完成、被加入项目、定时执行暂停或停止、定时任务没成功、Skill 审核结论），按时间倒序，只含最近 90 天。每条读取时按本人当前权限重新判断：不可见时 visible=false，且不返回名称与跳转目标。",
         "parameters": [
           { "name": "status", "in": "query", "required": false, "schema": { "type": "string", "enum": ["all", "unread"], "default": "all" } },
           { "name": "cursor", "in": "query", "required": false, "schema": { "type": "string" } },
@@ -597,7 +594,7 @@
       "get": {
         "operationId": "listAvailableAgents",
         "summary": "按当前员工角色查询可用的已发布 Agent",
-        "description": "每项含 id、name、description、welcomeMessage、version、examplePrompts 与 canCreateSkills；canCreateSkills 为当前启用版本是否开启“可创建 Skill”，供 Skill 广场的“创建 Skill”入口找到 Skill 创建专家（Skill 创建专家方案 4.8）。",
+        "description": "每项含 id、name、description、welcomeMessage、version、examplePrompts 与 canCreateSkills；canCreateSkills 为当前启用版本是否开启“可创建 Skill”，供 Skill 广场的“创建 Skill”入口找到 Skill 创建专家（功能规则 5.6）。",
         "responses": {
           "200": {
             "$ref": "#/components/responses/Ok"
@@ -623,7 +620,7 @@
       "parameters": [{ "name": "submissionId", "in": "path", "required": true, "schema": { "type": "string" } }],
       "post": {
         "operationId": "submitSkillDraft",
-        "summary": "员工在草稿卡片上把本人的 Skill 草稿提交平台管理员审核（Skill 创建专家方案 4.3）",
+        "summary": "员工在草稿卡片上把本人的 Skill 草稿提交平台管理员审核（功能规则 5.6）",
         "description": "只能提交本人的、当前版本的、非不兼容的草稿；已待审核时重复提交不改变状态。同一员工同时待审核不超过 5 条，超出返回 409。模型没有对应工具，提交只能由员工发起。",
         "requestBody": {
           "required": true,
@@ -3580,7 +3577,7 @@
       "get": {
         "operationId": "getKnowledgeStatus",
         "summary": "企业知识库可用性与本人权限级别",
-        "description": "enabled 为 false 时员工端不显示“知识库”入口与“添加知识库”（WeKnora 未配置、AI Hub 账号或没有查看级别）。",
+        "description": "enabled 为 false 时员工端不显示“知识库”入口与“添加知识库”（WeKnora 未配置或没有查看级别）。",
         "responses": {
           "200": {
             "description": "成功",
@@ -3670,7 +3667,7 @@
         "operationId": "listKnowledgeBases",
         "parameters": [{ "name": "stats", "in": "query", "description": "false 时不读取 WeKnora 统计（documentCount、processingCount 为 0）。", "schema": { "enum": ["true", "false"] } }],
         "summary": "可见知识库",
-        "description": "授给本人所属部门、或上级部门勾选“包含下级”授给的知识库（weknora-knowledge-plan 5.3）。",
+        "description": "授给本人所属部门、或上级部门勾选“包含下级”授给的知识库（功能规则第 11 节）。",
         "responses": {
           "200": {
             "description": "成功",
@@ -4746,13 +4743,7 @@
   },
   "components": {
     "securitySchemes": {
-      "localWorkbenchSession": {"type": "apiKey", "in": "cookie", "name": "dsh_work_local_session", "description": "local 模式签发；生产使用 __Host- 前缀，与 OIDC Session 分离。"},
-      "enterpriseSession": {
-        "type": "apiKey",
-        "in": "cookie",
-        "name": "dsh_work_session",
-        "description": "AI Hub OIDC 回调后由 dsh-work 设置的不透明 HttpOnly Session Cookie；生产名称使用 __Host- 前缀。"
-      }
+      "localWorkbenchSession": {"type": "apiKey", "in": "cookie", "name": "dsh_work_local_session", "description": "独立账号或钉钉免登签发；生产使用 __Host- 前缀。"}
     },
     "parameters": {
       "WorkspaceId": {

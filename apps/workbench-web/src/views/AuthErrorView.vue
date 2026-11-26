@@ -7,15 +7,11 @@ import { useAuthStore } from '@/stores/auth'
 const route = useRoute()
 const authStore = useAuthStore()
 const errorCode = computed(() => typeof route.query.code === 'string' ? route.query.code : 'authentication_failed')
-const accountBlocked = computed(() => ['business_user_required', 'permission_denied', 'initial_admin_not_authorized', 'account_disabled'].includes(errorCode.value))
+const accountBlocked = computed(() => ['permission_denied', 'account_disabled'].includes(errorCode.value))
 const errorTitle = computed(() => accountBlocked.value ? '当前账号无法访问' : '登录失败')
 const errorDescription = computed(() => ({
-  business_user_required: '当前登录的是 AI Hub 平台管理账号，不能访问 dsh-work。请切换为业务员工账号。',
-  access_denied: '你取消了授权，或 AI Hub 未允许该账号访问工作台。',
   account_disabled: '该账号已停用，请联系平台管理员。',
   permission_denied: '当前业务员工账号尚未获得员工工作台权限，请联系 dsh-work 管理员授权。',
-  invalid_callback: '登录回调参数不完整，请重新发起登录。',
-  invalid_state: '登录会话已过期或状态校验失败，请重新登录。',
   session_unavailable: '暂时无法校验登录会话，请稍后重试。',
 }[errorCode.value] ?? '登录没有完成，请重新发起登录。'))
 </script>

@@ -5,7 +5,7 @@
 ### E2E-ENV-01 默认冒烟环境隔离
 
 **优先级：** P0 · **角色：** 本地开发者 / CI · **运行层级：** P0 冒烟服务、内存数据
-**前置数据：** 仓库可以保留配置开发数据库和正式登录的 `.env`；无需启动 PostgreSQL、AI Hub 或 DSH。
+**前置数据：** 仓库可以保留配置开发数据库和正式登录的 `.env`；无需启动 PostgreSQL 或 DSH。
 **验证：** `scripts/testing/playwright-p0-config.test.mjs` 与默认 `pnpm test:e2e` 全套冒烟。
 
 1. 直接执行 `pnpm test:e2e`，自动在独立端口启动员工端、管理端和测试专用冒烟服务（`scripts/testing/p0-smoke-server.ts`），不启动应用服务端。
@@ -40,7 +40,7 @@
 ### LOCAL-AUTH-P1 独立账号登录与管理
 
 **优先级：** P1 · **角色：** 平台管理员、普通员工 · **运行层级：** P1 集成用户旅程<br>
-**前置数据：** 专用可丢弃 PostgreSQL、独立账号认证模式、一次性初始化的合成管理员；不配置或访问 AI Hub，不使用真实模型<br>
+**前置数据：** 专用可丢弃 PostgreSQL、独立账号认证模式、一次性初始化的合成管理员；不使用真实模型<br>
 **spec：** `e2e/local-auth.integration.spec.ts`
 
 1. 未登录访问管理端，进入账号密码登录页；错误密码显示可理解的错误，正确密码返回原入口。
@@ -49,41 +49,40 @@
 4. 员工端与管理端首次登录完成改密后直接进入原访问页面，无需再次登录；当前门户获得新的登录会话，所有旧会话失效，旧密码不能登录。管理员重置后的首次改密遵循相同流程；密码校验失败留在改密页，不签发新会话、不跳转。外部返回地址不能跳出本站。
 5. 管理员停用员工，员工现有会话立即失效；重新启用后可重新登录。最后一个有效本地管理员不能停用或撤去管理员角色。
 6. 退出登录后回到登录页；窄屏表单可操作，键盘和表单标签可访问。
-7. 员工端与运营平台默认展示账号密码主入口，无自助注册。AI Hub 配置有效时显示“使用 AI Hub 账号登录”，点击后直接进入企业认证，保留原访问目标，清空密码。
-8. 未配置或配置无效时隐藏 AI Hub 入口，独立账号仍可用；配置加载失败可重试。上游故障返回账号密码页说明原因。
+7. 员工端与运营平台只展示账号密码登录，无自助注册，没有其他登录方式。
+8. 登录配置加载失败可重试。
 9. 新建账号的“登录账号、姓名、初始密码”标注必填星号；留空不能提交且在对应字段提示。新登录账号仅接受中国大陆 11 位手机号（可带 +86）或邮箱，部门与联系邮箱可选；旧账号仍可登录。提交重复的独立账号（包括已停用账号）时，在账号字段提示“登录账号已存在”，不创建身份、不变更已有授权；邮箱大小写或等价手机号写法不能绕过查重。
 
-**验收：** 账号、授权与会话均在 PostgreSQL 持久化；整个旅程不跳转或请求 AI Hub。账号开通、密码变更、停用和会话撤销保留审计且不记录密码。P1 不代替生产 HTTPS、密码交付和既有账号迁移验收。
+**验收：** 账号、授权与会话均在 PostgreSQL 持久化；整个旅程不跳转到外部身份平台。账号开通、密码变更、停用和会话撤销保留审计且不记录密码。P1 不代替生产 HTTPS、密码交付和既有账号迁移验收。
 
-### LOGIN-ENTRY-P1 默认密码登录与可选 AI Hub 入口
+### LOGIN-ENTRY-P1 只有账号密码登录
 
-**优先级：** P1 · **角色：** 员工、平台管理员 · **运行层级：** 隔离 PostgreSQL、受控 OIDC 入口及本地浏览器<br>
-**前置数据：** 两门户的合成独立账号、受控 AI Hub 配置；不访问真实 AI Hub、模型或业务库<br>
-**spec：** `e2e/local-auth.integration.spec.ts`、`server/src/modules/identity/portal-auth.integration.test.ts`
+**优先级：** P1 · **角色：** 员工、平台管理员 · **运行层级：** 隔离 PostgreSQL 及本地浏览器<br>
+**前置数据：** 两门户的合成独立账号；不访问模型或业务库<br>
+**spec：** `e2e/local-auth.integration.spec.ts`、`server/src/http/review-p2-origin.test.ts`
 
-1. 正式部署始终支持独立账号；AI Hub 根据接入配置自动可用，旧登录模式记录不影响启动或撤销会话。
-2. 点击“使用 AI Hub 账号登录”后直接进入对应门户的企业认证，不显示中间确认页，保留返回路径及切换账号意图；上游不可用时回到账号密码表单显示错误，不自动重试或切换身份。
-3. 成功登录一种身份后撤销并清理当前门户另一种身份的旧会话；不同提供方、不同门户的 Cookie 不能混用，两个提供方同时有 Cookie 时要求重新登录。
-4. 首次改密、退出、权限收回仍遵循原认证边界；本地登录不请求 AI Hub。
+1. 两端登录页只有账号密码表单，没有“其他登录方式”或 AI Hub 入口；访问登录页不发出任何外部身份请求，保留原访问目标。
+2. 窄屏下登录按钮可见、页面无横向滚动。
+3. 不在允许列表的入口返回 421，跨站请求返回 403。
 
-**验收：** 页面、HTTP 路由与会话选择均有回归证据；真实 AI Hub 授权、回调和生产部署另行验收。
+**验收：** 页面、HTTP 路由与会话均有回归证据；AI Hub 登录已删除（迁移 0129），原 OIDC 入口返回 404。
 
-### LOGIN-OPTIONS-P1 默认登录能力与独立账号边界
+### LOGIN-OPTIONS-P1 登录配置与员工授权列表
 
 **优先级：** P1 · **角色：** 平台管理员、只读管理员 · **运行层级：** P1 集成用户旅程<br>
-**前置数据：** 专用可丢弃 PostgreSQL、独立账号管理员、受控 OIDC 配置及独立的上游账号；不连接真实 AI Hub 或模型<br>
-**spec：** `e2e/login-options.integration.spec.ts`、`server/src/modules/identity/authentication-startup.integration.test.ts`
+**前置数据：** 专用可丢弃 PostgreSQL、独立账号管理员、一名普通员工与一名只读管理员；不连接模型<br>
+**spec：** `e2e/login-options.integration.spec.ts`、`server/src/modules/identity/authentication-startup.integration.test.ts`、`server/src/infrastructure/postgres/ai-hub-removal-migration.integration.test.ts`
 
 1. 管理员登录后主导航无“登录设置”，旧模式配置 API 不再提供读写；账号管理仍可使用。
-2. 未配置、配置不完整、配置有效但上游故障时，独立账号均可登录；配置有效时两端显示可直接跳转的 AI Hub 入口。仅配置旧门户地址和后端回调地址时，保留原回调且同时启用两种登录；显式配置的新旧入口冲突仍需提示，不能被兼容逻辑忽略。
-3. 员工授权列表的“来源”列显示“独立账号”或“AI Hub”。新建独立账号始终产生独立身份；姓名或资料邮箱相同也不合并，角色和个人数据各自归属。已有身份不迁移。
-4. AI Hub 员工的授权配置不显示“开通独立登录”或密码操作；旧绑定 API 及带既有用户 ID 的创建请求拒绝，不改变上游账号。
-5. 旧登录模式记录不参与启动、不会撤销现有会话；原 prototype 模式已移除，设置后服务拒绝启动。最后一位独立管理员不能被停用或移除权限。
-6. 员工列表独立展示姓名与邮箱、登录账号、来源、组织、角色、状态和最近活跃情况；独立账号显示本地用户名，AI Hub 账号显示同步的登录账号，不能把员工 UUID 当成账号。搜索登录账号可找到对应员工；空邮箱和无访问记录有明确反馈。
-7. 员工详情展示登录账号、来源、最近活跃及 AI Hub 用户标识、同步时间；只读管理员可查看这些信息，不能改动凭据或授权。桌面与较窄视口保持账号信息可读和行操作可达。
-8. 新建账号时，输入框失焦及提交均校验格式与账号是否存在。已同步 AI Hub 的登录账号（包括已停用账号）也参与查重，资料邮箱不作为登录账号；重复时在登录账号字段提示，不创建或绑定身份。查重失败保留输入并允许重试，旧输入的迟到结果不能覆盖新输入；提交时发现冲突仍保留表单并提示。
+2. 两端登录配置只返回 `mode: local` 与 `localEnabled`；运行配置中残留 `AI_HUB_*` 或旧认证模式时服务照常启动，启动日志列出这些变量，账号密码登录不受影响；原 OIDC 入口返回 404。
+3. 新建独立账号始终产生独立身份；姓名或资料邮箱相同也不合并，角色和个人数据各自归属。带既有用户 ID 的创建请求与旧绑定 API 被拒绝。
+4. 旧登录模式记录不参与启动、不会撤销现有会话；原 prototype 模式已移除，设置后服务拒绝启动。最后一位独立管理员不能被停用或移除权限。
+5. 员工列表只列出开通了登录账号的员工，展示姓名与邮箱、登录账号、组织、角色、状态和最近活跃情况，没有“来源”列；不能把员工 UUID 当成账号。搜索登录账号可找到对应员工；空邮箱和无访问记录有明确反馈。
+6. 员工详情展示登录账号、最近活跃与活动会话；只读管理员可查看，不能改动凭据或授权。桌面与较窄视口保持账号信息可读和行操作可达。
+7. 新建账号时，输入框失焦及提交均校验格式与账号是否存在（包括已停用账号），资料邮箱不作为登录账号；重复时在登录账号字段提示，不创建或绑定身份。查重失败保留输入并允许重试，旧输入的迟到结果不能覆盖新输入；提交时发现冲突仍保留表单并提示。
+8. 迁移 0129 删除残留的 AI Hub 会话、相关表和列；库中仍有 AI Hub 用户时迁移失败并整体回滚。
 
-**验收：** 浏览器验证入口、账号管理与绑定入口移除，隔离 PostgreSQL 验证启动、旧配置兼容和账号隔离；不删除或迁移旧身份、角色和业务数据。真实 AI Hub 与生产部署按 P2 另行验收。
+**验收：** 浏览器验证登录入口、账号管理与绑定入口移除，隔离 PostgreSQL 验证启动、旧配置只警告与账号隔离；不删除旧角色和业务数据。生产部署按 P2 另行验收。
 
 ## 管理端受控工具与操作计划旅程
 
@@ -218,6 +217,20 @@
 
 **验收：** 结果未知不会显示成确定失败，也不能被直接重试；对账留下操作人、时间和依据。真实 DSH 行为按 PF-MCP-P2 留证。
 
+### PF-MCP-03 MCP 连接器“发送员工身份”（外部应用调用上下文，EA-S1）
+
+**优先级：** P0（个人信息与按人授权） · **角色：** 连接器管理员、只读管理员、员工 · **运行层级：** 单元、隔离 PostgreSQL 集成（服务层，合成 Runtime）、P1 受控真实 DSH（一次性 PostgreSQL、平台真实入口、模型网关假上游与假外部应用，opt-in）与 P0 浏览器冒烟（管理端开关）；真实外部应用按 PF-MCP-P2 另留证<br>
+**前置数据：** 一个 Bearer 认证、凭据独占的 MCP Connector；一个无认证的 MCP Connector；个人空间、项目空间各一个，登录账号分别为手机号与邮箱、其中一人已绑定钉钉的员工<br>
+**spec：** `server/src/domain/mcp-call-context.test.ts`、`server/src/infrastructure/postgres/mcp-connector-governance.integration.test.ts`、`server/src/modules/tool/mcp-employee-identity-dsh.e2e.integration.test.ts`（P1）、`apps/admin-web/src/views/CapabilityManagementView.test.ts`、`e2e/mvp-smoke.spec.ts`
+
+1. 管理员在“MCP 连接器”打开 Bearer 认证 Connector 的详情，看到“发送员工身份”开关（默认关闭）及说明：开启后，结果只给一个人看的调用（员工本人的对话和个人定时任务，以及 Agent 主动任务）附带该员工的平台用户 ID、手机号、邮箱和钉钉账号；项目空间中结果多人可见的调用只告知“结果多人可见”。开启后列表中该 Connector 标出“发送员工身份”。
+2. 无认证的 Connector 不能开启，说明原因；凭据与其他 Connector 共用时不能开启，提示先在“更多”中“轮换 Token”。只读管理员只能查看开关状态。开关变化写入审计。
+3. 开启后，员工本人在个人空间的对话与定时任务运行时，该 Connector 的 MCP 请求带 `X-DSH-Work-Visibility: personal` 与该员工的 `X-DSH-Work-Viewer-*`（手机号去掉 `+86`；登录账号为邮箱时带邮箱；已绑定钉钉时带钉钉 userid）；项目空间中的运行（含结果归属空间为项目空间的定时任务）带 `shared`、不带员工标识；Agent 主动任务（含放在项目空间的）带 `personal`，员工标识为接收人。请求头都带 Run、Attempt 与 Agent 标识。
+4. 未开启的 Connector、发布验证与管理端运行不带调用上下文；开启后凭据被发现与其他 Connector 共用时，本次运行不发送员工身份。
+5. 调用审计记录每次调用是否带调用上下文及 `personal`/`shared`，管理端“最近调用”与对账可见。
+
+**验收：** 员工身份只发给管理员明确开启、Bearer 认证且凭据独占的 Connector；`personal`/`shared` 按结果实际给谁看判定；员工标识只出现在 `personal` 调用中；请求头只经环境变量注入、不写入 DSH patch 正文。服务层集成与冒烟不能证明真实外部应用的识别与过滤，按 PF-MCP-P2 留证。
+
 ### PF-MCP-P2 真实 MCP 与 DSH 发布前验收
 
 **优先级：** P0（发布门禁）
@@ -233,6 +246,7 @@
 1. 留存服务身份和发现清单摘要，使用至少两个不同 Agent 的真实员工任务分别触发一次成功 MCP Tool 调用，并核对业务只读结果和审计。
 2. 分别演练错误凭据、MCP 超时/取消、服务新增 Tool、Connector 停用和删除。创建 Run 前被拒绝时（如错误凭据），核对没有新建 Run 与工具调用，并留存 traceId；已经开始的运行核对 Run/Attempt 终态及后续调用是否停止。
 3. 检查 DSH Worker Patch 和环境边界，确认密钥正文未进入 PostgreSQL、Manifest、前端响应、Patch 文件或普通日志。
+4. 仅当该环境有开启“发送员工身份”的连接器时执行（EA-S1，PF-MCP-03；未使用的环境跳过并在留证中注明）。首个开启的真实外部应用：外部应用校验 Bearer 凭据并按 `X-DSH-Work-Viewer-Mobile` 识别员工；员工本人对话只拿到本人有权的数据，项目空间中的运行只拿到所有员工可见的数据且写入被拒绝；写入回执记录该员工为操作人；个人定时任务按本人查询消息。留存外部应用侧日志摘要（不含手机号原文）与调用审计中的 `call_context`。
 
 **验收：** 真实 DSH 为所有 Agent 只加载健康且能力快照已同步的 Connector；调用、失败、停用和删除均可追溯。P1 合成 Runtime、一次性 PostgreSQL和管理页面绿灯不能替代本层证据。
 
@@ -265,15 +279,15 @@
 
 ### PF-WAIT-P2 真实 DSH 与撤权验收
 
-> 已移出 PF-07 门禁：真实 Agent 审批固定为 `never`，暂不可执行。首个需要人工审批的动作准入时恢复，原因见[能力矩阵](../../docs/development/agent-platform-capabilities.v2.json)的 `deferred`。
+> 不属于 PF-07（2026-11-23 移出）：真实 Agent 审批固定为 `never`，暂不可执行。出现需要人工审批的业务动作时重新设计并进入门禁，原因见[能力矩阵](../../docs/development/agent-platform-capabilities.v2.json)的 `removed`。
 
-**优先级：** P0（恢复后的发布门禁）
+**优先级：** P0（持久化等待重新设计并进入门禁时，按新设计修订本条后执行）
 
 **角色：** 真实员工、平台管理员、安全管理员
 
 **运行层级：** P2 真实验收
 
-**前置数据：** 目标 DSH Lock/Adapter、真实 OIDC、批准的测试写动作与可查询权威回执、目标环境重启权限
+**前置数据：** 目标 DSH Lock/Adapter、真实账号、批准的测试写动作与可查询权威回执、目标环境重启权限
 
 **spec：** 受控发布环境验收记录（不纳入普通 CI）
 
@@ -285,7 +299,7 @@
 
 ## 平台内置 Skill
 
-设计见[平台内置 Skill 方案](../../docs/design/builtin-skills-plan.md)，规则见[功能规则 5.5](../../docs/development/feature-rules.md#55-平台内置-skill)。
+规则见[功能规则 5.5](../../docs/development/feature-rules.md#55-平台内置-skill)。
 
 ### BSK-01 管理端查看内置 Skill、设置覆盖场景与紧急停用
 
@@ -307,14 +321,14 @@
 **角色：** 员工、平台管理员
 **运行层级：** 专用可丢弃 PostgreSQL、受控测试身份与 Mock ACP Worker
 **前置数据：** 未固定任何 Skill 的已发布 Agent；一个已发布并标记覆盖 `html-page` 的 Skill；一个团队空间（只授权该 Agent，不授权额外 Skill）
-**spec：** `server/src/infrastructure/postgres/builtin-skills.integration.test.ts`、`server/src/modules/skill/builtin-skills.test.ts`、`server/src/modules/run/current-execution-authorization.test.ts`、`server/src/modules/runtime/runtime-adapter.test.ts`
+**spec：** `server/src/infrastructure/postgres/builtin-skills.integration.test.ts`、`server/src/infrastructure/postgres/admin-skill-installation.integration.test.ts`、`server/src/modules/skill/builtin-skills.test.ts`、`server/src/modules/run/current-execution-authorization.test.ts`、`server/src/modules/runtime/runtime-adapter.test.ts`
 
 1. 员工在个人空间与该 Agent 对话：Manifest 含三个内置 Skill（内联正文、`id@version`），装配 `activate_skill`；目录中内置 Skill 排在最后。
 2. 在团队空间与该 Agent 对话并让运行排队后再执行：派发授权与执行前复核都不因内置 Skill 报“工作空间未授权 Skill”。
 3. 为 Agent 固定标记覆盖 `html-page` 的 Skill 并发布，再对话：Manifest 中没有 HTML 页面内置 Skill，并记录被覆盖的内置 Skill 与覆盖者；另两个内置 Skill 仍在。员工从 Skill 广场选择该 Skill 时同样生效。
 4. 管理员在 Runtime 中紧急停用“文件分析”内置 Skill：新运行不再装配，Manifest 记录停用；执行中的运行再激活它时只拒绝这一次并告知模型，运行继续。
 5. 管理助手、Skill 安装与试运行、会话摘要、项目档案员运行的 Manifest 中没有内置 Skill。
-6. 以“（平台内置）”结尾的名称上传、链接安装或经旧文本接口创建 Skill，被拒绝并说明原因。
+6. 以“（平台内置）”结尾的名称上传或经链接安装 Skill，被拒绝并说明原因。
 
 **验收：** 内置 Skill 不需要 Skill 授权或空间授权，不进入依赖闭包；覆盖与停用确定性生效并可从 Manifest 追溯；系统与管理运行不受影响。
 
@@ -330,7 +344,9 @@
 2. 要求“整理成 Word 文档”：模型激活 Office 文档内置 Skill，成果 docx 可打开、通过成果登记。
 3. 在 Runtime 中紧急停用 `bash` 后重复第 1 步：回答为 Markdown 并说明无法生成 HTML，运行不失败。
 
-另需观察：模型调用 `activate_skill` 时传入的名称能否唯一匹配（目录行形如“文件分析（平台内置）（dsh-work-file-analysis@1.0.0）”，只传“文件分析”会得到“没有唯一匹配”）。
+另需观察：模型调用 `activate_skill` 是否一次成功（目录行形如“文件分析（平台内置）（dsh-work-file-analysis@1.1.0）”；`id@版本`、整行和不带“（平台内置）”的名称都能匹配，见[功能规则 5.3](../../docs/development/feature-rules.md)）。
+
+另需观察：“文件分析”是否在读取附件、计算之前就被激活（1.1.0 起按触发场景描述，HTML 页面与 Office 文档也要求先激活它），场景 1、2 都要看，并记录多次运行中的激活比例。
 
 **验收：** 留存 Run/Attempt、激活记录、成果与版本；与不装配内置 Skill 的同题产出对比的人工结论写入发布说明。P0/P1 绿灯不能替代本层。
 
@@ -340,7 +356,7 @@
 **角色：** 平台管理员
 **运行层级：** 专用可丢弃 PostgreSQL 与 Mock ACP Worker；管理端组件测试
 **前置数据：** 一个经 ZIP 安装、尚未发布的 Skill 草稿；同名的修正包
-**spec：** `server/src/infrastructure/postgres/admin-skill-installation.integration.test.ts`、`apps/admin-web/src/stores/content.test.ts`
+**spec：** `server/src/infrastructure/postgres/admin-skill-installation.integration.test.ts`、`server/src/infrastructure/postgres/m4-skill-management.integration.test.ts`、`server/src/infrastructure/postgres/review-p2-skill-errors.integration.test.ts`、`apps/admin-web/src/stores/content.test.ts`
 
 1. 草稿严格试运行未通过后上传修正包：安装被拒绝，提示在 Skill 详情的“版本历史”中放弃该草稿。
 2. 在“版本历史”的草稿行点“放弃草稿”并确认：从未发布过的 Skill 从列表移除；已发布过的 Skill 回到当前已发布版本。
@@ -348,8 +364,24 @@
 4. 经链接安装带依赖的 Skill：放弃入口 Skill 的草稿时，同一安装带入的依赖草稿一并停用，管理端列表随之更新；直接放弃依赖草稿被拒绝并提示放弃入口 Skill（即使该依赖以前单独作为入口安装过）。
 5. 另一次安装复用了同一份依赖草稿时，放弃被拒绝并列出复用它的 Skill；先放弃那个 Skill 的草稿后可以放弃。
 6. 来自员工提交的草稿被拒绝放弃，仍在“待审核”中处理。
+7. 已删除的文本接口留下的旧草稿（前置数据另构造：版本不带安装来源）：试运行、查询试运行进度与发布都被拒绝（`skill_legacy_draft_unsupported`），提示在“版本历史”中放弃后重新安装，不产生试运行记录；放弃后该 Skill 已发布的旧版本照常被引用、回滚、停用与启用，重新安装的新版本可以试运行并发布。
 
 **验收：** 被放弃的版本标为停用、安装记录取消、审计记录 `skill.draft.discard`；试运行证据与已发布版本不受影响；与停用版本内容相同的包重新安装时生成新草稿，不复用停用版本。
+
+### SKILL-UPGRADE-01 安装同名包生成已有 Skill 的下一版本
+
+**优先级：** P1
+**角色：** 平台管理员
+**运行层级：** 专用可丢弃 PostgreSQL 与 Mock ACP Worker
+**前置数据：** 一个经 ZIP 安装并已发布的 Skill；预置的“文档处理”Skill（不经安装进入，迁移 0130 补写安装名称）；迁移到 0129 的库中构造的旧 Skill（同名多行、名称已被占用、员工提交审核中）
+**spec：** `server/src/infrastructure/postgres/admin-skill-installation.integration.test.ts`、`server/src/infrastructure/postgres/skill-installation-key-backfill-migration.integration.test.ts`
+
+1. 上传与已发布 Skill 同名、内容不同的包：同一 Skill 生成下一版本草稿，已发布版本仍是当前版本；上传内容相同的包提示无需重复安装，Skill 列表不出现同名重复项。
+2. 发布 0.2.0 后回滚到 0.1.0，再上传新包：生成 0.3.0，不与已有版本号冲突。
+3. 上传与预置“文档处理”同名的包：生成它的 1.1.0 草稿，不新建同名 Skill；当前版本仍为 1.0.0。
+4. 迁移 0130：旧 Skill 补写安装名称，同名多行只补未停用、最早创建的一行；名称已被占用的和员工提交审核中的 Skill 不补。
+
+**验收：** 修改 Skill 只能经重新安装；安装命中已有 Skill 时只追加草稿版本，不改动已发布版本与 Agent 固定引用。
 
 ### SKILL-DEP-01 脚本依赖按执行镜像核对，换镜像后复查已发布 Skill
 
@@ -401,3 +433,72 @@
 
 1. 命中记录、识别规则和检测试用可用。
 2. 保密词表和白名单显示没有查看权限，接口返回 403，响应中没有词条内容。
+
+## 错误记录（OBS-S1）
+
+方案：[错误记录与使用情况方案](../../docs/design/error-tracking-usage-plan.md)。
+
+### OBS-E2E-01 管理员在“错误记录”查看归并后的问题与详情
+
+**优先级：** P0 · **角色：** 有“运营”查看权限的管理员 · **运行层级：** P0 冒烟（确定性内存数据）<br>
+**前置数据：** 员工端渲染错误、服务端 5xx（带运行编号）、白屏加载失败、未登录的钉钉免登失败、管理端接口失败各一组，另有一组“提示”类（员工看到的失败提示）<br>
+**spec：** `e2e/error-records.spec.ts`
+
+1. 从“安全与运维”进入“错误记录”：列表按问题归并，显示来源与类型、次数、影响人数、首次与最近发生时间、最近版本；默认不显示“提示”类。
+2. 按来源筛选为“服务端”，只剩服务端问题；勾选“显示提示类”后出现员工看到的失败提示。
+3. 点一行，详情从右侧打开：显示最近样本（时间、员工或“未登录”、页面或路由、客户端、版本、链路编号、运行编号）与堆栈；有运行编号的样本给出“在 Session 列表查看”。关闭后回到列表，列表宽度不受影响。
+4. 切到“运行问题”：按原因汇总失败、超时、取消与“成功但没有回答”的运行，并列出工具调用失败或被拒绝的次数。
+
+**验收：** 页面任何位置不出现请求体、对话正文或查询参数；没有“运营”查看权限的管理员导航中看不到该入口，接口返回 403。
+
+### OBS-E2E-02 按员工报来的链路编号查到前后端记录与关联运行
+
+**优先级：** P0 · **角色：** 有“运营”查看权限的管理员 · **运行层级：** P0 冒烟；关联口径由 PostgreSQL 集成测试补充（`error-records.integration.test.ts`）<br>
+**前置数据：** 同一链路编号下一条服务端失败与一条浏览器上报，服务端样本带运行编号<br>
+**spec：** `e2e/error-records.spec.ts`
+
+1. 在“编号查询”输入链路编号并查询：分别列出服务端失败、浏览器上报与关联运行（含失败原因）。
+2. 输入运行编号：列出该运行的失败信息与带此运行编号的样本。
+3. 输入不存在的编号：提示没有找到记录。
+
+**验收：** 接口链路编号只通过样本中的运行编号关联到运行，不做其他推断。
+
+### OBS-E2E-03 员工端异常与失败提示被上报
+
+**优先级：** P1 · **角色：** 员工；平台运维管理员 · **运行层级：** 前端单元测试（上报器）+ PostgreSQL 集成测试（接口入库、限流、脱敏）<br>
+**前置数据：** 测试员工身份；未登录请求<br>
+**spec：** `apps/workbench-web/src/utils/error-reporting.test.ts`（上报器在 `packages/ui-core/src/error-reporting.ts`）、`server/src/modules/observability/error-records.test.ts`、`server/src/http/client-error-routes.test.ts`、`server/src/infrastructure/postgres/error-records.integration.test.ts`；浏览器发出上报由 `e2e/error-records.spec.ts` 冒烟
+
+1. 员工端出现组件渲染错误、未处理的 Promise 拒绝、接口 5xx 与失败提示：每类在同一页面加载内只上报一次并计数，失败提示不带提示原文。
+2. 未登录页面（登录、钉钉免登）出错也能上报，不记员工身份。
+3. 上报内容中的密钥、手机号与网址参数被遮盖；堆栈只保留函数名、文件名与行列号。
+4. 来自其他网站、内容类型不符或字段多余的上报被拒绝；超过限额的上报被丢弃且不影响页面。
+5. 服务端 5xx 与浏览器上报以相同链路编号出现在同一次查询中。
+
+## 使用情况（OBS-S2）
+
+方案：[错误记录与使用情况方案](../../docs/design/error-tracking-usage-plan.md) 6.5“运营概览（使用情况）”。
+
+### OBS-E2E-04 管理员在“运营概览”查看一段时间的使用情况
+
+**优先级：** P0 · **角色：** 有“运营”查看权限的管理员 · **运行层级：** P0 冒烟（确定性内存数据）；统计口径由 PostgreSQL 集成测试补充（`usage-analytics.integration.test.ts`）<br>
+**前置数据：** 近 90 天内多名员工的对话、运行（含失败）、模型用量与页面访问；两个部门；至少一名有账号但期间内没有任何活动的员工<br>
+**spec：** `e2e/usage-overview.spec.ts`
+
+1. 进入“概览 › 运营概览”：默认近 30 天，显示活跃员工（含覆盖率）、日均活跃、新建对话、运行数与成功率、Token 消耗，以及每日活跃员工与运行数趋势。
+2. 切换到近 7 天与近 90 天，指标与趋势按周期重算；按部门筛选后指标只统计该部门员工。
+3. 看到 AI 同事使用排行、页面访问排行、入口分布（个人对话、项目空间、定时任务、主动任务，及钉钉内访问人数）、运行失败原因与部门覆盖率；“在错误记录中查看运行问题”跳到错误记录页。
+4. “按人明细”列出期间内活跃的员工：最近活跃、活跃天数、对话、运行（成功率）、Token、常用 AI 同事、常访问页面；可按姓名搜索。点员工姓名，详情从右侧打开，显示每日运行与功能分布，不显示对话标题与内容。
+5. “期间内未使用”列出有账号但期间内没有会话、运行或页面访问的员工，显示账号创建时间与最近一次活跃（从未使用时注明）。
+
+**验收：** 页面任何位置不出现对话标题、消息正文或附件名称；没有“运营”查看权限的管理员看不到该页面，接口返回 403。
+
+### OBS-E2E-05 员工与管理员的页面访问被记录
+
+**优先级：** P1 · **角色：** 员工；管理员 · **运行层级：** 前端单元测试（上报器）+ 服务端路由测试 + PostgreSQL 集成测试<br>
+**前置数据：** 已登录的测试身份；未登录请求<br>
+**spec：** `apps/workbench-web/src/utils/error-reporting.test.ts`、`server/src/http/client-error-routes.test.ts`、`server/src/infrastructure/postgres/usage-analytics.integration.test.ts`
+
+1. 已登录时切换页面，记录页面路由名、所在端（员工端或管理端）与是否在钉钉内打开；同一员工同一页面 30 分钟内只记一次。
+2. 未登录的页面访问不记录；来自其他网站或结构不符的请求被拒绝。
+3. 不记录网址、查询参数与页面内容。

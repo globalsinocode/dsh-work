@@ -60,7 +60,7 @@ before(async () => {
   const local = new LocalAuthService(config, database.client)
   adminId = (await local.bootstrap({ username: 'dt.settings.admin@example.invalid', name: '陈默', password })).userId
   employeeId = (await local.createAccount({ username: 'dt.settings.e@example.invalid', name: '员工', password }, adminId)).userId
-  await new IdentityAdministrationService(database.client, true).grantRole({ userId: employeeId, roleId: 'role-employee', actorId: adminId })
+  await new IdentityAdministrationService(database.client).grantRole({ userId: employeeId, roleId: 'role-employee', actorId: adminId })
 })
 
 after(async () => { if (database) await database.dispose() })

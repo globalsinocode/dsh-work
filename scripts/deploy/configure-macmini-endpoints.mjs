@@ -39,13 +39,11 @@ const updates = new Map([
   ['DSH_WORK_ADMIN_ORIGINS', adminOrigins.join(',')],
   ['DSH_WORK_WORKBENCH_DEFAULT_ORIGIN', workbenchDefault],
   ['DSH_WORK_ADMIN_DEFAULT_ORIGIN', adminDefault],
-  ['AI_HUB_WORKBENCH_PORTAL_URL', workbenchDefault],
-  ['AI_HUB_ADMIN_PORTAL_URL', adminDefault],
-  ['AI_HUB_WORKBENCH_REDIRECT_URI', `${workbenchDefault}/auth/workbench/callback`],
-  ['AI_HUB_ADMIN_REDIRECT_URI', `${adminDefault}/auth/admin/callback`],
 ])
+// AI Hub 登录已删除：以前写入的 AI Hub 入口与回调变量顺带删除（迁移 0129）。
+const removed = new Set(['AI_HUB_WORKBENCH_PORTAL_URL', 'AI_HUB_ADMIN_PORTAL_URL', 'AI_HUB_WORKBENCH_REDIRECT_URI', 'AI_HUB_ADMIN_REDIRECT_URI'])
 const seen = new Set()
-const result = source.split('\n').map((line) => {
+const result = source.split('\n').filter((line) => !removed.has(/^([A-Z][A-Z0-9_]*)=/.exec(line)?.[1] ?? '')).map((line) => {
   const match = /^([A-Z][A-Z0-9_]*)=/.exec(line)
   if (!match || !updates.has(match[1])) return line
   if (seen.has(match[1])) throw new Error(`runtime.env 包含重复变量 ${match[1]}`)

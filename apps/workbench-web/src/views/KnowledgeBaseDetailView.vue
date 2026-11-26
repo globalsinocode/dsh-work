@@ -13,7 +13,7 @@ import { useUiModeStore } from '@/stores/ui-mode'
 import { describeKnowledgeGrants, formatKnowledgeDate, formatKnowledgeDateTime } from '@/utils/knowledge'
 
 /**
- * 知识库详情（weknora-knowledge-plan 第 8 节）：面包屑、“文档”页签与右侧“知识库信息”，与项目空间
+ * 知识库详情（功能规则第 11 节）：面包屑、“文档”页签与右侧“知识库信息”，与项目空间
  * 详情一致。按钮只按服务端返回的 canManageDocuments / canManageBase 显示，最终权限由服务端校验。
  */
 const route = useRoute()

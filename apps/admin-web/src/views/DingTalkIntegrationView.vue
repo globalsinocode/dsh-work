@@ -5,18 +5,24 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessageBox } from 'element-plus'
 
 import { adminApi } from '@/api/client'
+import DingTalkBindingPanel from '@/components/dingtalk/DingTalkBindingPanel.vue'
 import DingTalkSettingsDialog from '@/components/dingtalk/DingTalkSettingsDialog.vue'
-import type { DingTalkIntegrationOverview, DingTalkSettings, DingTalkUnboundEmployee } from '@/types/domain'
-import { dingtalkRevokeReason } from '@/utils/dingtalk'
+import { useAuthStore } from '@/stores/auth'
+import type { DingTalkBoundEmployee, DingTalkIntegrationOverview, DingTalkSettings, DingTalkUnboundEmployee } from '@/types/domain'
+import { dingtalkBoundBy, dingtalkRevokeReason } from '@/utils/dingtalk'
 
 /**
- * 钉钉集成（钉钉接入 DT-S1，原型②）：应用配置与连接检查、绑定情况、离职检查、未绑定名单与提醒。
- * 通知投递记录在 DT-S2 启用。凭据只在服务端环境变量中，此处不可查看。
+ * 钉钉集成（钉钉接入 DT-S1，原型②）：应用配置与连接检查、绑定情况、离职检查、未绑定与已绑定名单、提醒，
+ * 以及在页内抽屉中代绑、解绑与解锁（功能规则第 13 节：只有钉钉集成权限也能处理，不跳转员工与权限）。
+ * 修改类按钮按模块权限显示，应用配置的保存与清除只限平台管理员。通知投递记录在 DT-S2 启用。
  */
-type Tab = 'overview' | 'unbound' | 'delivery'
+type Tab = 'overview' | 'unbound' | 'bound' | 'delivery'
 const route = useRoute()
 const router = useRouter()
-const tab = ref<Tab>(route.query.tab === 'unbound' ? 'unbound' : route.query.tab === 'delivery' ? 'delivery' : 'overview')
+const authStore = useAuthStore()
+const canWrite = computed(() => authStore.canWrite('dingtalk'))
+const tabs: Tab[] = ['overview', 'unbound', 'bound', 'delivery']
+const tab = ref<Tab>(tabs.includes(route.query.tab as Tab) ? route.query.tab as Tab : 'overview')
 const overview = ref<DingTalkIntegrationOverview>()
 const settings = ref<DingTalkSettings>()
 const editing = ref(false)
@@ -25,6 +31,15 @@ const unbound = ref<DingTalkUnboundEmployee[]>([])
 const unboundTotal = ref(0)
 const unboundPage = ref(1)
 const unboundPageSize = 50
+const bound = ref<DingTalkBoundEmployee[]>([])
+const boundTotal = ref(0)
+const boundPage = ref(1)
+const boundQuery = ref('')
+const bindingTarget = ref<{ id: string; name: string; manageable: boolean }>()
+const bindingDrawerOpen = computed({
+  get: () => Boolean(bindingTarget.value),
+  set: (open: boolean) => { if (!open) bindingTarget.value = undefined },
+})
 const loading = ref(false)
 const checking = ref(false)
 const reminding = ref(false)
@@ -97,11 +112,38 @@ async function loadUnbound() {
   unboundTotal.value = page.total
 }
 
+async function loadBound() {
+  const page = await adminApi.getDingTalkBound(boundPage.value, boundQuery.value.trim())
+  bound.value = page.items
+  boundTotal.value = page.total
+}
+
+async function searchBound() {
+  boundPage.value = 1
+  try {
+    await loadBound()
+  } catch (cause) {
+    error.value = cause instanceof Error ? cause.message : '已绑定名单加载失败'
+  }
+}
+
+function openBinding(target: { id: string; name: string; manageable: boolean }) {
+  bindingTarget.value = { id: target.id, name: target.name, manageable: target.manageable }
+}
+
+async function bindingChanged() {
+  try {
+    await Promise.all([loadOverview(), loadUnbound(), loadBound()])
+  } catch (cause) {
+    error.value = cause instanceof Error ? cause.message : '钉钉集成信息刷新失败'
+  }
+}
+
 async function load() {
   loading.value = true
   error.value = ''
   try {
-    await Promise.all([loadOverview(), loadUnbound()])
+    await Promise.all([loadOverview(), loadUnbound(), loadBound()])
   } catch (cause) {
     error.value = cause instanceof Error ? cause.message : '钉钉集成信息加载失败'
   } finally {
@@ -236,10 +278,13 @@ onMounted(load)
               </template>
             </dl>
             <div class="dingtalk-actions">
-              <el-button type="primary" :disabled="!settings" @click="editing = true">{{ settings?.configured ? '编辑配置' : '填写配置' }}</el-button>
-              <el-button :loading="checking" :disabled="!overview.configured" @click="check">重新检查连接</el-button>
-              <el-button v-if="settings?.configured" type="danger" plain :loading="clearing" @click="clearSettings">清除配置</el-button>
+              <template v-if="authStore.platformAdmin">
+                <el-button type="primary" :disabled="!settings" @click="editing = true">{{ settings?.configured ? '编辑配置' : '填写配置' }}</el-button>
+                <el-button v-if="settings?.configured" type="danger" plain :loading="clearing" @click="clearSettings">清除配置</el-button>
+              </template>
+              <el-button v-if="canWrite" :loading="checking" :disabled="!overview.configured" @click="check">重新检查连接</el-button>
             </div>
+            <p v-if="canWrite && !authStore.platformAdmin" class="dingtalk-muted">钉钉应用配置（CorpId、AppKey、AppSecret）只有平台管理员可以修改。</p>
             <p v-if="checkMessage" role="status" class="dingtalk-status">{{ checkMessage }}</p>
           </section>
 
@@ -270,7 +315,7 @@ onMounted(load)
                 本次离职检查判定 <strong>{{ overview.departureCheck.pausedRun.pending }}</strong> 人已离职，超过已绑定人数
                 {{ overview.departureCheck.pausedRun.bound }} 的 10%，已整批暂停。请核实后再执行。
               </p>
-              <div class="dingtalk-actions">
+              <div v-if="canWrite" class="dingtalk-actions">
                 <el-button type="danger" :loading="deciding" @click="decide('confirm')">确认失效这些绑定</el-button>
                 <el-button :disabled="deciding" @click="decide('dismiss')">忽略本次结果</el-button>
               </div>
@@ -283,8 +328,8 @@ onMounted(load)
       <el-tab-pane :label="`未绑定（${unboundTotal}）`" name="unbound">
         <section class="content-panel content-panel--flush">
           <div class="dingtalk-list-head">
-            <span>这些员工收不到钉钉通知。可以代为绑定，或提醒他们在钉钉中打开 dsh-work 登录一次。</span>
-            <el-button :loading="reminding" :disabled="!unboundTotal" @click="remind(null)">提醒全部未绑定员工</el-button>
+            <span>这些员工收不到钉钉通知。{{ canWrite ? '可以代为绑定，或提醒他们在钉钉中打开 dsh-work 登录一次。' : '' }}</span>
+            <el-button v-if="canWrite" :loading="reminding" :disabled="!unboundTotal" @click="remind(null)">提醒全部未绑定员工</el-button>
           </div>
           <el-table class="data-table" :data="unbound" empty-text="所有有效员工都已绑定钉钉">
             <el-table-column label="员工" min-width="200">
@@ -301,8 +346,8 @@ onMounted(load)
             </el-table-column>
             <el-table-column label="操作" width="200">
               <template #default="scope">
-                <el-button link type="primary" @click="router.push({ path: '/identity', query: { user: scope.row.id, query: scope.row.loginAccount } })">代为绑定</el-button>
-                <el-button link type="primary" :disabled="reminding || scope.row.selfRebindLocked" @click="remind(scope.row)">提醒员工</el-button>
+                <el-button link type="primary" @click="openBinding(scope.row)">{{ canWrite && scope.row.manageable ? '代为绑定' : '查看' }}</el-button>
+                <el-button v-if="canWrite" link type="primary" :disabled="reminding || scope.row.selfRebindLocked" @click="remind(scope.row)">提醒员工</el-button>
               </template>
             </el-table-column>
           </el-table>
@@ -316,7 +361,42 @@ onMounted(load)
             @current-change="loadUnbound"
           />
           <p v-if="listMessage" role="status" class="dingtalk-status dingtalk-list-foot">{{ listMessage }}</p>
-          <p class="dingtalk-muted dingtalk-list-foot">“提醒员工”发送一条站内通知：在钉钉工作台打开 dsh-work，用账号密码登录一次即可绑定。</p>
+          <p v-if="canWrite" class="dingtalk-muted dingtalk-list-foot">“提醒员工”发送一条站内通知：在钉钉工作台打开 dsh-work，用账号密码登录一次即可绑定。</p>
+        </section>
+      </el-tab-pane>
+
+      <el-tab-pane :label="`已绑定（${boundTotal}）`" name="bound">
+        <section class="content-panel content-panel--flush">
+          <div class="dingtalk-list-head">
+            <el-input v-model="boundQuery" class="dingtalk-search" clearable aria-label="按姓名或登录账号搜索已绑定员工" placeholder="按姓名或登录账号搜索" @keyup.enter="searchBound" @clear="searchBound" />
+            <el-button @click="searchBound">搜索</el-button>
+          </div>
+          <el-table class="data-table" :data="bound" :empty-text="boundQuery ? '没有匹配的已绑定员工' : '还没有员工绑定钉钉'">
+            <el-table-column label="员工" min-width="200">
+              <template #default="scope"><strong>{{ scope.row.name }}</strong><div class="dingtalk-muted">{{ scope.row.loginAccount }}</div></template>
+            </el-table-column>
+            <el-table-column prop="department" label="部门" min-width="140" />
+            <el-table-column label="钉钉成员" min-width="140">
+              <template #default="scope">{{ scope.row.dingtalkName ?? '未知姓名' }}</template>
+            </el-table-column>
+            <el-table-column label="绑定方式" min-width="160">
+              <template #default="scope">{{ dingtalkBoundBy(scope.row.boundBy) }}<div class="dingtalk-muted">{{ formatDate(scope.row.boundAt) }}</div></template>
+            </el-table-column>
+            <el-table-column label="操作" width="120">
+              <template #default="scope">
+                <el-button link type="primary" @click="openBinding(scope.row)">{{ canWrite && scope.row.manageable ? '管理绑定' : '查看' }}</el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+          <el-pagination
+            v-if="boundTotal > unboundPageSize"
+            v-model:current-page="boundPage"
+            class="dingtalk-list-foot"
+            layout="prev, pager, next"
+            :total="boundTotal"
+            :page-size="unboundPageSize"
+            @current-change="loadBound"
+          />
         </section>
       </el-tab-pane>
 
@@ -327,7 +407,18 @@ onMounted(load)
         </section>
       </el-tab-pane>
     </el-tabs>
-    <DingTalkSettingsDialog v-if="settings" v-model="editing" :settings="settings" @saved="settingsSaved" />
+    <DingTalkSettingsDialog v-if="settings && authStore.platformAdmin" v-model="editing" :settings="settings" @saved="settingsSaved" />
+    <el-drawer v-model="bindingDrawerOpen" size="min(560px, 100vw)" :title="bindingTarget ? `${bindingTarget.name} 的钉钉绑定` : '钉钉绑定'">
+      <DingTalkBindingPanel
+        v-if="bindingTarget"
+        :key="bindingTarget.id"
+        :user-id="bindingTarget.id"
+        :user-name="bindingTarget.name"
+        :can-manage="canWrite && bindingTarget.manageable"
+        @changed="bindingChanged"
+      />
+      <p v-if="canWrite && !bindingTarget?.manageable" class="dingtalk-muted">这是你自己、平台管理员或权限比你高的员工，只能查看，请联系平台管理员处理。</p>
+    </el-drawer>
   </div>
 </template>
 
@@ -352,6 +443,7 @@ onMounted(load)
 .dingtalk-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .dingtalk-status { margin: 0; font-size: 13px; color: var(--el-color-success); }
 .dingtalk-list-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px; padding: 12px 16px; font-size: 13px; }
+.dingtalk-search { flex: 1 1 240px; max-width: 360px; }
 .dingtalk-list-foot { padding: 0 16px 12px; }
 .dingtalk-empty { text-align: center; padding: 48px 20px; }
 .dingtalk-empty h2 { margin: 0; font-size: 16px; }

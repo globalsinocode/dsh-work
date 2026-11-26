@@ -657,9 +657,9 @@ test('5-T4 授权拒绝类型化：消息不变，HTTP 仍是 403 permission_den
 
   // 2）平台管理员校验（原先靠「不是平台管理员」文案落 403）。
   await expectTypedDenial(
-    'requirePlatformAdmin',
-    `操作人不存在、已停用或不是平台管理员：${bareUserId}`,
-    () => authorization.requirePlatformAdmin(bareUserId),
+    'requireAdminModule',
+    `操作人不存在、已停用或没有Agent的修改权限：${bareUserId}`,
+    () => authorization.requireAdminModule(bareUserId, 'agent', 'write'),
   )
 
   // 3）空间已配置能力授权，但不含本次请求的 Agent 版本。

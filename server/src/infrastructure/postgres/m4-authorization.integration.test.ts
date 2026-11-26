@@ -156,7 +156,7 @@ test('authorization is fail-closed and compiles the effective identity into Runt
       maxOutputBytes: 65536, maxToolCalls: 20, timeoutSeconds: 300,
       skills: [], changeSummary: '越权测试', actor: '林岚',
     }),
-    /不是平台管理员/,
+    /没有.*的修改权限/,
   )
 
   await database`
@@ -355,7 +355,7 @@ test('5-T4 管理操作人与会话拒绝类型化：HTTP 仍是 403 permission_
   assert.ok(actorDenial instanceof AuthorizationDeniedError, `必须是类型化授权拒绝，实际：${String(actorDenial)}`)
   assert.equal(actorDenial.status, 403)
   assert.equal(actorDenial.code, 'permission_denied')
-  assert.match(actorDenial.message, /不是平台管理员/)
+  assert.match(actorDenial.message, /没有.*的修改权限/)
   assert.equal(classifyHttpError(actorDenial, '/api/admin/v1/agents').error.code, 'permission_denied')
 
   const missingSession = `session-typed-missing-${randomUUID()}`

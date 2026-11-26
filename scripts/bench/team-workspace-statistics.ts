@@ -308,7 +308,7 @@ async function seed(database: DatabaseClient, options: Options) {
   for (const [index, userId] of users.entries()) {
     await database`
       insert into users (id, tenant_id, external_subject, display_name, status, identity_provider, business_user)
-      values (${userId}, ${tenantId}, ${`directory:${userId}`}, ${`基线成员 ${index}`}, 'active', 'ai-hub', true)
+      values (${userId}, ${tenantId}, ${`directory:${userId}`}, ${`基线成员 ${index}`}, 'active', 'local', true)
       on conflict do nothing
     `
     await database`

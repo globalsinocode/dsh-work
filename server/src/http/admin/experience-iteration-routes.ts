@@ -15,13 +15,13 @@ export function registerAdminExperienceIterationRoutes(
 ): void {
   router.get(`${basePath}/agents`, async (_request, context) => {
     const identity = requireRequestIdentity(context, 'admin')
-    await authorization.requireAdminReader(identity.userId)
+    await authorization.requireAdminModule(identity.userId, 'agent', 'read')
     return envelope('admin', await service.listExperienceIterationAgents(), 'postgres')
   })
 
   router.get(`${basePath}/applications`, async (_request, context) => {
     const identity = requireRequestIdentity(context, 'admin')
-    await authorization.requireAdminReader(identity.userId)
+    await authorization.requireAdminModule(identity.userId, 'agent', 'read')
     const status = parseStatus(context.url.searchParams.get('status'))
     const agentId = context.url.searchParams.get('agentId')?.trim() || undefined
     return envelope('admin', await service.listExperienceIterationApplications(
@@ -32,7 +32,7 @@ export function registerAdminExperienceIterationRoutes(
 
   router.post(`${basePath}/applications/:applicationId/review`, async (request, context) => {
     const identity = requireRequestIdentity(context, 'admin')
-    await authorization.requirePlatformAdmin(identity.userId)
+    await authorization.requireAdminModule(identity.userId, 'agent', 'write')
     const body = await readJsonBody<{
       decision?: unknown
       resolutionKey?: unknown
@@ -55,13 +55,13 @@ export function registerAdminExperienceIterationRoutes(
   // AE-04：按 Agent 管理已发布经验的当前版本（停用、启用、回滚）。
   router.get(`${basePath}/agents/:agentId/experiences`, async (_request, context) => {
     const identity = requireRequestIdentity(context, 'admin')
-    await authorization.requireAdminReader(identity.userId)
+    await authorization.requireAdminModule(identity.userId, 'agent', 'read')
     return envelope('admin', await service.listAgentExperiences(context.params['agentId'] ?? ''), 'postgres')
   })
 
   router.put(`${basePath}/agents/:agentId/experiences/:entryId/current`, async (request, context) => {
     const identity = requireRequestIdentity(context, 'admin')
-    await authorization.requirePlatformAdmin(identity.userId)
+    await authorization.requireAdminModule(identity.userId, 'agent', 'write')
     const body = await readJsonBody<{ versionId?: unknown; expectedVersionId?: unknown; reason?: unknown } | null>(request)
     const nullableId = (value: unknown) => value === null || (typeof value === 'string' && value.length > 0 && value.length <= 128)
     if (!body || !nullableId(body.versionId) || !nullableId(body.expectedVersionId)) {

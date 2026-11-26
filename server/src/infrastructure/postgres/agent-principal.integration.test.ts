@@ -40,7 +40,7 @@ test('new Agent has a stable principal distinct from its governance owner, and d
   const agentId = `agent-principal-${randomUUID().slice(0, 20)}`
   await database`
     insert into users (id, tenant_id, external_subject, display_name, status, identity_provider, business_user)
-    values (${actor}, ${tenantId}, ${`directory:${actor}`}, '治理负责人', 'active', 'ai-hub', true)
+    values (${actor}, ${tenantId}, ${`directory:${actor}`}, '治理负责人', 'active', 'local', true)
   `
   await database`
     insert into user_roles (tenant_id, user_id, role_id, source_key)

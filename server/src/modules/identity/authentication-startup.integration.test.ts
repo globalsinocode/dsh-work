@@ -26,7 +26,7 @@ before(async () => {
 })
 after(async () => { await database?.dispose() })
 
-async function start(extra: NodeJS.ProcessEnv, legacyCallbacks = false) {
+async function start(extra: NodeJS.ProcessEnv) {
   const listener = createServer().listen(0, '127.0.0.1')
   await once(listener, 'listening')
   const address = listener.address()
@@ -40,11 +40,7 @@ async function start(extra: NodeJS.ProcessEnv, legacyCallbacks = false) {
     env: { PATH: process.env.PATH, NODE_ENV: 'development', DSH_WORK_DATABASE_URL: database.url,
       DSH_WORK_DATA_ROOT: root, DSH_RUNTIME_HOME: join(root, 'unavailable-runtime'),
       DSH_WORK_SESSION_SECRET: secret, DSH_WORK_COOKIE_SECURE: 'false',
-      ...(legacyCallbacks ? {
-        AI_HUB_ADMIN_PORTAL_URL: origin, AI_HUB_WORKBENCH_PORTAL_URL: origin,
-        AI_HUB_ADMIN_REDIRECT_URI: 'http://localhost:4190/auth/admin/callback',
-        AI_HUB_WORKBENCH_REDIRECT_URI: 'http://localhost:4190/auth/workbench/callback',
-      } : { DSH_WORK_ADMIN_ORIGINS: origin, DSH_WORK_WORKBENCH_ORIGINS: origin }),
+      DSH_WORK_ADMIN_ORIGINS: origin, DSH_WORK_WORKBENCH_ORIGINS: origin,
       DSH_WORK_ADMIN_PORT: String(port), DSH_WORK_WORKBENCH_PORT: String(port),
       DSH_WORK_SERVER_HOST: '127.0.0.1', DSH_WORK_SERVER_PORT: String(port), ...extra },
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -75,25 +71,27 @@ async function start(extra: NodeJS.ProcessEnv, legacyCallbacks = false) {
   }
 }
 
-const upstream = { AI_HUB_PLATFORM_URL: 'http://localhost:9', AI_HUB_OIDC_ISSUER: 'http://localhost:9/fixture', AI_HUB_APPLICATION_ID: 'startup-fixture', AI_HUB_CLIENT_ID: 'startup-fixture', AI_HUB_CLIENT_SECRET: 'fixture-not-a-real-secret' }
+// 迁移 0129：残留的 AI_HUB_* 与旧认证模式只记警告，账号密码登录不受影响，OIDC 入口已不存在。
+const leftover = { AI_HUB_PLATFORM_URL: 'http://localhost:9', AI_HUB_OIDC_ISSUER: 'http://localhost:9/fixture', AI_HUB_APPLICATION_ID: 'startup-fixture', AI_HUB_CLIENT_ID: 'startup-fixture', AI_HUB_CLIENT_SECRET: 'fixture-not-a-real-secret' }
 for (const scenario of [
-  { name: 'no provider configuration', environment: {}, aiHubEnabled: false },
-  { name: 'incomplete provider configuration', environment: { ...upstream, AI_HUB_CLIENT_SECRET: '' }, aiHubEnabled: false },
-  { name: 'valid configuration with unavailable provider and legacy local mode', environment: { ...upstream, DSH_WORK_AUTH_MODE: 'local' }, aiHubEnabled: true },
-  { name: 'legacy portal configuration with separate backend callbacks', environment: upstream, aiHubEnabled: true, legacyCallbacks: true },
+  { name: 'no leftover configuration', environment: {}, leftover: false },
+  { name: 'leftover AI Hub variables and a legacy oidc mode', environment: { ...leftover, DSH_WORK_AUTH_MODE: 'oidc' }, leftover: true },
 ]) {
   test(`startup ignores old mode records and supports password login with ${scenario.name}`, async () => {
-    const app = await start(scenario.environment, scenario.legacyCallbacks)
+    const app = await start(scenario.environment)
     try {
       await app.ready()
       for (const audience of ['admin', 'workbench']) {
         const config = await (await fetch(`${app.origin}/auth/${audience}/configuration`)).json()
+        assert.equal(config.mode, 'local')
         assert.equal(config.localEnabled, true)
-        assert.equal(config.aiHubEnabled, scenario.aiHubEnabled)
+        assert.equal('aiHubEnabled' in config, false)
         assert.equal(JSON.stringify(config).includes('fixture-not-a-real-secret'), false)
+        assert.equal((await fetch(`${app.origin}/auth/${audience}/oidc/login`, { redirect: 'manual' })).status, 404)
       }
-      if (scenario.name.startsWith('incomplete')) assert.match(app.output(), /AI Hub 登录未启用/)
-      if (scenario.aiHubEnabled) assert.doesNotMatch(app.output(), /AI Hub 登录未启用/)
+      if (scenario.leftover) assert.match(app.output(), /AI Hub 登录已删除，以下旧配置不再读取/)
+      else assert.doesNotMatch(app.output(), /AI Hub/)
+      assert.equal(app.output().includes('fixture-not-a-real-secret'), false)
       const login = await fetch(`${app.origin}/auth/admin/login`, { method: 'POST', headers: { Origin: app.origin, 'Content-Type': 'application/json' }, body: JSON.stringify({ username: 'startup.admin@example.invalid', password, returnTo: '/identity' }) })
       assert.equal(login.status, 200)
       const cookie = login.headers.getSetCookie().find(value => value.startsWith('dsh_work_local_admin_session='))!.split(';')[0]!
@@ -103,12 +101,6 @@ for (const scenario of [
       }
       const [old] = await database.client`select value from system_settings where key = 'identity.login'`
       assert.equal(old!.value.mode, 'invalid-old-setting')
-      if (scenario.aiHubEnabled) {
-        const response = await fetch(`${app.origin}/auth/admin/oidc/login?return_to=%2Fidentity`, { redirect: 'manual' })
-        assert.equal(response.status, 302)
-        assert.equal(new URL(response.headers.get('location')!).searchParams.get('auth_error'), 'ai_hub_unavailable')
-        assert.equal((await fetch(`${app.origin}/api/admin/v1/session`, { headers: { Cookie: cookie } })).status, 200)
-      }
     } finally { await app.close() }
   })
 }

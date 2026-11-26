@@ -1,4 +1,5 @@
 import { envelope, requireRequestIdentity, type Router } from './router.ts'
+import { adminModuleSummary, isPlatformAdmin } from '../domain/admin-permissions.ts'
 
 /**
  * Current signed-in user for each portal. The browser uses this to render the shell
@@ -21,13 +22,16 @@ export function registerSessionRoutes(router: Router) {
       identityProvider: identity.identityProvider,
       apiAudience: 'admin' as const,
       permissions: [...identity.permissions],
+      // 各模块的可用级别（功能规则第 13 节）：前端只用于展示菜单与按钮，服务端仍逐请求校验。
+      adminModules: adminModuleSummary(identity.permissions),
+      platformAdmin: isPlatformAdmin(identity.permissions),
     }, 'postgres')
   })
 }
 
-interface AuthConfiguration { mode: string; localEnabled: boolean; aiHubEnabled: boolean; dingtalk?: { corpId: string } }
+interface AuthConfiguration { mode: string; localEnabled: boolean; dingtalk?: { corpId: string } }
 
-/** Login options for both portals; the login pages read it before showing the AI Hub entry. */
+/** Login options for both portals: password login and, on the workbench, the DingTalk corpId. */
 export function registerAuthConfigurationRoutes(
   router: Router,
   describe: (audience: 'workbench' | 'admin') => Promise<AuthConfiguration> | AuthConfiguration,

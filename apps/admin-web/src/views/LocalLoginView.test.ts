@@ -15,7 +15,7 @@ function button(wrapper: VueWrapper, text: string) {
 }
 beforeEach(() => {
   fetchMock.mockReset()
-  fetchMock.mockResolvedValue({ ok: true, json: async () => ({ mode: 'oidc', localEnabled: true, aiHubEnabled: true }) })
+  fetchMock.mockResolvedValue({ ok: true, json: async () => ({ mode: 'local', localEnabled: true }) })
   vi.stubGlobal('fetch', fetchMock)
   vi.spyOn(window.location, 'assign').mockImplementation(() => {})
   vi.spyOn(window.location, 'replace').mockImplementation(() => {})
@@ -76,7 +76,7 @@ describe.each(['admin', 'workbench'] as const)('%s shared login page', audience 
     expect(button(wrapper, '保存新密码').attributes()).not.toHaveProperty('disabled')
   })
 
-  it('defaults to the password form with AI Hub enabled, and preserves the return target on login failure', async () => {
+  it('defaults to the password form and preserves the return target on login failure', async () => {
     const wrapper = render(audience)
     await flushPromises()
     expect(wrapper.get('h1').text()).toBe(audience === 'admin' ? '登录运营平台' : '登录员工工作台')
@@ -95,43 +95,14 @@ describe.each(['admin', 'workbench'] as const)('%s shared login page', audience 
     expect((wrapper.get('#local-password').element as HTMLInputElement).value).toBe('')
   })
 
-  it('starts enterprise login with one click, clears the password and blocks duplicate submissions', async () => {
+  it('offers no other login method', async () => {
     const wrapper = render(audience)
     await flushPromises()
-    await wrapper.get('#local-password').setValue('transient-password')
-    await button(wrapper, '使用 AI Hub 账号登录').trigger('click')
-    expect(window.location.assign).toHaveBeenCalledWith(`/auth/${audience}/oidc/login?return_to=%2Fsettings%3Fview%3Dprofile%23details`)
-    expect(wrapper.find('h2').exists()).toBe(false)
-    expect((wrapper.get('#local-password').element as HTMLInputElement).value).toBe('')
-    expect(button(wrapper, '正在前往 AI Hub…').attributes()).toHaveProperty('disabled')
-    expect(button(wrapper, '登录').attributes()).toHaveProperty('disabled')
-    await button(wrapper, '正在前往 AI Hub…').trigger('click')
-    await wrapper.get('form').trigger('submit')
-    expect(window.location.assign).toHaveBeenCalledTimes(1)
-    expect(fetchMock).toHaveBeenCalledTimes(1)
-  })
-
-  it('hides the AI Hub entry when the provider is not configured', async () => {
-    fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({ mode: 'local', localEnabled: true, aiHubEnabled: false }) })
-    const wrapper = render(audience)
-    await flushPromises()
-    expect(wrapper.text()).not.toContain('使用 AI Hub 账号登录')
+    expect(wrapper.text()).not.toContain('AI Hub')
     expect(wrapper.text()).not.toContain('其他登录方式')
     expect(wrapper.find('#local-username').exists()).toBe(true)
     expect(button(wrapper, '登录').attributes()).not.toHaveProperty('disabled')
     expect(window.location.assign).not.toHaveBeenCalled()
-  })
-
-  it('recovers from an upstream failure directly on the password form without another redirect', async () => {
-    window.history.replaceState({}, '', '/login?provider=ai-hub&auth_error=ai_hub_unavailable&return_to=%2Fsettings')
-    const wrapper = render(audience)
-    await flushPromises()
-    expect(wrapper.get('[role="alert"]').text()).toContain('AI Hub 暂不可用')
-    expect(wrapper.find('#local-username').exists()).toBe(true)
-    expect(wrapper.find('h2').exists()).toBe(false)
-    expect(window.location.assign).not.toHaveBeenCalled()
-    await button(wrapper, '使用 AI Hub 账号登录').trigger('click')
-    expect(window.location.assign).toHaveBeenCalledWith(`/auth/${audience}/oidc/login?return_to=%2Fsettings`)
   })
 })
 
@@ -147,10 +118,9 @@ it('retries a failed configuration load without silently redirecting', async () 
   expect(window.location.assign).not.toHaveBeenCalled()
 })
 
-it('keeps first-password changes separate from the AI Hub entry and validates confirmation', async () => {
+it('validates the new password confirmation on first-password changes', async () => {
   const wrapper = render('admin', true)
   await flushPromises()
-  expect(wrapper.text()).not.toContain('使用 AI Hub 账号登录')
   await wrapper.get('#local-password').setValue('current-test-password')
   await wrapper.get('#local-new-password').setValue('NewTest12345')
   await wrapper.get('#local-confirm-password').setValue('Different12')
@@ -160,18 +130,16 @@ it('keeps first-password changes separate from the AI Hub entry and validates co
   expect(wrapper.get('a').attributes('href')).toBe('/login?return_to=%2Fsettings%3Fview%3Dprofile%23details')
 })
 
-it('replaces an external return target before sending it to either provider', async () => {
+it('replaces an external return target before sending it with the password login', async () => {
   window.history.replaceState({}, '', '/login?return_to=https%3A%2F%2Fevil.invalid')
   const wrapper = render('admin')
   await flushPromises()
-  await button(wrapper, '使用 AI Hub 账号登录').trigger('click')
-  expect(window.location.assign).toHaveBeenCalledWith('/auth/admin/oidc/login?return_to=%2Foverview')
-})
-
-it('preserves the explicit switch-account intent for the enterprise login flow', async () => {
-  window.history.replaceState({}, '', '/login?switch_account=true&return_to=%2Fidentity')
-  const wrapper = render('admin')
+  await wrapper.get('#local-username').setValue('test.admin')
+  await wrapper.get('#local-password').setValue('test-only-password')
+  fetchMock.mockResolvedValueOnce({ ok: false, json: async () => ({ error: { message: '账号或密码错误' } }) })
+  await wrapper.get('form').trigger('submit')
   await flushPromises()
-  await button(wrapper, '使用 AI Hub 账号登录').trigger('click')
-  expect(window.location.assign).toHaveBeenCalledWith('/auth/admin/oidc/switch-account?return_to=%2Fidentity')
+  expect(fetchMock).toHaveBeenLastCalledWith('/auth/admin/login', expect.objectContaining({
+    body: JSON.stringify({ username: 'test.admin', password: 'test-only-password', returnTo: '/overview' }),
+  }))
 })

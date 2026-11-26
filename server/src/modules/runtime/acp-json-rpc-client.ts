@@ -56,7 +56,11 @@ export interface AcpClientHandlers {
   onDiagnostic?: (message: string) => void
 }
 
-const inheritedEnvironmentKeys = [
+/**
+ * ACP 子进程只继承这些环境变量。读取网页方案 6.3：不得加入 HTTP(S)_PROXY / ALL_PROXY，否则 DSH 的取页
+ * 对域名不再做公网地址校验（dsh-home-proxy.test.ts 守护）。
+ */
+export const inheritedEnvironmentKeys = [
   'PATH', 'HOME', 'USER', 'LOGNAME', 'SHELL', 'TMPDIR', 'TMP', 'TEMP',
   'LANG', 'LC_ALL', 'LC_CTYPE', 'TERM', 'NO_COLOR', 'FORCE_COLOR', 'COLORTERM',
   'XDG_CONFIG_HOME', 'XDG_CACHE_HOME', 'XDG_DATA_HOME', 'DSH_HOME',

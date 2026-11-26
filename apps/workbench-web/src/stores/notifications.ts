@@ -97,7 +97,7 @@ export const useNotificationStore = defineStore('workbench-notifications', () =>
     if (reloading) await load()
   }
 
-  /** 打开群组时服务端已把该群的 @ 通知标为已读：本地同步，再以服务端的未读数为准（方案 NC4）。 */
+  /** 打开群组时服务端已把该群的 @ 通知标为已读：本地同步，再以服务端的未读数为准（功能规则 3.7）。 */
   async function markWorkspaceMentionsRead(workspaceId: string) {
     for (const item of items.value) {
       if (item.kind === 'mention' && item.workspace?.id === workspaceId) item.read = true

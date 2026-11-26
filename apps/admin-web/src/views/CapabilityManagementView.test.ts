@@ -265,6 +265,66 @@ describe('Skill installation sibling tab', () => {
     expect(info).not.toHaveBeenCalled()
   })
 
+  it('turns on “发送员工身份” only after confirming, and explains why it cannot be turned on', async () => {
+    const { wrapper, content } = await render(true, '/connectors')
+    const connector = offlinePendingMcp()
+    connector.mcp!.employeeIdentity = { enabled: false, available: true }
+    content.connectors.push(connector)
+    vi.spyOn(content, 'getMcpInvocationAudits').mockResolvedValue([{
+      id: 'audit-1', runId: 'run-1', attemptId: 'attempt-1', connectorId: connector.id, actorUserId: 'U1',
+      capabilityName: 'query', parameterDigest: 'b'.repeat(64), result: 'success', callContext: 'personal',
+      occurredAt: '2026-11-19T08:00:00.000Z', resolvedResult: null, resolvedBy: null, resolvedAt: null, resolutionNote: null,
+    }])
+    const enabled = { ...connector, mcp: { ...connector.mcp!, employeeIdentity: { enabled: true, available: true } } }
+    const update = vi.spyOn(adminApi, 'setMcpEmployeeIdentity').mockResolvedValue(enabled)
+    const { ElMessageBox } = await import('element-plus')
+    const confirm = vi.spyOn(ElMessageBox, 'confirm').mockResolvedValue('confirm' as never)
+    await flushPromises()
+    expect(wrapper.find('[data-testid="employee-identity-tag"]').exists()).toBe(false)
+
+    await wrapper.get('[data-action="view-connector"]').trigger('click')
+    await flushPromises()
+    const section = wrapper.get('[data-testid="employee-identity-section"]')
+    expect(section.text()).toContain('发送员工身份')
+    expect(section.text()).toContain('Agent 主动任务')
+    expect(section.text()).toContain('平台用户 ID、手机号、邮箱和钉钉账号')
+    expect(wrapper.text()).toContain('调用上下文 个人')
+    await section.get('[data-action="toggle-employee-identity"]').trigger('click')
+    await flushPromises()
+    expect(confirm).toHaveBeenCalledWith(expect.anything(), `向“${connector.name}”发送员工身份？`, expect.anything())
+    const message = confirm.mock.calls[0]![0] as unknown as { children: Array<{ children: string }> }
+    expect(message.children.map(child => child.children)).toEqual([expect.stringContaining('结果只给一个人看的调用'), '开启只影响此后新启动的运行。'])
+    expect(update).toHaveBeenCalledWith({ connectorId: connector.id, enabled: true })
+    expect(wrapper.get('[data-testid="employee-identity-tag"]').text()).toBe('发送员工身份')
+
+    // 无认证或凭据共用时不能开启，说明原因。
+    content.connectors.splice(0, content.connectors.length, { ...connector, mcp: { ...connector.mcp!, employeeIdentity: { enabled: false, available: false, unavailableReason: '无认证的连接器任何人都能伪造员工身份' } } })
+    await flushPromises()
+    const blocked = wrapper.get('[data-testid="employee-identity-section"]')
+    expect(blocked.text()).toContain('无认证的连接器任何人都能伪造员工身份')
+    expect(blocked.get('[data-action="toggle-employee-identity"]').classes()).toContain('is-disabled')
+
+    // 已开启但当前不满足条件（如凭据变为共用）：列表标为“未生效”，开关仍可关闭。
+    content.connectors.splice(0, content.connectors.length, { ...connector, mcp: { ...connector.mcp!, employeeIdentity: { enabled: true, available: false, unavailableReason: 'Bearer 凭据与其他连接器共用' } } })
+    await flushPromises()
+    expect(wrapper.get('[data-testid="employee-identity-tag"]').text()).toBe('发送员工身份（未生效）')
+    expect(wrapper.get('[data-testid="employee-identity-section"]').text()).toContain('当前不满足开启条件，运行时不发送员工身份')
+    expect(wrapper.get('[data-action="toggle-employee-identity"]').classes()).not.toContain('is-disabled')
+  })
+
+  it('shows the “发送员工身份” switch read-only to readers', async () => {
+    const { wrapper, content } = await render(false, '/connectors')
+    const connector = offlinePendingMcp()
+    connector.mcp!.employeeIdentity = { enabled: true, available: true }
+    content.connectors.push(connector)
+    vi.spyOn(content, 'getMcpInvocationAudits').mockResolvedValue([])
+    await flushPromises()
+    expect(wrapper.find('[data-testid="employee-identity-tag"]').exists()).toBe(true)
+    await wrapper.get('[data-action="view-connector"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('[data-action="toggle-employee-identity"]').classes()).toContain('is-disabled')
+  })
+
   it('does not expose the DSH Runtime internal connector in MCP management', async () => {
     const { wrapper, content } = await render(true, '/connectors')
     content.connectors.push({

@@ -1,7 +1,7 @@
 ---
 name: Office 文档（平台内置）
 description: 平台内置的通用方法：生成或修改 Word（docx）、Excel（xlsx）、PowerPoint（pptx）文件，以及在 Office、PDF、Markdown、HTML 之间转换格式。目录中有更专门的文档类 Skill 时优先使用后者。
-version: 1.0.0
+version: 1.1.0
 allowed-tools: [read, glob, grep]
 ---
 
@@ -27,7 +27,7 @@ allowed-tools: [read, glob, grep]
 
 - 中文内容使用通用字体（如“微软雅黑”“宋体”或保持默认），不依赖特殊字体。
 - 文件名用有意义的中文或英文名称，扩展名与实际格式一致。
-- 数据先算准再写入；来自用户文件的结论保留出处（方法见文件分析内置 Skill）。
+- 数据先算准再写入；内容来自用户文件时，先激活目录中的“文件分析（平台内置）”，按其方法核算并保留出处（目录中没有它时按同样要求自行完成）。
 
 ## 完成前自检
 

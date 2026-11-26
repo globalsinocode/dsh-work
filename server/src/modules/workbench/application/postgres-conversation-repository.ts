@@ -184,7 +184,7 @@ interface AttachmentRow {
 }
 
 /** 会话详情读取推荐卡片的端口（实现见 agent 模块的推荐服务）。 */
-/** Skill 创建专家方案 4.3：草稿卡片只给提交人本人看。 */
+/** 功能规则 5.6：草稿卡片只给提交人本人看。 */
 export interface SkillDraftReader {
   loadForRuns(runIds: string[], viewerUserId: string): Promise<SkillDraftView[]>
 }
@@ -204,7 +204,7 @@ export class PostgresConversationRepository {
     this.workspaces = workspaces
   }
 
-  /** 推荐方案 4.2：会话详情装载推荐卡片。生产组装时接入；测试替身未接时详情不含推荐。 */
+  /** 功能规则 2.4：会话详情装载推荐卡片。生产组装时接入；测试替身未接时详情不含推荐。 */
   setSkillDraftReader(reader: SkillDraftReader) {
     this.skillDrafts = reader
   }
@@ -1500,7 +1500,7 @@ export class PostgresConversationRepository {
         type: 'knowledge' as const,
         title: source.title,
         description: source.excerpt,
-        // 引用快照（weknora-knowledge-plan 第 6 节第 5 条）：WeKnora 文档没有版本号与数据范围。
+        // 引用快照（功能规则第 11 节）：WeKnora 文档没有版本号与数据范围。
         fileName: source.fileName || undefined,
         knowledgeBaseName: source.knowledgeBaseName,
         updatedAt: formatDate(source.updatedAt),

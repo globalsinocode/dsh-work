@@ -60,6 +60,8 @@ export class ModelGateway {
   private readonly now: () => number
   private readonly bindings = new Map<string, ModelGatewayBinding>()
   private readonly attemptTokens = new Map<string, string>()
+  /** 读取网页方案 6.2：本 Attempt 搜索回复中结构化结果条目的网址，供 web_fetch 来源复核；随令牌吊销清除。 */
+  private readonly searchResultUrlsByAttempt = new Map<string, Set<string>>()
   private server: Server | undefined
   private rootUrl: string | undefined
 
@@ -124,8 +126,28 @@ export class ModelGateway {
     return token
   }
 
+  /**
+   * 读取网页方案 6.2：本 Attempt 经网关的联网搜索回复里，`web_search_result` 条目的网址。只取结构化的 `url` 字段，
+   * 不取搜索模型生成的文字与引用片段；网关未缓冲的超大回复不收集（失败即关闭）。
+   */
+  private recordSearchResultUrls(attemptId: string, reply: unknown): void {
+    const urls = searchResultUrlsFromReply(reply)
+    if (!urls.length) return
+    const recorded = this.searchResultUrlsByAttempt.get(attemptId) ?? new Set<string>()
+    for (const url of urls) {
+      if (recorded.size >= MAX_SEARCH_RESULT_URLS_PER_ATTEMPT) break
+      recorded.add(url)
+    }
+    this.searchResultUrlsByAttempt.set(attemptId, recorded)
+  }
+
+  searchResultUrls(attemptId: string): ReadonlySet<string> {
+    return this.searchResultUrlsByAttempt.get(attemptId) ?? new Set()
+  }
+
   /** Attempt 终态即吊销（模型路由方案 4.5）。 */
   revokeToken(attemptId: string): void {
+    this.searchResultUrlsByAttempt.delete(attemptId)
     const digest = this.attemptTokens.get(attemptId)
     if (!digest) return
     this.bindings.delete(digest)
@@ -150,7 +172,11 @@ export class ModelGateway {
     for (const [digest, binding] of this.bindings) {
       if (binding.expiresAt <= now) {
         this.bindings.delete(digest)
-        if (this.attemptTokens.get(binding.attemptId) === digest) this.attemptTokens.delete(binding.attemptId)
+        if (this.attemptTokens.get(binding.attemptId) === digest) {
+          this.attemptTokens.delete(binding.attemptId)
+          // 未正常吊销（例如 Attempt 崩溃）的令牌过期清理时，一并清掉该 Attempt 的搜索结果网址。
+          this.searchResultUrlsByAttempt.delete(binding.attemptId)
+        }
       }
     }
   }
@@ -374,6 +400,7 @@ export class ModelGateway {
         try {
           reply = JSON.parse(replyText)
           usage.acceptJson(reply)
+          if (endpoint === 'search' && upstream.ok) this.recordSearchResultUrls(binding.attemptId, reply)
         } catch {
           // 非 JSON 回复不计量，也没有可还原的字段，原样放行。
         }
@@ -530,3 +557,26 @@ function waitForDrain(response: ServerResponse): Promise<void> {
     response.once('close', done)
   })
 }
+
+/** 每个 Attempt 最多记录的搜索结果网址数；正常搜索每次只有十余条。 */
+const MAX_SEARCH_RESULT_URLS_PER_ATTEMPT = 500
+
+/** 从 Anthropic 兼容搜索回复中取出 `web_search_tool_result` 块里 `web_search_result` 条目的 `url`。 */
+export function searchResultUrlsFromReply(reply: unknown): string[] {
+  if (reply === null || typeof reply !== 'object') return []
+  const content = (reply as { content?: unknown }).content
+  if (!Array.isArray(content)) return []
+  const urls: string[] = []
+  for (const block of content) {
+    if (block === null || typeof block !== 'object' || (block as { type?: unknown }).type !== 'web_search_tool_result') continue
+    const items = (block as { content?: unknown }).content
+    if (!Array.isArray(items)) continue
+    for (const item of items) {
+      if (item === null || typeof item !== 'object' || (item as { type?: unknown }).type !== 'web_search_result') continue
+      const url = (item as { url?: unknown }).url
+      if (typeof url === 'string' && url.length > 0 && url.length <= 4096) urls.push(url)
+    }
+  }
+  return urls
+}
+

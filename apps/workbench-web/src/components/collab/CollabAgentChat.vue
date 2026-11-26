@@ -32,8 +32,10 @@ const props = defineProps<{
   agentId: string
   /** 链接定位的会话：加载到该段并滚动到段首。 */
   focusSessionId?: string
+  /** 从 Skill 广场“去对话”带来的 Skill（MODE-E2E-18）：发送时随新会话一起选用。 */
+  skillId?: string
 }>()
-const emit = defineEmits<{ back: [] }>()
+const emit = defineEmits<{ back: []; 'skill-cleared': []; 'open-agent': [agentId: string, sessionId: string] }>()
 
 const taskStore = useTaskStore()
 const authStore = useAuthStore()
@@ -42,6 +44,8 @@ const conversations = useCollabConversationStore()
 const openRecommendedAgent = useOpenRecommendedAgent()
 /** 推荐卡片跳转带来的问题：预填进输入框，不自动发送；发送后提示消失。 */
 const recommendationPrefill = ref('')
+/** 选用 Skill 的推荐提问（没有推荐提问的 Skill 不预填，见功能规则第 5 节“推荐提问”）。 */
+const skillPrefill = ref('')
 /** 输入框只在挂载时读取初始内容：带入预填时换 key 重新挂载，发送时不重挂以免打断提交。 */
 const composerKey = ref(0)
 
@@ -61,10 +65,17 @@ const agentProfile = computed(() => contentStore.agents.find(item => item.id ===
 const displaySegments = computed(() => [...segments.value].reverse())
 const newestSegment = computed(() => segments.value[0])
 const continueSessionId = computed(() => conversation.value?.continueSessionId ?? null)
+/**
+ * 选用的 Skill 只在新会话创建时固定（与工作模式“新对话”同一入口），所以选用后发送总是开始新会话；
+ * 员工可见的 Skill 中找不到时视为未选用。
+ */
+const selectedSkill = computed(() => props.skillId ? contentStore.skills.find(item => item.id === props.skillId) : undefined)
+/** 知识库选择所属的会话：选用 Skill 时发送会开启新会话，选择只用于新会话，不读写最近一段会话。 */
+const knowledgeSessionId = computed(() => selectedSkill.value ? null : continueSessionId.value)
 const canSend = computed(() => agent.value?.available === true)
 
 /**
- * 企业知识库（weknora-knowledge-plan 5.7）：单聊是个人空间的对话。续写最近一段会话时，添加、移除直接
+ * 企业知识库（功能规则第 11 节）：单聊是个人空间的对话。续写最近一段会话时，添加、移除直接
  * 保存到该会话；开启新会话时先在本地记下，随首条提问写入会话。
  */
 const knowledge = useKnowledgeStore()
@@ -73,7 +84,7 @@ const showKnowledge = computed(() => knowledge.enabled)
 const selectedKnowledge = ref<SessionKnowledgeBase[]>([])
 let knowledgeToken = 0
 // 同时监听启用状态：刷新页面时状态可能晚于会话加载，否则会漏读已选知识库，之后保存时把它们覆盖掉。
-watch([continueSessionId, () => knowledge.enabled], async ([sessionId, enabled]) => {
+watch([knowledgeSessionId, () => knowledge.enabled], async ([sessionId, enabled]) => {
   const token = ++knowledgeToken
   selectedKnowledge.value = []
   if (!sessionId || !enabled) return
@@ -85,7 +96,7 @@ watch([continueSessionId, () => knowledge.enabled], async ([sessionId, enabled])
   }
 }, { immediate: true })
 async function changeKnowledge(items: SessionKnowledgeBase[]) {
-  const sessionId = continueSessionId.value
+  const sessionId = knowledgeSessionId.value
   if (!sessionId) {
     selectedKnowledge.value = items
     return
@@ -262,9 +273,11 @@ async function scrollToBottom(behavior: 'auto' | 'smooth' = 'smooth') {
 async function submit(payload: { prompt: string; files: File[]; workspaceId: string; mentions: string[]; confirm: () => void }) {
   if (!canSend.value) return
   recommendationPrefill.value = ''
+  skillPrefill.value = ''
   const references = referencedArtifacts.value.map(item => item.fileId)
   try {
-    const sessionId = continueSessionId.value
+    const skill = selectedSkill.value
+    const sessionId = skill ? null : continueSessionId.value
     if (sessionId) {
       // 续写最近一段会话：与 A 的续写同一入口（POST /sessions/:id/runs）。
       const task = await taskStore.startRunWithSessionFiles(sessionId, {
@@ -276,7 +289,20 @@ async function submit(payload: { prompt: string; files: File[]; workspaceId: str
     } else {
       // 首次对话或 Agent 版本已变化：经既有 createSession 开启新会话，固定 AI 同事当前版本。
       const knowledgeBaseIds = showKnowledge.value ? selectedKnowledge.value.filter(item => item.available).map(item => item.id) : []
-      if (knowledgeBaseIds.length) {
+      if (skill) {
+        // 选用 Skill：与工作模式“新对话”相同，不指定 AI 同事，由服务端在本人可见的 AI 同事中依次选出
+        // 能提供该 Skill 所需工具的一位（通常是通用助手）；落到其他 AI 同事时转到它的单聊。
+        const task = await taskStore.createTask(payload.prompt, payload.files, undefined, undefined, undefined, references, skill.id, undefined, [], knowledgeBaseIds)
+        payload.confirm()
+        referencedArtifacts.value = []
+        const location = await workbenchApi.resolveConversation(task.id).catch(() => null)
+        if (location?.type === 'agent' && location.agentId !== props.agentId) {
+          emit('open-agent', location.agentId, location.sessionId)
+          void conversations.refresh()
+          return
+        }
+        emit('skill-cleared')
+      } else if (knowledgeBaseIds.length) {
         await taskStore.createTask(payload.prompt, payload.files, undefined, undefined, props.agentId, references, undefined, undefined, [], knowledgeBaseIds)
       } else {
         await taskStore.createTask(payload.prompt, payload.files, undefined, undefined, props.agentId, references)
@@ -297,6 +323,22 @@ watch(() => props.agentId, () => {
   recommendationPrefill.value = takeRecommendationPrefill() ?? ''
   if (recommendationPrefill.value) composerKey.value += 1
   void load()
+}, { immediate: true })
+
+/** 带着 Skill 进入时读取员工可见的 Skill（Skill 广场已加载时直接复用），有推荐提问则预填。 */
+watch(() => props.skillId, async (skillId) => {
+  if (!skillId) return
+  if (!contentStore.skills.some(item => item.id === skillId)) {
+    try { await contentStore.refreshSkills() } catch (cause) {
+      notifyActionFailure('加载 Skill', 'Skill 广场', cause, '仍可继续发送普通对话；稍后刷新页面重试 Skill。')
+      return
+    }
+  }
+  const skill = contentStore.skills.find(item => item.id === skillId)
+  if (skill?.testPrompt && !recommendationPrefill.value) {
+    skillPrefill.value = skill.testPrompt
+    composerKey.value += 1
+  }
 }, { immediate: true })
 watch(() => props.focusSessionId, (sessionId) => {
   if (sessionId && !loading.value) void focusSession(sessionId, generation)
@@ -390,7 +432,9 @@ watch(() => [latestTask.value?.messages.length, latestTask.value?.status] as con
             :running="running && canOperate"
             :stopping="stopping"
             :placeholder="`发消息给 ${agent?.name ?? 'AI 同事'}`"
-            :initial-prompt="recommendationPrefill"
+            :initial-prompt="recommendationPrefill || skillPrefill"
+            :selected-skill-name="selectedSkill?.name"
+            @clear-skill="emit('skill-cleared')"
             @remove-reference="removeReferencedArtifact"
             @submit="submit"
             @stop="stopRun"
@@ -405,7 +449,10 @@ watch(() => [latestTask.value?.messages.length, latestTask.value?.status] as con
               <p v-if="recommendationPrefill" class="collab-agent-chat__notice" role="status" data-testid="recommendation-prefill-notice">
                 已带入要发给这位 AI 同事的问题，可以修改，确认后再发送；原对话记录与附件不会带入。
               </p>
-              <p v-if="segments.length && !continueSessionId" class="collab-agent-chat__notice" data-testid="new-session-notice">
+              <p v-if="selectedSkill" class="collab-agent-chat__notice" role="status" data-testid="skill-session-notice">
+                已选用 Skill“{{ selectedSkill.name }}”，发送后将开始新的对话。
+              </p>
+              <p v-else-if="segments.length && !continueSessionId" class="collab-agent-chat__notice" data-testid="new-session-notice">
                 {{ agent?.name }} 已更新版本，发送后将开始新的对话。
               </p>
             </template>

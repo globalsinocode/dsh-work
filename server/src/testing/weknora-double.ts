@@ -2,7 +2,7 @@ import { createServer, type IncomingMessage, type Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
 
 /**
- * 按 WeKnora v0.9.0 接口约定实现的测试替身（weknora-knowledge-plan 第 12 节）。只实现平台调用的
+ * 按 WeKnora v0.9.0 接口约定实现的测试替身（功能规则第 11 节）。只实现平台调用的
  * 检索、文档元数据与知识库管理接口，返回固定数据；仅用于测试，不是生产备用。
  */
 export interface WeKnoraDoubleDocument {
@@ -22,7 +22,7 @@ export interface WeKnoraDoubleChunk {
   knowledgeId: string
   content: string
   score: number
-  /** 只在查询词包含该文字时返回（模拟追问只有带上一条提问才能命中，优化方案 O3）。 */
+  /** 只在查询词包含该文字时返回（模拟追问只有带上一条提问才能命中，功能规则第 11 节）。 */
   matchQuery?: string
 }
 
@@ -50,16 +50,23 @@ export class WeKnoraDouble {
   ignoreKnowledgeBaseScope = false
   /** 元数据接口不返回这些文档（模拟两次请求之间被删除）。 */
   hiddenMetadataIds: string[] = []
-  /** 检索响应 meta.rerank.outcome（优化方案 O5）。 */
+  /** 检索响应 meta.rerank.outcome（功能规则第 11 节）。 */
   rerankOutcome = 'disabled'
   /** 只让第 N 次检索请求失败（从 1 开始，返回 503）。 */
   failSearchNumber: number | null = null
   /** 已收到的检索请求数。 */
   searchCount = 0
-  /** WeKnora 中为知识库配置的摘要模型（模拟有人在 WeKnora 前端修改过，优化方案 O7）。 */
+  /** WeKnora 中为知识库配置的摘要模型（模拟有人在 WeKnora 前端修改过，功能规则第 11 节）。 */
   readonly summaryModels = new Map<string, string>()
   /** 经 POST /knowledge-bases 创建、尚未删除的知识库及收到的建库请求体。 */
   readonly knowledgeBases = new Map<string, Record<string, unknown>>()
+  /**
+   * WeKnora 中存在的嵌入模型 ID。设置后上传的文档立即解析完：知识库的模型在其中为 completed，否则为 failed
+   * （与 v0.9.0 一致：建库不校验模型 ID，解析时才失败）。为空时上传的文档一直停在 processing。
+   */
+  embeddingModels: Set<string> | null = null
+  /** 删除知识库时返回该状态（模拟清理失败）。 */
+  failDeleteKnowledgeBaseWith: number | null = null
   private server: Server | null = null
   private nextKnowledgeBase = 1
 
@@ -106,6 +113,8 @@ export class WeKnoraDouble {
     this.searchCount = 0
     this.summaryModels.clear()
     this.knowledgeBases.clear()
+    this.embeddingModels = null
+    this.failDeleteKnowledgeBaseWith = null
   }
 
   private async handle(request: IncomingMessage): Promise<{ status: number; body?: unknown; raw?: Buffer; contentType?: string }> {
@@ -190,6 +199,7 @@ export class WeKnoraDouble {
       }) } }
     }
     if (request.method === 'DELETE' && base) {
+      if (this.failDeleteKnowledgeBaseWith) return { status: this.failDeleteKnowledgeBaseWith, body: { success: false, error: { code: 1000, message: 'delete failed' } } }
       this.knowledgeBases.delete(decodeURIComponent(base[1]!))
       return { status: 200, body: { success: true, message: 'Knowledge base deleted successfully' } }
     }
@@ -220,7 +230,9 @@ export class WeKnoraDouble {
       const knowledgeBaseId = decodeURIComponent(upload[1]!)
       const existing = this.documents.find(document => document.knowledgeBaseId === knowledgeBaseId && document.fileName === fileName)
       if (existing) return { status: 409, body: { success: false, data: toKnowledge(existing) } }
-      const document = { id: `doc-double-${this.nextKnowledgeBase++}`, knowledgeBaseId, title: fileName.replace(/\.[^.]+$/, ''), fileName, updatedAt: new Date().toISOString(), parseStatus: 'processing' }
+      const model = String(this.knowledgeBases.get(knowledgeBaseId)?.embedding_model_id ?? '')
+      const parseStatus = this.embeddingModels ? (this.embeddingModels.has(model) ? 'completed' : 'failed') : 'processing'
+      const document = { id: `doc-double-${this.nextKnowledgeBase++}`, knowledgeBaseId, title: fileName.replace(/\.[^.]+$/, ''), fileName, updatedAt: new Date().toISOString(), parseStatus }
       this.documents.push(document)
       return ok(toKnowledge(document))
     }

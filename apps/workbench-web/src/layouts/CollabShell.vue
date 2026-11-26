@@ -192,7 +192,7 @@ onMounted(() => {
 
 .collab-rail__logo { display: flex; justify-content: center; min-height: 44px; }
 
-/* 站内通知（方案 NC2）：铃铛在头像上方；窄屏顶栏中排在头像左侧。 */
+/* 站内通知（功能规则 3.7）：铃铛在头像上方；窄屏顶栏中排在头像左侧。 */
 .collab-rail__account { display: flex; flex-direction: column; align-items: center; gap: 10px; }
 
 .collab-rail__nav {

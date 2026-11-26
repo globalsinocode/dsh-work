@@ -110,11 +110,13 @@ test('project checks reject dangling docs and tests disconnected from CI', t => 
   const workflow = join(root, '.github/workflows/ci.yml')
   writeFileSync(workflow, readFileSync(workflow, 'utf8')
     .replace('run: pnpm test:integration', 'run: echo skipped')
-    .replace('run: pnpm test:e2e:personal', 'run: echo skipped'))
+    .replace('run: pnpm test:e2e:personal', 'run: echo skipped')
+    .replace(/actions\/upload-artifact@[0-9a-f]{40}/, 'actions/upload-artifact@v7'))
   assert.match(failures(root, 'project'), /文档链接不存在：docs\/deleted.md/)
   assert.match(failures(root, 'project'), /test:unit 未接入 ci:check/)
   assert.match(failures(root, 'project'), /test:integration 未接入 GitHub CI/)
   assert.match(failures(root, 'project'), /test:e2e:personal 未接入 GitHub CI/)
+  assert.match(failures(root, 'project'), /CI 的 actions\/upload-artifact 必须固定带版本注释的 Commit SHA/)
 })
 
 test('project checks reject duplicate migration numbers and database tests outside the integration job', t => {
@@ -132,9 +134,9 @@ test('project checks reject duplicate migration numbers and database tests outsi
 
 test('security checks reject external authorization calls and plaintext secret columns', t => {
   const root = fixture(t)
-  appendFileSync(join(root, 'server/src/modules/identity/ai-hub-client.ts'), '\nfetch("/authorization/decisions")\n')
+  appendFileSync(join(root, 'server/src/modules/identity/types.ts'), "\nexport const leaked = 'dsh_work.agent.read'\n")
   appendFileSync(join(root, 'server/migrations/0001_m2_platform.sql'), '\nALTER TABLE x ADD API_KEY TEXT;\n')
-  assert.match(failures(root, 'security'), /不应包含 \/authorization\/decisions/)
+  assert.match(failures(root, 'security'), /不应包含 dsh_work\./)
   assert.match(failures(root, 'security'), /不得包含明文凭据列/)
   appendFileSync(join(root, 'server/src/modules/tool/postgres-tool-connector-service.ts'), "\nthrow Object.assign(new Error('x'), { status: 409, code: 'y' })\n")
   assert.match(failures(root, 'security'), /postgres-tool-connector-service\.ts 不得用 Object\.assign 拼装 HTTP 状态/)

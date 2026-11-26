@@ -181,8 +181,9 @@ export function compileRuntimeManifest(input: RuntimeManifest): CompiledRuntimeM
       for (const key of Object.keys(item)) {
         if (!['tool', 'reason'].includes(key)) throw new TypeError(`unavailable_tools contains unsupported field: ${key}`)
       }
-      if (item.tool !== 'web_search') throw new TypeError('unavailable_tools.tool is invalid')
-      if (item.reason !== 'model_route_unsupported') throw new TypeError('unavailable_tools.reason is invalid')
+      const expectedReason = { web_search: 'model_route_unsupported', web_fetch: 'proxy_configured' }[item.tool as string]
+      if (!expectedReason) throw new TypeError('unavailable_tools.tool is invalid')
+      if (item.reason !== expectedReason) throw new TypeError('unavailable_tools.reason is invalid')
       if (toolIds.has(item.tool)) throw new TypeError(`Tool is both unavailable and assembled: ${item.tool}`)
     }
   }

@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { test } from 'node:test'
 import { commandEnvironment } from './docker-execution-backend.ts'
 import type { ContainerCommand, ContainerCommandResult } from './execution-backend.ts'
-import { ExecutionContainerPythonRunner, skillDirectory } from './execution-container-python.ts'
+import { ExecutionContainerPythonRunner, resolvePythonCall, skillDirectory } from './execution-container-python.ts'
 import type { RuntimeManifest } from './runtime-types.ts'
 
 function manifest(): RuntimeManifest {
@@ -80,4 +80,11 @@ test('per-command variables are limited to the python_execute paths', () => {
   assert.throws(() => commandEnvironment({ env: { PATH: '/evil' } }), /环境变量无效/)
   assert.throws(() => commandEnvironment({ env: { DSH_INPUT_DIR: 'relative' } }), /环境变量无效/)
   assert.throws(() => commandEnvironment({ env: { DSH_SKILL_DIR: '/ws\nPATH=/evil' } }), /环境变量无效/)
+})
+
+test('python_execute resolves the Skill with the same catalog forms as activate_skill', () => {
+  for (const skill of ['report', 'skill-report', 'skill-report@1.0.0', 'report（skill-report@1.0.0）']) {
+    assert.equal(resolvePythonCall({ skill, entry: 'scripts/build.py' }, manifest()).skillId, 'skill-report')
+  }
+  assert.throws(() => resolvePythonCall({ skill: 'skill-report@2.0.0', entry: 'scripts/build.py' }, manifest()), /未在当前 Run 的锁定 Skill 中声明/)
 })

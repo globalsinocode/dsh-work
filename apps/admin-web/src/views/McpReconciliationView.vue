@@ -13,7 +13,7 @@ const NOTE_LIMIT = 1000
 
 const auth = useAuthStore()
 /** 与服务端平台管理员口径（F-04）一致：admin:* 或 admin:write。 */
-const canResolve = computed(() => auth.canManage)
+const canResolve = computed(() => auth.canWrite('connector'))
 
 const status = ref<Status>('pending')
 const connectorId = ref('all')

@@ -1,5 +1,6 @@
 import { hash, scanPythonImports, type SkillBundle, type SkillCompatibility, type SkillPackage, type SkillPackageArtifact } from './skill-package.ts'
 import { canonicalJson } from '../runtime/canonical-json.ts'
+import { PYTHON_ENTRIES_FIELD, skillPythonEntries } from '../../domain/skill-python-entries.ts'
 import type { PythonModuleIndex } from '../runtime/execution-backend.ts'
 
 interface InstallationPlanBase {
@@ -58,6 +59,13 @@ export function buildSkillInstallationPlan(
       issues.push({
         code: 'python_fixed_sandbox_paths', severity: 'warning',
         message: `${pkg.name}：脚本写死了 /skill、/input 或 /output（${fixed.slice(0, 3).join('、')}${fixed.length > 3 ? ' 等' : ''}），平台不提供这些路径；请改用环境变量 DSH_SKILL_DIR、DSH_INPUT_DIR、DSH_OUTPUT_DIR 或相对路径`,
+      })
+    }
+    // 功能规则第 6 节：未登记入口时包内全部 .py 都可被直接运行，建议在 SKILL.md 中登记。
+    if (pkg.files.some(file => file.path.endsWith('.py')) && !skillPythonEntries(pkg.files).declared) {
+      issues.push({
+        code: 'python_entries_undeclared', severity: 'warning',
+        message: `${pkg.name}：SKILL.md 没有用 ${PYTHON_ENTRIES_FIELD} 登记入口，包内全部 .py 文件都可被直接运行；建议列出供直接运行的脚本（例如 ${PYTHON_ENTRIES_FIELD}: [scripts/main.py]），只被导入的模块不要列入`,
       })
     }
   }

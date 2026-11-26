@@ -3,7 +3,7 @@
   "info": {
     "title": "dsh-work 管理平台 API",
     "version": "0.13.0-agent-validation",
-    "description": "管理面请求使用独立账号密码或 AI Hub OIDC 登录后由 dsh-work 签发的 HttpOnly 服务端 Session。认证模式由部署配置显式选择；admin:read、admin:write、audit:read、角色与数据范围全部由 dsh-work 本地授权。身份同步、账号管理、角色、员工授权和 Session 撤销仅允许本地平台管理员（admin:*）修改。操作人由服务端 Session 注入，请求体不接受 actor。"
+    "description": "管理面请求使用独立账号密码登录后由 dsh-work 签发的 HttpOnly 服务端 Session；admin:read、admin:write、audit:read、角色与数据范围全部由 dsh-work 本地授权。身份同步、账号管理、角色、员工授权和 Session 撤销仅允许本地平台管理员（admin:*）修改。操作人由服务端 Session 注入，请求体不接受 actor。"
   },
   "servers": [
     {
@@ -11,9 +11,6 @@
     }
   ],
   "security": [
-    {
-      "adminSession": []
-    },
     {
       "localAdminSession": []
     }
@@ -702,7 +699,7 @@
     "/session": {
       "get": {
         "operationId": "getAdminSession",
-        "summary": "获取管理员身份、角色和权限",
+        "summary": "获取管理员身份、角色和权限；adminModules 为各模块的可用级别（none / read / write），platformAdmin 表示是否持有 admin:*（只用于展示，服务端逐请求校验）",
         "responses": {
           "200": {
             "$ref": "#/components/responses/Ok"
@@ -1253,92 +1250,6 @@
             "$ref": "#/components/responses/Ok"
           }
         }
-      },
-      "post": {
-        "operationId": "createSkill",
-        "summary": "创建 Skill 草稿，标识由系统自动生成",
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/CreateSkillInput"
-              }
-            }
-          }
-        },
-        "responses": {
-          "201": {
-            "$ref": "#/components/responses/Ok"
-          },
-          "403": {
-            "$ref": "#/components/responses/Error",
-            "description": "当前管理员身份或操作权限不足"
-          },
-          "404": {
-            "$ref": "#/components/responses/Error",
-            "description": "Skill 或请求的版本不存在（skill_not_found / skill_version_not_found）"
-          },
-          "409": {
-            "$ref": "#/components/responses/Error",
-            "description": "缺少草稿、状态冲突或测试证据失效；不自动改变对象状态"
-          },
-          "422": {
-            "$ref": "#/components/responses/Error",
-            "description": "Skill 输入类型、测试问题或场景无效"
-          },
-          "500": {
-            "$ref": "#/components/responses/Error",
-            "description": "内部数据或持久化故障；仅返回安全摘要与 traceId"
-          },
-          "503": {
-            "$ref": "#/components/responses/Error",
-            "description": "Skill 存储、试运行或执行能力不可用"
-          }
-        }
-      },
-      "patch": {
-        "operationId": "updateSkill",
-        "summary": "更新草稿；编辑已发布 Skill 时创建下一版本草稿",
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/UpdateSkillInput"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "$ref": "#/components/responses/Ok"
-          },
-          "403": {
-            "$ref": "#/components/responses/Error",
-            "description": "当前管理员身份或操作权限不足"
-          },
-          "404": {
-            "$ref": "#/components/responses/Error",
-            "description": "Skill 或请求的版本不存在（skill_not_found / skill_version_not_found）"
-          },
-          "409": {
-            "$ref": "#/components/responses/Error",
-            "description": "缺少草稿、状态冲突或测试证据失效；不自动改变对象状态"
-          },
-          "422": {
-            "$ref": "#/components/responses/Error",
-            "description": "Skill 输入类型、测试问题或场景无效"
-          },
-          "500": {
-            "$ref": "#/components/responses/Error",
-            "description": "内部数据或持久化故障；仅返回安全摘要与 traceId"
-          },
-          "503": {
-            "$ref": "#/components/responses/Error",
-            "description": "Skill 存储、试运行或执行能力不可用"
-          }
-        }
       }
     },
     "/skills/test": {
@@ -1517,7 +1428,7 @@
     "/skills/status": {
       "patch": {
         "operationId": "setSkillStatus",
-        "summary": "发布、启用或停用 Skill；发布要求当前配置测试通过；待发布版本来自员工提交时返回 409 skill_submission_review_required，须经“待审核”通过发布",
+        "summary": "发布、启用或停用 Skill；发布要求当前版本的严格试运行通过；草稿没有安装来源（已删除的文本接口留下）时返回 409 skill_legacy_draft_unsupported；待发布版本来自员工提交时返回 409 skill_submission_review_required，须经“待审核”通过发布",
         "responses": {
           "200": {
             "$ref": "#/components/responses/Ok"
@@ -1808,6 +1719,23 @@
         "responses": {
           "200": {
             "$ref": "#/components/responses/Ok"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/connectors/mcp/employee-identity": {
+      "patch": {
+        "operationId": "setMcpEmployeeIdentity",
+        "summary": "开启或关闭 MCP Connector 的“发送员工身份”（外部业务应用调用上下文，EA-S1）；只能为 Bearer 认证且凭据独占的 Connector 开启，只影响此后新启动的 Attempt",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
           },
           "409": {
             "$ref": "#/components/responses/Error"
@@ -2548,7 +2476,7 @@
     "/identity/login-account/check": {
       "post": {
         "operationId": "checkLocalLoginAccount",
-        "summary": "平台管理员检查新登录账号格式及是否被独立账号或已同步 AI Hub 账号占用",
+        "summary": "检查新登录账号格式及是否已被占用",
         "requestBody": {
           "required": true,
           "content": {
@@ -2605,7 +2533,7 @@
             }
           },
           "403": {
-            "description": "仅平台管理员可检查账号占用"
+            "description": "需要员工与权限的修改权限（admin:identity:write）"
           },
           "422": {
             "description": "账号不是有效的手机号或邮箱"
@@ -2658,7 +2586,7 @@
             "$ref": "#/components/responses/Ok"
           },
           "403": {
-            "description": "仅平台管理员可修改组织架构"
+            "description": "需要组织架构的修改权限（admin:org:write）；非平台管理员授出的角色不能超过本人，也不能变更自己的部门归属"
           },
           "404": {
             "description": "部门或成员关系不存在"
@@ -2712,7 +2640,7 @@
             "$ref": "#/components/responses/Ok"
           },
           "403": {
-            "description": "仅平台管理员可修改组织架构"
+            "description": "需要组织架构的修改权限（admin:org:write）；非平台管理员授出的角色不能超过本人，也不能变更自己的部门归属"
           },
           "404": {
             "description": "部门或成员关系不存在"
@@ -2743,7 +2671,7 @@
             "$ref": "#/components/responses/Ok"
           },
           "403": {
-            "description": "仅平台管理员可修改组织架构"
+            "description": "需要组织架构的修改权限（admin:org:write）；非平台管理员授出的角色不能超过本人，也不能变更自己的部门归属"
           },
           "404": {
             "description": "部门或成员关系不存在"
@@ -2799,7 +2727,7 @@
             "$ref": "#/components/responses/Ok"
           },
           "403": {
-            "description": "仅平台管理员可修改组织架构"
+            "description": "需要组织架构的修改权限（admin:org:write）；非平台管理员授出的角色不能超过本人，也不能变更自己的部门归属"
           },
           "404": {
             "description": "部门或成员关系不存在"
@@ -2855,7 +2783,7 @@
             "$ref": "#/components/responses/Ok"
           },
           "403": {
-            "description": "仅平台管理员可修改组织架构"
+            "description": "需要组织架构的修改权限（admin:org:write）；非平台管理员授出的角色不能超过本人，也不能变更自己的部门归属"
           },
           "404": {
             "description": "部门、角色或部门授权不存在"
@@ -2888,7 +2816,7 @@
             "$ref": "#/components/responses/Ok"
           },
           "403": {
-            "description": "仅平台管理员可修改组织架构"
+            "description": "需要组织架构的修改权限（admin:org:write）；非平台管理员授出的角色不能超过本人，也不能变更自己的部门归属"
           },
           "404": {
             "description": "部门、角色或部门授权不存在"
@@ -2945,7 +2873,7 @@
             "$ref": "#/components/responses/Ok"
           },
           "403": {
-            "description": "仅平台管理员可修改组织架构"
+            "description": "需要组织架构的修改权限（admin:org:write）；非平台管理员授出的角色不能超过本人，也不能变更自己的部门归属"
           },
           "404": {
             "description": "部门或成员关系不存在"
@@ -2994,7 +2922,7 @@
             "$ref": "#/components/responses/Ok"
           },
           "403": {
-            "description": "仅平台管理员可修改组织架构"
+            "description": "需要组织架构的修改权限（admin:org:write）；非平台管理员授出的角色不能超过本人，也不能变更自己的部门归属"
           },
           "404": {
             "description": "部门或成员关系不存在"
@@ -3035,7 +2963,7 @@
             "$ref": "#/components/responses/Ok"
           },
           "403": {
-            "description": "仅平台管理员可修改组织架构"
+            "description": "需要组织架构的修改权限（admin:org:write）；非平台管理员授出的角色不能超过本人，也不能变更自己的部门归属"
           },
           "404": {
             "description": "部门或成员关系不存在"
@@ -3062,7 +2990,7 @@
       ],
       "get": {
         "operationId": "getUserDingTalkBinding",
-        "summary": "员工详情 › 钉钉：绑定状态（已绑定 / 未绑定 / 已失效）、钉钉姓名与部门、绑定方式与代绑管理员、失效原因、是否锁定自行绑定。仅平台管理员",
+        "summary": "员工详情 › 钉钉：绑定状态（已绑定 / 未绑定 / 已失效）、钉钉姓名与部门、绑定方式与代绑管理员、失效原因、是否锁定自行绑定。需要钉钉集成的查看权限（admin:dingtalk:read）",
         "responses": {
           "200": {
             "$ref": "#/components/responses/Ok"
@@ -3199,7 +3127,7 @@
     "/dingtalk/settings": {
       "get": {
         "operationId": "getDingTalkSettings",
-        "summary": "钉钉集成 › 应用配置（DT30）：CorpId、AgentId、AppKey、AppSecret 后 4 位（不回显）、能否读取已保存的 AppSecret、钉钉会话有效期、待绑定凭证有效期、每日代绑上限、接口超时、配置来源（deployment-config / admin）、服务能否保存密钥（是否配置 DSH_CREDENTIAL_MASTER_KEY）。仅平台管理员",
+        "summary": "钉钉集成 › 应用配置（DT30）：CorpId、AgentId、AppKey、AppSecret 后 4 位（不回显）、能否读取已保存的 AppSecret、钉钉会话有效期、待绑定凭证有效期、每日代绑上限、接口超时、配置来源（deployment-config / admin）、服务能否保存密钥（是否配置 DSH_CREDENTIAL_MASTER_KEY）。需要钉钉集成的查看权限（admin:dingtalk:read）",
         "responses": {
           "200": {
             "$ref": "#/components/responses/Ok"
@@ -3208,7 +3136,7 @@
       },
       "put": {
         "operationId": "saveDingTalkSettings",
-        "summary": "保存钉钉应用配置：先用这组凭据向钉钉换取 access_token，失败返回 422 dingtalk_credentials_rejected 或 503 dingtalk_unavailable 且不保存；AppSecret 留空沿用已保存的值，更换 CorpId 或 AppKey 时必须填写（422 dingtalk_secret_required）；服务未配置凭据主密钥时不能保存 AppSecret（409 credential_master_key_missing）。AppSecret 加密保存，立即生效，写审计（不含密钥）。仅平台管理员",
+        "summary": "保存钉钉应用配置：先用这组凭据向钉钉换取 access_token，失败返回 422 dingtalk_credentials_rejected 或 503 dingtalk_unavailable 且不保存；AppSecret 留空沿用已保存的值，更换 CorpId 或 AppKey 时必须填写（422 dingtalk_secret_required）；服务未配置凭据主密钥时不能保存 AppSecret（409 credential_master_key_missing）。AppSecret 加密保存，立即生效，写审计（不含密钥）。只限平台管理员（功能规则第 13 节：换成他人控制的应用可以冒充已绑定员工登录）",
         "requestBody": {
           "required": true,
           "content": {
@@ -3272,7 +3200,7 @@
       },
       "delete": {
         "operationId": "clearDingTalkSettings",
-        "summary": "清除钉钉应用配置：删除已加密的 AppSecret，免登、代绑与离职检查立即停用；已有绑定记录保留；部署配置不会自动重新生效。仅平台管理员",
+        "summary": "清除钉钉应用配置：删除已加密的 AppSecret，免登、代绑与离职检查立即停用；已有绑定记录保留；部署配置不会自动重新生效。只限平台管理员（功能规则第 13 节：换成他人控制的应用可以冒充已绑定员工登录）",
         "responses": {
           "200": {
             "$ref": "#/components/responses/Ok"
@@ -3322,6 +3250,44 @@
               "type": "integer",
               "minimum": 10,
               "maximum": 100
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          }
+        }
+      }
+    },
+    "/dingtalk/bound": {
+      "get": {
+        "operationId": "listDingTalkBound",
+        "summary": "已绑定名单：有效独立账号中有有效钉钉绑定的员工（姓名、账号、部门、钉钉成员名与绑定方式），按姓名或登录账号搜索；钉钉集成查看权限",
+        "parameters": [
+          {
+            "name": "page",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "name": "page_size",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 10,
+              "maximum": 100
+            }
+          },
+          {
+            "name": "query",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "maxLength": 100
             }
           }
         ],
@@ -3413,7 +3379,7 @@
     "/identity/users": {
       "get": {
         "operationId": "listIdentityUsers",
-        "summary": "分页查询员工及本地角色、数据范围和会话摘要；loginAccount 展示登录账号（独立用户名或 AI Hub subject），identityProvider 表示来源 local/ai-hub，username 仅用于独立凭据管理；不提供账号绑定；departmentRoles 列出来自部门授权的角色（含 departmentName、grantId），只能在组织架构中修改，roles 只含直接授予的角色；dingtalk 为独立账号的钉钉绑定状态（bound/unbound/invalid、绑定方式、钉钉姓名、失效原因、是否锁定自行绑定），AI Hub 账号为 null；summary.dingtalk 为有效独立账号的绑定概况",
+        "summary": "分页查询员工及本地角色、数据范围和会话摘要；loginAccount 展示登录账号（凭据用户名），只列出开通了登录账号的员工；不提供账号绑定；departmentRoles 列出来自部门授权的角色（含 departmentName、grantId），只能在组织架构中修改，roles 只含直接授予的角色；dingtalk 为独立账号的钉钉绑定状态（bound/unbound/invalid、绑定方式、钉钉姓名、失效原因、是否锁定自行绑定）；summary.dingtalk 为有效独立账号的绑定概况",
         "parameters": [
           {
             "name": "dingtalk",
@@ -3494,7 +3460,7 @@
                     "type": "string",
                     "minLength": 5,
                     "maxLength": 254,
-                    "description": "中国大陆 11 位手机号（可带 +86）或邮箱；忽略邮箱大小写，创建时检查独立及已同步 AI Hub 登录账号占用"
+                    "description": "中国大陆 11 位手机号（可带 +86）或邮箱；忽略邮箱大小写，创建时检查登录账号占用"
                   },
                   "password": {
                     "type": "string",
@@ -3526,7 +3492,7 @@
             "$ref": "#/components/responses/Ok"
           },
           "403": {
-            "description": "仅平台管理员可修改账号"
+            "description": "需要员工与权限的修改权限（admin:identity:write）；非平台管理员不能操作自己、平台管理员或权限比自己高的账号"
           },
           "404": {
             "description": "所选部门不存在或已删除"
@@ -3553,7 +3519,7 @@
       ],
       "post": {
         "operationId": "resetLocalPassword",
-        "summary": "重置他人密码并撤销所有旧会话，下次登录强制改密",
+        "summary": "重置他人密码并撤销所有旧会话，下次登录强制改密；非平台管理员不能操作自己、平台管理员或权限比自己高的账号，授出的角色与数据范围不能超过本人",
         "requestBody": {
           "required": true,
           "content": {
@@ -3582,7 +3548,7 @@
             "$ref": "#/components/responses/Ok"
           },
           "403": {
-            "description": "仅平台管理员可修改账号"
+            "description": "需要员工与权限的修改权限（admin:identity:write）；非平台管理员不能操作自己、平台管理员或权限比自己高的账号"
           },
           "409": {
             "description": "账号已存在或最后一位管理员保护"
@@ -3606,7 +3572,7 @@
       ],
       "patch": {
         "operationId": "setLocalAccountStatus",
-        "summary": "启停账号；不能停用最后一位可登录的本地平台管理员",
+        "summary": "启停账号；不能停用最后一位可登录的本地平台管理员；非平台管理员不能操作自己、平台管理员或权限比自己高的账号，授出的角色与数据范围不能超过本人",
         "requestBody": {
           "required": true,
           "content": {
@@ -3635,7 +3601,7 @@
             "$ref": "#/components/responses/Ok"
           },
           "403": {
-            "description": "仅平台管理员可修改账号"
+            "description": "需要员工与权限的修改权限（admin:identity:write）；非平台管理员不能操作自己、平台管理员或权限比自己高的账号"
           },
           "409": {
             "description": "账号已存在或最后一位管理员保护"
@@ -3654,7 +3620,7 @@
       ],
       "post": {
         "operationId": "grantIdentityUserRole",
-        "summary": "由平台管理员为员工分配 dsh-work 本地角色",
+        "summary": "需要员工与权限的修改权限：为员工分配 dsh-work 本地角色；非平台管理员不能操作自己、平台管理员或权限比自己高的账号，授出的角色与数据范围不能超过本人",
         "responses": {
           "200": {
             "$ref": "#/components/responses/Ok"
@@ -3679,7 +3645,7 @@
       ],
       "delete": {
         "operationId": "revokeIdentityUserRole",
-        "summary": "由平台管理员移除员工的本地角色；禁止移除最后一个平台管理员",
+        "summary": "需要员工与权限的修改权限：移除员工的本地角色；禁止移除最后一个平台管理员；非平台管理员不能操作自己、平台管理员或权限比自己高的账号，授出的角色与数据范围不能超过本人",
         "responses": {
           "200": {
             "$ref": "#/components/responses/Ok"
@@ -3701,7 +3667,7 @@
       ],
       "patch": {
         "operationId": "replaceIdentityUserScopes",
-        "summary": "由平台管理员替换员工在 dsh-work 中的直接数据范围",
+        "summary": "需要员工与权限的修改权限：替换员工在 dsh-work 中的直接数据范围；非平台管理员不能操作自己、平台管理员或权限比自己高的账号，授出的角色与数据范围不能超过本人",
         "responses": {
           "200": {
             "$ref": "#/components/responses/Ok"
@@ -3720,7 +3686,7 @@
       ],
       "post": {
         "operationId": "revokeIdentityUserSessions",
-        "summary": "由平台管理员撤销员工全部 dsh-work 登录 Session",
+        "summary": "需要员工与权限的修改权限：撤销员工全部 dsh-work 登录 Session；非平台管理员不能操作自己、平台管理员或权限比自己高的账号，授出的角色与数据范围不能超过本人",
         "responses": {
           "200": {
             "$ref": "#/components/responses/Ok"
@@ -3743,7 +3709,7 @@
       },
       "post": {
         "operationId": "createIdentityRole",
-        "summary": "由平台管理员创建 dsh-work 本地角色",
+        "summary": "创建 dsh-work 本地角色：需要员工与权限的修改权限，角色编码由系统生成（role_ + 8 位随机字符，请求中的 code 被忽略），非平台管理员授出的权限不能超过本人",
         "responses": {
           "200": {
             "$ref": "#/components/responses/Ok"
@@ -3762,7 +3728,7 @@
       ],
       "patch": {
         "operationId": "updateIdentityRole",
-        "summary": "由平台管理员更新本地角色的状态、权限和数据范围",
+        "summary": "需要员工与权限的修改权限：更新本地角色的状态、权限和数据范围",
         "responses": {
           "200": {
             "$ref": "#/components/responses/Ok"
@@ -3784,32 +3750,6 @@
         }
       }
     },
-    "/identity/directory-sync": {
-      "get": {
-        "operationId": "getIdentityDirectorySyncState",
-        "summary": "查询 AI Hub 员工目录同步状态",
-        "responses": {
-          "200": {
-            "$ref": "#/components/responses/Ok"
-          }
-        }
-      },
-      "post": {
-        "operationId": "synchronizeIdentityDirectory",
-        "summary": "由平台管理员使用应用服务凭据增量或全量同步 AI Hub 员工资料，不修改本地授权",
-        "responses": {
-          "200": {
-            "$ref": "#/components/responses/Ok"
-          },
-          "403": {
-            "$ref": "#/components/responses/Error"
-          },
-          "409": {
-            "$ref": "#/components/responses/Error"
-          }
-        }
-      }
-    },
     "/health": {
       "get": {
         "operationId": "getPlatformHealth",
@@ -3824,7 +3764,7 @@
     "/skill-submissions": {
       "get": {
         "operationId": "listSkillSubmissions",
-        "summary": "待审核的员工 Skill 提交（Skill 创建专家方案 4.4）：提交人、来源、当前版本、脚本数量与最近一次严格试运行状态（not_started / running / unconfirmed / passed / failed），按提交时间先后",
+        "summary": "待审核的员工 Skill 提交（功能规则 5.6）：提交人、来源、当前版本、脚本数量与最近一次严格试运行状态（not_started / running / unconfirmed / passed / failed），按提交时间先后",
         "responses": {
           "200": {
             "$ref": "#/components/responses/Ok"
@@ -4585,7 +4525,7 @@
       "post": {
         "operationId": "resolveTaskOperation",
         "summary": "核对外部系统后收敛 Task Operation 状态",
-        "description": "仅平台管理员可用。用于把 accepted 或 unknown 操作收敛为 completed/failed；receipt 必须来自权威外部系统核对结果。",
+        "description": "需要工具与连接的修改权限（admin:connector:write）。用于把 accepted 或 unknown 操作收敛为 completed/failed；receipt 必须来自权威外部系统核对结果。",
         "parameters": [
           {
             "$ref": "#/components/parameters/TaskId"
@@ -4744,20 +4684,6 @@
         }
       }
     },
-    "/usage": {
-      "get": {
-        "operationId": "getUsage",
-        "summary": "查询平台运行与资源用量汇总",
-        "responses": {
-          "200": {
-            "$ref": "#/components/responses/Ok"
-          },
-          "403": {
-            "$ref": "#/components/responses/Error"
-          }
-        }
-      }
-    },
     "/platform-status": {
       "get": {
         "operationId": "getPlatformStatus",
@@ -4819,7 +4745,7 @@
       "put": {
         "operationId": "updateKnowledgeConnection",
         "summary": "保存连接配置",
-        "description": "只有平台管理员。apiKey 省略时保留已保存的 Key；Key 用凭据主密钥加密保存。保存后检索与员工端立即生效。",
+        "description": "需要企业知识库的修改权限（admin:knowledge:write）。apiKey 省略时保留已保存的 Key；Key 用凭据主密钥加密保存。保存后检索与员工端立即生效。",
         "responses": {
           "200": {
             "description": "成功",
@@ -4976,6 +4902,101 @@
         }
       }
     },
+    "/knowledge/connection/verify-embedding-model": {
+      "post": {
+        "operationId": "verifyKnowledgeEmbeddingModel",
+        "summary": "校验嵌入模型",
+        "description": "用填写的或已保存的地址与 Key，以待校验的嵌入模型新建临时知识库、上传一个小文本文件并等待解析结束，随后删除临时库。返回 ok、原因分类（not_configured、api_key_required、parse_failed、parse_timeout、request_rejected、timeout、network、auth、rate_limited、server、protocol）、WeKnora 的简短说明与临时库是否未能删除。",
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/Envelope"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "type": "object",
+                          "required": [
+                            "ok",
+                            "reason",
+                            "detail",
+                            "cleanupFailed"
+                          ],
+                          "properties": {
+                            "ok": {
+                              "type": "boolean"
+                            },
+                            "reason": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
+                            "detail": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
+                            "cleanupFailed": {
+                              "type": "boolean"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "baseUrl": {
+                    "type": "string"
+                  },
+                  "apiKey": {
+                    "type": "string",
+                    "writeOnly": true
+                  },
+                  "embeddingModelId": {
+                    "type": "string",
+                    "maxLength": 200
+                  }
+                },
+                "required": [
+                  "embeddingModelId"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
     "/knowledge/departments": {
       "get": {
         "operationId": "listKnowledgeAdminDepartments",
@@ -5067,7 +5088,7 @@
       "post": {
         "operationId": "createKnowledgeAdminBase",
         "summary": "新建知识库",
-        "description": "只有平台管理员。归属部门为任意有效的非根部门，默认授给它并包含下级（管理员授予），带统一嵌入模型。",
+        "description": "需要企业知识库的修改权限（admin:knowledge:write）。归属部门为任意有效的非根部门，默认授给它并包含下级（管理员授予），带统一嵌入模型。",
         "responses": {
           "200": {
             "description": "成功",
@@ -5138,7 +5159,7 @@
       "patch": {
         "operationId": "updateKnowledgeAdminBaseOwner",
         "summary": "修改归属部门",
-        "description": "只有平台管理员；归属部门须为有效的非根部门，不改变可见部门。",
+        "description": "需要企业知识库的修改权限（admin:knowledge:write）；归属部门须为有效的非根部门，不改变可见部门。",
         "responses": {
           "200": {
             "description": "成功",
@@ -5207,7 +5228,7 @@
       "delete": {
         "operationId": "deleteKnowledgeAdminBase",
         "summary": "删除知识库",
-        "description": "只有平台管理员；员工端立即不可见、不再检索。",
+        "description": "需要企业知识库的修改权限（admin:knowledge:write）；员工端立即不可见、不再检索。",
         "responses": {
           "200": {
             "description": "成功",
@@ -5260,7 +5281,7 @@
       "post": {
         "operationId": "addKnowledgeAdminGrant",
         "summary": "授给部门",
-        "description": "只有平台管理员；可授给任意有效部门（含根部门），同一部门重复授予幂等。",
+        "description": "需要企业知识库的修改权限（admin:knowledge:write）；可授给任意有效部门（含根部门），同一部门重复授予幂等。",
         "responses": {
           "200": {
             "description": "成功",
@@ -5335,7 +5356,7 @@
       "delete": {
         "operationId": "revokeKnowledgeAdminGrant",
         "summary": "撤销授权",
-        "description": "只有平台管理员；可以撤销任何授权，包括员工授予的，也可以撤到没有授权。",
+        "description": "需要企业知识库的修改权限（admin:knowledge:write）；可以撤销任何授权，包括员工授予的，也可以撤到没有授权。",
         "responses": {
           "200": {
             "description": "成功",
@@ -5665,7 +5686,7 @@
       "post": {
         "operationId": "restoreKnowledgeAdminBase",
         "summary": "恢复原连接已更换的知识库",
-        "description": "只有平台管理员；先确认当前连接的 WeKnora 中存在该知识库，存在才恢复为有效，否则返回 409。",
+        "description": "需要企业知识库的修改权限（admin:knowledge:write）；先确认当前连接的 WeKnora 中存在该知识库，存在才恢复为有效，否则返回 409。",
         "responses": {
           "200": {
             "description": "成功",
@@ -5716,6 +5737,251 @@
           }
         ]
       }
+    },
+    "/error-records/groups": {
+      "get": {
+        "operationId": "listErrorGroups",
+        "summary": "错误记录（安全与运维，模块 ops 只读）：周期内按问题归并的员工端、管理端与服务端错误，含次数、影响人数、首次与最近发生、最近版本；默认不含“提示”类；最多 200 个问题",
+        "parameters": [
+          {
+            "name": "range",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "7d",
+                "30d",
+                "90d"
+              ]
+            }
+          },
+          {
+            "name": "source",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "workbench",
+                "admin",
+                "server",
+                "process"
+              ]
+            }
+          },
+          {
+            "name": "include_notice",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "true"
+              ]
+            }
+          },
+          {
+            "name": "release",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "recent",
+                "count"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          }
+        }
+      }
+    },
+    "/error-records/groups/{groupId}": {
+      "get": {
+        "operationId": "getErrorGroup",
+        "summary": "问题详情：最近 20 个样本（时间、员工或未登录、页面或路由、客户端简称、版本、链路编号、运行编号）与最近样本的堆栈（浏览器堆栈按源码映射还原）",
+        "parameters": [
+          {
+            "name": "groupId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/error-records/run-problems": {
+      "get": {
+        "operationId": "getRunProblems",
+        "summary": "运行问题：周期内失败、超时、取消与“成功但没有回答”的运行数，按原因汇总，以及按工具统计的调用失败与被拒绝次数（读取已有运行记录）",
+        "parameters": [
+          {
+            "name": "range",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "7d",
+                "30d",
+                "90d"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          }
+        }
+      }
+    },
+    "/error-records/lookup": {
+      "get": {
+        "operationId": "lookupErrorRecords",
+        "summary": "编号查询：输入接口链路编号（trace-http-…）列出同一编号的服务端失败与浏览器上报，以及样本中记下的运行；输入运行编号或运行侧链路编号（trace-<runId>）列出该运行与带此运行编号的样本",
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "maxLength": 128
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          }
+        }
+      }
+    },
+    "/usage-analytics/overview": {
+      "get": {
+        "operationId": "getUsageOverview",
+        "summary": "运营概览（使用情况，模块 ops 只读）：周期内活跃员工与覆盖率、日均活跃、新建对话、运行数与成功率、Token、每日趋势（平台时区），AI 同事与页面访问排行、入口分布（个人对话、项目空间、定时任务、主动任务）、钉钉内访问人数、失败原因与部门覆盖。员工活动只计员工侧运行（不含发布试运行、管理助手与系统运行）、新建的员工端对话与员工端页面访问；不含对话内容",
+        "parameters": [
+          {
+            "name": "range",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "7d",
+                "30d",
+                "90d"
+              ]
+            }
+          },
+          {
+            "name": "department",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "主部门名称；不传为全部"
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/usage-analytics/people": {
+      "get": {
+        "operationId": "getUsagePeople",
+        "summary": "按人明细：期间内活跃员工的最近活跃、活跃天数、对话、运行与成功率、Token、常用 AI 同事与常访问页面；以及有账号但期间内未使用的员工（账号创建时间、期间开始之前、同一口径的最近一次活跃）",
+        "parameters": [
+          {
+            "name": "range",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "7d",
+                "30d",
+                "90d"
+              ]
+            }
+          },
+          {
+            "name": "department",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "主部门名称；不传为全部"
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/usage-analytics/people/{userId}": {
+      "get": {
+        "operationId": "getUsagePerson",
+        "summary": "员工使用详情：每日运行、入口与页面访问分布；期间内没有使用记录时 404。不含对话标题与内容",
+        "parameters": [
+          {
+            "name": "userId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "range",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "7d",
+                "30d",
+                "90d"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
     }
   },
   "components": {
@@ -5724,13 +5990,7 @@
         "type": "apiKey",
         "in": "cookie",
         "name": "dsh_work_local_admin_session",
-        "description": "独立账号登录签发；生产使用 __Host- 前缀，与 OIDC Session 分离。"
-      },
-      "adminSession": {
-        "type": "apiKey",
-        "in": "cookie",
-        "name": "dsh_work_admin_session",
-        "description": "AI Hub OIDC 回调后由 dsh-work 设置的不透明 HttpOnly Session Cookie；生产名称使用 __Host- 前缀。"
+        "description": "独立账号登录签发；生产使用 __Host- 前缀。"
       }
     },
     "parameters": {
@@ -6569,79 +6829,6 @@
             }
           }
         }
-      },
-      "SkillConfiguration": {
-        "type": "object",
-        "required": [
-          "name",
-          "category",
-          "description",
-          "instructions",
-          "toolIds",
-          "testPrompt"
-        ],
-        "properties": {
-          "name": {
-            "type": "string",
-            "minLength": 2,
-            "maxLength": 40
-          },
-          "category": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 40
-          },
-          "description": {
-            "type": "string",
-            "minLength": 10,
-            "maxLength": 200
-          },
-          "instructions": {
-            "type": "string",
-            "minLength": 20,
-            "maxLength": 10000
-          },
-          "toolIds": {
-            "type": "array",
-            "minItems": 1,
-            "items": {
-              "type": "string"
-            },
-            "uniqueItems": true
-          },
-          "testPrompt": {
-            "type": "string",
-            "minLength": 4,
-            "maxLength": 500
-          }
-        }
-      },
-      "CreateSkillInput": {
-        "unevaluatedProperties": false,
-        "allOf": [
-          {
-            "$ref": "#/components/schemas/SkillConfiguration"
-          }
-        ]
-      },
-      "UpdateSkillInput": {
-        "unevaluatedProperties": false,
-        "allOf": [
-          {
-            "$ref": "#/components/schemas/SkillConfiguration"
-          },
-          {
-            "type": "object",
-            "required": [
-              "skillId"
-            ],
-            "properties": {
-              "skillId": {
-                "type": "string"
-              }
-            }
-          }
-        ]
       },
       "Envelope": {
         "type": "object",

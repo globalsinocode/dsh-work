@@ -18,6 +18,8 @@ withDefaults(defineProps<{
   placeholder?: string
   /** 输入框初始内容（推荐卡片跳转时预填的问题）；只在挂载时读取。 */
   initialPrompt?: string
+  /** 本次发送选用的 Skill（协作模式从 Skill 广场进入）：输入框上方显示可移除的标签。 */
+  selectedSkillName?: string
 }>(), {
   referencedArtifacts: () => [],
   running: false,
@@ -27,6 +29,7 @@ withDefaults(defineProps<{
   showWorkspaceContext: false,
   placeholder: undefined,
   initialPrompt: '',
+  selectedSkillName: undefined,
 })
 
 const emit = defineEmits<{
@@ -34,6 +37,7 @@ const emit = defineEmits<{
   stop: []
   'remove-reference': [fileId: string]
   'open-files': []
+  'clear-skill': []
 }>()
 </script>
 
@@ -64,7 +68,9 @@ const emit = defineEmits<{
     :files-require-mention="filesRequireMention"
     :placeholder="placeholder"
     :initial-prompt="initialPrompt"
+    :selected-skill-name="selectedSkillName"
     @open-files="emit('open-files')"
+    @clear-skill="emit('clear-skill')"
     @submit="emit('submit', $event)"
     @stop="emit('stop')"
   >
