@@ -569,18 +569,18 @@ bash current/scripts/deploy/restore.sh \
 
 ### 12.2 删除 AI Hub 登录（AH-S1，迁移 0129）的升级步骤
 
-适用于从 `v2026.11.09-01` 或更早版本首次升级到包含迁移 `0129_remove_ai_hub_login` 的版本（`v2026.11.16-01` 起）。该版本删除 AI Hub 登录，同时带上 `v2026.11.09-01` 之后合入的 MCP 调用对账、知识检索工具、管理端模块权限等改动（迁移 0126～0128 只新增列，可向后兼容）。
+适用于从 `v2026.11.09-01` 或更早版本首次升级到包含迁移 `0129_remove_ai_hub_login` 的版本（`v2026.11.16-01` 起）。该版本删除 AI Hub 登录，同时带上 `v2026.11.09-01` 之后合入的 MCP 调用对账、知识检索工具、管理端模块权限等改动（迁移 0126～0128 只新增列，可向后兼容）。之后的版本照此流程升级：`v2026.11.26-01` 还会执行 0130～0135——0130 只为空值行补写 Skill 安装名称，0131～0135 只新增列、表或索引（MCP 员工身份、读取网页、错误记录、页面访问与索引），都可向后兼容，不需要改 `runtime.env`；不可回退的仍只有 0129。下文以 `v2026.11.26-01` 为例，换成实际要部署的版本。
 
 **影响：** 迁移 0129 删除表和列，**不能回退到旧版本**；失败后只能发布修复版本，或用本次升级前的备份恢复数据库再回滚应用（第 12 节）。升级过程中后端会停止几分钟，执行中的对话会中断；员工的独立账号会话 Cookie 名不变，升级后无需重新登录。
 
 #### 1. 发布端准备 Release
 
-1. 确认 `main` 上包含 PR #129，`server/package.json` 的 `releaseVersion` 为目标版本（例如 `2026.11.16-01`），该 Commit 的 CI 四个 Job 全部成功。
-2. 按第 3 节在 Actions 运行 **Manual release**，输入同一版本号，等待生成 `v2026.11.16-01` 及其资产与来源证明。
+1. 确认 `main` 上包含 PR #129，`server/package.json` 的 `releaseVersion` 为目标版本（例如 `2026.11.26-01`），该 Commit 的 CI 四个 Job 全部成功。
+2. 按第 3 节在 Actions 运行 **Manual release**，输入同一版本号，等待生成 `v2026.11.26-01` 及其资产与来源证明。
 
 #### 2. Mac mini 升级前只读检查
 
-在 Mac mini 的持续 Bash 会话中按第 2 节设置 `DWP_*`（`DWP_TAG='v2026.11.16-01'`，`DWP_ROOT` 填实际部署目录）。第 2 节开启了 `set -e`：本节的检查命令都写成“没有匹配也不退出”，不要去掉其中的 `|| true` 或 `if`，否则当前会话会退出并丢失 `DWP_*`。
+在 Mac mini 的持续 Bash 会话中按第 2 节设置 `DWP_*`（`DWP_TAG='v2026.11.26-01'`，`DWP_ROOT` 填实际部署目录）。第 2 节开启了 `set -e`：本节的检查命令都写成“没有匹配也不退出”，不要去掉其中的 `|| true` 或 `if`，否则当前会话会退出并丢失 `DWP_*`。
 
 ```bash
 cat "${DWP_ROOT}/active-release"   # 应为当前生产版本，例如 v2026.11.09-01
@@ -649,7 +649,7 @@ grep -E '^DSH_WORK_(WORKBENCH|ADMIN)_ORIGINS=.+' "${DWP_ROOT}/runtime.env" || ec
 
 #### 5. 下载、验证并执行升级
 
-按第 6 节下载并验证 `v2026.11.16-01`（得到 `DWP_BUNDLE`），先记下后端错误日志当前的行数（launchd 日志是追加写入的，检查时只看这之后的内容），再用新包里的脚本升级：
+按第 6 节下载并验证 `v2026.11.26-01`（得到 `DWP_BUNDLE`），先记下后端错误日志当前的行数（launchd 日志是追加写入的，检查时只看这之后的内容），再用新包里的脚本升级：
 
 ```bash
 DWP_LOG="${DWP_ROOT}/logs/server.stderr.log"
@@ -657,7 +657,7 @@ DWP_LOG_LINES="$(wc -l < "${DWP_LOG}" 2>/dev/null || echo 0)"
 bash "${DWP_BUNDLE}/scripts/deploy/release.sh" "${DWP_VERSION}" "${DWP_ROOT}"
 ```
 
-脚本依次执行：Release 与来源验证 → 预检（含身份配置与入口）→ 停止旧后端并备份、异机校验 → 迁移 0126～0129 → 切换 `current` → 健康检查。
+脚本依次执行：Release 与来源验证 → 预检（含身份配置与入口）→ 停止旧后端并备份、异机校验 → 迁移 0126～0129 及之后的迁移（`v2026.11.26-01` 为 0126～0135）→ 切换 `current` → 健康检查。
 
 | 失败位置 | 现象 | 处理 |
 | --- | --- | --- |
@@ -669,7 +669,7 @@ bash "${DWP_BUNDLE}/scripts/deploy/release.sh" "${DWP_VERSION}" "${DWP_ROOT}"
 #### 6. 升级后检查
 
 ```bash
-cat "${DWP_ROOT}/active-release"   # 应为 v2026.11.16-01
+cat "${DWP_ROOT}/active-release"   # 应为 v2026.11.26-01
 curl --fail --silent --show-error --max-time 30 http://127.0.0.1:4190/health
 for DWP_AUDIENCE_PORT in workbench:4174 admin:4180; do
   DWP_AUDIENCE="${DWP_AUDIENCE_PORT%%:*}"; DWP_PORT="${DWP_AUDIENCE_PORT##*:}"
