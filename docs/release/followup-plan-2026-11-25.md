@@ -150,7 +150,7 @@
    - 复跑 deployment-safety 新增静态断言与 ci/deploy.sh 新增 grep 断言通过。
    - 受本机 Windows CRLF 与 POSIX 路径影响，完整的 `node scripts/ci/deployment-safety.test.mjs` 与 `bash scripts/ci/deploy.sh` 只能在 Linux CI 运行，视为待 CI 验证。
 5. **待办（Phase 0 完成前）**：提交并推送到 `globalsinocode/dsh-work`，基于修正后的 main 完整 SHA 等待四项 CI 全绿；随后按 Phase 1 dispatch 新 tag。`v2026.11.25-01` 仍不得在 CI 之前发布。
-6. **变更文件（相对 `9406dfbf`）**：`scripts/deploy/release-wait.mjs`（新）、`scripts/deploy/release.sh`、`deploy/compose.yaml`、`deploy/nginx/default.conf.template`、`scripts/release/build-release.sh`、`scripts/ci/deploy.sh`、`scripts/ci/release-wait.test.mjs`（新）、`scripts/ci/deployment-safety.test.mjs`、`docs/release/mac-mini-deployment-runbook.md`、`docs/release/incident-2026-11-24-startup-probe-retry-outage.md`、`docs/release/incident-2026-11-24-post-deploy-502-503.md`、`docs/release/followup-plan-2026-11-25.md`（新）、`docs/release/acceptance-2026-11-24-evidence.md`（新）。本工作区 HEAD 不是 `9406dfbf`，不要从本地 HEAD 直接提交；请把上述文件应用到基于 `9406dfbf` 的干净克隆（其余本地改动已与该 commit 一致）。
+6. **变更文件（相对 `9406dfbf`）**：`scripts/deploy/release-wait.mjs`（新）、`scripts/deploy/release.sh`、`deploy/compose.yaml`、`deploy/nginx/default.conf.template`、`scripts/release/build-release.sh`、`scripts/ci/deploy.sh`、`scripts/ci/release-wait.test.mjs`（新）、`scripts/ci/deployment-safety.test.mjs`、`scripts/checks/checks.test.mjs`（文档链接夹具）、`docs/release/mac-mini-deployment-runbook.md`、`docs/release/incident-2026-11-24-startup-probe-retry-outage.md`、`docs/release/incident-2026-11-24-post-deploy-502-503.md`、`docs/release/followup-plan-2026-11-25.md`（新）、`docs/release/acceptance-2026-11-24-evidence.md`（新）。本工作区 HEAD 不是 `9406dfbf`，不要从本地 HEAD 直接提交；请把上述文件应用到基于 `9406dfbf` 的干净克隆（其余本地改动已与该 commit 一致）。
 
 ### Phase 1：发布
 
