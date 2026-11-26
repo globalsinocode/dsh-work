@@ -7,20 +7,26 @@ import { fileURLToPath } from 'node:url'
 
 const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..')
 const releasePath = join(projectRoot, 'scripts/deploy/release.sh')
+const releaseWaitPath = join(projectRoot, 'scripts/deploy/release-wait.mjs')
 const restorePath = join(projectRoot, 'scripts/deploy/restore.sh')
 const backupPath = join(projectRoot, 'scripts/deploy/backup.sh')
 const buildPath = join(projectRoot, 'scripts/release/build-release.sh')
 const preflightPath = join(projectRoot, 'scripts/deploy/preflight.sh')
+const composePath = join(projectRoot, 'deploy/compose.yaml')
+const nginxTemplatePath = join(projectRoot, 'deploy/nginx/default.conf.template')
 const endpointRendererPath = join(projectRoot, 'scripts/deploy/render-endpoint-compose.mjs')
 const endpointConfiguratorPath = join(projectRoot, 'scripts/deploy/configure-macmini-endpoints.mjs')
 const endpointWrapperPath = join(projectRoot, 'scripts/deploy/render-endpoint-compose.sh')
 
-const [release, restore, backup, build, preflight, endpointWrapper] = await Promise.all([
+const [release, releaseWait, restore, backup, build, preflight, compose, nginxTemplate, endpointWrapper] = await Promise.all([
   readFile(releasePath, 'utf8'),
+  readFile(releaseWaitPath, 'utf8'),
   readFile(restorePath, 'utf8'),
   readFile(backupPath, 'utf8'),
   readFile(buildPath, 'utf8'),
   readFile(preflightPath, 'utf8'),
+  readFile(composePath, 'utf8'),
+  readFile(nginxTemplatePath, 'utf8'),
   readFile(endpointWrapperPath, 'utf8'),
 ])
 
@@ -61,6 +67,21 @@ assert.match(backup, /DSH_WORK_OFF_HOST_BACKUP_DIRECTORY/)
 assert.match(backup, /storage_class": "off-host"/)
 assert.match(backup, /shasum -a 256 -c/)
 assert.match(backup, /off-host backup filesystem changed while the backup was being written/)
+
+// Startup wait budget: release.sh must delegate to release-wait.mjs (its budget covers the DSH
+// and execution-container startup probes), the web healthcheck must stay a Nginx-only liveness
+// probe, and the bundle must ship the helper.
+assert.match(release, /release-wait\.mjs/)
+assert.match(release, /release readiness check passed/)
+assert.doesNotMatch(release, /for _attempt in \{1\.\.90\}/)
+assert.doesNotMatch(release, /for _attempt in \{1\.\.30\}/)
+assert.match(releaseWait, /RELEASE_HEALTH_BUDGET_SECONDS = 1500/)
+assert.match(releaseWait, /health\/ready/)
+assert.match(releaseWait, /executionContainer/)
+assert.match(compose, /\/nginx-health/)
+assert.doesNotMatch(compose, /\/health\/live/)
+assert.match(nginxTemplate, /location = \/nginx-health/)
+assert.match(build, /release-wait\.mjs/)
 
 for (const [script, version] of [[buildPath, '0.1.0'], [releasePath, '2026.9.7-01']]) {
   const result = spawnSync('bash', [script, version], { encoding: 'utf8' })

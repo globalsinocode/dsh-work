@@ -61,8 +61,12 @@ profile 竞争仍是首要怀疑，需要本版本新增的逐次日志确认。
 
 **2026-11-24 部署实测（`v2026.11.24-02`）**：该重试因 `deadlineMs=20 s` 小于单次 preflight 的
 30 s 超时未生效，首启仍不可用约 15 小时，直到人工 `kickstart -k` 才恢复；部署门禁也只看了
-`/health`，把能力不可用判为成功。`v2026.11.25-01` 已修并加入 `/health/ready` 就绪断言，详见
-[启动探针重试失效事件](incident-2026-11-24-startup-probe-retry-outage.md)。
+`/health`，把能力不可用判为成功。`9406dfbf` 已修重试预算并加入 `/health/ready` 就绪断言；
+Phase 0 进一步把 web healthcheck 改为静态 `/nginx-health`，并把 `/health` 等待预算（1500 s）
+与就绪断言迁入 `scripts/deploy/release-wait.mjs`（详见
+`docs/release/followup-plan-2026-11-25.md` Phase 0 实施记录与
+[启动探针重试失效事件](incident-2026-11-24-startup-probe-retry-outage.md)）。
+该实现尚待提交、CI 与发布验收，11-25-01 发布前不得跳过。
 
 ## 5. 任务线程目标探测缺陷（重跑暴露，`2026.11.24-02` 一并修复）
 

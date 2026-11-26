@@ -94,6 +94,7 @@ deployment_scripts=(
   render-endpoint-compose.mjs
   render-endpoint-compose.sh
   release.sh
+  release-wait.mjs
   restore.sh
   rollback.sh
   run-server.sh
