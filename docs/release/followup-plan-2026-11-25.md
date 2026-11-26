@@ -1,11 +1,11 @@
 # 2026-11-25 后续计划：发布前修正、v2026.11.25-01 部署验收与稳定性复核
 
-> 状态（2026-11-25 14:50 CST 复核）：远端 main 仍为 `9406dfbf91ccd57c697d11d6c1ee1c090aaa77f1`（2026-11-25T01:29:10Z 的 PR #13），四项 CI 仍全绿，`v2026.11.25-01` 的 tag 与 Release 均不存在。
-> 结论：**暂不直接 dispatch 当前 `9406dfbf`**。先修正**部署启动等待预算**（compose web healthcheck、公网 `/health`、`/health/ready` 三段）并跑绿 CI；随后仍可使用版本号 `2026.11.25-01`，但 Release target 必须改为修正后的 main 完整 SHA。
+> 状态（2026-11-26 12:20 CST）：Phase 0 已合并（PR #14，main=`d19ec5fd04203a9b38b3ba048bf19d4ef7690483`，四项 CI 全绿）；`v2026.11.25-01` 已发布为 immutable/attested Release，target 同上；生产仍为 `v2026.11.24-02`，本次部署按 Phase 2/3 执行。
+> 结论：Phase 0/1 完成，进入生产部署前置与验收；部署必须使用已验证 bundle 的原始 `release.sh`，不得复用旧副本。
 > 本计划按 2026-10-26～2026-11-25 日志导出重新校准：区分“代码已完成待生产验收”“历史配置事件”“已经定因”“仍开放”和“证据不足”，不以“后续未出现”代替闭环证据。
 > 本计划不替代部署手册、PF-07 目标环境清单和生产取证单。
 > 修订记录（2026-11-25 14:50 CST）：补入 compose healthcheck 等待预算及三段等待的串行上界，要求同批更新部署手册/事件记录/定时任务，并按导出材料校正统计口径；13:20 版本的核心结论不变。
-> Phase 0 实施状态（2026-11-25）：三段等待的代码修正已在当前工作区完成（`scripts/deploy/release-wait.mjs`、nginx `/nginx-health`、`release.sh` 重构、CI/回归断言），**尚未提交、推送或运行四项 CI**；Phase 0 完成仍以修正后 main 的 CI 全绿为准（见 §4 Phase 0 实施记录）。
+> 修订记录（2026-11-26 12:20 CST）：记录 Phase 0 合并与 `v2026.11.25-01` 发布证据（见 Phase 0/1 执行记录），关闭“等待预算待修正/Release 未发布”状态。
 
 ## 1. 证据范围与统计口径
 
@@ -50,8 +50,8 @@
 | 生产版本 | `v2026.11.24-02`，commit `7d847d41`，`DEPLOYED_AT=2026-11-24T09:24:38Z` | 事实 |
 | Nginx 502 修复 | 固定 upstream `192.168.65.254:4190 max_fails=0` 后既有专项验收通过；月度应用日志中的唯一 `502 model_catalog_invalid` 是应用返回的模型目录解析错误，不是 Nginx upstream 502 | 已实施，仍须随新部署复验 |
 | 启动探针 | 11-24 09:24、09:25、09:31 三次启动都只有 `attempt 1/3`；导出共 9 次 `RUNTIME_UNAVAILABLE`：11-24 06:37/06:39Z 3 次属 502/503 事件链，11-25 00:13/00:16Z 6 次属启动探针事件；00:17:41 人工重启后出现 toolchain | 生产缺陷确证 |
-| 11-25-01 代码 | `9406dfbf` 已修正 retry deadline 并增加 `/health/ready` 门禁 | 代码完成，但等待预算仍有发布前缺口 |
-| 部署等待预算 | 远端 `9406dfbf` 的启动到可服务前有三段独立等待：compose web healthcheck（约 110 秒）、公网 `/health`（约 180 秒）、`/health/ready`（30 次）。探针串行上界约 21–22 分钟，三段等待都小于该上界，compose 会在约 110 秒先失败。工作区已按 Phase 0 改为 nginx 静态存活 + `release-wait.mjs`（见 §2.2 实施结果） | **发布前硬阻塞（Phase 0 已实施，待 CI/合并）** |
+| 11-25-01 代码 | `9406dfbf` 修正 retry deadline 与 `/health/ready` 门禁；`d19ec5fd` 补齐启动等待预算并已发布 `v2026.11.25-01` | 已完成（Phase 0/1 记录） |
+| 部署等待预算 | 远端 `9406dfbf` 的启动到可服务前有三段独立等待：compose web healthcheck（约 110 秒）、公网 `/health`（约 180 秒）、`/health/ready`（30 次）。探针串行上界约 21–22 分钟，三段等待都小于该上界，compose 会在约 110 秒先失败。已按 Phase 0 改为 nginx 静态存活 + `release-wait.mjs`（main `d19ec5fd`，四项 CI 全绿） | **已修复** |
 | 任务线程 `/runs/session-*` | session→runs 误探测的代码修复已在 `v2026.11.24-02`；导出中没有字面 `/runs/session-*`，但路径已模板化，84 条 `run_not_found` 也包含其他合法 404 | 代码完成，生产浏览器验收仍开放 |
 | “任务不存在”文案 | `project_task_not_found` 是独立分支，月度 stderr 不能证明是否仍对用户误报 | 仍开放 |
 | 00:00 两条无 Attempt/Event 的 failed Run | 两条均为 automation task，在 `AttemptDispatcher.submit/dispatch` 前因 `ExecutionCapabilityUnavailableError` 失败并走 `failUndispatchedRun` | **已定因，关闭未知创建路径调查** |
@@ -90,7 +90,7 @@
 
 因此 Phase 0 必须同时处理 compose healthcheck，否则只改 `release.sh` 的等待时间仍会提前回滚；同时要决定是否收紧昂贵探针的超时，避免把失败检测拉长到 20 分钟以上。
 
-**Phase 0 实施结果（2026-11-25，待 CI/合并）**：web healthcheck 已改为静态 `/nginx-health`（[deploy/nginx/default.conf.template](../../deploy/nginx/default.conf.template) 与 [deploy/compose.yaml](../../deploy/compose.yaml)），`up -d --wait web` 只等 Nginx 存活，不再等宿主探针；公网 `/health` 等待（1500 s，约每 30 s 打印一次进度）与 `/health/ready` 断言迁入 [scripts/deploy/release-wait.mjs](../../scripts/deploy/release-wait.mjs)，能力缺失立即失败、仅 database 503 重试。上表“compose ≈110 秒先失败”的约束随之解除，剩余约束是 `release-wait.mjs` 的 1500 s 预算（覆盖约 21–22 分钟探针上界并留余量）。
+**Phase 0 实施结果（已完成：main `d19ec5fd`，四项 CI 全绿）**：web healthcheck 已改为静态 `/nginx-health`（[deploy/nginx/default.conf.template](../../deploy/nginx/default.conf.template) 与 [deploy/compose.yaml](../../deploy/compose.yaml)），`up -d --wait web` 只等 Nginx 存活，不再等宿主探针；公网 `/health` 等待（1500 s，约每 30 s 打印一次进度）与 `/health/ready` 断言迁入 [scripts/deploy/release-wait.mjs](../../scripts/deploy/release-wait.mjs)，能力缺失立即失败、仅 database 503 重试。上表“compose ≈110 秒先失败”的约束随之解除，剩余约束是 `release-wait.mjs` 的 1500 s 预算（覆盖约 21–22 分钟探针上界并留余量）。
 
 ## 3. 完成定义（DoD）
 
@@ -130,7 +130,7 @@
 
 若在修正完成前已经有人发布 `v2026.11.25-01`，不得覆盖或删除；递增版本号、形成新 commit 并重跑四项 CI。
 
-### Phase 0 实施记录（2026-11-25，工作区已完成，待提交/CI）
+### Phase 0 实施记录（2026-11-26 已合并：PR #14 → `d19ec5fd`，四项 CI 全绿）
 
 1. **等待预算**
    - `scripts/deploy/release-wait.mjs`（新增，随发布包交付）：公网 `/health` 等待预算 1500 s、每 2 s 轮询、单次请求 10 s 超时、约每 30 s 打印进度；`/health/ready` 返回 200 后一次性断言 `dsh` 与 `executionContainer`，缺失立即失败；仅 database 503 重试（30 次 × 2 s）；`python` 不可用只告警。失败输出沿用 `release health check failed` / `release readiness check failed` 文案，`release.sh` 仍走 `fail_after_migration`。
@@ -149,7 +149,7 @@
    - 渲染端点覆盖后 `docker compose config` 通过；用固定 nginx 镜像对模板执行 `nginx -t`，`host.docker.internal` 与固定 IPv4 两种 upstream 均通过；
    - 复跑 deployment-safety 新增静态断言与 ci/deploy.sh 新增 grep 断言通过。
    - 受本机 Windows CRLF 与 POSIX 路径影响，完整的 `node scripts/ci/deployment-safety.test.mjs` 与 `bash scripts/ci/deploy.sh` 只能在 Linux CI 运行，视为待 CI 验证。
-5. **待办（Phase 0 完成前）**：提交并推送到 `globalsinocode/dsh-work`，基于修正后的 main 完整 SHA 等待四项 CI 全绿；随后按 Phase 1 dispatch 新 tag。`v2026.11.25-01` 仍不得在 CI 之前发布。
+5. **合并与 CI（已完成）**：PR #14 于 2026-11-26T03:58Z 合并为 `d19ec5fd04203a9b38b3ba048bf19d4ef7690483`；该 commit 四项 CI（Static / Unit / PostgreSQL integration / Browser，run `45752238471`）全绿；发布前 `v2026.11.25-01` 的 tag 与 Release 均不存在。
 6. **变更文件（相对 `9406dfbf`）**：`scripts/deploy/release-wait.mjs`（新）、`scripts/deploy/release.sh`、`deploy/compose.yaml`、`deploy/nginx/default.conf.template`、`scripts/release/build-release.sh`、`scripts/ci/deploy.sh`、`scripts/ci/release-wait.test.mjs`（新）、`scripts/ci/deployment-safety.test.mjs`、`scripts/checks/checks.test.mjs`（文档链接夹具）、`docs/release/mac-mini-deployment-runbook.md`、`docs/release/incident-2026-11-24-startup-probe-retry-outage.md`、`docs/release/incident-2026-11-24-post-deploy-502-503.md`、`docs/release/followup-plan-2026-11-25.md`（新）、`docs/release/acceptance-2026-11-24-evidence.md`（新）。本工作区 HEAD 不是 `9406dfbf`，不要从本地 HEAD 直接提交；请把上述文件应用到基于 `9406dfbf` 的干净克隆（其余本地改动已与该 commit 一致）。
 
 ### Phase 1：发布
@@ -170,6 +170,14 @@
 
 - 正式 Release/tag 尚未产生：修复后可以重新 dispatch 同版本；
 - Release 已转正式后 immutability/attestation 验证失败：冻结该 tag，watcher 保持关闭，不删除、不覆盖；递增版本、创建新 commit、重跑 CI 后发布新 tag。
+
+### Phase 1 执行记录（2026-11-26）
+
+- 触发：`gh workflow run release.yml --ref main -f version=2026.11.25-01` → run [45753725184](https://github.com/globalsinocode/dsh-work/actions/runs/45753725184)，head SHA `d19ec5fd`，success。
+- Release：`v2026.11.25-01`，immutable、非 draft/prerelease、作者 `github-actions[bot]`、target `d19ec5fd04203a9b38b3ba048bf19d4ef7690483`、两项资产（tar.gz + sha256）。
+- 资产校验：tar SHA-256 `75f7684e8220b1f6187fdfad27e7c4df38caae034824c7cb6f781902339e93d6`；`gh release verify`、`gh release verify-asset`、`gh attestation verify --source-digest d19ec5fd… --deny-self-hosted-runners` 均通过。
+- bundle 检查：`release.json` version=`2026.11.25-01`、commit=`d19ec5fd`、1652 个文件；含 `scripts/deploy/release-wait.mjs`，`release.sh` 已调用 helper，compose/nginx 为 `/nginx-health`。
+- 结论：Phase 0/1 完成；生产部署待 Phase 2/3，watcher 保持关闭。
 
 ### Phase 2：生产部署前置
 
@@ -317,8 +325,8 @@
 
 | 时间 | 动作 |
 | --- | --- |
-| T-发布 | 修正三段启动等待预算、补脚本回归、同步手册/事件记录/定时任务，合并并等待四项 CI（代码已在工作区完成，待提交） |
-| T+0 | 固定修正后的 `TARGET_SHA`，dispatch 并验证 Release |
+| T-发布 | 修正三段启动等待预算、补脚本回归、同步文档，合并并等待四项 CI（已完成：PR #14 → `d19ec5fd`） |
+| T+0 | 固定 `TARGET_SHA=d19ec5fd04203a9b38b3ba048bf19d4ef7690483`，dispatch 并验证 Release（已完成：run `45753725184`） |
 | T+10 min | 迁移门禁与签署、备份设施/IPv4/锁预检 |
 | T+20 min | 使用 verified bundle 原始脚本部署；以实际启动预算（compose ≈110 秒起、探针上界约 21–22 分钟）安排维护窗口，不再承诺固定 30 分钟 |
 | 部署完成后 | 记录 `DEPLOYED_AT`、权威 backup ID、readiness、日志 offsets；登记/创建正式一周复核任务（不早于 `DEPLOYED_AT + 168h`） |
