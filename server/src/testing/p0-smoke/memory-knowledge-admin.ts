@@ -56,7 +56,7 @@ export class MemoryKnowledgeAdminStore {
   async updateConnection(_actorId: string, input: { baseUrl: string; apiKey?: string; credentialExpiresAt?: string | null; embeddingModelId?: string | null; enabled: boolean }) {
     if (!/^https?:\/\//.test(input.baseUrl.trim())) throw invalidRequest('WeKnora 地址必须以 http 或 https 开头')
     const baseUrl = input.baseUrl.trim().replace(/\/+$/, '')
-    // 优化方案 O9：更换地址后原有知识库标为“原连接已更换”。
+    // 功能规则第 11 节：更换地址后原有知识库标为“原连接已更换”。
     if (baseUrl !== this.connection.baseUrl) {
       for (const base of this.bases) if ((base.status ?? 'active') === 'active') base.status = 'unavailable'
     }
@@ -73,6 +73,14 @@ export class MemoryKnowledgeAdminStore {
 
   async testConnection() {
     return { ok: true, reason: null }
+  }
+
+  /** P0 冒烟的确定性替身：UUID 形状的 ID 视为有效，其余按解析失败返回。 */
+  async verifyEmbeddingModel(_actorId: string, input: { embeddingModelId: string }) {
+    const valid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(input.embeddingModelId.trim())
+    return valid
+      ? { ok: true, reason: null, detail: null, cleanupFailed: false }
+      : { ok: false, reason: 'parse_failed', detail: 'model not found', cleanupFailed: false }
   }
 
   async departments(): Promise<KnowledgeAdminDepartment[]> {

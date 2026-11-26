@@ -31,7 +31,7 @@ const grantDialog = reactive({ open: false, roleId: '', includeDescendants: true
 const activeTab = ref<'members' | 'grants'>('members')
 const drawerUser = ref<OrganizationEmployee>()
 
-const canManage = computed(() => authStore.canManage)
+const canManage = computed(() => authStore.canWrite('org'))
 const departments = computed(() => snapshot.value.departments)
 const departmentById = computed(() => new Map(departments.value.map(department => [department.id, department])))
 const rootId = computed(() => departments.value.find(department => department.parentId === null)?.id ?? '')

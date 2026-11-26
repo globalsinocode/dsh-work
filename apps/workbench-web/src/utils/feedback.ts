@@ -1,5 +1,7 @@
 import { ElMessage, ElNotification } from 'element-plus'
 
+import { errorReporter } from '@dsh-work/ui-core'
+
 import { workbenchApi } from '@/api/client'
 import type { Artifact } from '@/types/domain'
 
@@ -16,6 +18,8 @@ export function notifyActionFailure(
   fallbackSuggestion = '请稍后重试；若问题持续，请联系管理员。',
 ) {
   const failure = cause instanceof Error ? cause as StructuredFailure : undefined
+  // 错误记录（OB12）：只报错误码、动作名与链路编号，不报提示原文与对象名。
+  errorReporter()?.reportNotice(action, cause)
   const reason = failure?.message ?? `${action}未完成`
   const suggestion = failure?.suggestion ?? fallbackSuggestion
   const trace = failure?.traceId && failure.traceId !== '—' ? ` 链路编号：${failure.traceId}` : ''

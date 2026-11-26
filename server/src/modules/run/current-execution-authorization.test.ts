@@ -16,8 +16,7 @@ function ports(changes: Partial<Port> = {}): Port {
   return {
     async workspaceTypeOf() { return 'personal' }, async authorizeRuntime() { return decision },
     async authorizeTeamRunExecution() { return decision },
-    async requireAdminReader() { return { id: 'u1', displayName: '', department: '' } },
-    async requirePlatformAdmin() { return { id: 'u1', displayName: '', department: '' } },
+    async requireAdminRunPurpose() { return { id: 'u1', displayName: '', department: '' } },
     async requireActiveAgentPrincipal() {},
     async assertAgentPrincipalSnapshot() {}, ...changes,
   }
@@ -91,7 +90,7 @@ test('agent-release-trial is admin-side: platform-admin check, never workspace c
   const trial = { ...manifest, purpose: 'agent-release-trial', workspace_id: '', agent_version_id: 'draft-v1' } as RuntimeManifest
   let adminCalls = 0
   await assertCurrentExecutionAuthorization(ports({
-    async requirePlatformAdmin() { adminCalls += 1; return { id: 'u1', displayName: '', department: '' } },
+    async requireAdminRunPurpose(_userId, purpose) { adminCalls += 1; assert.equal(purpose, 'agent-release-trial'); return { id: 'u1', displayName: '', department: '' } },
     async workspaceTypeOf() { throw new Error('must not reach workspace checks') },
   }), undefined, trial)
   assert.equal(adminCalls, 1)
@@ -107,7 +106,7 @@ test('automation purpose is workspace-bound: never reaches the admin branch', as
   let runtimeCalls = 0
   await assertCurrentExecutionAuthorization(ports({
     async authorizeRuntime() { runtimeCalls += 1; return { userId: 'u1', workspaceId: 'ws-personal-u1', executorPrincipalId: 'principal-agent-a1', executorAuthorizationVersion: 1, roleIds: [], permissions: [], dataScopes: ['scope:one'], agentVersionId: 'agent-v1' } },
-    async requirePlatformAdmin() { throw new Error('automation is not an admin purpose') },
+    async requireAdminRunPurpose() { throw new Error('automation is not an admin purpose') },
   }), undefined, automation)
   assert.equal(runtimeCalls, 1)
 })

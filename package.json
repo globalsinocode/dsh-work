@@ -29,7 +29,7 @@
     "test:pf07:fixture": "node --test scripts/acceptance/pf07-mcp-fixture.test.mjs",
     "probe:pf07:mcp": "node --experimental-strip-types --env-file-if-exists=.env scripts/acceptance/pf07-mcp-runtime-probe.ts",
     "probe:pf07:mcp:platform": "node --experimental-strip-types --env-file-if-exists=.env scripts/acceptance/pf07-mcp-platform-probe.ts",
-    "test:pf07:p1": "pnpm test:m2:integration && pnpm test:m3:integration && pnpm test:mcp:integration && pnpm test:pf04:integration && pnpm test:pf05:integration",
+    "test:pf07:p1": "pnpm test:m2:integration && pnpm test:m3:integration && pnpm test:mcp:integration && pnpm test:pf05:integration",
     "test:knowledge:integration": "pnpm --filter @dsh-work/server test:knowledge:integration",
     "test:m4:file": "pnpm --filter @dsh-work/server test:m4:file",
     "test:m4:file:integration": "pnpm --filter @dsh-work/server test:m4:file:integration",
@@ -43,8 +43,7 @@
     "test:m5:security": "pnpm --filter @dsh-work/server test:m5:security",
     "test:m5:security:integration": "pnpm --filter @dsh-work/server test:m5:security:integration",
     "test:m5:faults": "pnpm --filter @dsh-work/server test:m5:faults",
-    "test:sso": "pnpm --filter @dsh-work/server test:sso",
-    "test:sso:integration": "pnpm --filter @dsh-work/server test:sso:integration",
+    "test:identity": "pnpm --filter @dsh-work/server test:identity",
     "test:m5:faults:integration": "pnpm --filter @dsh-work/server test:m5:faults:integration",
     "test:m5:capacity:integration": "pnpm --filter @dsh-work/server test:m5:capacity:integration",
     "test:m5:workspace:integration": "pnpm --filter @dsh-work/server test:m5:workspace:integration",
@@ -117,7 +116,9 @@
     "test:local-auth:integration": "pnpm --filter @dsh-work/server test:local-auth:integration",
     "test:e2e:local-auth": "playwright test --config playwright.local-auth.config.ts",
     "test:e2e:dingtalk": "playwright test --config playwright.dingtalk.config.ts",
-    "test:e2e:login-options": "playwright test --config playwright.login-options.config.ts"
+    "test:e2e:login-options": "playwright test --config playwright.login-options.config.ts",
+    "test:observability": "pnpm --filter @dsh-work/server test:observability",
+    "test:observability:integration": "pnpm --filter @dsh-work/server test:observability:integration"
   },
   "devDependencies": {
     "@eslint/js": "^9.37.0",

@@ -51,8 +51,11 @@ function orchestration(overrides: {
     async workspaceTypeOf() { return overrides.workspaceType ?? 'personal' },
     async authorizeRuntime() { if (overrides.authorizeRuntimeCalls) overrides.authorizeRuntimeCalls.count += 1; return decision },
     async authorizeTeamRunExecution() { if (overrides.teamExecutionCalls) overrides.teamExecutionCalls.count += 1; return decision },
-    async requireAdminReader() { if (overrides.adminReaderCalls) overrides.adminReaderCalls.count += 1; return { id: 'u-owner' } },
-    async requirePlatformAdmin() { if (overrides.platformAdminCalls) overrides.platformAdminCalls.count += 1; return { id: 'u-owner' } },
+    async requireAdminRunPurpose(_userId: string, purpose: string) {
+      if (purpose === 'admin-assistant') { if (overrides.adminReaderCalls) overrides.adminReaderCalls.count += 1 }
+      else if (overrides.platformAdminCalls) overrides.platformAdminCalls.count += 1
+      return { id: 'u-owner' }
+    },
     async requireActiveAgentPrincipal() {},
     async assertAgentPrincipalSnapshot() {},
     async sessionSelectedSkillReference() { return null },

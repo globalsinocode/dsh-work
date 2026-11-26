@@ -607,8 +607,7 @@ export class PostgresWorkspaceMemberService {
   /**
    * Rejects employees outside the addable directory (TW-01): active business
    * employees with current workbench access, same criterion requireIdentity
-   * applies for the workbench:use permission. AI Hub and local (独立账号)
-   * employees are equally addable.
+   * applies for the workbench:use permission.
    */
   private async assertAddableEmployee(userId: string) {
     await assertAddableEmployees(this.database, [userId])

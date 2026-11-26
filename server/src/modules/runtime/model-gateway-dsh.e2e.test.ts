@@ -5,6 +5,9 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { after, before, describe, it } from 'node:test'
 
+import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
+import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
+
 import { DataProtectionService, MemoryDataProtectionStore } from '../data-protection/data-protection-service.ts'
 import { DshAcpRuntimeAdapter } from './dsh-acp-runtime-adapter.ts'
 import { preflightDshRuntime, resolveDshRuntimeInstallation } from './dsh-runtime-installation.ts'
@@ -19,7 +22,8 @@ import { MemoryModelGatewayRequestLog } from '../model-gateway/model-gateway-req
  *
  * 覆盖：路由生效（上游收到路由模型与平台密钥）、共享 settings.yaml 中的同名路由不影响平台路由、
  * 令牌与请求模型不符被拒绝、厂商 401 / 400 不被重试、429 与 5xx 按 retryPolicy 重试后分类、
- * 联网搜索经网关透传。
+ * 联网搜索经网关透传；工具目录探测与 MCP 连接检查不发出模型请求（探测用的默认 Provider 指向同一个假上游，
+ * 任何模型请求都会被记录）。
  */
 const skip = process.env.DSH_WORK_MODEL_GATEWAY_E2E !== '1' ? 'DSH_WORK_MODEL_GATEWAY_E2E is not set'
   : !process.env.DSH_RUNTIME_HOME ? 'DSH_RUNTIME_HOME is not set' : false
@@ -40,6 +44,9 @@ describe('受控 DSH 经平台模型网关执行（MR-S2 P1）', { skip, timeout
   let gateway: ModelGateway
   let log: MemoryModelGatewayRequestLog
   let adapter: DshAcpRuntimeAdapter
+  let probeAdapter: DshAcpRuntimeAdapter
+  let mcpServer: Server
+  let mcpEndpoint: string
 
   before(async () => {
     root = await mkdtemp(join(tmpdir(), 'dsh-gateway-p1-'))
@@ -79,10 +86,48 @@ describe('受控 DSH 经平台模型网关执行（MR-S2 P1）', { skip, timeout
       modelGateway: gateway,
       setupTimeoutMs: 60_000,
     })
+
+    // 探测路径（工具目录、MCP 连接检查）不走路由与网关，使用基础部署 patch 的默认 Provider `deepseek-official`（llm-deepseek）。
+    // 这里把它的地址指向同一个记录请求的假上游并给一个假凭据：探测若经这个 Provider 发出模型请求，必然出现在上游记录里。
+    // 已知限制：只拦这一个 Provider；联网搜索插件与其他 Provider 仍指向真实厂商且未禁止外网，探测若改走它们本用例发现不了。
+    const probeHome = join(root, 'dsh-home-probe')
+    await mkdir(probeHome, { recursive: true })
+    await writeFile(join(probeHome, 'settings.yaml'), [
+      // 基础部署 patch 的 `deepseek-official` 由 DSH 的 llm-deepseek 插件提供（不是 llm-pi-ai）。
+      'llm-deepseek:',
+      `  baseURL: ${upstreamBase}/probe-trap`,
+      // 凭据引用指向一个非敏感命名的变量（ACP 子进程禁止注入 *_API_KEY），保证请求不会因缺凭据而在发出前失败。
+      '  apiKeyEnv: DSH_WORK_PROBE_TRAP_VALUE',
+      '',
+    ].join('\n'))
+    probeAdapter = new DshAcpRuntimeAdapter({
+      runtimeId: 'runtime-gateway-p1-probe',
+      runtimeRoot: join(root, 'probe-attempts'),
+      dshRepository: installation.home,
+      process: { ...installation.process, env: { ...installation.process.env, DSH_HOME: probeHome, DSH_WORK_PROBE_TRAP_VALUE: 'sk-probe-trap' } },
+      setupTimeoutMs: 60_000,
+    })
+
+    mcpServer = createServer((request, response) => {
+      const mcp = new McpServer({ name: 'mr-s2-probe', version: '1.0.0' }, { capabilities: { tools: {} } })
+      mcp.registerTool('probe_echo', { description: 'Echo a fixed text for MCP inspection.', inputSchema: {} }, async () => (
+        { content: [{ type: 'text', text: 'probe' }] }
+      ))
+      const transport = new StreamableHTTPServerTransport({})
+      response.on('close', () => { void transport.close(); void mcp.close() })
+      void mcp.connect(transport).then(() => transport.handleRequest(request, response)).catch(() => {
+        if (!response.headersSent) response.writeHead(500)
+        response.end()
+      })
+    })
+    await new Promise<void>(resolveListen => mcpServer.listen(0, '127.0.0.1', resolveListen))
+    mcpEndpoint = `http://127.0.0.1:${(mcpServer.address() as { port: number }).port}/mcp`
   })
 
   after(async () => {
     await adapter?.close()
+    await probeAdapter?.close()
+    if (mcpServer) await new Promise<void>(resolveClose => mcpServer.close(() => resolveClose()))
     await gateway?.stop()
     await new Promise<void>(resolveClose => upstream?.close(() => resolveClose()))
     if (root) await rm(root, { recursive: true, force: true })
@@ -227,5 +272,28 @@ describe('受控 DSH 经平台模型网关执行（MR-S2 P1）', { skip, timeout
     assert.equal(search.model, 'deepseek-v4-flash')
     assert.equal(search.apiKey, VENDOR_SECRET)
     assert.ok(records.some(record => record.endpoint === 'search' && record.outcome === 'succeeded'))
+  })
+
+  it('工具目录探测与 MCP 连接检查不发出模型请求', async () => {
+    // 对照：probeAdapter 未接网关，正式执行会忽略 Manifest 中的路由、改用基础部署 patch 的默认 Provider，
+    // 与探测路径相同；它确实把模型请求发到陷阱地址，说明下面的“零请求”不是假阴性。
+    behaviour = 'answer'
+    requests.length = 0
+    const control = await (await probeAdapter.execute(manifest('run-p1-probe-control'))).done
+    assert.equal(control.status, 'completed', control.errorMessage ?? undefined)
+    assert.ok(requests.length >= 1 && requests.every(item => item.path.startsWith('/probe-trap/')), 'the trap receives model requests')
+
+    requests.length = 0
+    const tools = await probeAdapter.listTools()
+    assert.ok(tools.length > 0, 'the tool catalog probe returns tools')
+    const inspected = await probeAdapter.inspectMcpConnection({
+      snapshot: {
+        connector_id: 'connector-mr-s2-probe', server_name: 'mr_s2_probe', transport: 'streamable-http',
+        endpoint: mcpEndpoint, auth_type: 'none', capability_digest: '0'.repeat(64),
+      },
+      headers: {},
+    })
+    assert.deepEqual(inspected.capabilities.map(item => item.name), ['probe_echo'])
+    assert.deepEqual(requests, [], 'neither probe sent a model request (the default provider points at the recording upstream)')
   })
 })

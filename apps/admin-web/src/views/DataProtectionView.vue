@@ -443,7 +443,7 @@ onMounted(() => {
     </section>
 
     <section v-else-if="activeTab === 'terms'" v-loading="termsLoading" class="content-panel content-panel--flush" aria-label="保密词表">
-      <form v-if="auth.canManage" class="data-protection-form" @submit.prevent="addTerm">
+      <form v-if="auth.canWrite('dlp')" class="data-protection-form" @submit.prevent="addTerm">
         <el-input v-model="termDraft" class="data-protection-input" maxlength="200" placeholder="项目代号、客户名、内部域名等" aria-label="词条" />
         <el-checkbox v-model="draftCase">区分大小写</el-checkbox>
         <el-checkbox v-model="draftWhole">整词匹配</el-checkbox>
@@ -460,7 +460,7 @@ onMounted(() => {
         <el-table-column label="区分大小写" width="120"><template #default="{ row }">{{ row.caseSensitive ? '是' : '否' }}</template></el-table-column>
         <el-table-column label="整词匹配" width="120"><template #default="{ row }">{{ row.wholeWord ? '是' : '否' }}</template></el-table-column>
         <el-table-column label="添加时间" width="150"><template #default="{ row }">{{ formatTime(row.createdAt) }}</template></el-table-column>
-        <el-table-column v-if="auth.canManage" label="操作" width="90">
+        <el-table-column v-if="auth.canWrite('dlp')" label="操作" width="90">
           <template #default="{ row }"><el-button link type="danger" :aria-label="`删除词条 ${row.value}`" @click="removeTerm(row)">删除</el-button></template>
         </el-table-column>
       </el-table>
@@ -471,14 +471,14 @@ onMounted(() => {
     </section>
 
     <section v-else-if="activeTab === 'allow'" v-loading="allowLoading" class="content-panel content-panel--flush" aria-label="白名单">
-      <form v-if="auth.canManage" class="data-protection-form" @submit.prevent="addAllow">
+      <form v-if="auth.canWrite('dlp')" class="data-protection-form" @submit.prevent="addAllow">
         <el-input v-model="allowDraft" class="data-protection-input" maxlength="500" placeholder="例如公司对外客服邮箱" aria-label="放行的值" />
         <el-button type="primary" native-type="submit">添加</el-button>
       </form>
       <el-table class="data-table" :data="allowlist" empty-text="白名单为空">
         <el-table-column label="值" prop="value" min-width="320" />
         <el-table-column label="添加时间" width="150"><template #default="{ row }">{{ formatTime(row.createdAt) }}</template></el-table-column>
-        <el-table-column v-if="auth.canManage" label="操作" width="90">
+        <el-table-column v-if="auth.canWrite('dlp')" label="操作" width="90">
           <template #default="{ row }"><el-button link type="danger" :aria-label="`删除白名单 ${row.value}`" @click="removeAllow(row)">删除</el-button></template>
         </el-table-column>
       </el-table>
@@ -489,8 +489,8 @@ onMounted(() => {
       <label class="page-note" for="data-protection-preview-text">输入一段文本，看会被如何处理</label>
       <el-input id="data-protection-preview-text" v-model="previewText" type="textarea" :rows="5" maxlength="20000" />
       <div class="data-protection-preview__actions">
-        <el-button type="primary" :loading="previewing" :disabled="!auth.canManage" @click="runPreview">检测</el-button>
-        <span class="page-note">{{ auth.canManage ? '只在此页显示结果，不写入审计，也不发给模型。' : '需要管理写权限才能检测。' }}</span>
+        <el-button type="primary" :loading="previewing" :disabled="!auth.canWrite('dlp')" @click="runPreview">检测</el-button>
+        <span class="page-note">{{ auth.canWrite('dlp') ? '只在此页显示结果，不写入审计，也不发给模型。' : '需要管理写权限才能检测。' }}</span>
       </div>
       <template v-if="previewResult">
         <el-alert :title="previewVerdict" :type="previewResult.wouldBlock ? 'error' : 'info'" :closable="false" show-icon />

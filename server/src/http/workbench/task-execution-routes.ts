@@ -89,7 +89,7 @@ export function registerTaskOperationAdminRoutes(
 ) {
   router.post('/api/admin/v1/task-executions/:taskId/operations/:operationId/resolve', async (request, context) => {
     const identity = requireRequestIdentity(context, 'admin')
-    await authorization.requirePlatformAdmin(identity.userId)
+    await authorization.requireAdminModule(identity.userId, 'connector', 'write')
     const operation = await tasks.getOperation('tenant-dsh-work', context.params['operationId'] ?? '')
     if (!operation || operation.taskId !== context.params['taskId']) throw authorizationDenied('外部操作不存在或不可访问')
     const body = await readJsonBody<{ status?: unknown; receipt?: unknown; errorCode?: unknown } | null>(request)

@@ -39,7 +39,7 @@ interface GrantRow extends KnowledgeGrantView {
 
 
 /**
- * 员工端知识库与文档管理（weknora-knowledge-plan 第 5、8 节）。权限全部由平台校验：查看要求
+ * 员工端知识库与文档管理（功能规则第 11 节）。权限全部由平台校验：查看要求
  * 知识库当前对员工可见，管理要求知识库归属员工直接所属的部门且具备对应级别（5.2）；文档 ID
  * 必须属于该知识库。WeKnora 只做存储与解析，员工浏览器不直接访问它。
  */
@@ -179,7 +179,7 @@ export class PostgresKnowledgeBaseService implements KnowledgeBaseService {
     // 计数与撤销在同一事务中，锁住知识库行：并发撤销不会撤到没有任何授权。
     await this.database.begin(async transaction => {
       await transaction`select id from external_knowledge_bases where tenant_id = ${tenantId} and id = ${row.id} for update`
-      // 优化方案 O11：只统计所在部门仍有效的授权，与可见范围的计算口径（5.5）一致，避免撤到实际无人可见。
+      // 功能规则第 11 节：只统计所在部门仍有效的授权，与可见范围的计算口径一致，避免撤到实际无人可见。
       const [{ count }] = await transaction<{ count: number }[]>`
         select count(*)::int as count from external_knowledge_base_grants g
           join org_departments d on d.tenant_id = g.tenant_id and d.id = g.department_id and d.status = 'active'
@@ -399,7 +399,7 @@ export class PostgresKnowledgeBaseService implements KnowledgeBaseService {
       select d.id, d.name, m.is_primary as primary, d.parent_id is null as root
         from org_department_members m
         join org_departments d on d.tenant_id = m.tenant_id and d.id = m.department_id and d.status = 'active'
-        join users u on u.tenant_id = m.tenant_id and u.id = m.user_id and u.status = 'active' and u.identity_provider <> 'ai-hub'
+        join users u on u.tenant_id = m.tenant_id and u.id = m.user_id and u.status = 'active'
        where m.tenant_id = ${tenantId} and m.user_id = ${userId}
        order by m.is_primary desc, d.path
     `

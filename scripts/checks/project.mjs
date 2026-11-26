@@ -20,7 +20,7 @@ export function checkProject(check) {
   check.files([
     'README.md', 'docs/index/README.md', 'docs/development/overview.md', 'docs/design/data-model.md',
     'docs/development/internal-ports.md', 'docs/development/development.md',
-    'docs/release/ai-hub-sso-integration.md', 'docs/release/dsh-runtime-delivery.md',
+    'docs/release/local-authentication.md', 'docs/release/dsh-runtime-delivery.md',
     'docs/release/mac-mini-deployment-runbook.md',
     'apps/workbench-web/vitest.config.ts', 'apps/admin-web/vitest.config.ts',
     'playwright.config.ts', 'e2e/mvp-smoke.spec.ts',
@@ -71,6 +71,7 @@ export function checkProject(check) {
   for (const [action, pattern] of [
     ['actions/checkout', /actions\/checkout@[0-9a-f]{40}\s+# v\d/],
     ['pnpm/setup', /pnpm\/setup@[0-9a-f]{40}\s+# v\d/],
+    ['actions/upload-artifact', /actions\/upload-artifact@[0-9a-f]{40}\s+# v\d/],
   ]) check.assert(pattern.test(workflow), `CI 的 ${action} 必须固定带版本注释的 Commit SHA`)
   check.includes('.github/workflows/ci.yml', [
     'pnpm install --frozen-lockfile',

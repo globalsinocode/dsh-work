@@ -17,6 +17,12 @@ export interface PlatformToolContract {
   completionSemantics: ToolCompletionSemantics
   timeoutMs: number
   maxOutputBytes: number
+  /**
+   * 写入工具默认在 Task 范围登记幂等操作（PF-01），参数相同的再次调用直接返回已登记结果。
+   * 写入只落在本 Attempt 工作区、没有外部副作用的工具设为 'attempt-workspace'：不登记，
+   * 每次调用都实际执行（python_execute：输入可能已变化，重试的 Attempt 是新工作区）。
+   */
+  writeScope?: 'external' | 'attempt-workspace'
 }
 
 export interface PlatformToolRegistration {

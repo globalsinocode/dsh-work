@@ -72,7 +72,7 @@ if ! (
   "${node_bin}" --input-type=module <<'JS'
 import { loadStartupIdentityConfiguration } from './server/dist/modules/identity/config.js'
 const configuration = loadStartupIdentityConfiguration()
-if (configuration.aiHubConfigurationIssue) console.warn(`AI Hub 登录未启用：${configuration.aiHubConfigurationIssue}。独立账号登录仍可用。`)
+if (configuration.ignoredLegacySettings?.length) console.warn(`AI Hub 登录已删除，以下旧配置不再读取，可从 runtime.env 删除：${configuration.ignoredLegacySettings.join('、')}`)
 JS
 ); then
   fail "Production identity configuration is invalid"
@@ -132,8 +132,8 @@ for bind_address in "${bind_addresses[@]}"; do
   fi
 done
 
-origin_values=${DSH_WORK_WORKBENCH_ORIGINS:-${AI_HUB_WORKBENCH_PORTAL_URL:?Set workbench Origins}}
-origin_values+=",${DSH_WORK_ADMIN_ORIGINS:-${AI_HUB_ADMIN_PORTAL_URL:?Set admin Origins}}"
+origin_values=${DSH_WORK_WORKBENCH_ORIGINS:?Set DSH_WORK_WORKBENCH_ORIGINS}
+origin_values+=",${DSH_WORK_ADMIN_ORIGINS:?Set DSH_WORK_ADMIN_ORIGINS}"
 IFS=',' read -r -a configured_origins <<<"${origin_values}"
 IFS=${old_ifs}
 checked_dns_names=' '

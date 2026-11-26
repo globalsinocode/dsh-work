@@ -152,7 +152,7 @@ fixture.router.get('/api/workbench/v1/test/automations/:automationId/evidence', 
   }, 'postgres')
 })
 
-console.log('P1 automation workbench ready; throwaway PostgreSQL, synthetic Runtime, no OIDC/DSH/model.')
+console.log('P1 automation workbench ready; throwaway PostgreSQL, synthetic Runtime, no DSH/model.')
 
 let closing = false
 async function close() {

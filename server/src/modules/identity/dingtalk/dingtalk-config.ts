@@ -3,7 +3,7 @@ import { invalidRequest } from '../../../domain/request-errors.ts'
 /**
  * 钉钉企业内部应用配置（钉钉接入方案第 5 节、8.1）。2026-11-06 起在管理端“钉钉集成”页填写，AppSecret 加密入库
  * （`dingtalk-settings.ts`）；部署配置 `DSH_WORK_DINGTALK_*` 只在页面从未保存过时作为初始配置。
- * 变量名使用 `DSH_WORK_DINGTALK_*`，不能用 `AI_HUB_*` 前缀（那会触发 AI Hub 登录配置检查）。
+ * 变量名使用 `DSH_WORK_DINGTALK_*`。
  */
 export interface DingTalkConfiguration {
   corpId: string

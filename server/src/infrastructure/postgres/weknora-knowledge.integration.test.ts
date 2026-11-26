@@ -28,7 +28,7 @@ import { createThrowawayDatabase, type ThrowawayDatabase } from './test-database
 
 if (!process.env.DSH_WORK_TEST_DATABASE_URL) throw new Error('DSH_WORK_TEST_DATABASE_URL 未配置')
 
-// weknora-knowledge-plan 第 12 节 P1：一次性 PostgreSQL + 按 WeKnora v0.9.0 接口实现的测试 HTTP 服务。
+// 功能规则第 11 节 P1：一次性 PostgreSQL + 按 WeKnora v0.9.0 接口实现的测试 HTTP 服务。
 const tenantId = 'tenant-dsh-work'
 const ADMIN = 'U00008'
 const EMPLOYEE = 'U00001'
@@ -192,7 +192,7 @@ test('只检索所选且可见的知识库，按部门授权与“包含下级�
   })), [{ title: '库存安全水位规范', knowledgeBaseName: '供应链制度库', fileName: '库存安全水位规范.pdf', updatedAt: '2026-08-01' }])
 })
 
-test('先只用本次提问检索，没有结果时再带上同一会话的上一条提问（优化方案 O3）', async () => {
+test('先只用本次提问检索，没有结果时再带上同一会话的上一条提问（功能规则第 11 节）', async () => {
   // 替身中的分段只在查询词含“库存”时返回：追问本身查不到，带上一条提问才能命中。
   double.chunks = double.chunks.map(chunk => ({ ...chunk, matchQuery: '库存' }))
   const sessionId = await session(['kb-supply'])
@@ -213,7 +213,7 @@ test('先只用本次提问检索，没有结果时再带上同一会话的上�
   assert.equal(searches().length - before, 1)
 })
 
-test('补充检索失败时保留第一次“没有找到”的结果，不算不可用（优化方案 O3）', async () => {
+test('补充检索失败时保留第一次“没有找到”的结果，不算不可用（功能规则第 11 节）', async () => {
   double.chunks = double.chunks.map(chunk => ({ ...chunk, matchQuery: '库存' }))
   const sessionId = await session(['kb-supply'])
   await ask(sessionId, '库存相关的制度有哪些？')
@@ -225,7 +225,7 @@ test('补充检索失败时保留第一次“没有找到”的结果，不算�
   assert.match(followUp.answer, /已查询所添加的知识库，没有找到相关内容/)
 })
 
-test('检索成功但没有相关内容时，回答末尾注明没有找到（优化方案 O1）', async () => {
+test('检索成功但没有相关内容时，回答末尾注明没有找到（功能规则第 11 节）', async () => {
   double.chunks = [{ id: 'weak', knowledgeId: 'doc-transfer', content: '跨仓调拨须提前一天申请。', score: 0.12 }]
   const result = await ask(await session(['kb-supply']), '年假有几天？')
   assert.equal(result.manifest.knowledge_status, 'ok')
@@ -234,7 +234,7 @@ test('检索成功但没有相关内容时，回答末尾注明没有找到（�
   assert.doesNotMatch(result.answer, /本次检索到的资料/)
 })
 
-test('记录检索响应中的重排序结果，供管理端健康状态显示（优化方案 O5）', async () => {
+test('记录检索响应中的重排序结果，供管理端健康状态显示（功能规则第 11 节）', async () => {
   double.rerankOutcome = 'model_unavailable'
   await ask(await session(['kb-supply']), '安全库存？')
   const [connection] = await database<{ outcome: string | null; at: Date | null }[]>`
@@ -325,15 +325,8 @@ test('单篇文档元数据缺失只丢弃该篇，由后面的候选补上（4.
     ['weknora:doc-safety', 'weknora:doc-a', 'weknora:doc-b'])
 })
 
-test('AI Hub 账号不检索也不提示；停用的连接在会话添加了知识库时按不可用提示（第 3 节，优化方案 O2）', async () => {
+test('停用的连接在会话添加了知识库时按不可用提示（功能规则第 11 节）', async () => {
   const sessionId = await session(['kb-supply'])
-  await database`update users set identity_provider = 'ai-hub' where tenant_id = ${tenantId} and id = ${EMPLOYEE}`
-  try {
-    const oidc = await ask(sessionId, '安全库存？')
-    assert.equal(oidc.manifest.knowledge_status, undefined)
-  } finally {
-    await database`update users set identity_provider = 'local' where tenant_id = ${tenantId} and id = ${EMPLOYEE}`
-  }
   const [before] = await database<{ reason: string | null; at: Date | null }[]>`
     select last_failure_reason as reason, last_failure_at as at from external_knowledge_connections where tenant_id = ${tenantId}
   `
@@ -387,7 +380,7 @@ test('WeKnora 不可用时执行继续，回答注明不可用并记录原因（
   assert.equal(metadata.manifest.knowledge_status, 'unavailable')
 })
 
-test('Agent 岗位角色不具备查看级别时不检索，会话添加了知识库时提示 AI 同事未开通（WK14，优化方案 O2）', async () => {
+test('Agent 岗位角色不具备查看级别时不检索，会话添加了知识库时提示 AI 同事未开通（WK14，功能规则第 11 节）', async () => {
   await database`
     insert into roles (id, tenant_id, code, name, permissions)
     values ('role-no-knowledge', ${tenantId}, 'no_knowledge', '无知识权限', '["workbench:use"]')
@@ -405,7 +398,7 @@ test('Agent 岗位角色不具备查看级别时不检索，会话添加了知�
   assert.equal(searches().length, 0)
 })
 
-test('原连接已更换的知识库在页脚单独提示，不说成无权查看（优化方案 O9，评审 #116）', async () => {
+test('原连接已更换的知识库在页脚单独提示，不说成无权查看（功能规则第 11 节，评审 #116）', async () => {
   const sessionId = await session(['kb-supply', 'kb-finance'])
   await database`update external_knowledge_bases set status = 'unavailable' where tenant_id = ${tenantId} and id = 'kb-supply'`
   try {
@@ -421,7 +414,7 @@ test('原连接已更换的知识库在页脚单独提示，不说成无权查�
   assert.equal(searches().length, 0)
 })
 
-test('员工已不具备查看级别时，所选知识库按“你已无权查看”跳过（优化方案 O2）', async () => {
+test('员工已不具备查看级别时，所选知识库按“你已无权查看”跳过（功能规则第 11 节）', async () => {
   const sessionId = await session(['kb-supply'])
   await database`update roles set permissions = permissions - 'knowledge:view' where tenant_id = ${tenantId} and id = 'role-employee'`
   try {
@@ -439,7 +432,7 @@ test('员工已不具备查看级别时，所选知识库按“你已无权查�
   assert.equal(searches().length, 0)
 })
 
-// Agent 知识检索工具方案（KO9）：装配条件、实时复核、引用续编与审计。
+// 功能规则第 11 节（KO9）：装配条件、实时复核、引用续编与审计。
 const toolInput = (result: { runId: string; attemptId: string; manifest: RuntimeManifest }, query: string, callNumber = 1, knowledgeBaseNames?: string[]) => ({
   runId: result.runId, attemptId: result.attemptId, sessionId: result.manifest.session_id!, userId: EMPLOYEE,
   agentVersionId: result.manifest.agent_version_id!, traceId: `trace-${result.runId}`, query, callNumber,

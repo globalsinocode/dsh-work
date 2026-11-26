@@ -10,7 +10,7 @@ export function registerPersistentApprovalRoutes(
 ): void {
   router.get('/api/admin/v1/approvals', async (_request, context) => {
     const identity = requireRequestIdentity(context, 'admin')
-    await authorization.requireAdminReader(identity.userId)
+    await authorization.requireAdminModule(identity.userId, 'agent', 'read')
     const status = context.url.searchParams.get('status') ?? undefined
     if (status !== undefined && !['pending', 'approved', 'rejected', 'expired', 'cancelled'].includes(status)) {
       throw requestInvalid('status 不受支持')
@@ -19,14 +19,14 @@ export function registerPersistentApprovalRoutes(
   })
   router.get('/api/admin/v1/approvals/:approvalId', async (_request, context) => {
     const identity = requireRequestIdentity(context, 'admin')
-    await authorization.requireAdminReader(identity.userId)
+    await authorization.requireAdminModule(identity.userId, 'agent', 'read')
     const approval = await service.get(context.params['approvalId'] ?? '')
     if (!approval) throw requestInvalid('审批不存在')
     return envelope('admin', approval, 'postgres')
   })
   router.post('/api/admin/v1/approvals/:approvalId/resolve', async (request, context) => {
     const identity = requireRequestIdentity(context, 'admin')
-    await authorization.requirePlatformAdmin(identity.userId)
+    await authorization.requireAdminModule(identity.userId, 'agent', 'write')
     const body = await readJsonBody<{ decision?: unknown; resolutionKey?: unknown; comment?: unknown } | null>(request)
     if (!body || (body.decision !== 'approved' && body.decision !== 'rejected')) throw requestInvalid('decision 仅支持 approved 或 rejected')
     if (typeof body.resolutionKey !== 'string' || !body.resolutionKey.trim()) throw requestInvalid('resolutionKey 必须是非空字符串')

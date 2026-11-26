@@ -11,7 +11,7 @@ import { useKnowledgeStore } from '@/stores/knowledge'
 import type { KnowledgeBase } from '@/types/knowledge'
 import { formatKnowledgeDate } from '@/utils/knowledge'
 
-/** 员工端“知识库”列表（weknora-knowledge-plan 第 8 节）：页头、工具栏与卡片和项目空间列表一致。 */
+/** 员工端“知识库”列表（功能规则第 11 节）：页头、工具栏与卡片和项目空间列表一致。 */
 const router = useRouter()
 const knowledge = useKnowledgeStore()
 const bases = ref<KnowledgeBase[]>([])

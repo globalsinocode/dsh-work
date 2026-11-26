@@ -1,7 +1,7 @@
 import { randomBytes, scrypt, timingSafeEqual } from 'node:crypto'
 import { availableParallelism } from 'node:os'
 
-import { IdentityAccessError } from './auth-service.ts'
+import { IdentityAccessError } from './request-security.ts'
 import { normalizeLoginAccount } from './login-account.ts'
 
 // OWASP scrypt baseline. Fixed parameters also bound work when reading a stored hash.

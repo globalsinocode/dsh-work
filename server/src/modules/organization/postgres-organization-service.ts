@@ -1,15 +1,21 @@
 import { randomUUID } from 'node:crypto'
 
 import type { DatabaseClient, DatabaseTransaction } from '../../infrastructure/postgres/database.ts'
-import { requirePlatformAdminActor } from '../authorization/platform-admin-actor.ts'
+import {
+  assertWithinGrantCeiling, isPlatformAdminActor, loadGrantCeiling, loadRoleGrants, requireAdminModuleActor,
+} from '../authorization/admin-actor.ts'
+import { isManagementPermission } from '../../domain/admin-permissions.ts'
+import { authorizationDenied } from '../../domain/authorization-errors.ts'
 import { invalidRequest, notFound, stateConflict } from '../../domain/request-errors.ts'
 
 const tenantId = 'tenant-dsh-work'
 const maxNameLength = 60
 const maxMembersPerRequest = 200
 
-/** 管理类权限：带任一权限的角色不能授给部门（方案 OD8），只能单独授给个人。 */
-export const DEPARTMENT_FORBIDDEN_PERMISSIONS = ['admin:*', 'admin:write', 'admin:read', 'audit:read', 'data-protection:terms'] as const
+/**
+ * 管理类权限（`admin:`、`audit:`、`data-protection:` 前缀）的角色不能授给部门（功能规则第 10 节；
+ * 功能规则第 13 节），只能单独授给个人。按前缀判定，新增的模块权限码自动覆盖。
+ */
 
 export interface OrganizationDepartment {
   id: string
@@ -75,7 +81,7 @@ interface DepartmentRow {
 }
 
 /**
- * 企业组织架构 ORG-S1（docs/design/org-structure-plan.md）：本地维护的部门树、成员与主部门。
+ * 企业组织架构 ORG-S1（功能规则第 10 节）：本地维护的部门树、成员与主部门。
  * 部门本身不带权限；按部门授权是第二期（ORG-S2）。所有写操作只有平台管理员可以执行，按企业
  * 串行（事务级咨询锁），在同一事务中同步员工的显示部门（users.department_id = 主部门名称）并写审计。
  */
@@ -199,7 +205,7 @@ export class PostgresOrganizationService {
         update org_departments set status = 'removed', updated_at = now(), updated_by = ${input.actorId}
          where tenant_id = ${tenantId} and id = ${department.id}
       `
-      // 部门授权保留但失效，不转移给上级部门（方案 6.3）。
+      // 部门授权保留但失效，不转移给上级部门（功能规则第 10 节）。
       await transaction`
         update org_department_grants set status = 'invalid', invalidated_at = now()
          where tenant_id = ${tenantId} and department_id = ${department.id} and status = 'active'
@@ -219,10 +225,10 @@ export class PostgresOrganizationService {
       const valid = await transaction<{ id: string }[]>`
         select u.id from users u
          where u.tenant_id = ${tenantId} and u.id in ${transaction(userIds)} and u.status = 'active' and u.business_user
-           and (u.identity_provider = 'ai-hub'
-                or exists (select 1 from local_user_credentials c where c.tenant_id = u.tenant_id and c.user_id = u.id))
+           and exists (select 1 from local_user_credentials c where c.tenant_id = u.tenant_id and c.user_id = u.id)
       `
       if (valid.length !== userIds.length) throw invalidRequest('包含不存在或已停用的员工')
+      await assertNotSelfMembership(transaction, input.actorId, userIds)
       for (const userId of userIds) await addMembership(transaction, department.id, userId, input.actorId)
       return { action: 'organization.member.add', objectId: department.id, context: { userIds } }
     })
@@ -230,6 +236,7 @@ export class PostgresOrganizationService {
 
   async removeMember(input: { departmentId: string; userId: string; newPrimaryDepartmentId?: unknown; actorId: string }) {
     return this.write(input.actorId, async (transaction) => {
+      await assertNotSelfMembership(transaction, input.actorId, [input.userId])
       const memberships = await transaction<{ departmentId: string; primary: boolean }[]>`
         select m.department_id as "departmentId", m.is_primary as primary
           from org_department_members m
@@ -262,6 +269,7 @@ export class PostgresOrganizationService {
 
   async setPrimaryDepartment(input: { departmentId: string; userId: string; actorId: string }) {
     return this.write(input.actorId, async (transaction) => {
+      await assertNotSelfMembership(transaction, input.actorId, [input.userId])
       const [membership] = await transaction`
         select 1 from org_department_members
          where tenant_id = ${tenantId} and department_id = ${input.departmentId} and user_id = ${input.userId}
@@ -297,6 +305,9 @@ export class PostgresOrganizationService {
       if (hasForbiddenPermission(role.permissions)) {
         throw stateConflict(`角色“${role.name}”含管理类权限，只能在“员工与权限”中单独授给个人`)
       }
+      // 授出不超过自身（功能规则第 13 节）：授权时就判定角色本身，部门当前为空也一样，
+      // 否则之后有人加入部门就会拿到超出授予人权限的角色。
+      assertWithinGrantCeiling(await loadGrantCeiling(transaction, input.actorId), await loadRoleGrants(transaction, [roleId]), `授给部门的角色“${role.name}”`)
       const [existing] = await transaction`
         select 1 from org_department_grants
          where tenant_id = ${tenantId} and department_id = ${department.id} and role_id = ${roleId} and status = 'active'
@@ -330,10 +341,13 @@ export class PostgresOrganizationService {
     options: { syncRoles?: boolean } = {},
   ): Promise<OrganizationSnapshot> {
     return this.database.begin(async (transaction) => {
-      await requirePlatformAdminActor(transaction, actorId)
+      await requireAdminModuleActor(transaction, actorId, 'org', 'write')
       await lockOrganization(transaction)
+      const ceiling = await loadGrantCeiling(transaction, actorId)
+      const before = ceiling.platformAdmin ? null : await effectiveRolePairs(transaction)
       const audit = await change(transaction)
       if (options.syncRoles !== false) await syncDepartmentRoles(transaction)
+      if (before) await assertNoRoleEscalation(transaction, before, ceiling)
       await appendOrganizationAudit(transaction, { actorId, ...audit })
       return readSnapshot(transaction)
     })
@@ -341,7 +355,7 @@ export class PostgresOrganizationService {
 }
 
 /**
- * 新建账号时把员工放入一个部门并设为主部门（方案第 5 节“员工账号”），与建号同一事务。
+ * 新建账号时把员工放入一个部门并设为主部门（功能规则第 10 节“员工账号”），与建号同一事务。
  * 只校验部门有效；操作人是否为平台管理员由建号流程负责。
  */
 export async function assignNewAccountDepartment(
@@ -356,7 +370,7 @@ export async function assignNewAccountDepartment(
 }
 
 /**
- * 角色在已授给部门时不能加入管理类权限（方案 OD8），否则调整部门成员就会间接授予管理权限。
+ * 角色在已授给部门时不能加入管理类权限（功能规则第 10 节），否则调整部门成员就会间接授予管理权限。
  * 由“员工与权限”修改角色时在同一事务中调用。
  */
 export async function assertRoleDepartmentGrantable(transaction: DatabaseTransaction, roleId: string, permissions: string[]) {
@@ -368,13 +382,42 @@ export async function assertRoleDepartmentGrantable(transaction: DatabaseTransac
 }
 
 function hasForbiddenPermission(permissions: unknown) {
-  return Array.isArray(permissions) && permissions.some(permission => (DEPARTMENT_FORBIDDEN_PERMISSIONS as readonly string[]).includes(permission))
+  return Array.isArray(permissions) && permissions.some(permission => typeof permission === 'string' && isManagementPermission(permission))
+}
+
+/** 员工当前有效的（员工, 角色）组合：本地与部门授予，有效期内。 */
+async function effectiveRolePairs(transaction: DatabaseTransaction) {
+  const rows = await transaction<{ userId: string; roleId: string }[]>`
+    select distinct user_id as "userId", role_id as "roleId" from user_roles
+     where tenant_id = ${tenantId} and (source_key = 'local' or source_key like 'department:%')
+       and (valid_until is null or valid_until > now())
+  `
+  return new Set(rows.map(row => `${row.userId}\u0000${row.roleId}`))
+}
+
+/**
+ * 授出不超过自身（功能规则第 13 节）：本次组织变更（部门授权、成员变更、部门移动）
+ * 让员工新获得的角色，其权限与数据范围须是操作人自身的子集。平台管理员不受约束。
+ */
+async function assertNoRoleEscalation(transaction: DatabaseTransaction, before: Set<string>, ceiling: Awaited<ReturnType<typeof loadGrantCeiling>>) {
+  const after = await effectiveRolePairs(transaction)
+  const gained = [...after].filter(pair => !before.has(pair)).map(pair => pair.split('\u0000')[1]!)
+  if (!gained.length) return
+  const grants = await loadRoleGrants(transaction, [...new Set(gained)])
+  assertWithinGrantCeiling(ceiling, grants, '本次组织变更让员工获得的角色')
+}
+
+/** 非平台管理员不能变更自己的部门归属（功能规则第 10 节），避免借部门授权给自己加权限。 */
+async function assertNotSelfMembership(transaction: DatabaseTransaction, actorId: string, userIds: string[]) {
+  if (!userIds.includes(actorId)) return
+  if (await isPlatformAdminActor(transaction, actorId)) return
+  throw authorizationDenied('不能变更自己的部门归属，请联系平台管理员处理')
 }
 
 /**
  * 把有效的部门授权展开为 user_roles（source_key = 'department:<grant_id>'），与期望集合对比后
  * 只增删差异行：授权、成员关系、部门移动或删除后都调用。权限版本由 user_roles 触发器按行递增
- * （方案 6.2）。停用的角色仍展开，由读取端按角色状态忽略，重新启用即恢复。
+ * （功能规则第 10 节）。停用的角色仍展开，由读取端按角色状态忽略，重新启用即恢复。
  */
 async function syncDepartmentRoles(transaction: DatabaseTransaction) {
   await transaction`
@@ -425,14 +468,10 @@ async function readSnapshot(sql: DatabaseClient | DatabaseTransaction): Promise<
   `
   const employees = await sql<OrganizationEmployee[]>`
     select u.id, u.display_name as name, u.email, u.status,
-           coalesce(
-             (select c.username from local_user_credentials c where c.tenant_id = u.tenant_id and c.user_id = u.id),
-             case when u.identity_provider = 'ai-hub' then u.external_subject end
-           ) as "loginAccount"
+           (select c.username from local_user_credentials c where c.tenant_id = u.tenant_id and c.user_id = u.id) as "loginAccount"
       from users u
      where u.tenant_id = ${tenantId} and u.business_user
-       and (u.identity_provider = 'ai-hub'
-            or exists (select 1 from local_user_credentials c where c.tenant_id = u.tenant_id and c.user_id = u.id))
+       and exists (select 1 from local_user_credentials c where c.tenant_id = u.tenant_id and c.user_id = u.id)
      order by u.display_name, u.id
   `
   const grants = await sql<OrganizationGrant[]>`

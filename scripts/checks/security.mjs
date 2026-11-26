@@ -4,9 +4,7 @@ import { resolve } from 'node:path'
 // These forbidden dependencies and production safeguards supplement behavior tests.
 // Method names, SQL formatting and UI copy are intentionally left to their test suites.
 export function checkSecurity(check) {
-  check.excludes('server/src/modules/identity/ai-hub-client.ts', ['/me/permissions', '/authorization/decisions'])
   check.excludes('server/src/modules/identity/types.ts', ['dsh_work.'])
-  check.excludes('server/src/modules/identity/auth-service.ts', ['claim.owner_user_id'])
   for (const file of ['run-orchestration-service.ts', 'orchestration/attempt-dispatcher.ts', 'orchestration/run-event-recorder.ts']) {
     check.excludes(`server/src/modules/run/${file}`, ["role_ids: ['role-employee']", 'publishAssistantResult'])
   }
@@ -15,8 +13,7 @@ export function checkSecurity(check) {
     check.assert(!initialMigration.includes(secret), `初始化迁移不得包含明文凭据列 ${secret}`)
   }
   check.includes('server/src/modules/identity/config.ts', [
-    "mode === 'prototype') throw", '`__Host-${name}`', 'DSH_WORK_COOKIE_SECURE',
-    'DSH_WORK_DIRECTORY_SYNC_INTERVAL_SECONDS',
+    "legacyMode === 'prototype') throw", '`__Host-${name}`', 'DSH_WORK_COOKIE_SECURE',
   ])
   // Test identities and in-memory smoke data must never be reachable from the application entry point.
   check.assert(!/from '\.\/testing\//.test(check.read('server/src/main.ts')), 'server/src/main.ts 不得引用 server/src/testing 下的测试身份或冒烟数据')
@@ -30,8 +27,11 @@ export function checkSecurity(check) {
     check.assert(!/Object\.assign\(new Error\([\s\S]{0,400}?\bstatus:/.test(check.read(file)),
       `${file} 不得用 Object.assign 拼装 HTTP 状态，请使用 server/src/domain/request-errors.ts 中的 RequestError 或工厂函数`)
   }
-  check.includes('server/src/modules/identity/auth-service.ts', [
-    'equalOpaqueHash', 'validateRequestOrigin', 'refreshTokensWithLock', 'resolveAuthorization',
+  check.includes('server/src/modules/identity/request-security.ts', ['validateRequestOrigin', 'assertAudienceAccess'])
+  check.includes('server/src/modules/identity/session-repository.ts', ['resolveAuthorization'])
+  // AI Hub 登录已删除（迁移 0129）：用户只能是独立账号，会话来源只有密码与钉钉。
+  check.includes('server/migrations/0129_remove_ai_hub_login.sql', [
+    "check (identity_provider = 'local')", "check (authentication_provider in ('local-password', 'dingtalk'))",
   ])
   check.includes('server/src/modules/runtime/acp-json-rpc-client.ts', [
     'buildAcpChildEnvironment', 'isSensitiveEnvironmentKey', 'redactSensitiveText',

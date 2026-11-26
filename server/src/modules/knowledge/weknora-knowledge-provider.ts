@@ -31,12 +31,12 @@ interface SelectedBaseRow {
   externalId: string
   name: string
   visible: boolean
-  /** 知识库因更换连接地址标为“原连接已更换”（优化方案 O9）。 */
+  /** 知识库因更换连接地址标为“原连接已更换”（功能规则第 11 节）。 */
   moved: boolean
 }
 
 /**
- * 企业知识库接入 WeKnora（weknora-knowledge-plan）。可见范围按部门授权实时计算（5.3、5.5），
+ * 企业知识库接入 WeKnora（功能规则第 11 节）。可见范围按部门授权实时计算，
  * 检索范围 = 会话所选知识库 ∩ 当前可见知识库（5.7）；返回结果再按本次传入的知识库校验一次
  * （4.4 第 4 步）。员工与 Agent 都须具备查看级别（5.1、WK14）。
  */
@@ -54,21 +54,16 @@ export class WeKnoraKnowledgeProvider implements KnowledgeProvider {
   }
 
   /**
-   * 执行前检索与知识检索工具共用的复核（5.1、5.3、5.7，WK14）：连接、身份模式、员工与 Agent 的查看级别，
+   * 执行前检索与知识检索工具共用的复核（5.1、5.3、5.7，WK14）：连接、员工与 Agent 的查看级别，
    * 以及会话所选知识库当前是否可见。每次调用都实时读取，不使用 Manifest 中冻结的结果。
    */
   private async evaluate(input: { sessionId: string; userId: string; agentVersionId: string }) {
-    const [levels] = await this.database<{ connection: boolean; localIdentity: boolean; employee: boolean; agent: boolean }[]>`
+    const [levels] = await this.database<{ connection: boolean; employee: boolean; agent: boolean }[]>`
       select
         exists (
           select 1 from external_knowledge_connections c
            where c.tenant_id = ${tenantId} and c.id = ${this.connectionId} and c.status = 'active'
         ) as connection,
-        -- 按部门授权只在本地身份模式下提供；AI Hub（OIDC）账号没有部门，也没有添加入口（第 3 节）。
-        exists (
-          select 1 from users u
-           where u.tenant_id = ${tenantId} and u.id = ${input.userId} and u.identity_provider <> 'ai-hub'
-        ) as "localIdentity",
         exists (
           select 1 from users u
             join user_roles ur on ur.tenant_id = u.tenant_id and ur.user_id = u.id
@@ -88,7 +83,7 @@ export class WeKnoraKnowledgeProvider implements KnowledgeProvider {
              and r.permissions ?| ${knowledgeViewLevel}::text[]
         ) as agent
     `
-    const selected: SelectedBaseRow[] = levels?.localIdentity ? await this.database<SelectedBaseRow[]>`
+    const selected: SelectedBaseRow[] = await this.database<SelectedBaseRow[]>`
       select kb.id, kb.external_id as "externalId", kb.name,
              (kb.status = 'active' and kb.id in (${visibleBaseIdsSql(this.database, input.userId)})) as visible,
              kb.status = 'unavailable' as moved
@@ -97,9 +92,9 @@ export class WeKnoraKnowledgeProvider implements KnowledgeProvider {
        where skb.tenant_id = ${tenantId} and skb.session_id = ${input.sessionId}
          and kb.connection_id = ${this.connectionId}
        order by skb.added_at, kb.id
-    ` : []
+    `
     return {
-      levels: levels ?? { connection: false, localIdentity: false, employee: false, agent: false },
+      levels: levels ?? { connection: false, employee: false, agent: false },
       selected,
     }
   }
@@ -113,7 +108,6 @@ export class WeKnoraKnowledgeProvider implements KnowledgeProvider {
   }): Promise<KnowledgeResolution> {
     const empty = { documents: [], citations: [], skippedBases: [] }
     const { levels, selected } = await this.evaluate(input)
-    if (!levels.localIdentity) return { status: 'not_applicable', ...empty }
 
     // Manifest 最多记 20 个名称；会话所选知识库没有数量上限，超出的不再逐一提示。
     const names = (bases: SelectedBaseRow[]) => bases.map(base => base.name.trim()).filter(Boolean).slice(0, maxSkippedBases)
@@ -123,7 +117,7 @@ export class WeKnoraKnowledgeProvider implements KnowledgeProvider {
       const ready = levels.connection && levels.employee && levels.agent && await this.connection.client() !== null
       return { status: ready ? 'not_selected' : 'not_applicable', ...empty }
     }
-    // 优化方案 O2：员工添加了知识库但本次没有检索时，都要让模型与员工知道，不能静默按普通对话回答。
+    // 功能规则第 11 节：员工添加了知识库但本次没有检索时，都要让模型与员工知道，不能静默按普通对话回答。
     // 连接停用、未配置或 API Key 读不出按不可用处理；这不是 WeKnora 故障，不写连接的失败记录。
     const client = levels.connection ? await this.connection.client() : null
     if (!client) return { status: 'unavailable', ...empty, failureReason: 'not_configured' }
@@ -148,7 +142,7 @@ export class WeKnoraKnowledgeProvider implements KnowledgeProvider {
       await this.recordFailure(failureReason)
       return { status: 'unavailable', documents: [], citations: [], ...skips, failureReason }
     }
-    // 优化方案 O3：本次提问没有结果时，再用“上一条提问 + 本次提问”检索一次，追问也能命中；两次结果不合并。
+    // 功能规则第 11 节：本次提问没有结果时，再用“上一条提问 + 本次提问”检索一次，追问也能命中；两次结果不合并。
     // 第二次失败时保留第一次“没有找到”的结果，不算不可用。
     const fallbackQuery = input.fallbackQuery?.trim()
     if (!retrieved.documents.length && fallbackQuery && fallbackQuery !== input.query.trim()) {
@@ -166,7 +160,7 @@ export class WeKnoraKnowledgeProvider implements KnowledgeProvider {
   }
 
   /**
-   * Agent 知识检索工具（Agent 知识检索工具方案 4.3，KO9）：每次调用实时复核范围，筛选规则与执行前检索相同，
+   * Agent 知识检索工具（功能规则第 11 节，KO9）：每次调用实时复核范围，筛选规则与执行前检索相同，
    * 结果写入引用快照并续编序号（KS5）。审计不记录检索词与摘录（KS6）；失败单独审计，不计入健康状态的
    * 检索与不可用次数（KS7）。
    */
@@ -188,7 +182,7 @@ export class WeKnoraKnowledgeProvider implements KnowledgeProvider {
     const query = input.query.trim()
     if (!query) throw toolPreconditionFailed('检索词不能为空')
     const { levels, selected } = await this.evaluate(input)
-    if (!levels.localIdentity || !levels.employee || !levels.agent) {
+    if (!levels.employee || !levels.agent) {
       throw toolPreconditionFailed('当前不能检索企业知识库：员工或 AI 同事已没有知识库查看权限')
     }
     const client = levels.connection ? await this.connection.client() : null
@@ -301,7 +295,7 @@ export class WeKnoraKnowledgeProvider implements KnowledgeProvider {
     `
     const sections: string[] = []
     if (citations.length) {
-      // 优化方案 O6：列出的是本次注入的全部资料，不代表模型都引用了。同一篇文档的多个分段合并为一行，
+      // 功能规则第 11 节：列出的是本次注入的全部资料，不代表模型都引用了。同一篇文档的多个分段合并为一行，
       // 列出它的全部序号（评审 PR 118：检索工具可能取到同一文档的另一个分段）。
       const documents = new Map<string, { ordinals: number[]; title: string; updatedAt: Date }>()
       for (const row of citations) {
@@ -398,7 +392,7 @@ export class WeKnoraKnowledgeProvider implements KnowledgeProvider {
     return { documents, citations, rerankOutcome }
   }
 
-  /** 记录成功与本次重排序结果（优化方案 O5）：WeKnora 重排序降级时检索照常返回，只能靠这里让管理员看到。 */
+  /** 记录成功与本次重排序结果（功能规则第 11 节）：WeKnora 重排序降级时检索照常返回，只能靠这里让管理员看到。 */
   private async recordSuccess(rerankOutcome: string | null) {
     await this.database`
       update external_knowledge_connections

@@ -52,6 +52,15 @@ test('Agent draft flow autosaves AGENTS.md and MCP scope; detail shows it read-o
   await tools.getByRole('button', { name: 'Close this dialog' }).press('Enter')
   await expect(status).toHaveText('已保存')
 
+  // 读取网页（AG-WEBFETCH-01）：默认关闭，打开后自动保存。
+  const webFetch = capabilities.getByRole('switch', { name: '允许读取网页' })
+  await expect(webFetch).not.toBeChecked()
+  await expect(capabilities.getByText(/只能打开员工在对话中给出的网址，以及联网搜索结果中的网址/)).toBeVisible()
+  // Element Plus 把真实开关输入框视觉隐藏，点击可见的开关本体；状态仍按可访问的 switch 断言。
+  await capabilities.getByTestId('agent-web-fetch-switch').click()
+  await expect(webFetch).toBeChecked()
+  await expect(status).toHaveText('已保存')
+
   // 运行限制默认折叠。
   await expect(capabilities.getByText('运行超时（秒）', { exact: true })).toBeHidden()
   await capabilities.getByText('运行限制').click()
@@ -79,6 +88,7 @@ test('Agent draft flow autosaves AGENTS.md and MCP scope; detail shows it read-o
   const reopened = page.getByRole('region', { name: '能力' })
   await expect(reopened.getByRole('radio', { name: '仅使用选定 MCP' })).toBeChecked()
   await expect(reopened.getByText('企业知识 MCP', { exact: true })).toBeVisible()
+  await expect(reopened.getByRole('switch', { name: '允许读取网页' })).toBeChecked()
   await reopened.getByRole('radio', { name: '不使用 MCP' }).press('Space')
   await expect(reopened.getByRole('combobox', { name: '选择 MCP Connector' })).toHaveCount(0)
   await reopened.getByRole('radio', { name: '仅使用选定 MCP' }).press('Space')

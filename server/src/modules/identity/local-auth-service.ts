@@ -5,8 +5,10 @@ import type { DatabaseClient, DatabaseTransaction } from '../../infrastructure/p
 import {
   assertAudienceAccess, clearCookie, IdentityAccessError, normalizeReturnTo,
   parseCookies, resolveRequestOrigin, serializeCookie, validateRequestOrigin,
-} from './auth-service.ts'
+} from './request-security.ts'
 import { assignNewAccountDepartment } from '../organization/postgres-organization-service.ts'
+import { assertCanGrant, assertCanManageUser, loadGrantCeiling, requireAdminModuleActor } from '../authorization/admin-actor.ts'
+import { isAuthorizationDenial } from '../../domain/authorization-errors.ts'
 import { lockPlatformAdminInvariant, requireAnotherPlatformAdmin } from './administration-service.ts'
 import { hashPassword, normalizeUsername, verifyPassword } from './password.ts'
 import { loginAccountCandidates, normalizeLoginAccount } from './login-account.ts'
@@ -189,7 +191,7 @@ export class LocalAuthService {
     return { status: 'bound' }
   }
 
-  /** 密码登录只撤销此前的密码与 AI Hub 会话，不撤销钉钉会话（按来源撤销，4.3）。 */
+  /** 密码登录只撤销此前的密码会话，不撤销钉钉会话（按来源撤销，4.3）。 */
   private async insertPasswordSession(transaction: DatabaseTransaction, userId: string, audience: ApiAudience, sessionHash: string, authorizationVersion: number) {
     const expiresAt = new Date(Date.now() + this.configuration.sessionTtlSeconds * 1000)
     await transaction`
@@ -381,9 +383,11 @@ export class LocalAuthService {
     const username = normalizeLoginAccount(input.username)
     const passwordHash = await hashPassword(input.password)
     return this.database.begin(async transaction => {
-      await assertPlatformAdmin(transaction, actorId)
+      await assertIdentityWriter(transaction, actorId)
       const userId = await insertAccount(transaction, input, username, passwordHash, true)
       if (input.departmentId) await assignNewAccountDepartment(transaction, { userId, departmentId: input.departmentId, actorId })
+      // 新账号经部门授权得到的角色同样不能超过建号人（功能规则第 13 节）。
+      await mapDenial(assertCanGrant(transaction, actorId, await loadGrantCeiling(transaction, userId), '新账号经所选部门获得的权限'))
       await revokeUserSessions(transaction, userId)
       await localAudit(transaction, actorId, 'identity.local.create', 'success', { userId })
       return { userId, username }
@@ -393,7 +397,7 @@ export class LocalAuthService {
   async checkLoginAccount(input: unknown, actorId: string) {
     const username = normalizeLoginAccount(input)
     return this.database.begin(async transaction => {
-      await assertPlatformAdmin(transaction, actorId)
+      await assertIdentityWriter(transaction, actorId)
       return { username, available: !await loginAccountExists(transaction, username) }
     })
   }
@@ -402,7 +406,8 @@ export class LocalAuthService {
     if (userId === actorId) throw new IdentityAccessError(422, 'self_reset_forbidden', '请通过修改密码验证自己的当前密码')
     const passwordHash = await hashPassword(password)
     await this.database.begin(async transaction => {
-      await assertPlatformAdmin(transaction, actorId)
+      await assertIdentityWriter(transaction, actorId)
+      await mapDenial(assertCanManageUser(transaction, actorId, userId))
       const [credential] = await transaction`
         update local_user_credentials set password_hash = ${passwordHash}, must_change_password = true, updated_at = now()
          where tenant_id = ${tenantId} and user_id = ${userId}
@@ -421,22 +426,20 @@ export class LocalAuthService {
     if (status !== 'active' && status !== 'disabled') throw new IdentityAccessError(422, 'invalid_status', '账号状态无效')
     await this.database.begin(async transaction => {
       await lockPlatformAdminInvariant(transaction)
-      await assertPlatformAdmin(transaction, actorId)
-      const [user] = await transaction<{ identityProvider: string }[]>`
-        select u.identity_provider as "identityProvider" from users u join local_user_credentials c on c.tenant_id = u.tenant_id and c.user_id = u.id
+      await assertIdentityWriter(transaction, actorId)
+      await mapDenial(assertCanManageUser(transaction, actorId, userId))
+      const [user] = await transaction`
+        select 1 from users u join local_user_credentials c on c.tenant_id = u.tenant_id and c.user_id = u.id
          where u.tenant_id = ${tenantId} and u.id = ${userId} for update of u
       `
       if (!user) throw new IdentityAccessError(404, 'local_account_missing', '该员工尚未开通独立登录')
-      if (user.identityProvider !== 'local') {
-        throw new IdentityAccessError(422, 'upstream_managed_status', 'AI Hub 账号状态请在企业身份平台中管理')
-      }
       if (status === 'disabled') {
         const [admin] = await transaction`
           select ur.user_id from user_roles ur join roles r on r.id = ur.role_id and r.tenant_id = ur.tenant_id
            where ur.tenant_id = ${tenantId} and ur.user_id = ${userId} and r.id = 'role-platform-admin'
              and r.status = 'active' and (ur.valid_until is null or ur.valid_until > now())
         `
-        if (admin) await requireAnotherPlatformAdmin(transaction, userId, true)
+        if (admin) await requireAnotherPlatformAdmin(transaction, userId)
       }
       await transaction`update users set status = ${status}, local_authorization_version = local_authorization_version + 1, updated_at = now() where tenant_id = ${tenantId} and id = ${userId}`
       if (status === 'disabled') {
@@ -471,23 +474,29 @@ async function loginAccountExists(transaction: DatabaseTransaction, username: st
   const candidates = loginAccountCandidates(username)
   const [existing] = await transaction`
     select 1 from local_user_credentials where tenant_id = ${tenantId} and username = any(${candidates}::text[])
-    union all
-    select 1 from users where tenant_id = ${tenantId} and identity_provider = 'ai-hub'
-      and lower(btrim(external_subject)) = any(${candidates}::text[])
     limit 1
   `
   return Boolean(existing)
 }
 
-async function assertPlatformAdmin(transaction: DatabaseTransaction, userId: string) {
-  const [actor] = await transaction`
-    select u.id from users u join user_roles ur on ur.tenant_id = u.tenant_id and ur.user_id = u.id
-    join roles r on r.tenant_id = ur.tenant_id and r.id = ur.role_id
-    join tenants t on t.id = u.tenant_id
-    where u.tenant_id = ${tenantId} and u.id = ${userId} and u.status = 'active' and u.business_user and t.status = 'active'
-      and ur.source_key = 'local' and r.status = 'active' and r.permissions ? 'admin:*' and (ur.valid_until is null or ur.valid_until > now())
-  `
-  if (!actor) throw new IdentityAccessError(403, 'permission_denied', '只有平台管理员可以管理独立账号')
+/** 修改员工与权限（功能规则第 13 节）：只认本地授予的模块权限。 */
+async function assertIdentityWriter(transaction: DatabaseTransaction, userId: string) {
+  try {
+    await requireAdminModuleActor(transaction, userId, 'identity', 'write')
+  } catch (error) {
+    if (isAuthorizationDenial(error)) throw new IdentityAccessError(403, 'permission_denied', '当前用户没有员工与权限的修改权限')
+    throw error
+  }
+}
+
+/** 防提权拒绝（功能规则第 13 节）以身份模块的错误类型返回，保留原因文案。 */
+async function mapDenial(check: Promise<unknown>) {
+  try {
+    await check
+  } catch (error) {
+    if (isAuthorizationDenial(error)) throw new IdentityAccessError(403, 'permission_denied', error instanceof Error ? error.message : '没有权限')
+    throw error
+  }
 }
 
 async function revokeUserSessions(transaction: DatabaseTransaction, userId: string) {

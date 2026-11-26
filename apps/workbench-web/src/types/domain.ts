@@ -187,7 +187,7 @@ export interface AgentRecommendation {
 }
 
 /**
- * Skill 草稿卡片（Skill 创建专家方案 4.3）：某个 Run 当前 Attempt 保存的草稿版本，带所属提交的当前状态。
+ * Skill 草稿卡片（功能规则 5.6）：某个 Run 当前 Attempt 保存的草稿版本，带所属提交的当前状态。
  * 只给提交人本人看；提交审核只能由员工在卡片上发起。
  */
 export interface SkillDraft {
@@ -959,7 +959,7 @@ export type ConversationLocation =
 
 export interface WorkbenchSession {
   user: UserProfile
-  identityProvider: 'prototype-sso' | 'ai-hub-oidc' | 'local-password' | 'dingtalk'
+  identityProvider: 'prototype-sso' | 'local-password' | 'dingtalk'
   apiAudience: 'workbench'
 }
 
@@ -970,7 +970,7 @@ export interface WorkbenchAgent {
   welcomeMessage: string
   version: string
   examplePrompts: string[]
-  /** 当前启用版本开启了“可创建 Skill”（Skill 创建专家方案 4.8）；旧服务端缺省。 */
+  /** 当前启用版本开启了“可创建 Skill”（功能规则 5.6）；旧服务端缺省。 */
   canCreateSkills?: boolean
 }
 
@@ -1159,7 +1159,7 @@ export interface MentionSummary {
   latestAt: string
 }
 
-/** 用户中心 › 钉钉（钉钉接入 DT-S1）。`enabled` 为部署是否配置了钉钉应用；AI Hub 账号恒为 false。 */
+/** 用户中心 › 钉钉（钉钉接入 DT-S1）。`enabled` 为部署是否配置了钉钉应用。 */
 export interface DingTalkSelfBinding {
   enabled: boolean
   status: 'bound' | 'unbound' | 'invalid'

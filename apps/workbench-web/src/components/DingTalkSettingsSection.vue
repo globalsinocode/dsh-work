@@ -8,7 +8,7 @@ import type { DingTalkSelfBinding } from '@/types/domain'
 
 /**
  * 用户中心 › 钉钉（钉钉接入 DT-S1，原型④）：查看本人的钉钉绑定与解除。绑定只能在钉钉内登录或由管理员代绑。
- * 部署未配置钉钉、或 AI Hub 账号时不显示。
+ * 部署未配置钉钉时不显示。
  */
 const authStore = useAuthStore()
 const view = ref<DingTalkSelfBinding>()

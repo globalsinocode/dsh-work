@@ -6,7 +6,7 @@ import type { UserNotificationKind, UserNotificationObjectType } from '../../not
 
 const tenantId = 'tenant-dsh-work'
 
-/** 方案 NC4：只保留最近 90 天的通知；更早的不再列出、不计未读，并由每日清扫删除（NC-S4）。 */
+/** 功能规则 3.7：只保留最近 90 天的通知；更早的不再列出、不计未读，并由每日清扫删除（NC-S4）。 */
 const retentionDays = 90
 /** 每批删除条数：分批提交，避免一次长事务锁住大量行。 */
 const purgeBatchSize = 1000
@@ -18,7 +18,7 @@ export interface UserNotificationItem {
   read: boolean
   /**
    * 接收人当前是否仍能看到通知对应的内容。为 false 时不返回任何名称与跳转目标，
-   * 界面显示“该内容已不可见”（方案第 7 节：失权后不能经旧通知看到名称）。
+   * 界面显示“该内容已不可见”（功能规则 3.7：失权后不能经旧通知看到名称）。
    */
   visible: boolean
   actor: { id: string; name: string } | null
@@ -176,7 +176,7 @@ export class PostgresUserNotificationService {
 }
 
 /**
- * 已读的 @ 通知同步到 `message_mentions`（方案 NC4），使群组“[有人@我]”标记一并消失。接在名为
+ * 已读的 @ 通知同步到 `message_mentions`（功能规则 3.7），使群组“[有人@我]”标记一并消失。接在名为
  * `marked`（含 `kind`、`object_id`）的 CTE 之后；与通知更新同一条语句，两者一起提交。
  */
 function mentionsReadWith(sql: DatabaseClient, userId: string) {
@@ -190,7 +190,7 @@ function mentionsReadWith(sql: DatabaseClient, userId: string) {
 
 /**
  * 计入未读（未读数与“未读”页签同一口径）：未读、仍可见；静音空间的通知照常列出但不计未读，
- * @ 我不受静音影响（方案 NC5，与 D38 一致）。依赖 `visibilityJoins` 产出的 `v` 与 `ns`。
+ * @ 我不受静音影响（功能规则 3.7，与 D38 一致）。依赖 `visibilityJoins` 产出的 `v` 与 `ns`。
  */
 function countsAsUnread(sql: DatabaseClient) {
   return sql`(n.read_at is null and v.visible and (n.kind = 'mention' or ns.muted_at is null))`

@@ -213,7 +213,7 @@ async function verifySensitiveBuildInputIsRejected(fixture, buildSource) {
     await readFile(join(projectRoot, 'scripts/deploy/release-version.sh')),
     { mode: 0o755 },
   )
-  await writeFile(join(fixture, 'deploy/runtime.env'), 'AI_HUB_CLIENT_SECRET=must-not-ship\n', { mode: 0o600 })
+  await writeFile(join(fixture, 'deploy/runtime.env'), 'DSH_WORK_SESSION_SECRET=must-not-ship\n', { mode: 0o600 })
 
   const result = spawnSync('bash', [fixtureBuild, '2026.09.07-01', outputRoot], { encoding: 'utf8' })
   assert.notEqual(result.status, 0, 'release build accepted deploy/runtime.env')
@@ -284,6 +284,8 @@ async function verifyEndpointConfigurator(fixture) {
     'DSH_WORK_WORKBENCH_PORT=4174',
     'DSH_WORK_ADMIN_PORT=4180',
     'DSH_WORK_POSTGRES_PASSWORD=preserve-this-secret',
+    'AI_HUB_WORKBENCH_PORTAL_URL=https://192.168.1.99:4174',
+    'AI_HUB_WORKBENCH_REDIRECT_URI=https://192.168.1.99:4174/auth/workbench/callback',
     '',
   ].join('\n'), { mode: 0o600 })
   const result = spawnSync(process.execPath, [
@@ -304,7 +306,8 @@ async function verifyEndpointConfigurator(fixture) {
   assert.equal(result.status, 0, result.stderr)
   const candidate = await readFile(candidateEnv, 'utf8')
   assert.match(candidate, /DSH_WORK_BIND_ADDRESSES=192\.168\.1\.99,192\.168\.34\.20/)
-  assert.match(candidate, /AI_HUB_WORKBENCH_REDIRECT_URI=https:\/\/work\.example\.com:4174\/auth\/workbench\/callback/)
+  assert.match(candidate, /DSH_WORK_WORKBENCH_DEFAULT_ORIGIN=https:\/\/work\.example\.com:4174/)
+  assert.doesNotMatch(candidate, /AI_HUB_/, 'leftover AI Hub portal and callback variables are removed')
   assert.match(candidate, /DSH_WORK_POSTGRES_PASSWORD=preserve-this-secret/)
 }
 

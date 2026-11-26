@@ -51,9 +51,20 @@ test('可创建 Skill 开关关闭时不进入验证指纹，开启时改变指�
   const base = {
     versionId: 'v1', name: '助手', description: '说明', welcomeMessage: '', systemPrompt: '你是助手。',
     examplePrompts: [], skills: [], webSearchEnabled: false, projectTasksEnabled: false,
-    agentRecommendationEnabled: false, maxOutputBytes: 65536, maxToolCalls: 20, timeoutSeconds: 300,
+    agentRecommendationEnabled: false, webFetchEnabled: false, maxOutputBytes: 65536, maxToolCalls: 20, timeoutSeconds: 300,
   }
   const before = configurationFingerprint(base as unknown as AgentFingerprintSource)
   assert.equal(configurationFingerprint({ ...base, skillCreationEnabled: false } as AgentFingerprintSource), before)
   assert.notEqual(configurationFingerprint({ ...base, skillCreationEnabled: true } as AgentFingerprintSource), before)
+})
+
+test('读取网页开关关闭时不进入验证指纹，开启时改变指纹', () => {
+  const base = {
+    versionId: 'v1', name: '助手', description: '说明', welcomeMessage: '', systemPrompt: '你是助手。',
+    examplePrompts: [], skills: [], webSearchEnabled: false, projectTasksEnabled: false,
+    agentRecommendationEnabled: false, skillCreationEnabled: false, maxOutputBytes: 65536, maxToolCalls: 20, timeoutSeconds: 300,
+  }
+  const before = configurationFingerprint(base as unknown as AgentFingerprintSource)
+  assert.equal(configurationFingerprint({ ...base, webFetchEnabled: false } as AgentFingerprintSource), before)
+  assert.notEqual(configurationFingerprint({ ...base, webFetchEnabled: true } as AgentFingerprintSource), before)
 })

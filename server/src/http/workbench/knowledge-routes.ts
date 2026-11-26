@@ -10,7 +10,7 @@ const basePath = '/api/workbench/v1'
 type WorkbenchAccess = Pick<PostgresAuthorizationService, 'authorizeWorkbench'>
 
 /**
- * 员工端“知识库”（weknora-knowledge-plan 第 8 节，WK-S2）。员工浏览器只访问这些接口，不直接访问
+ * 员工端“知识库”（功能规则第 11 节，WK-S2）。员工浏览器只访问这些接口，不直接访问
  * WeKnora；查看与管理权限全部在服务层按部门与三级权限码校验。
  */
 export function registerKnowledgeRoutes(

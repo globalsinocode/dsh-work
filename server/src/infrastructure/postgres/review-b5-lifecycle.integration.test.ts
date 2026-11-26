@@ -2,7 +2,6 @@ import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { before, after, test } from 'node:test'
 import { personalWorkbenchFixture, testTenant } from './personal-workbench-test-fixture.ts'
-import { IdentitySessionRepository } from '../../modules/identity/session-repository.ts'
 let f: Awaited<ReturnType<typeof personalWorkbenchFixture>>
 before(async () => { f=await personalWorkbenchFixture('dsh_b5_lifecycle') })
 after(async () => { await f?.close() })
@@ -48,22 +47,6 @@ test('concurrent start/remove serialize without resurrecting a removed Session o
   const [row]=await f.db.client`select s.status, (select count(*)::int from runs where session_id=s.id) as runs from sessions s where id=${s.id}`
   assert.ok((row.status==='archived' && row.runs===0)||(row.status==='active'&&row.runs===1))
 })
-test('directory deactivation revokes auth Sessions and preserves personal content/ownership',async()=>{
-  const identities=new IdentitySessionRepository(f.db.client)
-  const external={externalUserId:'b5-'+randomUUID(),subject:'b5-subject-'+randomUUID(),displayName:'合成员工',email:'fixture@example.invalid',businessUser:true,status:'ACTIVE'}
-  const user=await identities.synchronizeIdentity(external)
-  await f.db.client`insert into user_roles(tenant_id,user_id,role_id,source_key,granted_by) values(${testTenant},${user.userId},'role-employee','local','U00008')`
-  const s=await f.conversations.createSession({userId:user.userId,title:'B5 员工内容'})
-  const file=await f.content.storeSessionFile(s.id,'B5-owned.txt','text/plain',Buffer.from('employee fixture'),user.userId)
-  await identities.createSession({sessionHash:'b5-session',audience:'workbench',userId:user.userId,
-    accessTokenEncrypted:'fixture-only',refreshTokenEncrypted:null,tokenExpiresAt:new Date(Date.now()+60000),authorizationVersion:1,expiresAt:new Date(Date.now()+60000)})
-  await identities.synchronizeIdentity({...external,status:'DISABLED'})
-  assert.equal(await identities.findSession('b5-session','workbench'),null)
-  assert.equal((await f.api('/files',{headers:{'x-test-user-id':user.userId}})).status,403)
-  const [ownership]=await f.db.client`select w.created_by,f.uploaded_by from workspaces w join file_objects f on f.workspace_id=w.id where f.id=${file.id}`
-  assert.equal(ownership.created_by,user.userId);assert.equal(ownership.uploaded_by,user.userId)
-})
-
 test('conversation removal works with a one-connection pool (no out-of-transaction query borrowing)', async () => {
   const { createDatabase } = await import('./database.ts')
   const { PostgresConversationRepository } = await import('../../modules/workbench/application/postgres-conversation-repository.ts')

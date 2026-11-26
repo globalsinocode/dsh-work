@@ -44,7 +44,7 @@ before(async () => {
   })
   await settings.ensureBootstrap()
   local = new LocalAuthService(config, database.client, settings)
-  administration = new IdentityAdministrationService(database.client, true)
+  administration = new IdentityAdministrationService(database.client)
   service = new DingTalkAdministrationService(database.client, settings, { manager: settings, secret: config.sessionSecret, workbenchOrigins: config.audiences.workbench.allowedOrigins })
   adminId = (await local.bootstrap({ username: 'dt.admin@example.invalid', name: '陈默', password })).userId
   const second = await local.createAccount({ username: 'dt.admin2@example.invalid', name: '第二管理员', password }, adminId)
@@ -398,4 +398,33 @@ test('停用账号使代绑失效；停用后不能再代绑', async () => {
   const [row] = await database.client<{ status: string; reason: string }[]>`select status, revoke_reason as reason from external_account_bindings where user_id = ${userId}`
   assert.deepEqual({ ...row }, { status: 'invalid', reason: 'account_disabled' })
   assert.equal(await code(service.preview(userId, { mobile: phone }, adminId)), 'account_inactive')
+})
+
+test('AMP-01 钉钉集成模块：模块管理员可管理普通员工的绑定，应用配置仍只限平台管理员，不能操作自己与平台管理员', async () => {
+  const moduleRole = await administration.createRole({ name: `钉钉管理员-${++sequence}`, permissions: ['admin:dingtalk:write'], actorId: adminId })
+  const dingAdmin = await employee('钉钉管理员')
+  await administration.grantRole({ userId: dingAdmin, roleId: moduleRole.id, actorId: adminId })
+
+  assert.equal(await code(service.overview(dingAdmin)), 'ok')
+  assert.equal(await code(service.saveSettings({ corpId: 'ding-other', agentId: '1', appKey: 'k2', appSecret: 's2' }, dingAdmin)), 'permission_denied')
+  assert.equal(await code(service.clearSettings(dingAdmin)), 'permission_denied')
+
+  const target = await employee('被代绑的员工')
+  const person = member('被代绑的员工')
+  assert.equal(await code(bind(target, person.phone, dingAdmin)), 'ok')
+  // 已绑定名单：只有钉钉权限即可在集成页找到已绑定员工并解绑（评审 #127）。
+  const bound = await service.listBound({ query: '被代绑的员工', pageSize: 100 }, dingAdmin)
+  assert.ok(bound.items.some(item => item.id === target && item.boundBy === 'admin' && item.manageable))
+  // 逐行提示：自己与平台管理员不可操作，普通员工可以。
+  const unboundRows = (await service.listUnbound({ pageSize: 100 }, dingAdmin)).items
+  assert.equal(unboundRows.find(item => item.id === dingAdmin)?.manageable, false)
+  assert.equal(unboundRows.find(item => item.id === secondAdminId)?.manageable ?? false, false)
+  assert.ok((await service.listUnbound({ pageSize: 100 }, adminId)).items.every(item => item.manageable))
+  assert.ok(!(await service.listUnbound({ pageSize: 100 }, dingAdmin)).items.some(item => item.id === target))
+  assert.equal(await code(service.unbind(target, {}, dingAdmin)), 'ok')
+  assert.ok(!(await service.listBound({ query: '被代绑的员工', pageSize: 100 }, dingAdmin)).items.some(item => item.id === target))
+
+  const other = member('第二管理员')
+  assert.equal(await code(service.preview(secondAdminId, { mobile: other.phone }, dingAdmin)), 'permission_denied')
+  assert.equal(await code(service.preview(dingAdmin, { mobile: mobile() }, dingAdmin)), 'permission_denied')
 })

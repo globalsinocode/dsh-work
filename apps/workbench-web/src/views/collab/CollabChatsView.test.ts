@@ -110,3 +110,53 @@ describe('CollabChatsView: 未读与已读（S5e）', () => {
     wrapper.unmount()
   })
 })
+
+describe('CollabChatsView: 从 Skill 广场选用 Skill（MODE-E2E-18）', () => {
+  const agent = { id: 'assistant', name: '通用助手', description: '', welcomeMessage: '', version: '1.0.0', examplePrompts: [] }
+  beforeEach(() => {
+    vi.mocked(workbenchApi.listConversationTargets).mockReset().mockResolvedValue({ items: [], nextCursor: null })
+    vi.mocked(workbenchApi.getAgents).mockReset().mockResolvedValue([agent, { ...agent, id: 'other', name: '其他同事' }])
+  })
+
+  it('opens the first visible AI colleague (the platform assistant) with the Skill kept in the address', async () => {
+    const { wrapper, router } = await mountAt('/c/chats?skill=skill-report')
+    expect(router.currentRoute.value.name).toBe('collab-agent-chat')
+    expect(router.currentRoute.value.params.agentId).toBe('assistant')
+    expect(router.currentRoute.value.query.skill).toBe('skill-report')
+    expect(wrapper.findComponent({ name: 'CollabAgentChat' }).props('skillId')).toBe('skill-report')
+    wrapper.unmount()
+  })
+
+  it('removes the Skill from the address when the chat clears it', async () => {
+    const { wrapper, router } = await mountAt('/c/chats/agent/assistant?skill=skill-report')
+    wrapper.findComponent({ name: 'CollabAgentChat' }).vm.$emit('skill-cleared')
+    await flushPromises()
+    expect(router.currentRoute.value.query.skill).toBeUndefined()
+    expect(router.currentRoute.value.params.agentId).toBe('assistant')
+    wrapper.unmount()
+  })
+
+  it('follows the session to the AI colleague the server picked', async () => {
+    const { wrapper, router } = await mountAt('/c/chats/agent/assistant?skill=skill-report')
+    wrapper.findComponent({ name: 'CollabAgentChat' }).vm.$emit('open-agent', 'other', 's-skill')
+    await flushPromises()
+    expect(router.currentRoute.value.params.agentId).toBe('other')
+    expect(router.currentRoute.value.query).toEqual({ session: 's-skill' })
+    wrapper.unmount()
+  })
+
+  it('loads the AI colleague list once when arriving with a Skill', async () => {
+    const { wrapper } = await mountAt('/c/chats?skill=skill-report')
+    expect(workbenchApi.getAgents).toHaveBeenCalledTimes(1)
+    wrapper.unmount()
+  })
+
+  it('explains instead of showing a blank page when no AI colleague is available', async () => {
+    vi.mocked(workbenchApi.getAgents).mockResolvedValue([])
+    const { wrapper, router } = await mountAt('/c/chats?skill=skill-report')
+    expect(router.currentRoute.value.name).toBe('collab-chats')
+    expect(router.currentRoute.value.query.skill).toBeUndefined()
+    expect(wrapper.text()).toContain('当前没有可用的 AI 同事，无法用这个 Skill 发起对话')
+    wrapper.unmount()
+  })
+})

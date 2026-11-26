@@ -7,6 +7,23 @@ import {
   normalizeDisabledTools, skillCreationToolNames, skillToolName, unavailableSkillTools,
 } from './builtin-tools.ts'
 
+// 读取网页方案（精简版）：独立开关，与联网搜索互不影响；Skill 不能声明，allowed-tools 中的 WebFetch 保持忽略。
+test('web_fetch assembles only when its own version switch is on and cannot be declared by Skills', () => {
+  const tool = builtinTool('web_fetch')
+  assert.deepEqual({ source: tool?.source, effect: tool?.effect, assembly: tool?.assembly }, { source: 'dsh', effect: 'read', assembly: 'agent-opt-in' })
+  assert.equal(isDshBuiltinTool('web_fetch'), true, 'Runtime 可紧急停用')
+  assert.equal(agentBuiltinToolNames({ webSearchEnabled: false }).includes('web_fetch'), false)
+  assert.equal(agentBuiltinToolNames({ webSearchEnabled: true }).includes('web_fetch'), false)
+  const fetchOnly = agentBuiltinToolNames({ webSearchEnabled: false, webFetchEnabled: true })
+  assert.equal(fetchOnly.includes('web_fetch'), true)
+  assert.equal(fetchOnly.includes('web_search'), false)
+  assert.equal(agentBuiltinToolNames({ webSearchEnabled: false, webFetchEnabled: true, disabledTools: ['web_fetch'] }).includes('web_fetch'), false)
+  assert.equal(skillToolName('WebFetch'), undefined)
+  assert.equal(skillToolName('web_fetch'), undefined)
+  assert.deepEqual(invalidSkillToolReferences(['web_fetch@1.0.0']), ['web_fetch@1.0.0'])
+  assert.deepEqual(unavailableSkillTools(['web_fetch@1.0.0'], { webSearchEnabled: true }), ['web_fetch@1.0.0（平台不提供该工具）'])
+})
+
 // 执行隔离阶段 2：bash 由平台在执行容器可用时装配，不进入 Agent 快照，也不能由 Skill 声明。
 test('bash is a DSH tool assembled only when the execution container is available', () => {
   const bash = builtinTool('bash')
@@ -28,7 +45,7 @@ test('Skills cannot declare bash: allowed-tools Bash stays an unsupported requir
   assert.deepEqual(unavailableSkillTools(['bash@1.0.0'], { webSearchEnabled: true }), ['bash@1.0.0（平台不提供该工具）'])
 })
 
-// 推荐方案 4.1：推荐工具只在开启开关的个人对话中装配，Skill 不能声明。
+// 功能规则 2.4：推荐工具只在开启开关的个人对话中装配，Skill 不能声明。
 test('agent recommendation tools assemble only for enabled personal conversations', () => {
   assert.deepEqual(agentRecommendationToolNames({ enabled: true, personalConversation: true }), ['list_colleague_agents', 'recommend_agents'])
   assert.deepEqual(agentRecommendationToolNames({ enabled: true, personalConversation: false }), [])
@@ -41,7 +58,7 @@ test('agent recommendation tools assemble only for enabled personal conversation
   assert.equal(agentBuiltinToolNames({ webSearchEnabled: true }).includes('list_colleague_agents'), false)
 })
 
-// Skill 创建专家方案 4.2：开启开关的个人对话装配；草稿只能经 bash 写出，bash 被停用时不装配保存工具。
+// 功能规则 5.6：开启开关的个人对话装配；草稿只能经 bash 写出，bash 被停用时不装配保存工具。
 test('Skill creation tools assemble only for enabled personal conversations, saving only with bash', () => {
   assert.deepEqual(skillCreationToolNames({ enabled: true, personalConversation: true, bashAvailable: true }), ['list_available_skills', 'skill_draft_save'])
   assert.deepEqual(skillCreationToolNames({ enabled: true, personalConversation: true, bashAvailable: false }), ['list_available_skills'])
@@ -54,7 +71,7 @@ test('Skill creation tools assemble only for enabled personal conversations, sav
   }
 })
 
-// Agent 知识检索工具方案 4.2（KO9）：个人对话且执行前检索为 ok 时装配，不需要 Agent 开关。
+// 功能规则第 11 节（KO9）：个人对话且执行前检索为 ok 时装配，不需要 Agent 开关。
 test('knowledge search tool assembles only for personal conversations whose pre-retrieval succeeded', () => {
   assert.deepEqual(knowledgeSearchToolNames({ personalConversation: true, knowledgeStatus: 'ok' }), ['knowledge_search'])
   for (const status of ['not_selected', 'skipped', 'unavailable', 'not_applicable', undefined]) {

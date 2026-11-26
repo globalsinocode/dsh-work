@@ -242,7 +242,7 @@ DSH Worker（每 Attempt 一个，宿主进程）
   - 每条可能派生进程的命令（`bash`；1b② 后的 Python）结束后先清扫残留进程，确认失败、清扫命令无法执行或进程数耗尽时删除容器（下次命令再惰性创建）。清扫只是优化，“不干净就删除”才是保证。
   - 超时或取消时，平台在清理与静止确认完成前把执行容器标为忙；执行容器模式下工具桥的 `/authorize-execution`（策略每次工具调用前都会探测）先等待执行容器空闲，最多 3 秒（在策略 6 秒的探测时限之内；正常清理约 0.1–0.4 s），超时只拒绝本次工具调用。插件侧“取消后等待平台确认”未实施，由该等待替代。
   - 静止无法恢复（删除容器也失败）时，下一次授权探测即令 Attempt 以 `EXECUTION_CONTAINER_UNRECOVERABLE` 失败，不再执行任何工具；该 Attempt 的执行容器也拒绝后续命令。
-  - 在 dsh-work 内置工具注册表的工具与 `bash` 中，只有 `read`、`read_image`、`web_search` 可由 DSH 并行调度，其余必须独占（3.7）。这是安全不变量：工具策略在工具目录中发布 DSH 实际的调度方式（`dshScheduling`），执行容器模式启动检查据此准入，不满足或未报告即视为执行容器不可用。
+  - 在 dsh-work 内置工具注册表的工具与 `bash` 中，只有 `read`、`read_image`、`web_search`、`web_fetch`（2026-11-25 读取网页进入注册表；只读网络、返回文本，不触及工作区）可由 DSH 并行调度，其余必须独占（3.7）。这是安全不变量：工具策略在工具目录中发布 DSH 实际的调度方式（`dshScheduling`），执行容器模式启动检查据此准入，不满足或未报告即视为执行容器不可用。
 - **宿主侧读取工作区。** 产物收集、检查点复制、输入挂载等宿主侧操作只在静止期间进行：Attempt 结束时先让工具桥停止接收命令、等待清理结束并删除执行容器，再收集成果，任何一步失败都令 Attempt 以 `EXECUTION_CONTAINER_UNRECOVERABLE` 失败且不收集；持久化等待的检查点在读取 `output/` 前等待执行容器空闲，不空闲则不创建检查点。读取时并先确认 `output/` 等目录本身是工作区内的真实目录（`lstat` 与真实路径，3.7 发现现有代码未检查目录本身），文件只收普通文件，拒绝管道等特殊文件；macOS 上读取可再加 `O_NOFOLLOW_ANY`。
 - **remote subprocess 插件**按官方 `SubprocessRuntime` 接口实现，参照 KnowWork 的 `remote-subprocess`；DSH 官方 bash、文件工具与 `present` 原样使用。路径只认本 Attempt 工作区。
 - **acp Profile 调整：** 1b 停用 `subprocess`、`tool-jobs`，插入 remote subprocess，`tool-bash` 配置 `enableRunInBackground: false`（[执行容器叠加层](../../server/config/dsh/execution-container.cordis.patch.yml)，追加在部署 patch 之后，作用于 Attempt、工具目录探测、MCP 发现与预检的所有 DSH 进程）。阶段 2a 再停用 `bash-sandbox`、`permission` 并改挂 `dsh-bash-local`（`timeoutMs` 60000、`maxTimeoutMs` 600000，与平台单条命令上限一致；3.8）。`fs-sandbox` 保持不变（1c 不替换 `ctx.fs`）。patch 不能替换已有条目的包名，只能停用后插入。插件以 `ctx.provide('subprocess', …)` 注册，不引用 DSH 包，与工具策略插件一样以绝对路径装配。
@@ -379,7 +379,7 @@ DSH Worker（每 Attempt 一个，宿主进程）
 
 1. **计量：** `AttemptExecutionContainers` 在每条命令执行期间每 2 秒计量一次工作区，命令结束（静止确认后）再计量一次；计量按已分配块（`st_blocks × 512`）求和，不跟随链接，硬链接按次计（保守），遍历超过 5 万项按超限处理（防止海量小文件）。宿主上 DSH 文件工具写入的内容在下一次计量中一并计入。
 2. **超限处理：** 计量超过上限且高于本条命令开始时的用量时，终止本条命令（与超时同一路径：进程组终止、静止确认），工具结果告知模型“工作区已用 X，超过上限 Y，命令已终止；请删除不需要的中间文件后再继续”，Attempt 继续，删除文件的命令不会因仍超限而被误杀；命令事件记 `run.container.command` 审计（含超限标记）。若计量超过上限的 2 倍（轮询间隙冲高），按“静止无法恢复”处理：删除执行容器，Attempt 失败。
-3. **宿主剩余空间保护：** 创建执行容器与每条命令开始前检查数据卷剩余空间（`statfs`），低于阈值时拒绝执行命令并告知“服务器磁盘空间不足”；执行中的命令在计量时同时检查，低于阈值即终止。两种情况返回给模型的说明都要求本次运行不再重试命令并立即答复用户（2026-11-12：原说明写“请稍后重试”，真实 DSH 下模型反复调用 `bash` 直到 Attempt 超时，员工收到空回答）。健康状态与管理端 Runtime 页面显示剩余空间告警。
+3. **宿主剩余空间保护：** 创建执行容器与每条命令开始前检查数据卷剩余空间（`statfs`），低于阈值时拒绝执行命令并告知“服务器磁盘空间不足”；执行中的命令在计量时同时检查，低于阈值即终止。`bash`、`glob`、`grep`、`python_execute` 走同一检查。两种情况返回给模型的说明都要求本次运行不再调用这些工具、不再生成大文件，其余不受限制的工具照常使用，并用日常说法答复用户已完成与未完成的部分；执行中被终止且当时正在写文件时另要求说明该文件可能不完整。该说明只经 `bash` 与 `python_execute` 到达模型：DSH 0.1.2-rc.1 的搜索工具（`tool-fs-search`）把被拒或被终止的 ripgrep 换成自己的通用报错（“could not start its search command”“killed by signal”），平台原文留在错误的 `cause` 中不显示，因此说明里写明搜索此时的报错是同一原因，模型先调搜索时要到调用 `bash` 或 `python_execute` 才收到说明；`bash` 被紧急停用且没有 `python_execute` 的运行收不到（2026-11-12：原说明写“请稍后重试”，真实 DSH 下模型反复调用 `bash` 直到 Attempt 超时，员工收到空回答）。取舍：其他 Attempt 结束后空间可能恢复，但平台有意不在同一 Attempt 内等待或重试，由员工重新发送；该说明只约束模型，没有程序侧止损，是否在 Attempt 内记住已触发保护或在装配前检查，另行决定。健康状态与管理端 Runtime 页面显示剩余空间告警。
 4. **Attempt 结束后回收：** Attempt 终态（成果收集、检查点读取之后）删除其 `workspace/`；`manifest.json`、`sessions/` 与审批日志体积小，保留供排查。失败的 Attempt 工作区保留一段时间再清扫，便于排查。服务启动时与定期按同一规则清扫历史 Attempt 目录（含本方案上线前累积的）。
 5. **说明与可观测：** Runtime 说明中的“运行命令”一节写明工作区上限；管理端或日志可见超限与剩余空间告警次数。上限值为代码常量，与其他容器限额（`EXECUTION_CONTAINER_LIMITS`）一致，不做环境变量。
 
@@ -424,7 +424,7 @@ DSH Worker（每 Attempt 一个，宿主进程）
 
 | # | 事项 | 定案 |
 | --- | --- | --- |
-| 1 | 执行容器不可用时 | fail-closed：服务照常启动（登录、管理端与健康检查可用），健康状态与管理端 Runtime 页面报告执行容器 `unavailable` 及原因；所有经 DSH 的 Agent 运行（员工侧与系统 Agent）在创建 Attempt 前失败并给出明确错误，与“DSH 不可用时明确报告，不降级”一致。不在宿主执行任何 DSH 子进程 |
+| 1 | 执行容器不可用时 | fail-closed：服务照常启动（登录、管理端与健康检查可用），健康状态与管理端 Runtime 页面报告执行容器 `unavailable` 及原因；所有经 DSH 的 Agent 运行（员工侧与系统 Agent）在创建 Attempt 前失败并给出明确错误，与“DSH 不可用时明确报告，不降级”一致。不在宿主执行任何 DSH 子进程。启动后执行镜像被删除也按此处理：健康检查、新建运行（含管理助手与 Skill 安装检查、MCP 连接检查）前复查镜像（结果缓存约 15 秒），重新拉取同一摘要后自动恢复；只有 docker 明确答复镜像不存在才判为缺失，检查超时或出错时保留上一次结论 |
 | 2 | 适用范围 | 与现行打开状态相同：DSH 子进程整体使用执行容器叠加层，系统与管理用途（会话摘要、项目档案员、管理助手、Skill 安装与试运行）也依赖执行容器；`bash` 的装配范围不变（第 6 节前置事项 1），系统用途仍不装配 |
 | 3 | 紧急关闭 | 不保留只关闭 `bash` 的开关；全局停用依靠 Runtime 紧急停用，回退依靠部署上一个 Release。代价：不能再“改配置重启”快速回到宿主执行 |
 | 4 | Python | 删除每次调用一个容器的模式（`PythonSkillRunner`、`DSH_WORK_PYTHON_IMAGE`、`DSH_WORK_PYTHON_PACKAGES`、`DSH_WORK_PYTHON_USER`）及 4.8 定案 2 中为它保留的 `/skill`、`/input`、`/output` 兼容变量；`python_execute` 只在执行容器内运行，依赖按执行镜像核对。安装时对写死这些路径的“需复核”提示保留，并改为说明这些路径不再提供 |
@@ -433,7 +433,7 @@ DSH Worker（每 Attempt 一个，宿主进程）
 
 **可删除的代码与配置（实施时核对）：** `main.ts` 中开关解析、`not-configured` 分支与宿主回退；`attemptContainers` 可空判断（启动后只有“可用”与“不可用即拒绝运行”两种）；`executionContainerAvailable` 参数与 `executionToolNames(false)` 分支；仓储层 `binaryArtifactsReferenceable` 选项（恒为可引用）；健康检查、管理端 Runtime 页面与 P0 冒烟替身中的 `not-configured` 状态；`PythonSkillRunner` 及其测试；`DSH_WORK_EXECUTION_MAX_CONTAINERS`（仅服务于按次 Python 容器，实施时确认无其他用途）。`ContainerExecutor` 保留，供二进制成果解析使用（2b-3）。
 
-**前提与顺序：** 先按第 9 节在 Mac mini 上完成 C 档 P2（期间保留开关，验收不通过可改回 `off`）；P2 通过后再实施本阶段。实施时同步[总览](../development/overview.md)（第 1 节“MVP 不包含任意 Shell”的说明与第 10 节边界）、[功能规则](../development/feature-rules.md)、[内部端口](../development/internal-ports.md)、[Agent 设计规范](../development/agent-design-standard.md)、[部署手册](../release/mac-mini-deployment-runbook.md)、[DSH 交付说明](../release/dsh-runtime-delivery.md)、[C 档 P2 验收清单](../release/c-tier-p2-acceptance.md)与两份环境变量模板。本阶段发布即在生产强制启用执行容器，发布说明须写明，并按第 6 节前置事项 1 挑选关键 Agent 重新试运行。
+**前提与顺序：** 先按第 9 节在 Mac mini 上完成 C 档 P2（期间保留开关，验收不通过可改回 `off`）；P2 通过后再实施本阶段。实施时同步[总览](../development/overview.md)（第 1 节“MVP 不包含任意 Shell”的说明与第 10 节边界）、[功能规则](../development/feature-rules.md)、[内部端口](../development/internal-ports.md)、[Agent 设计规范](../development/agent-design-standard.md)、[部署手册](../release/mac-mini-deployment-runbook.md)、[DSH 交付说明](../release/dsh-runtime-delivery.md)与两份环境变量模板。本阶段发布即在生产强制启用执行容器，发布说明须写明，并按第 6 节前置事项 1 挑选关键 Agent 重新试运行。
 
 **实施（2026-10-28）：** [main.ts](../../server/src/main.ts) 在 DSH 预检通过后总是检查执行容器，只用执行容器叠加层的安装构建 DSH Adapter；任一步失败时 Runtime 为 `UnavailableRuntime('execution-container')`，Run 与 Attempt 创建前的可用性检查以 `EXECUTION_CONTAINER_UNAVAILABLE` 拒绝，日志说明运行被拒绝而不是回到宿主。旧设置仍存在时只在启动日志提示被忽略（`removedExecutionSettingWarnings`）。删除 `PythonSkillRunner`（`resolvePythonCall`、`skillDirectory` 并入 [execution-container-python.ts](../../server/src/modules/runtime/execution-container-python.ts)）、`parseMaxContainers` 与成果解析沙箱的路径环境变量；`executionToolNames()` 不再接收可用性，`PostgresConversationRepository` 不再有 `binaryArtifactsReferenceable` 选项；健康检查与管理端只报告 `available`/`unavailable`。部署预检要求 `DSH_WORK_EXECUTION_IMAGE` 按摘要锁定且本机已有该镜像（[preflight.sh](../../scripts/deploy/preflight.sh)）。Runtime Adapter 的 `remoteExecution` 仍是可选端口：生产启动总是配置，可选只为不起命令的 Worker 替身测试，带 `bash` 的 Manifest 在未配置时仍被拒绝（第二道防线），不构成宿主执行路径。“未装配 `bash`”此后只发生在 Runtime 紧急停用时，2b-4 的“只作文本参考/提交前拒绝”规则沿用于该情形。
 
@@ -501,7 +501,7 @@ B、C、D 的风险由执行容器姿态决定，隔离要求相同，不能因�
 | 前台单次 `bash`（含经 `bash` 运行模型写的脚本） | 执行世界 | 阶段 2，C 档（第 6 节） |
 | `bash` 的 `run_in_background`、`job_output`/`job_kill` | 生命周期随 Attempt 结束、收集模式无中途输出 | D 档暂缓（第 6 节、第 10 节） |
 | 持久化 bash、终端 | 执行世界 + 终端会话 | 第 10 节 |
-| `web_fetch` | 数据出口治理，与沙箱无关 | 第 10 节 |
+| `web_fetch` | 数据出口治理，与沙箱无关 | 2026-11-25 已按[读取网页方案](web-fetch-plan.md)（精简版）开放：服务端逐次复核，不经出口代理 |
 | Agent 协作、子 Agent | 委派已删除，需产品重设计 | 不在本方案 |
 | Runtime 控制类工具 | 越过平台边界 | 继续拒绝 |
 
@@ -531,11 +531,11 @@ B、C、D 的风险由执行容器姿态决定，隔离要求相同，不能因�
 | 单元 | 执行器参数白名单、容器参数生成、固定环境变量、路径映射、可执行文件映射、令牌校验、静止确认与“不干净就删除”、清理期间授权探测等待、`output/` 目录本身的检查、进程组终止、能力报告、孤儿清扫 |
 | P1 集成 | 受控 DSH + 假上游：remote subprocess 经工具桥与平台到达执行容器；命令留下的后台进程在下一个工具前被清除；`glob`、`grep` 在容器内返回与宿主一致的结果；DSH 与容器内命令使用同一路径；审批仍在工具层生效，收权后底层操作立即被拒；取消与超时回收；断网验证；跨 Attempt 不可见 |
 | 安全回归 | 执行容器内读取 `/proc`、凭据路径、工具桥 socket、其他工作区、Worker 环境变量均失败；执行容器无法连接工具桥；出网失败；工作区内指向外部的符号链接（含把 `output/` 本身换成链接）在文件工具、产物收集与检查点复制中均被拒绝；`setsid`、`nohup` 留下的进程与进程数耗尽都不能让后续工具在容器非静止时执行；白名单外的可执行文件被拒绝 |
-| P2 真实验收 | Mac mini 在目标 DSH 版本下逐场景留证；C 档放开时另行验收：模型写脚本经 `bash` 运行并生成 Office 产物、`run_in_background` 被拒绝、`job_*` 工具不可见 |
+| P2 真实验收 | 本机在目标 DSH 版本下逐场景留证；C 档放开时另行验收：模型写脚本经 `bash` 运行并生成 Office 产物、`run_in_background` 被拒绝、`job_*` 工具不可见 |
 
 Mock、探针或 P1 通过不能代替 P2。
 
-**C 档 P2 的执行方式（2026-10-27）：** 按 [C 档 P2 验收清单](../release/c-tier-p2-acceptance.md)在 Mac mini 上运行 `scripts/acceptance/c-tier-p2.mjs`（随 Release 发布），逐场景留证后由验收人填写结论；2026-10-28 在 Mac mini（Release v2026.10.28-01，`mac-mini-production`）按清单执行并经验收人复核通过，证据留在 Mac mini 的验收目录，不提交到仓库。2026-10-28 本机预演（本地认证、开发库、本机 Docker、真实 DSH 与 DeepSeek 模型）各场景自动核对通过：xlsx/docx 生成并转换为 PDF、下载与解析文本含指定中文、PDF 中文字体均为 Noto Sans CJK SC、引用上一轮表格得到同一成果的 V2、`bash` 无 `run_in_background` 参数且 `job_*` 不可见、Attempt 结束后工作区已删除。同日在 `0cd3c34` 上按清单完整执行一轮并经验收人复核通过：自动核对无失败，工具链、`bash-limits` 回答、PDF 版式与中文、“查看正文”与“我的文件”预览、取消 Run 后执行容器消失均人工复核通过；`python-skill` 未执行（无合适 Skill），工作区写满以本机真实 Docker 用例与单元测试为证。本机验收不代替 Mac mini 上的 P2。
+**C 档 P2 的执行方式（2026-10-27）：** 在 Mac mini 上运行 `scripts/acceptance/c-tier-p2.mjs`（随 Release 发布，用法与安全步骤见脚本开头），逐场景留证后由验收人填写结论；2026-10-28 在 Mac mini（Release v2026.10.28-01，`mac-mini-production`）执行并经验收人复核通过，证据留在 Mac mini 的验收目录，不提交到仓库。2026-10-28 本机预演（本地认证、开发库、本机 Docker、真实 DSH 与 DeepSeek 模型）各场景自动核对通过：xlsx/docx 生成并转换为 PDF、下载与解析文本含指定中文、PDF 中文字体均为 Noto Sans CJK SC、引用上一轮表格得到同一成果的 V2、`bash` 无 `run_in_background` 参数且 `job_*` 不可见、Attempt 结束后工作区已删除。同日在 `0cd3c34` 上按清单完整执行一轮并经验收人复核通过：自动核对无失败，工具链、`bash-limits` 回答、PDF 版式与中文、“查看正文”与“我的文件”预览、取消 Run 后执行容器消失均人工复核通过；`python-skill` 未执行（无合适 Skill），工作区写满以本机真实 Docker 用例与单元测试为证。
 
 **2a 的覆盖（2026-10-27）：** 单元 `execution-container.test.ts`（`bash -c` 是唯一接受的 shell 形式、叠加层停用与插入项、容器参数含单文件上限）、`builtin-tools.test.ts`（装配方式、Skill 不能声明）、`runtime-adapter.test.ts`（无执行容器时拒绝带 `bash` 的 Manifest、Runtime 说明）；集成 `builtin-tools.integration.test.ts`（员工对话仅在执行容器可用时装配 `bash`，紧急停用同样生效）；真实 DSH + 真实 Docker `execution-container.e2e.test.ts`（opt-in）：`bash` 以服务用户在容器内运行并写入共享工作区、DSH 不另行要求审批、Worker 环境变量/工具桥 socket/`DSH_HOME`/其他 Attempt 工作区/项目文件在容器内不可见、出网失败、根文件系统只读、`setsid`/`nohup` 残留在下一个工具前已清除、`bash` 超过自身时限（`timeoutMs`）时平台中断请求并整组杀掉容器内进程、`run_in_background` 被拒绝、`job_*` 不可见、只有 `rg` 与 `bash` 到达容器且逐条审计；`execution-container-startup.integration.test.ts` 覆盖叠加 `dsh-bash-local` 后的启动准入（`bash` 仍独占调度）。未覆盖：P2、Office 产物、用户取消 Run 时 `bash` 的端到端回收（执行器层的中断已由真实 Docker 用例覆盖）。
 
@@ -547,5 +547,5 @@ Mock、探针或 P1 通过不能代替 P2。
 - **Worker 进容器：** 隔离 DSH 自身漏洞的纵深防御。可沿用 3.4 的加固姿态与预编译只读 `tsx` 缓存；macOS 上工具桥需经虚拟机内中继容器（3.3），Linux 可绑定挂载宿主 socket（未验证）。需解决 Worker 镜像体积（2.0 GB 源码检出）与禁止共享可写缓存的问题。
 - **独立账号的执行器组件与其他部署形态：** 出现 Linux 单机或 Kubernetes 部署时，执行器拆为独立组件（rootless Docker / Podman，或仅限本命名空间 Pod 的 RBAC），新增对应 `ExecutionBackend` 实现，可选 gVisor/Kata。Mac mini 上 Docker Desktop 按登录用户运行，账号隔离需专用账号运行容器运行时（如 colima），需单独验证。
 - **持久化 bash、终端：** remote 实现需补 `spawnTerminal`，可能需要会话级容器。
-- **受控联网：** `web_fetch` 与执行容器出网经平台出口代理，域名白名单与逐请求审计。
+- **受控联网：** 执行容器出网经平台出口代理，域名白名单与逐请求审计。`web_fetch` 已按[读取网页方案](web-fetch-plan.md)以服务端逐次复核开放（不经出口代理，2026-11-25）。
 - **D 档后台任务：** C 档稳定后另行评审（第 6 节）。

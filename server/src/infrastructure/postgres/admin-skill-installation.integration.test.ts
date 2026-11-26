@@ -418,6 +418,53 @@ test('ZIP upload reuses package parsing, compatibility planning, folder storage 
   assert.equal(version?.status, 'published')
   assert.equal((await artifactStore.read(version!.manifest.artifact)).files.find(file => file.path === 'references/value.txt')?.content, 'SKILL_RESOURCE_MARKER_7F31')
 })
+
+test('installation refuses Skill names reserved for platform built-in Skills', async () => {
+  const reserved = zipSync({ 'SKILL.md': strToU8(body.replace('name: installation-test', 'name: HTML 页面（平台内置）')), 'references/value.txt': strToU8('v') })
+  await assert.rejects(service.prepareZip(actor, { fileName: 'reserved.zip', bytes: reserved }), /保留给平台内置 Skill/)
+})
+
+test('installing a package named like a Skill that predates installation identity adds its next version', { skip: real }, async () => {
+  // 种子 skill-document（“文档处理”v1.0.0）与经已删除的文本接口写入的 Skill 同类，安装名称由迁移 0130 补写。
+  const skills = new PostgresSkillService(database.client, operations, artifactStore)
+  const countSkills = async () => (await database.client<{ count: number }[]>`select count(*)::int as count from skills`)[0]!.count
+  const before = await countSkills()
+  const zip = zipSync({ 'SKILL.md': strToU8(body.replace('name: installation-test', 'name: 文档处理')), 'references/value.txt': strToU8('seed-upgrade') })
+  const preview = await service.prepareZip(actor, { fileName: 'document.zip', bytes: zip })
+  const installed = await service.confirmZip(actor, preview.id, preview.planSha256!)
+  assert.deepEqual([installed.skillId, installed.resultType, installed.installedVersion], ['skill-document', 'updated', '1.1.0'])
+  assert.equal(await countSkills(), before, 'no duplicate Skill with the same name is created')
+  const document = (await skills.getSkills()).find(skill => skill.id === 'skill-document')
+  assert.deepEqual([document?.activeVersion, document?.version], ['1.0.0', '1.1.0'], 'the published seed version stays active until the draft is published')
+  await skills.discardDraft({ skillId: 'skill-document', actor })
+})
+
+test('an install after a rollback continues from the highest version, not the active one', { skip: real, timeout: 30000 }, async () => {
+  const skills = new PostgresSkillService(database.client, undefined, artifactStore)
+  skills.setPackageTester((userId, skill, prompt) => service.testPackage(userId, skill, prompt))
+  const rollbackBody = body.replace('installation-test', 'rollback-install')
+  const install = async (suffix: string) => {
+    const zip = zipSync({ 'SKILL.md': strToU8(`${rollbackBody}${suffix}`), 'references/value.txt': strToU8('rollback') })
+    const preview = await service.prepareZip(actor, { fileName: 'rollback-install.zip', bytes: zip })
+    return service.confirmZip(actor, preview.id, preview.planSha256!)
+  }
+  const publish = async (skillId: string) => {
+    assert.equal((await skills.testSkill({ skillId, actor })).status, 'passed')
+    await skills.setStatus({ skillId, actor, status: 'published' })
+  }
+  const first = await install('')
+  assert.deepEqual([first.resultType, first.installedVersion], ['created', '0.1.0'])
+  await publish(first.skillId!)
+  const second = await install('\nReturn one line.\n')
+  assert.deepEqual([second.skillId, second.resultType, second.installedVersion], [first.skillId, 'updated', '0.2.0'])
+  await publish(first.skillId!)
+  await skills.rollback({ skillId: first.skillId!, version: '0.1.0', actor })
+  const third = await install('\nReturn the value as JSON.\n')
+  assert.deepEqual([third.skillId, third.resultType, third.installedVersion], [first.skillId, 'updated', '0.3.0'])
+  const skill = (await skills.getSkills()).find(item => item.id === first.skillId)
+  assert.deepEqual([skill?.activeVersion, skill?.version], ['0.1.0', '0.3.0'])
+})
+
 test('an installed draft can be discarded and replaced by a corrected package', { skip: real }, async () => {
   const skills = new PostgresSkillService(database.client, operations, artifactStore)
   const draftBody = body.replace('installation-test', 'discard-test')
@@ -500,7 +547,7 @@ test('published script Skills are rechecked against the execution image and refu
   const modules = { stdlib: ['os', 'sys'], modules: { pandas: ['pandas'] } }
   const installer = new AdminSkillInstallationService(database.client, orchestration, new PostgresAuthorizationService(database.client), fixtureAcquire, true, ['pandas'], artifactStore, undefined, modules)
   // pandas is imported but never declared: the plan records it as a dependency found from the import.
-  const zip = zipSync({ 'SKILL.md': strToU8(body.replace('installation-test', 'py-gap')), 'references/value.txt': strToU8('v'), 'scripts/run.py': strToU8('import os\nimport pandas as pd\n') })
+  const zip = zipSync({ 'SKILL.md': strToU8(body.replace('installation-test', 'py-gap').replace('description:', 'python-entries: [scripts/run.py]\ndescription:')), 'references/value.txt': strToU8('v'), 'scripts/run.py': strToU8('import os\nimport pandas as pd\n') })
   const preview = await installer.prepareZip(actor, { fileName: 'py-gap.zip', bytes: zip })
   assert.equal(preview.plan?.compatibility.status, 'compatible')
   assert.ok(preview.package?.requirements.some(item => item.name === 'python-package:pandas' && /由 import 识别/.test(item.evidence)))

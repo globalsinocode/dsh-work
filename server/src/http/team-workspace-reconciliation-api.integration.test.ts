@@ -528,7 +528,7 @@ function testApiAuthenticator(request: IncomingMessage, audience: ApiAudience): 
     permissions: isAdmin ? (isPlatformAdmin ? ['admin:*'] : ['admin:read']) : ['workbench:use'],
     dataScopes: ['enterprise:authorized'],
     authorizationVersion: 1,
-    identityProvider: 'ai-hub-oidc',
+    identityProvider: 'local-password',
   })
 }
 
@@ -539,7 +539,7 @@ async function createDirectoryUser(id: string, displayName: string) {
       identity_provider, business_user
     ) values (
       ${id}, ${tenantId}, ${`directory:${id}`}, ${displayName},
-      null, 'active', 'ai-hub', true
+      null, 'active', 'local', true
     )
   `
   await database`

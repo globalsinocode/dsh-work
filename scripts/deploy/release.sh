@@ -267,8 +267,14 @@ if ! run_compose "${compose_file}" up -d --wait --force-recreate web; then
   exit 1
 fi
 
-workbench_origin=${DSH_WORK_WORKBENCH_DEFAULT_ORIGIN:-${AI_HUB_WORKBENCH_PORTAL_URL:?Set the workbench default Origin}}
-admin_origin=${DSH_WORK_ADMIN_DEFAULT_ORIGIN:-${AI_HUB_ADMIN_PORTAL_URL:?Set the admin default Origin}}
+# 与服务端一致：未设置默认 Origin 时取允许列表的第一项。
+workbench_origins=${DSH_WORK_WORKBENCH_ORIGINS:?Set DSH_WORK_WORKBENCH_ORIGINS}
+admin_origins=${DSH_WORK_ADMIN_ORIGINS:?Set DSH_WORK_ADMIN_ORIGINS}
+workbench_origin=${DSH_WORK_WORKBENCH_DEFAULT_ORIGIN:-${workbench_origins%%,*}}
+admin_origin=${DSH_WORK_ADMIN_DEFAULT_ORIGIN:-${admin_origins%%,*}}
+# 去掉首尾空白，与服务端解析一致。
+workbench_origin=$(printf '%s' "${workbench_origin}" | tr -d '[:space:]')
+admin_origin=$(printf '%s' "${admin_origin}" | tr -d '[:space:]')
 health_url="${workbench_origin%/}/health"
 ready_url="http://127.0.0.1:${DSH_WORK_SERVER_PORT:-4190}/health/ready"
 # The server runs DSH (3 x 30 s) and execution-container (3 x ~400 s) startup probes before it

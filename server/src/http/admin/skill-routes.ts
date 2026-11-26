@@ -1,4 +1,4 @@
-import type { CreateSkillInput, PublishStatus, UpdateSkillInput } from '../../domain/types.ts'
+import type { PublishStatus, SkillDefinition } from '../../domain/types.ts'
 import type { PostgresSkillService } from '../../modules/skill/postgres-skill-service.ts'
 import type { BuiltinSkillStatus } from '../../modules/skill/builtin-skills.ts'
 import { envelope, httpResult, readJsonBody, requireRequestIdentity, type Router } from '../router.ts'
@@ -6,9 +6,19 @@ import { envelope, httpResult, readJsonBody, requireRequestIdentity, type Router
 const basePath = '/api/admin/v1'
 
 export function registerSkillRoutes(router: Router, service: PostgresSkillService, builtinSkillStatus: () => Promise<BuiltinSkillStatus>) {
-  router.get(`${basePath}/skills`, async () => envelope('admin', await service.getSkills(), 'postgres'))
+  router.get(`${basePath}/skills`, async (_request, context) => {
+    const skills = await service.getSkills()
+    // 只凭 Agent 修改权限读取时（功能规则第 13 节）只返回选择器需要的字段，不含 Skill 正文。
+    return envelope('admin', context.adminView === 'selector' ? skills.map(skillSelectorView) : skills, 'postgres')
+  })
   // 平台内置 Skill 随代码发布，只读展示；可改的只有已安装 Skill 的覆盖场景与 Runtime 紧急停用。
-  router.get(`${basePath}/skills/builtin`, async () => envelope('admin', await builtinSkillStatus(), 'postgres'))
+  router.get(`${basePath}/skills/builtin`, async (_request, context) => {
+    const status = await builtinSkillStatus()
+    // 选择器视图不含内置 Skill 正文与文件清单（功能规则第 13 节）。
+    return envelope('admin', context.adminView === 'selector'
+      ? { ...status, skills: status.skills.map(({ instructions: _instructions, files: _files, ...skill }) => skill) }
+      : status, 'postgres')
+  })
   router.patch(`${basePath}/skills/builtin-coverage`, async (request, context) => {
     const input = await readJsonBody<{ skillId: string; scenarios: unknown }>(request)
     return envelope('admin', await service.setCoveredBuiltinScenarios({
@@ -28,20 +38,6 @@ export function registerSkillRoutes(router: Router, service: PostgresSkillServic
   })
   router.get(`${basePath}/skill-versions`, async () => envelope('admin', await service.getSkillVersions(), 'postgres'))
   router.get(`${basePath}/skill-release-records`, async () => envelope('admin', await service.getReleaseRecords(), 'postgres'))
-  router.post(`${basePath}/skills`, async (request, context) => {
-    const input = await readJsonBody<Omit<CreateSkillInput, 'actor'>>(request)
-    return httpResult(201, envelope('admin', await service.createSkill({
-      ...input,
-      actor: requireRequestIdentity(context, 'admin').userId,
-    }), 'postgres'))
-  })
-  router.patch(`${basePath}/skills`, async (request, context) => {
-    const input = await readJsonBody<Omit<UpdateSkillInput, 'actor'>>(request)
-    return envelope('admin', await service.updateSkill({
-      ...input,
-      actor: requireRequestIdentity(context, 'admin').userId,
-    }), 'postgres')
-  })
   router.post(`${basePath}/skills/test`, async (request, context) => {
     const input = await readJsonBody<{ skillId: string; prompt?: string; scenario?: unknown }>(request)
     return envelope('admin', await service.testSkill({
@@ -86,4 +82,9 @@ export function registerSkillRoutes(router: Router, service: PostgresSkillServic
       actor: requireRequestIdentity(context, 'admin').userId,
     }), 'postgres')
   })
+}
+
+function skillSelectorView(skill: SkillDefinition) {
+  const { id, name, version, activeVersion, category, status, description, toolIds, visibleRoleIds, installationRole, dependencies, updatedAt } = skill
+  return { id, name, version, activeVersion, category, status, description, toolIds, visibleRoleIds, installationRole, dependencies, updatedAt }
 }

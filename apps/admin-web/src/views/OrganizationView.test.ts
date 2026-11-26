@@ -6,7 +6,7 @@ import { adminApi } from '@/api/client'
 import type { OrganizationSnapshot } from '@/types/domain'
 import OrganizationView from './OrganizationView.vue'
 
-const auth = vi.hoisted(() => ({ canManage: true }))
+const auth = vi.hoisted(() => ({ canManage: true, canWrite(module: string) { return module === 'org' && this.canManage } }))
 vi.mock('@/stores/auth', () => ({ useAuthStore: () => auth }))
 
 const wrappers: VueWrapper[] = []

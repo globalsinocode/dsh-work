@@ -16,7 +16,7 @@ import { registerKnowledgeAdminRoutes } from './admin/knowledge-admin-routes.ts'
 import { registerKnowledgeRoutes } from './workbench/knowledge-routes.ts'
 import { Router } from './router.ts'
 
-// KB-ADM-01、KB-ADM-02（e2e/catalog/knowledge.md，weknora-knowledge-plan WK-S3）：管理端连接配置与加密凭据、
+// KB-ADM-01、KB-ADM-02（e2e/catalog/knowledge.md，功能规则第 11 节，WK-S3）：管理端连接配置与加密凭据、
 // 全部知识库与跨部门授权。WeKnora 用按 v0.9.0 接口实现的测试 HTTP 服务。
 
 const tenantId = 'tenant-dsh-work'
@@ -77,7 +77,9 @@ before(async () => {
     authenticateApi: (request: IncomingMessage, audience: ApiAudience) =>
       Promise.resolve(identity(String(request.headers['x-test-user']), audience)),
   })
-  registerKnowledgeAdminRoutes(router, new PostgresKnowledgeAdminService(database, operations, connection, credentials))
+  registerKnowledgeAdminRoutes(router, new PostgresKnowledgeAdminService(database, operations, connection, credentials, {
+    embeddingCheck: { pollMs: 20, timeoutMs: 300 },
+  }))
   registerKnowledgeRoutes(router, new PostgresKnowledgeBaseService(database, operations, connection))
   server = createServer((request, response) => void router.handle(request, response))
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
@@ -264,7 +266,7 @@ test('KB-ADM-02 全部知识库：跨部门授权、归属部门、需重建与�
   }
 })
 
-test('KB-ADM-05 配置提示：摘要模型标记、重排序结果，管理员再次授予的授权归管理员（优化方案 O5、O7、O12）', async () => {
+test('KB-ADM-05 配置提示：摘要模型标记、重排序结果，管理员再次授予的授权归管理员（功能规则第 11 节）', async () => {
   let list = await ok('POST', `${adminBase}/bases`, { name: '摘要检查库', ownerDepartmentId: 'dept-finance' })
   const created = list.items.find((item: any) => item.name === '摘要检查库')
   const externalId = [...double.knowledgeBases.keys()].at(-1)!
@@ -300,7 +302,7 @@ test('KB-ADM-05 配置提示：摘要模型标记、重排序结果，管理员�
   await ok('DELETE', `${adminBase}/bases/${created.id}`)
 })
 
-test('KB-ADM-04 更换连接地址：原有知识库标为原连接已更换，确认新地址中存在后才能恢复（优化方案 O9）', async () => {
+test('KB-ADM-04 更换连接地址：原有知识库标为原连接已更换，确认新地址中存在后才能恢复（功能规则第 11 节）', async () => {
   let list = await ok('POST', `${adminBase}/bases`, { name: '迁移验证库', ownerDepartmentId: 'dept-finance' })
   const created = list.items.find((item: any) => item.name === '迁移验证库')
   const externalId = [...double.knowledgeBases.keys()].at(-1)!
@@ -347,4 +349,53 @@ test('KB-ADM-04 更换连接地址：原有知识库标为原连接已更换，�
     select count(*)::int as count from external_knowledge_bases where tenant_id = ${tenantId} and status = 'unavailable'
   `
   assert.ok((row?.count ?? 0) >= 2)
+})
+
+test('KB-ADM-08 校验嵌入模型：临时库上传小文件等解析，结束即删除；无效、超时、清理失败如实返回', async () => {
+  double.reset()
+  // 前面的用例改过连接：先恢复为测试替身的地址与 Key。
+  await ok('PUT', `${adminBase}/connection`, { baseUrl: doubleUrl, enabled: true, apiKey: double.apiKey })
+  const verify = (body: Record<string, unknown>, user = ADMIN) => api(user, 'POST', `${adminBase}/connection/verify-embedding-model`, body)
+  const leftover = () => [...double.knowledgeBases.values()].filter(base => String(base.name).startsWith('dsh-work 嵌入模型校验'))
+
+  // 有效模型：解析完成，临时库已删除；建库请求带的是待校验的模型。
+  double.embeddingModels = new Set(['embed-valid'])
+  const valid = await verify({ embeddingModelId: ' embed-valid ' })
+  assert.equal(valid.status, 200, valid.text)
+  assert.deepEqual(valid.data, { ok: true, reason: null, detail: null, cleanupFailed: false })
+  assert.ok(double.requests.some(request => request.method === 'POST' && request.path === '/api/v1/knowledge-bases' && (request.body as { embedding_model_id?: string } | null)?.embedding_model_id === 'embed-valid'))
+  assert.deepEqual(leftover(), [])
+
+  // 填了模型名称：WeKnora 建库成功、解析失败，返回 parse_failed 与 WeKnora 的说明。
+  assert.deepEqual((await verify({ embeddingModelId: 'bge-m3' })).data, { ok: false, reason: 'parse_failed', detail: 'parse failed', cleanupFailed: false })
+  assert.deepEqual(leftover(), [])
+
+  // 一直停在解析中：超时返回 parse_timeout，临时库同样删除。
+  double.embeddingModels = null
+  assert.equal((await verify({ embeddingModelId: 'embed-valid' })).data.reason, 'parse_timeout')
+  assert.deepEqual(leftover(), [])
+
+  // 临时库删不掉：结果照常返回，并提示需要到 WeKnora 中清理。
+  double.embeddingModels = new Set(['embed-valid'])
+  double.failDeleteKnowledgeBaseWith = 500
+  assert.deepEqual((await verify({ embeddingModelId: 'embed-valid' })).data, { ok: true, reason: null, detail: null, cleanupFailed: true })
+  // 临时库已不存在（404）不算删除失败。
+  double.failDeleteKnowledgeBaseWith = 404
+  assert.equal((await verify({ embeddingModelId: 'embed-valid' })).data.cleanupFailed, false)
+  double.failDeleteKnowledgeBaseWith = null
+
+  // 已保存的 Key 只发往已保存的地址；连接类故障返回原因分类。
+  assert.equal((await verify({ embeddingModelId: 'embed-valid', baseUrl: 'http://127.0.0.1:9/' })).data.reason, 'api_key_required')
+  double.failWith = 503
+  assert.equal((await verify({ embeddingModelId: 'embed-valid' })).data.reason, 'server')
+  double.failWith = null
+
+  // 校验要填写模型 ID；只读管理员不能执行。
+  assert.equal((await verify({ embeddingModelId: '  ' })).status, 422)
+  assert.equal((await verify({ embeddingModelId: 'embed-valid' }, READER)).status, 403)
+  const [audit] = await database<{ count: number }[]>`
+    select count(*)::int as count from audit_events where tenant_id = ${tenantId} and action = 'knowledge.embedding_model.verify'
+  `
+  // 实际执行的 7 次（含未发往 WeKnora 的 api_key_required）都写审计；422 与 403 不算执行。
+  assert.equal(audit?.count, 7, 'each executed check is audited')
 })

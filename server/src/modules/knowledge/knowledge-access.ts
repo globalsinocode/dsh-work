@@ -2,7 +2,7 @@ import type { DatabaseClient } from '../../infrastructure/postgres/database.ts'
 
 const tenantId = 'tenant-dsh-work'
 
-/** 三级权限码按级别包含（weknora-knowledge-plan 5.1）：具备任意一个即“具备查看级别”。 */
+/** 三级权限码按级别包含（功能规则第 11 节）：具备任意一个即“具备查看级别”。 */
 export const knowledgeViewLevel = ['knowledge:view', 'knowledge:docs', 'knowledge:bases']
 export const knowledgeDocsLevel = ['knowledge:docs', 'knowledge:bases']
 
@@ -25,8 +25,7 @@ export function visibleBaseIdsSql(database: DatabaseClient, userId: string) {
 }
 
 /**
- * 员工的知识库权限级别：有效角色（直接授予与来自部门的）权限并集中的最高级别。AI Hub（OIDC）
- * 账号没有部门，按部门授权不适用，视为 none（第 3 节）。
+ * 员工的知识库权限级别：有效角色（直接授予与来自部门的）权限并集中的最高级别。
  */
 export async function knowledgeLevelOf(database: DatabaseClient, userId: string): Promise<KnowledgeLevel> {
   const [row] = await database<{ permissions: string[] | null }[]>`
@@ -38,7 +37,6 @@ export async function knowledgeLevelOf(database: DatabaseClient, userId: string)
       join roles r on r.tenant_id = ur.tenant_id and r.id = ur.role_id and r.status = 'active'
       cross join lateral jsonb_array_elements_text(coalesce(r.permissions, '[]')) permission(value)
      where u.tenant_id = ${tenantId} and u.id = ${userId} and u.status = 'active'
-       and u.identity_provider <> 'ai-hub'
   `
   const permissions = new Set(row?.permissions ?? [])
   if (permissions.has('knowledge:bases')) return 'bases'

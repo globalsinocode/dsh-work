@@ -7,7 +7,7 @@ import type { SkillDraft } from '@/types/domain'
 import { notifyActionFailure } from '@/utils/feedback'
 
 /**
- * Skill 草稿卡片（Skill 创建专家方案 4.3，原型已确认）。只显示平台能证明的事：文件清单与包校验结论；
+ * Skill 草稿卡片（功能规则 5.6，原型已确认）。只显示平台能证明的事：文件清单与包校验结论；
  * 专家在执行容器中的试跑与保存的包没有绑定，卡片不声称“试跑通过”。提交审核只能由员工在卡片上发起（SC2）。
  */
 const props = defineProps<{ drafts: SkillDraft[] }>()

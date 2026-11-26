@@ -162,7 +162,7 @@ test('24-hour operations summary is calculated from persisted facts', async () =
 })
 
 test('5-T4 管理操作人校验类型化：仍映射为 403 permission_denied', async () => {
-  // 本套件的 operations 未注入 authorization，因此走的是它自己的 requirePlatformAdmin 分支。
+  // 本套件的 operations 未注入 authorization，因此走的是它自己的 requireConnectorAdmin 分支。
   const denial = await operations.updateRuntimeConfiguration({
     runtimeId: 'runtime-local-01',
     maxConcurrentWorkers: 2,
@@ -174,7 +174,7 @@ test('5-T4 管理操作人校验类型化：仍映射为 403 permission_denied',
   assert.ok(denial instanceof AuthorizationDeniedError, `必须是类型化授权拒绝，实际：${String(denial)}`)
   assert.equal(denial.status, 403)
   assert.equal(denial.code, 'permission_denied')
-  assert.match(denial.message, /不是平台管理员/)
+  assert.match(denial.message, /没有.*的修改权限/)
   const mapped = classifyHttpError(denial, '/api/admin/v1/runtimes/runtime-local-01/check')
   assert.equal(mapped.status, 403)
   assert.equal(mapped.error.code, 'permission_denied')

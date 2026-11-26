@@ -74,7 +74,7 @@ export async function recordMentionNotifications(
   `
 }
 
-/** 打开群组或讨论把 @ 提醒标为已读时，同步这些消息的 `mention` 通知（方案 NC4）。 */
+/** 打开群组或讨论把 @ 提醒标为已读时，同步这些消息的 `mention` 通知（功能规则 3.7）。 */
 export async function markMentionNotificationsRead(
   transaction: DatabaseTransaction,
   userId: string,

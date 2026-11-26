@@ -2,69 +2,30 @@ import type {
   ApiAudience,
   IdentityConfiguration,
   LocalAudienceConfiguration,
-  LocalIdentityConfiguration,
-  OidcAudienceConfiguration,
-  OidcIdentityConfiguration,
 } from './types.ts'
 import { invalidRequest, stateConflict } from '../../domain/request-errors.ts'
 
-const defaultScopes = [
-  'openid',
-  'profile',
-  'email',
-  'offline_access',
-  'ai_hub.identity',
-  'platform.me.read',
-]
+/** AI Hub 登录已删除（迁移 0129）：这些旧变量不再读取，启动时只记警告。 */
+const ignoredLegacyVariable = /^(?:AI_HUB_[A-Z0-9_]+|DSH_WORK_OIDC_[A-Z0-9_]+|DSH_WORK_DIRECTORY_SYNC_INTERVAL_SECONDS|DSH_WORK_ADMIN_BOOTSTRAP_ENABLED)$/
 
-/** Password authentication is always available. Legacy local/oidc values no longer select a provider. */
+/** 启动配置：账号密码登录始终可用；残留的 AI Hub 变量与旧认证模式只记入 ignoredLegacySettings。 */
 export function loadStartupIdentityConfiguration(environment: NodeJS.ProcessEnv = process.env): IdentityConfiguration {
-  const legacyMode = environment.DSH_WORK_AUTH_MODE
-  if (legacyMode === 'prototype') throw new Error('原型模式已移除：请删除 DSH_WORK_AUTH_MODE=prototype 并配置 PostgreSQL，使用账号密码或 AI Hub 登录')
-  if (legacyMode && legacyMode !== 'local' && legacyMode !== 'oidc') {
-    throw new Error('DSH_WORK_AUTH_MODE 无需设置；旧 local/oidc 值仅兼容，不再切换登录方式')
-  }
-  const localEnvironment = {
-    ...environment,
-    DSH_WORK_WORKBENCH_ORIGINS: environment.DSH_WORK_WORKBENCH_ORIGINS || environment.AI_HUB_WORKBENCH_PORTAL_URL,
-    DSH_WORK_ADMIN_ORIGINS: environment.DSH_WORK_ADMIN_ORIGINS || environment.AI_HUB_ADMIN_PORTAL_URL,
-  }
-  const local = loadIdentityConfiguration({ ...localEnvironment, DSH_WORK_AUTH_MODE: 'local' }) as LocalIdentityConfiguration
-  const configured = Object.entries(environment).some(([key, value]) =>
-    /^AI_HUB_(?:(?:WORKBENCH|ADMIN)_)?(?:PLATFORM_URL|OIDC_ISSUER|APPLICATION_ID|CLIENT_ID|CLIENT_SECRET)$/.test(key) && value?.trim())
-  if (!configured) return local
-  try {
-    // Local fallback origins must not opt legacy OIDC callbacks into multi-origin rules.
-    return loadIdentityConfiguration({ ...environment, DSH_WORK_AUTH_MODE: 'oidc' })
-  } catch (cause) {
-    return { ...local, aiHubConfigurationIssue: cause instanceof Error ? cause.message : 'AI Hub 接入配置无效' }
-  }
-}
-
-/** Password login uses the same trusted portals, but never an OIDC session cookie. */
-export function localIdentityConfiguration(configuration: LocalIdentityConfiguration | OidcIdentityConfiguration): LocalIdentityConfiguration {
-  if (configuration.mode === 'local') return configuration
-  const audience = (name: ApiAudience): LocalAudienceConfiguration => ({
-    audience: name, applicationId: 'dsh-work',
-    allowedOrigins: [...configuration.audiences[name].allowedOrigins],
-    defaultOrigin: configuration.audiences[name].defaultOrigin,
-    sessionCookieName: configuration.audiences[name].sessionCookieName.replace('dsh_work_', 'dsh_work_local_'),
-  })
-  return {
-    mode: 'local', sessionSecret: configuration.sessionSecret,
-    cookieSecure: configuration.cookieSecure, sessionTtlSeconds: configuration.sessionTtlSeconds,
-    audiences: { workbench: audience('workbench'), admin: audience('admin') },
-  }
+  const configuration = loadIdentityConfiguration(environment)
+  const ignored = Object.entries(environment)
+    .filter(([key, value]) => ignoredLegacyVariable.test(key) && value?.trim())
+    .map(([key]) => key)
+  if (environment.DSH_WORK_AUTH_MODE) ignored.push('DSH_WORK_AUTH_MODE')
+  return ignored.length ? { ...configuration, ignoredLegacySettings: ignored.sort() } : configuration
 }
 
 export function loadIdentityConfiguration(
   environment: NodeJS.ProcessEnv = process.env,
 ): IdentityConfiguration {
   const production = environment.NODE_ENV === 'production'
-  const mode = environment.DSH_WORK_AUTH_MODE ?? 'oidc'
-  if (mode === 'prototype') throw new Error('原型模式已移除：请删除 DSH_WORK_AUTH_MODE=prototype 并配置 PostgreSQL，使用账号密码或 AI Hub 登录')
-  if (mode !== 'oidc' && mode !== 'local') {
-    throw invalidRequest('DSH_WORK_AUTH_MODE 必须是 oidc 或 local')
+  const legacyMode = environment.DSH_WORK_AUTH_MODE
+  if (legacyMode === 'prototype') throw new Error('原型模式已移除：请删除 DSH_WORK_AUTH_MODE=prototype 并配置 PostgreSQL，使用账号密码登录')
+  if (legacyMode && legacyMode !== 'local' && legacyMode !== 'oidc') {
+    throw invalidRequest('DSH_WORK_AUTH_MODE 无需设置；旧 local/oidc 值会被忽略')
   }
 
   const sessionSecret = required(environment, 'DSH_WORK_SESSION_SECRET')
@@ -80,84 +41,16 @@ export function loadIdentityConfiguration(
   )
   if (production && !cookieSecure) throw invalidRequest('生产环境必须启用 Secure Session Cookie')
 
-  if (mode === 'local') {
-    return {
-      mode,
-      sessionSecret,
-      cookieSecure,
-      sessionTtlSeconds: positiveInteger(environment.DSH_WORK_SESSION_TTL_SECONDS, 8 * 60 * 60, 'DSH_WORK_SESSION_TTL_SECONDS'),
-      audiences: {
-        workbench: localAudienceConfiguration(environment, 'workbench', production),
-        admin: localAudienceConfiguration(environment, 'admin', production),
-      },
-    }
-  }
-
-  const platformUrl = normalizedUrl(
-    required(environment, 'AI_HUB_PLATFORM_URL'),
-    'AI_HUB_PLATFORM_URL',
-    production,
-  )
-  const workbench = audienceConfiguration(environment, 'workbench', production)
-  const admin = audienceConfiguration(environment, 'admin', production)
-  if (workbench.applicationId !== admin.applicationId) {
-    throw stateConflict('员工端与管理端必须使用同一个 AI Hub 应用，不能配置独立管理应用')
-  }
-  if (
-    workbench.clientId !== admin.clientId
-    || workbench.clientSecret !== admin.clientSecret
-    || workbench.issuer !== admin.issuer
-  ) {
-    throw invalidRequest('员工端与管理端必须共用同一个 AI Hub 应用环境凭据')
-  }
-  const applicationEnvironment = environment.AI_HUB_ENVIRONMENT?.trim() || 'local'
-  if (!/^[a-z][a-z0-9_-]{0,63}$/.test(applicationEnvironment)) {
-    throw invalidRequest('AI_HUB_ENVIRONMENT 必须是小写字母开头的环境标识')
-  }
-  const jwksCacheTtlSeconds = positiveInteger(
-    environment.DSH_WORK_OIDC_JWKS_CACHE_TTL_SECONDS,
-    300,
-    'DSH_WORK_OIDC_JWKS_CACHE_TTL_SECONDS',
-  )
-  const jwksStaleTtlSeconds = positiveInteger(
-    environment.DSH_WORK_OIDC_JWKS_STALE_TTL_SECONDS,
-    3600,
-    'DSH_WORK_OIDC_JWKS_STALE_TTL_SECONDS',
-  )
-  if (jwksStaleTtlSeconds < jwksCacheTtlSeconds) {
-    throw stateConflict('OIDC JWKS 陈旧窗口不能短于正常缓存时间')
-  }
-  const directorySyncIntervalSeconds = nonNegativeInteger(
-    environment.DSH_WORK_DIRECTORY_SYNC_INTERVAL_SECONDS,
-    15 * 60,
-    'DSH_WORK_DIRECTORY_SYNC_INTERVAL_SECONDS',
-  )
-  if (production && directorySyncIntervalSeconds === 0) {
-    throw stateConflict('生产环境不能关闭 AI Hub 员工目录同步')
-  }
   return {
-    mode,
-    platformUrl,
-    applicationId: workbench.applicationId,
-    adminBootstrapEnabled: booleanValue(environment.DSH_WORK_ADMIN_BOOTSTRAP_ENABLED, false, 'DSH_WORK_ADMIN_BOOTSTRAP_ENABLED'),
-    environment: applicationEnvironment,
+    mode: 'local',
     sessionSecret,
-    sessionTtlSeconds: positiveInteger(
-      environment.DSH_WORK_SESSION_TTL_SECONDS,
-      8 * 60 * 60,
-      'DSH_WORK_SESSION_TTL_SECONDS',
-    ),
-    transactionTtlSeconds: positiveInteger(
-      environment.DSH_WORK_OIDC_TRANSACTION_TTL_SECONDS,
-      10 * 60,
-      'DSH_WORK_OIDC_TRANSACTION_TTL_SECONDS',
-    ),
     cookieSecure,
-    directorySyncIntervalSeconds,
-    jwksCacheTtlSeconds,
-    jwksStaleTtlSeconds,
-    audiences: { workbench, admin },
-  } satisfies OidcIdentityConfiguration
+    sessionTtlSeconds: positiveInteger(environment.DSH_WORK_SESSION_TTL_SECONDS, 8 * 60 * 60, 'DSH_WORK_SESSION_TTL_SECONDS'),
+    audiences: {
+      workbench: localAudienceConfiguration(environment, 'workbench', production),
+      admin: localAudienceConfiguration(environment, 'admin', production),
+    },
+  }
 }
 
 function localAudienceConfiguration(
@@ -175,136 +68,6 @@ function localAudienceConfiguration(
     audience, applicationId: 'dsh-work', allowedOrigins, defaultOrigin,
     sessionCookieName: cookieName(audience === 'admin' ? 'dsh_work_local_admin_session' : 'dsh_work_local_session', production),
   }
-}
-
-function audienceConfiguration(
-  environment: NodeJS.ProcessEnv,
-  audience: ApiAudience,
-  production: boolean,
-): OidcAudienceConfiguration {
-  const prefix = audience === 'workbench' ? 'AI_HUB_WORKBENCH' : 'AI_HUB_ADMIN'
-  const applicationId = audienceOrShared(environment, prefix, 'APPLICATION_ID')
-  const clientId = audienceOrShared(environment, prefix, 'CLIENT_ID')
-  const issuerName = environment[`${prefix}_OIDC_ISSUER`]?.trim()
-    ? `${prefix}_OIDC_ISSUER`
-    : 'AI_HUB_OIDC_ISSUER'
-  const issuer = normalizedIssuer(audienceOrShared(environment, prefix, 'OIDC_ISSUER'), issuerName, production)
-  const origins = audienceOrigins(environment, audience, prefix, production)
-  const clientSecret = audienceOrShared(environment, prefix, 'CLIENT_SECRET')
-  if (production && placeholderSecret(clientSecret)) {
-    throw stateConflict(`生产环境的 ${prefix}_CLIENT_SECRET/AI_HUB_CLIENT_SECRET 不能使用占位值`)
-  }
-
-  return {
-    audience,
-    applicationId,
-    issuer,
-    tokenAudience: environment[`${prefix}_OIDC_AUDIENCE`]?.trim()
-      || environment.AI_HUB_OIDC_AUDIENCE?.trim()
-      || clientId,
-    clientId,
-    clientSecret,
-    ...origins,
-    sessionCookieName: cookieName(
-      audience === 'workbench' ? 'dsh_work_session' : 'dsh_work_admin_session',
-      production,
-    ),
-    transactionCookieName: cookieName(
-      audience === 'workbench' ? 'dsh_work_oidc_tx' : 'dsh_work_admin_oidc_tx',
-      production,
-    ),
-    loginScopes: [...defaultScopes],
-  }
-}
-
-function audienceOrigins(
-  environment: NodeJS.ProcessEnv,
-  audience: ApiAudience,
-  prefix: 'AI_HUB_WORKBENCH' | 'AI_HUB_ADMIN',
-  production: boolean,
-): Pick<OidcAudienceConfiguration, 'allowedOrigins' | 'defaultOrigin' | 'redirectUriByOrigin'> {
-  const originsName = audience === 'workbench'
-    ? 'DSH_WORK_WORKBENCH_ORIGINS'
-    : 'DSH_WORK_ADMIN_ORIGINS'
-  const defaultName = audience === 'workbench'
-    ? 'DSH_WORK_WORKBENCH_DEFAULT_ORIGIN'
-    : 'DSH_WORK_ADMIN_DEFAULT_ORIGIN'
-  const callbackPath = `/auth/${audience}/callback`
-  const configuredOrigins = environment[originsName]?.trim()
-  const legacyPortal = environment[`${prefix}_PORTAL_URL`]?.trim()
-  const legacyRedirect = environment[`${prefix}_REDIRECT_URI`]?.trim()
-
-  if (!configuredOrigins) {
-    if (!legacyPortal || !legacyRedirect) {
-      throw new Error(`${originsName} 未配置，且 ${prefix}_PORTAL_URL/${prefix}_REDIRECT_URI 不完整`)
-    }
-    const origin = normalizedOrigin(legacyPortal, `${prefix}_PORTAL_URL`, production)
-    const redirectUri = normalizedUrl(legacyRedirect, `${prefix}_REDIRECT_URI`, production)
-    assertRedirectUri(redirectUri, `${prefix}_REDIRECT_URI`)
-    return {
-      allowedOrigins: [origin],
-      defaultOrigin: origin,
-      redirectUriByOrigin: { [origin]: redirectUri },
-    }
-  }
-
-  const allowedOrigins = originList(configuredOrigins, originsName, production)
-  const expectedPort = environment[
-    audience === 'workbench' ? 'DSH_WORK_WORKBENCH_PORT' : 'DSH_WORK_ADMIN_PORT'
-  ]?.trim() || (audience === 'workbench' ? '4174' : '4180')
-  if (!/^\d+$/.test(expectedPort) || Number(expectedPort) < 1 || Number(expectedPort) > 65535) {
-    throw invalidRequest(`${audience === 'workbench' ? 'DSH_WORK_WORKBENCH_PORT' : 'DSH_WORK_ADMIN_PORT'} 必须是有效端口`)
-  }
-  // 员工端可额外放行一个入口端口（站点用 DSH_WORK_MOBILE_PORT=443 接入独立移动端 H5）；
-  // 未配置时行为与之前一致，只允许 DSH_WORK_WORKBENCH_PORT。
-  const allowedPorts = new Set([expectedPort])
-  if (audience === 'workbench') {
-    const mobilePort = environment.DSH_WORK_MOBILE_PORT?.trim()
-    if (mobilePort) {
-      if (!/^\d+$/.test(mobilePort) || Number(mobilePort) < 1 || Number(mobilePort) > 65535) {
-        throw invalidRequest('DSH_WORK_MOBILE_PORT 必须是有效端口')
-      }
-      allowedPorts.add(mobilePort)
-    }
-  }
-  for (const origin of allowedOrigins) {
-    const parsed = new URL(origin)
-    const actualPort = parsed.port || (parsed.protocol === 'https:' ? '443' : '80')
-    if (!allowedPorts.has(actualPort)) {
-      const portList = [...allowedPorts].sort((left, right) => Number(left) - Number(right)).join('、')
-      throw invalidRequest(`${originsName} 中的 ${origin} 必须使用端口 ${portList} 之一`)
-    }
-  }
-
-  const defaultOrigin = environment[defaultName]?.trim()
-    ? normalizedOrigin(environment[defaultName]!, defaultName, production)
-    : allowedOrigins[0]!
-  if (!allowedOrigins.includes(defaultOrigin)) {
-    throw invalidRequest(`${defaultName} 必须包含在 ${originsName} 中`)
-  }
-  const redirectUriByOrigin = Object.fromEntries(
-    allowedOrigins.map(origin => [origin, new URL(callbackPath, `${origin}/`).toString()]),
-  )
-
-  if (Boolean(legacyPortal) !== Boolean(legacyRedirect)) {
-    throw invalidRequest(`${prefix}_PORTAL_URL 与 ${prefix}_REDIRECT_URI 必须同时配置或同时移除`)
-  }
-  if (legacyPortal && legacyRedirect) {
-    const legacyOrigin = normalizedOrigin(legacyPortal, `${prefix}_PORTAL_URL`, production)
-    const normalizedLegacyRedirect = normalizedUrl(
-      legacyRedirect,
-      `${prefix}_REDIRECT_URI`,
-      production,
-    )
-    if (
-      !allowedOrigins.includes(legacyOrigin)
-      || redirectUriByOrigin[legacyOrigin] !== normalizedLegacyRedirect
-    ) {
-      throw new Error(`${originsName} 与旧 ${prefix}_PORTAL_URL/${prefix}_REDIRECT_URI 含义不一致`)
-    }
-  }
-
-  return { allowedOrigins, defaultOrigin, redirectUriByOrigin }
 }
 
 function originList(value: string, name: string, production: boolean) {
@@ -359,35 +122,14 @@ function isPrivateIpv4(value: string) {
     || (first === 192 && second === 168)
 }
 
-function assertRedirectUri(value: string, name: string) {
-  const parsed = new URL(value)
-  if (parsed.hash) throw stateConflict(`${name} 不能包含 URL Fragment`)
-}
-
 function cookieName(name: string, production: boolean) {
   return production ? `__Host-${name}` : name
-}
-
-function audienceOrShared(
-  environment: NodeJS.ProcessEnv,
-  prefix: 'AI_HUB_WORKBENCH' | 'AI_HUB_ADMIN',
-  suffix: 'APPLICATION_ID' | 'CLIENT_ID' | 'CLIENT_SECRET' | 'OIDC_ISSUER',
-) {
-  const audienceName = `${prefix}_${suffix}`
-  const sharedName = `AI_HUB_${suffix}`
-  const value = environment[audienceName]?.trim() || environment[sharedName]?.trim()
-  if (!value) throw new Error(`${audienceName} 或 ${sharedName} 未配置`)
-  return value
 }
 
 function required(environment: NodeJS.ProcessEnv, name: string) {
   const value = environment[name]?.trim()
   if (!value) throw new Error(`${name} 未配置`)
   return value
-}
-
-function normalizedIssuer(value: string, name: string, production: boolean) {
-  return `${normalizedUrl(value, name, production).replace(/\/$/, '')}/`
 }
 
 function normalizedUrl(value: string, name: string, production: boolean) {
@@ -407,13 +149,6 @@ function positiveInteger(value: string | undefined, fallback: number, name: stri
   if (value === undefined || value === '') return fallback
   const parsed = Number(value)
   if (!Number.isInteger(parsed) || parsed < 1) throw invalidRequest(`${name} 必须是正整数`)
-  return parsed
-}
-
-function nonNegativeInteger(value: string | undefined, fallback: number, name: string) {
-  if (value === undefined || value === '') return fallback
-  const parsed = Number(value)
-  if (!Number.isInteger(parsed) || parsed < 0) throw invalidRequest(`${name} 必须是非负整数`)
   return parsed
 }
 

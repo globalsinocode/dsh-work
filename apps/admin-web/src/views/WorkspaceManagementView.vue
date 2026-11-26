@@ -155,7 +155,7 @@ onMounted(async () => {
         <el-table-column label="操作" width="130" fixed="right">
           <template #default="scope">
             <el-button
-              v-if="authStore.canManage"
+              v-if="authStore.canWrite('connector')"
               link
               type="primary"
               :loading="reconcilingSourceId === scope.row.sourceId"
@@ -182,7 +182,7 @@ onMounted(async () => {
           <div><dt>成果数量</dt><dd>{{ selectedWorkspace.artifactCount }}</dd></div>
           <div><dt>待对账授权来源</dt><dd>{{ workspaceUnresolvedCount(selectedWorkspace.id) }}</dd></div>
         </dl>
-        <div v-if="authStore.canManage && workspaceUnresolvedCount(selectedWorkspace.id) > 0" class="workspace-detail__reconcile">
+        <div v-if="authStore.canWrite('connector') && workspaceUnresolvedCount(selectedWorkspace.id) > 0" class="workspace-detail__reconcile">
           <el-alert type="warning" :closable="false" show-icon title="该空间存在待对账的历史授权来源，完成对账前不能移除或停用 Agent 成员。" />
           <el-button
             type="primary"

@@ -74,7 +74,7 @@ before(async () => {
   // 另一位在职员工，用来确认看不到、不能操作他人的草稿。
   await database`
     insert into users (id, tenant_id, external_subject, display_name, status, identity_provider, business_user)
-    values (${OTHER}, ${tenantId}, ${`directory:skill-submission-${OTHER}`}, '另一位员工', 'active', 'ai-hub', true)
+    values (${OTHER}, ${tenantId}, ${`directory:skill-submission-${OTHER}`}, '另一位员工', 'active', 'local', true)
   `
   await database`insert into user_roles (tenant_id, user_id, role_id, source_key) values (${tenantId}, ${OTHER}, 'role-employee', 'local')`
   // 替身 Runtime 的运行不会结束；放宽 Runtime 容量，避免后续用例排在占满的容量后面。
@@ -144,7 +144,7 @@ test('只有开启开关的 Agent 在个人对话中装配两个工具', async (
   assert.equal(tools(without.manifest).some(id => id === 'list_available_skills' || id === 'skill_draft_save'), false)
 })
 
-test('员工 AI 同事列表标出开启“可创建 Skill”的 Agent（Skill 广场入口，方案 4.8）', async () => {
+test('员工 AI 同事列表标出开启“可创建 Skill”的 Agent（Skill 广场入口，功能规则 5.6）', async () => {
   const withSwitch = await publishedAgent(true)
   const without = await publishedAgent(false)
   const listed = await agents.listWorkbenchAgents(EMPLOYEE)

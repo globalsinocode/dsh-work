@@ -19,7 +19,7 @@ const tenantId = 'tenant-dsh-work'
 const SUBMISSION_CATEGORY = '员工创建 Skill'
 
 type SkillService = Pick<PostgresSkillService,
-  'requirePlatformAdmin' | 'normalizeVisibleRoles' | 'startSkillTest' | 'getSkillTestProgress' | 'publishSubmissionDraft'>
+  'requireSkillAdmin' | 'normalizeVisibleRoles' | 'startSkillTest' | 'getSkillTestProgress' | 'publishSubmissionDraft'>
 
 interface ReviewRow {
   id: string
@@ -42,7 +42,7 @@ interface ReviewRow {
 }
 
 /**
- * 管理员审核员工 Skill 提交（docs/design/skill-creator-plan.md 4.4，SC3/SC4）。
+ * 管理员审核员工 Skill 提交（功能规则 5.6，SC3/SC4）。
  *
  * - 管理员在详情点“开始试运行”：平台以该管理员身份把提交的当前版本存为 Skill 的待发布版本（新 Skill
  *   或已通过 Skill 的新版本，安装来源 submission），再走现有严格试运行；运行与证据记在该管理员名下。
@@ -103,7 +103,7 @@ export class SkillSubmissionReviewService {
 
   /** 开始严格试运行：先把提交的当前版本存为 Skill 待发布版本（已存过则沿用），再复用管理员试运行。 */
   async startTrial(actorId: string, submissionId: string, versionId: string): Promise<SkillTestRunProgress> {
-    const actor = await this.skills.requirePlatformAdmin(actorId)
+    const actor = await this.skills.requireSkillAdmin(actorId)
     const skillId = await this.database.begin(transaction => this.materialize(transaction, actor.id, submissionId, versionId))
     return this.skills.startSkillTest({ skillId, actor: actor.id })
   }
@@ -118,7 +118,7 @@ export class SkillSubmissionReviewService {
 
   /** 通过并发布：可见范围为 null（全员）或非空角色列表。 */
   async approve(actorId: string, submissionId: string, input: { versionId?: unknown; visibleRoleIds?: unknown }) {
-    const actor = await this.skills.requirePlatformAdmin(actorId)
+    const actor = await this.skills.requireSkillAdmin(actorId)
     if (typeof input.versionId !== 'string' || !input.versionId) throw skillInvalid('versionId 必须是非空字符串')
     const versionId = input.versionId
     const roleIds = await this.skills.normalizeVisibleRoles(input.visibleRoleIds)
@@ -180,7 +180,7 @@ export class SkillSubmissionReviewService {
 
   /** 拒绝：必须填写 1～500 字原因（提交人在草稿卡片上看到）。 */
   async reject(actorId: string, submissionId: string, input: { versionId?: unknown; note?: unknown }) {
-    const actor = await this.skills.requirePlatformAdmin(actorId)
+    const actor = await this.skills.requireSkillAdmin(actorId)
     if (typeof input.versionId !== 'string' || !input.versionId) throw skillInvalid('versionId 必须是非空字符串')
     const note = typeof input.note === 'string' ? input.note.trim() : ''
     if (!note || note.length > 500) throw skillInvalid('请填写 1～500 字的拒绝原因，提交人会在草稿卡片上看到')

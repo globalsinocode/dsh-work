@@ -78,7 +78,7 @@ export function registerAdminRoutes(router: Router, service: AdminQueryService) 
       actor: requireRequestIdentity(context, 'admin').userId,
     }))
   })
-  // 冒烟只提供待审核的只读展示（Skill 创建专家方案 4.4）：试运行、通过与拒绝走真实服务，由 P1 覆盖。
+  // 冒烟只提供待审核的只读展示（功能规则 5.6）：试运行、通过与拒绝走真实服务，由 P1 覆盖。
   router.get(`${basePath}/skill-submissions`, async () => envelope('admin', [smokeSkillSubmission()]))
   router.get(`${basePath}/skill-submissions/:submissionId`, async (_request, context) => {
     if (context.params['submissionId'] !== SMOKE_SUBMISSION_ID) throw notFound('提交不存在或已撤回')
@@ -101,16 +101,6 @@ export function registerAdminRoutes(router: Router, service: AdminQueryService) 
     (await service.getSkills()).map(prototypeSkillVersion),
   ))
   router.get(`${basePath}/skill-release-records`, async () => envelope('admin', []))
-  router.post(`${basePath}/skills`, async (request, context) => {
-    const input = await readJsonBody<Omit<Parameters<AdminQueryService['createSkill']>[0], 'actor'>>(request)
-    const skill = await service.createSkill({ ...input, actor: requireRequestIdentity(context, 'admin').userId })
-    return envelope('admin', { skill, version: prototypeSkillVersion(skill) })
-  })
-  router.patch(`${basePath}/skills`, async (request, context) => {
-    const input = await readJsonBody<Omit<Parameters<AdminQueryService['updateSkill']>[0], 'actor'>>(request)
-    const skill = await service.updateSkill({ ...input, actor: requireRequestIdentity(context, 'admin').userId })
-    return envelope('admin', { skill, version: prototypeSkillVersion(skill) })
-  })
   router.post(`${basePath}/skills/test`, async (request) => {
     const input = await readJsonBody<{ skillId: string; prompt?: string }>(request)
     const skill = (await service.getSkills()).find(item => item.id === input.skillId)
@@ -174,6 +164,10 @@ export function registerAdminRoutes(router: Router, service: AdminQueryService) 
   })
   router.get(`${basePath}/connectors`, async () => envelope('admin', await service.getMcpConnectors()))
   router.get(`${basePath}/runtimes/builtin-tools`, async () => envelope('admin', await service.getBuiltinToolStatus()))
+  router.patch(`${basePath}/connectors/mcp/employee-identity`, async (request, context) => {
+    const input = await readJsonBody<{ connectorId: string; enabled: boolean }>(request)
+    return envelope('admin', await service.setMcpEmployeeIdentity({ ...input, actor: requireRequestIdentity(context, 'admin').userId }))
+  })
   router.post(`${basePath}/connectors/check`, async (request, context) => {
     const input = await readJsonBody<{ connectorId: string }>(request)
     return envelope('admin', await service.checkMcpConnector({ ...input, actor: requireRequestIdentity(context, 'admin').userId }))
@@ -187,7 +181,6 @@ export function registerAdminRoutes(router: Router, service: AdminQueryService) 
   })))
   router.get(`${basePath}/operations/summary`, async () => envelope('admin', await service.getOperationsSummary()))
   router.get(`${basePath}/health`, async () => envelope('admin', await service.getHealth()))
-  router.get(`${basePath}/usage`, async () => envelope('admin', await service.getUsage()))
   router.get(`${basePath}/platform-status`, () => envelope('admin', service.getPlatformStatus()))
 }
 

@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { ArrowRight, OfficeBuilding } from '@element-plus/icons-vue'
 import AppLogo from './AppLogo.vue'
 
 /**
@@ -38,12 +37,10 @@ const newPassword = ref('')
 const confirmation = ref('')
 const loading = ref(true)
 const saving = ref(false)
-const redirectingToAiHub = ref(false)
-const busy = computed(() => saving.value || redirectingToAiHub.value)
+const busy = computed(() => saving.value)
 const error = ref('')
 const ready = ref(false)
 const localEnabled = ref(false)
-const aiHubEnabled = ref(false)
 const parameters = new URLSearchParams(window.location.search)
 const returnTo = (() => {
   const fallback = props.audience === 'admin' ? '/overview' : '/workbench'
@@ -60,16 +57,14 @@ async function initialize() {
   try {
     const response = await fetch(`/auth/${props.audience}/configuration`, { credentials: 'same-origin' })
     if (!response.ok) throw new Error('暂时无法加载登录配置，请重试')
-    const configuration = await response.json() as { mode: string; localEnabled?: boolean; aiHubEnabled?: boolean }
-    if (!['prototype', 'local', 'oidc'].includes(configuration.mode)) throw new Error('登录配置无效，请联系管理员')
+    const configuration = await response.json() as { mode: string; localEnabled?: boolean }
+    if (!['prototype', 'local'].includes(configuration.mode)) throw new Error('登录配置无效，请联系管理员')
     if (configuration.mode === 'prototype') {
       window.location.replace(props.audience === 'admin' ? '/overview' : '/workbench')
       return
     }
     localEnabled.value = configuration.localEnabled ?? configuration.mode === 'local'
-    aiHubEnabled.value = configuration.aiHubEnabled ?? configuration.mode === 'oidc'
     ready.value = true
-    if (parameters.get('auth_error') === 'ai_hub_unavailable') error.value = 'AI Hub 暂不可用，请稍后重试或使用账号密码登录。'
   } catch (cause) {
     error.value = cause instanceof Error ? cause.message : '登录服务暂不可用'
   } finally {
@@ -139,19 +134,6 @@ function continueWithoutBinding() {
   if (continueLocation.value) emit('dingtalkComplete', { outcome: 'not_bound', location: continueLocation.value })
 }
 
-function loginWithAiHub() {
-  if (!ready.value || busy.value) return
-  password.value = ''
-  if (!aiHubEnabled.value) {
-    error.value = 'AI Hub 登录尚未启用，请使用账号密码登录，或联系管理员。'
-    return
-  }
-  error.value = ''
-  redirectingToAiHub.value = true
-  const action = parameters.get('switch_account') === 'true' ? 'switch-account' : 'login'
-  window.location.assign(`/auth/${props.audience}/oidc/${action}?return_to=${encodeURIComponent(returnTo)}`)
-}
-
 onMounted(() => void initialize())
 </script>
 
@@ -173,7 +155,7 @@ onMounted(() => void initialize())
       <el-button v-if="ticketExpired" @click="emit('dingtalkRetry')">重新在钉钉中登录</el-button>
       <el-button v-if="!loading && !ready" @click="initialize">重试</el-button>
       <template v-if="ready">
-      <el-alert v-if="!localEnabled" title="账号密码登录尚未启用，请联系管理员或使用 AI Hub 账号登录。" type="info" :closable="false" show-icon />
+      <el-alert v-if="!localEnabled" title="账号密码登录尚未启用，请联系管理员。" type="info" :closable="false" show-icon />
       <el-form label-position="top" class="local-auth-form" @submit.prevent="submit">
         <el-form-item v-if="!changePassword" label="登录账号" for="local-username">
           <el-input id="local-username" v-model="username" placeholder="请输入登录账号" autocomplete="username" autocapitalize="none" :maxlength="254" required :disabled="busy || !localEnabled" />
@@ -194,10 +176,6 @@ onMounted(() => void initialize())
         <el-button v-if="continueLocation" class="local-auth-secondary" @click="continueWithoutBinding">不绑定，继续使用</el-button>
       </el-form>
       <p class="local-auth-hint local-auth-help">{{ changePassword ? '所有设备上的旧登录会话将失效。' : dingtalk ? '绑定后可随时在“用户中心 › 钉钉”中解除。账号由管理员开通，忘记密码请联系管理员。' : '没有账号或忘记密码？请联系管理员' }}</p>
-      <template v-if="!changePassword && !dingtalk && aiHubEnabled">
-        <div class="local-auth-divider">其他登录方式</div>
-        <el-button class="local-auth-secondary" :disabled="busy" :loading="redirectingToAiHub" @click="loginWithAiHub"><el-icon v-if="!redirectingToAiHub"><OfficeBuilding /></el-icon><span>{{ redirectingToAiHub ? '正在前往 AI Hub…' : '使用 AI Hub 账号登录' }}</span><el-icon v-if="!redirectingToAiHub"><ArrowRight /></el-icon></el-button>
-      </template>
       <a v-if="changePassword" class="local-auth-back" :href="loginLink">返回登录</a>
       </template>
     </section>
@@ -223,8 +201,6 @@ h1 { margin: 0; font-size: var(--dsh-font-size-page-title); font-weight: 650; le
 .local-auth-help { margin-top: -4px; text-align: center; }
 .local-auth-submit, .local-auth-secondary { width: 100%; min-height: 44px; margin: 0; }
 .local-auth-submit :deep(span), .local-auth-secondary :deep(span) { display: inline-flex; gap: 8px; align-items: center; justify-content: center; }
-.local-auth-divider { display: flex; align-items: center; gap: 14px; color: var(--dsh-color-muted); font-size: var(--dsh-font-size-badge); margin-top: 6px; }
-.local-auth-divider::before, .local-auth-divider::after { content: ''; height: 1px; flex: 1; background: var(--dsh-color-border); }
 .local-auth-back { color: var(--dsh-color-brand); text-align: center; }
 .local-auth-form .local-auth-secondary { margin-top: 10px; }
 .local-auth-dingtalk { padding: 12px 14px; border: 1px solid #bfdbfe; border-radius: var(--dsh-radius-md, 10px); background: #eff6ff; color: #1e3a8a; font-size: var(--dsh-font-size-body); line-height: 1.6; }

@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto'
 import type { DatabaseClient } from '../../infrastructure/postgres/database.ts'
 import type { AuditTrail } from '../../domain/audit-trail.ts'
 import { dependencyUnavailable, invalidRequest, notFound, RequestError, stateConflict } from '../../domain/request-errors.ts'
-import { requirePlatformAdminActor } from '../authorization/platform-admin-actor.ts'
+import { requireAdminModuleActor } from '../authorization/admin-actor.ts'
 import type { PostgresEncryptedCredentialStore } from '../tool/postgres-encrypted-credential-store.ts'
 import { knowledgeCredentialRefId, normalizeApiKey, normalizeBaseUrl, sameBaseUrl, type PostgresKnowledgeConnection } from './knowledge-connection.ts'
 import { WeKnoraRequestError, WeKnoraUnavailableError, type WeKnoraClient } from './weknora-client.ts'
@@ -22,7 +22,7 @@ export interface KnowledgeAdminConnection {
   lastSuccessAt: string | null
   lastFailureAt: string | null
   lastFailureReason: string | null
-  /** 最近一次检索响应中的重排序结果（WeKnora meta.rerank.outcome，优化方案 O5）与时间。 */
+  /** 最近一次检索响应中的重排序结果（WeKnora meta.rerank.outcome，功能规则第 11 节）与时间。 */
   lastRerankOutcome: string | null
   lastRerankAt: string | null
 }
@@ -58,12 +58,12 @@ export interface KnowledgeAdminBase {
   embeddingModelId: string | null
   /**
    * 建库时的嵌入模型与当前连接配置不同（4.6）。WeKnora 按各知识库自己的嵌入模型检索，旧模型仍登记在 WeKnora 中时
-   * 照常可用；旧模型被删除后才失效（优化方案 O10）。
+   * 照常可用；旧模型被删除后才失效（功能规则第 11 节）。
    */
   needsRebuild: boolean
-  /** active：有效；unavailable：原连接已更换，不参与检索、员工端不显示，可恢复（优化方案 O9）。 */
+  /** active：有效；unavailable：原连接已更换，不参与检索、员工端不显示，可恢复（功能规则第 11 节）。 */
   status: 'active' | 'unavailable'
-  /** WeKnora 中为该知识库配置了摘要模型（优化方案 O7）；WeKnora 不可用时为 null。 */
+  /** WeKnora 中为该知识库配置了摘要模型（功能规则第 11 节）；WeKnora 不可用时为 null。 */
   summaryModelConfigured: boolean | null
 }
 
@@ -71,6 +71,19 @@ export interface KnowledgeAdminBaseList {
   items: KnowledgeAdminBase[]
   /** WeKnora 统计是否读取成功；失败时文档数与更新时间为空，知识库与授权仍可查看和调整。 */
   statsAvailable: boolean
+}
+
+/**
+ * “校验嵌入模型”的结果。reason：not_configured、api_key_required、parse_failed（文档解析失败，多为模型 ID 无效）、
+ * parse_timeout（等待解析超时，无法确认）、request_rejected（WeKnora 拒绝建库或上传），以及连接类原因
+ * timeout、network、auth、rate_limited、server、protocol。detail 是 WeKnora 给出的简短错误说明。
+ */
+export interface EmbeddingModelCheck {
+  ok: boolean
+  reason: string | null
+  detail: string | null
+  /** 临时知识库没能删除，需要管理员到 WeKnora 中清理。 */
+  cleanupFailed: boolean
 }
 
 export interface KnowledgeAdminDepartment {
@@ -95,7 +108,7 @@ interface ConnectionRow {
 }
 
 /**
- * 管理端“企业知识库”（weknora-knowledge-plan 第 9 节，WK-S3）：连接配置、全部知识库与跨部门授权、
+ * 管理端“企业知识库”（功能规则第 11 节，WK-S3）：连接配置、全部知识库与跨部门授权、
  * 归属部门、新建与删除、健康状态。读取需要管理读权限（路由层），写入只有平台管理员可以执行；
  * 平台管理员可以授给任意有效部门（含根部门）并撤销任何授权（5.4）。文档不在管理端维护。
  */
@@ -104,23 +117,26 @@ export class PostgresKnowledgeAdminService {
   private readonly audit: AuditTrail
   private readonly connection: PostgresKnowledgeConnection
   private readonly credentials: PostgresEncryptedCredentialStore | undefined
+  private readonly embeddingCheck: { pollMs: number; timeoutMs: number }
 
   constructor(
     database: DatabaseClient,
     audit: AuditTrail,
     connection: PostgresKnowledgeConnection,
     credentials?: PostgresEncryptedCredentialStore,
+    options: { embeddingCheck?: { pollMs?: number; timeoutMs?: number } } = {},
   ) {
     this.database = database
     this.audit = audit
     this.connection = connection
     this.credentials = credentials
+    this.embeddingCheck = { pollMs: options.embeddingCheck?.pollMs ?? 2_000, timeoutMs: options.embeddingCheck?.timeoutMs ?? 120_000 }
   }
 
   async overview(): Promise<KnowledgeAdminOverview> {
     const row = await this.row()
     // 不可用次数按失败审计统计：连接被停用或 Key 读不出（not_configured）时执行也记为 unavailable，但不是检索故障，
-    // 不写审计，也不计入检索与不可用次数（优化方案 O2）。
+    // 不写审计，也不计入检索与不可用次数（功能规则第 11 节）。
     const [health] = await this.database<{ retrievals: number; unavailable: number }[]>`
       with unavailable as (
         select count(*)::int as count from audit_events
@@ -159,7 +175,7 @@ export class PostgresKnowledgeAdminService {
     embeddingModelId?: string | null
     enabled: boolean
   }): Promise<KnowledgeAdminOverview> {
-    await requirePlatformAdminActor(this.database, actorId)
+    await requireAdminModuleActor(this.database, actorId, 'knowledge', 'write')
     const baseUrl = normalizeBaseUrl(input.baseUrl)
     const embeddingModelId = input.embeddingModelId?.trim() || null
     if (embeddingModelId && embeddingModelId.length > 128) throw invalidRequest('嵌入模型 ID 不能超过 128 个字符')
@@ -194,7 +210,7 @@ export class PostgresKnowledgeAdminService {
       const credentialExpiresAt = input.credentialExpiresAt === undefined ? (apiKey ? null : existing?.credentialExpiresAt ?? null) : expiresAt
       // 换了 Key 或地址后，旧连接的失败记录不再代表当前状态。
       const connectionChanged = Boolean(apiKey) || !existing || !sameBaseUrl(baseUrl, existing.baseUrl)
-      // 优化方案 O9：更换地址后，现有知识库的外部 ID 属于原实例，标为“原连接已更换”，不再参与检索，由管理员逐个恢复。
+      // 功能规则第 11 节：更换地址后，现有知识库的外部 ID 属于原实例，标为“原连接已更换”，不再参与检索，由管理员逐个恢复。
       if (existing && !sameBaseUrl(baseUrl, existing.baseUrl)) {
         const moved = await transaction`
           update external_knowledge_bases set status = 'unavailable', updated_by = ${actorId}, updated_at = now()
@@ -225,7 +241,7 @@ export class PostgresKnowledgeAdminService {
 
   /** 用填写的（或已保存的）地址与 Key 调用 WeKnora 的知识库列表接口，只返回结果与原因分类。 */
   async testConnection(actorId: string, input: { baseUrl?: string; apiKey?: string }): Promise<{ ok: boolean; reason: string | null }> {
-    await requirePlatformAdminActor(this.database, actorId)
+    await requireAdminModuleActor(this.database, actorId, 'knowledge', 'write')
     const baseUrl = input.baseUrl ? normalizeBaseUrl(input.baseUrl) : undefined
     const apiKey = normalizeApiKey(input.apiKey)
     const probe = await this.connection.probeClient({ ...(baseUrl ? { baseUrl } : {}), ...(apiKey ? { apiKey } : {}) })
@@ -244,6 +260,81 @@ export class PostgresKnowledgeAdminService {
       if (error instanceof WeKnoraUnavailableError) return { ok: false, reason: error.reason }
       if (error instanceof WeKnoraRequestError) return { ok: false, reason: 'request_rejected' }
       throw error
+    }
+  }
+
+  /**
+   * “校验嵌入模型”（功能规则第 11 节）：WeKnora 建库时不校验嵌入模型 ID，填错（例如填了模型名称）要到上传文档
+   * 解析失败才暴露；平台 Key 也没有读取模型列表的能力。这里用填写的（或已保存的）地址与 Key，以待校验的模型
+   * 新建一个临时知识库、上传一个很小的文本文件、等解析结束，再删除临时库。只用 ingest 与 manage_kbs 能力，
+   * 代价是一次嵌入调用；只在管理员点击时执行。临时库删不掉时如实返回，由管理员到 WeKnora 中清理。
+   */
+  async verifyEmbeddingModel(actorId: string, input: { baseUrl?: string; apiKey?: string; embeddingModelId: string }): Promise<EmbeddingModelCheck> {
+    await requireAdminModuleActor(this.database, actorId, 'knowledge', 'write')
+    const embeddingModelId = input.embeddingModelId.trim()
+    if (!embeddingModelId || embeddingModelId.length > 200) throw invalidRequest('请填写要校验的嵌入模型 ID')
+    const baseUrl = input.baseUrl ? normalizeBaseUrl(input.baseUrl) : undefined
+    const apiKey = normalizeApiKey(input.apiKey)
+    const probe = await this.connection.probeClient({ ...(baseUrl ? { baseUrl } : {}), ...(apiKey ? { apiKey } : {}) })
+    if ('reason' in probe) {
+      await this.recordEmbeddingCheck(actorId, { ok: false, reason: probe.reason }, null)
+      return { ok: false, reason: probe.reason, detail: null, cleanupFailed: false }
+    }
+    const client = probe.client
+    let temporaryBaseId: string | null = null
+    // 建库请求已发出但没拿到 ID（超时、响应格式不符）时，WeKnora 中可能已经建好了临时库，无法按 ID 删除。
+    let possiblyCreated = false
+    let result: Omit<EmbeddingModelCheck, 'cleanupFailed'> = { ok: false, reason: 'protocol', detail: null }
+    let cleanupFailed = false
+    try {
+      try {
+        const created = await client.createKnowledgeBase({
+          name: `dsh-work 嵌入模型校验 ${randomUUID().slice(0, 8)}`,
+          description: '平台“校验嵌入模型”临时创建，校验结束即删除。',
+          embeddingModelId,
+        })
+        temporaryBaseId = created.id
+      } catch (error) {
+        possiblyCreated = error instanceof WeKnoraUnavailableError && (error.reason === 'timeout' || error.reason === 'protocol')
+        throw error
+      }
+      const document = await client.uploadDocument(temporaryBaseId, {
+        fileName: 'dsh-work-embedding-check.txt',
+        mimeType: 'text/plain',
+        bytes: Buffer.from('dsh-work 嵌入模型校验：这是一段用于确认嵌入模型可用的短文本。\nEmbedding model check from dsh-work.\n', 'utf8'),
+      })
+      result = await this.awaitParse(client, temporaryBaseId, document.id)
+    } catch (error) {
+      if (error instanceof WeKnoraUnavailableError) result = { ok: false, reason: error.reason, detail: null }
+      else if (error instanceof WeKnoraRequestError) result = { ok: false, reason: 'request_rejected', detail: error.message.slice(0, 200) || null }
+      else throw error
+    } finally {
+      // 任何结果（包括意外异常）都删除临时库；已不存在（404）不算失败。
+      if (temporaryBaseId) {
+        try { await client.deleteKnowledgeBase(temporaryBaseId) } catch (error) {
+          cleanupFailed = !(error instanceof WeKnoraRequestError && error.status === 404)
+        }
+      } else if (possiblyCreated) cleanupFailed = true
+      await this.recordEmbeddingCheck(actorId, result, cleanupFailed ? temporaryBaseId ?? '（未拿到 ID）' : null)
+    }
+    return { ...result, cleanupFailed }
+  }
+
+  private async recordEmbeddingCheck(actorId: string, result: { ok: boolean; reason: string | null }, leftover: string | null) {
+    await this.record(actorId, 'knowledge.embedding_model.verify', this.connection.connectionId,
+      `${result.ok ? '有效' : `无效或无法确认（${result.reason}）`}${leftover ? `；临时知识库 ${leftover} 可能未删除` : ''}`, 'knowledge_connection')
+  }
+
+  private async awaitParse(client: WeKnoraClient, knowledgeBaseId: string, documentId: string): Promise<Omit<EmbeddingModelCheck, 'cleanupFailed'>> {
+    const deadline = Date.now() + this.embeddingCheck.timeoutMs
+    for (;;) {
+      const { items } = await client.listDocuments(knowledgeBaseId, { page: 1, pageSize: 20 })
+      const document = items.find(item => item.id === documentId)
+      const status = document?.parseStatus ?? 'pending'
+      if (status === 'completed') return { ok: true, reason: null, detail: null }
+      if (status === 'failed' || status === 'cancelled') return { ok: false, reason: 'parse_failed', detail: document?.errorMessage?.slice(0, 200) ?? null }
+      if (Date.now() + this.embeddingCheck.pollMs > deadline) return { ok: false, reason: 'parse_timeout', detail: null }
+      await new Promise(resolveWait => setTimeout(resolveWait, this.embeddingCheck.pollMs))
     }
   }
 
@@ -309,7 +400,7 @@ export class PostgresKnowledgeAdminService {
   }
 
   async createBase(actorId: string, input: { name: string; description?: string; ownerDepartmentId: string }): Promise<KnowledgeAdminBaseList> {
-    await requirePlatformAdminActor(this.database, actorId)
+    await requireAdminModuleActor(this.database, actorId, 'knowledge', 'write')
     const name = input.name.trim()
     if (!name || name.length > 60) throw invalidRequest('名称长度为 1～60 个字')
     const description = (input.description ?? '').trim()
@@ -344,7 +435,7 @@ export class PostgresKnowledgeAdminService {
   }
 
   async updateOwner(actorId: string, knowledgeBaseId: string, ownerDepartmentId: string): Promise<KnowledgeAdminBaseList> {
-    await requirePlatformAdminActor(this.database, actorId)
+    await requireAdminModuleActor(this.database, actorId, 'knowledge', 'write')
     const base = await this.requireBase(knowledgeBaseId)
     const owner = await this.requireDepartment(ownerDepartmentId, { allowRoot: false })
     await this.database`
@@ -356,7 +447,7 @@ export class PostgresKnowledgeAdminService {
   }
 
   async addGrant(actorId: string, knowledgeBaseId: string, input: { departmentId: string; includeDescendants?: boolean }): Promise<KnowledgeAdminBaseList> {
-    await requirePlatformAdminActor(this.database, actorId)
+    await requireAdminModuleActor(this.database, actorId, 'knowledge', 'write')
     const base = await this.requireBase(knowledgeBaseId)
     const department = await this.requireDepartment(input.departmentId, { allowRoot: true })
     // 已有有效授权时按本次选择更新“含下级”；完全相同时不写入也不记审计。
@@ -366,7 +457,7 @@ export class PostgresKnowledgeAdminService {
       values (${`knowledge-grant-${randomUUID()}`}, ${tenantId}, ${base.id}, ${department.id}, ${includeDescendants}, ${actorId}, 'admin')
       on conflict (tenant_id, knowledge_base_id, department_id) where status = 'active'
       do update set include_descendants = excluded.include_descendants, granted_by = excluded.granted_by, granted_via = 'admin'
-       -- 优化方案 O12：管理员再次授予或调整过的授权归管理员，员工不能再撤销。
+       -- 功能规则第 11 节：管理员再次授予或调整过的授权归管理员，员工不能再撤销。
        where external_knowledge_base_grants.include_descendants is distinct from excluded.include_descendants
           or external_knowledge_base_grants.granted_via <> 'admin'
     `
@@ -379,7 +470,7 @@ export class PostgresKnowledgeAdminService {
 
   /** 平台管理员可以撤销任何授权，包括员工授予的，也可以撤到没有任何授权（员工都看不到）。 */
   async revokeGrant(actorId: string, knowledgeBaseId: string, grantId: string): Promise<KnowledgeAdminBaseList> {
-    await requirePlatformAdminActor(this.database, actorId)
+    await requireAdminModuleActor(this.database, actorId, 'knowledge', 'write')
     const base = await this.requireBase(knowledgeBaseId)
     const [revoked] = await this.database<{ departmentName: string }[]>`
       with revoked as (
@@ -396,7 +487,7 @@ export class PostgresKnowledgeAdminService {
   }
 
   async deleteBase(actorId: string, knowledgeBaseId: string): Promise<KnowledgeAdminBaseList> {
-    await requirePlatformAdminActor(this.database, actorId)
+    await requireAdminModuleActor(this.database, actorId, 'knowledge', 'write')
     const base = await this.requireBase(knowledgeBaseId)
     const client = await this.requireClient()
     try {
@@ -414,11 +505,11 @@ export class PostgresKnowledgeAdminService {
   }
 
   /**
-   * 恢复“原连接已更换”的知识库（优化方案 O9）：先确认当前连接的 WeKnora 中存在该知识库，存在才恢复为有效。
+   * 恢复“原连接已更换”的知识库（功能规则第 11 节）：先确认当前连接的 WeKnora 中存在该知识库，存在才恢复为有效。
    * 用于把地址改回原实例，或新地址只是同一实例的另一个访问地址。
    */
   async restoreBase(actorId: string, knowledgeBaseId: string): Promise<KnowledgeAdminBaseList> {
-    await requirePlatformAdminActor(this.database, actorId)
+    await requireAdminModuleActor(this.database, actorId, 'knowledge', 'write')
     const base = await this.requireBase(knowledgeBaseId)
     if (base.status !== 'unavailable') throw stateConflict('知识库不需要恢复')
     const client = await this.requireClient()

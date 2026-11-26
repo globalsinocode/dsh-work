@@ -30,7 +30,7 @@ before(async () => {
   const accounts = new LocalAuthService(configuration, db.client)
   const { userId: adminId } = await accounts.bootstrap({ username: 'c9.admin@example.invalid', name: 'C9 管理员', password })
   employeeId = (await accounts.createAccount({ username: 'c9.employee@example.invalid', name: 'C9 员工', password }, adminId)).userId
-  await new IdentityAdministrationService(db.client, true).grantRole({ userId: employeeId, roleId: 'role-employee', actorId: adminId })
+  await new IdentityAdministrationService(db.client).grantRole({ userId: employeeId, roleId: 'role-employee', actorId: adminId })
   await db.client`update local_user_credentials set must_change_password = false where user_id = ${employeeId}`
 })
 after(async () => { await db?.dispose() })
@@ -43,7 +43,7 @@ async function startApplication(extra: NodeJS.ProcessEnv = {}) {
   const root = await mkdtemp(join(tmpdir(), 'dsh-review-c9-'))
   const port = await freePort()
   const base = `http://localhost:${port}`
-  // Isolate from a developer .env: no AI Hub, no legacy mode switch.
+  // Isolate from a developer .env: no leftover AI Hub variables, no legacy mode switch.
   const inherited = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('AI_HUB_') && key !== 'DSH_WORK_AUTH_MODE'))
   const child = spawn(process.execPath, ['--experimental-strip-types', 'src/main.ts'], {
     cwd: resolve(import.meta.dirname, '../../..'),
@@ -126,28 +126,6 @@ test('core database and identity configuration failures never expose readiness',
       await assert.rejects(fetch(`${app.base}/health/ready`))
     } finally { await app.close() }
   }
-})
-
-test('invalid authorization check timeout fails startup before migrations or listening', async () => {
-  // 6000 低于生产下限：解析发生在 createDatabase/迁移与 listen 之前，子进程必须直接退出。
-  const app = await startApplication({ DSH_WORK_AUTHORIZATION_CHECK_TIMEOUT_MS: '6000' })
-  try {
-    await assert.rejects(ready(app), /backend exited/)
-    await assert.rejects(fetch(`${app.base}/health/live`))
-    assert.match(app.output(), /DSH_WORK_AUTHORIZATION_CHECK_TIMEOUT_MS/)
-  } finally { await app.close() }
-})
-
-test('a valid authorization check timeout starts and reports core readiness', async () => {
-  const app = await startApplication({ DSH_WORK_AUTHORIZATION_CHECK_TIMEOUT_MS: '10000' })
-  try {
-    await ready(app)
-    const response = await fetch(`${app.base}/health/ready`)
-    assert.equal(response.status, 200)
-    const body = await response.json() as { status: string; core: boolean }
-    assert.equal(body.status, 'ready')
-    assert.equal(body.core, true)
-  } finally { await app.close() }
 })
 
 test('restored queues fail explicitly when Runtime is unavailable even if scheduling is disabled', async () => {

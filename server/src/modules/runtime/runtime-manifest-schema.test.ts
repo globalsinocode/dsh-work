@@ -464,6 +464,21 @@ describe('Runtime Manifest Schema / compiler boundary', () => {
     assert.throws(() => compileRuntimeManifest(unknown), /unavailable_tools.reason is invalid/)
   })
 
+  it('读取网页方案 6.3：记录有代理配置时未装配的读取网页，原因必须对应', () => {
+    const unavailable = baseManifest()
+    unavailable.unavailable_tools = [
+      { tool: 'web_search', reason: 'model_route_unsupported' },
+      { tool: 'web_fetch', reason: 'proxy_configured' },
+    ]
+    assertBothAccept(unavailable, 'unavailable web fetch')
+    const assembled = structuredClone(unavailable)
+    assembled.tools.push({ id: 'web_fetch', version: '1.0.0' })
+    assert.throws(() => compileRuntimeManifest(assembled), /both unavailable and assembled: web_fetch/)
+    const mismatched = baseManifest()
+    mismatched.unavailable_tools = [{ tool: 'web_fetch', reason: 'model_route_unsupported' } as never]
+    assert.throws(() => compileRuntimeManifest(mismatched), /unavailable_tools.reason is invalid/)
+  })
+
   it('pins model requirements and rejects unknown, repeated or malformed declarations', () => {
     assertBothAccept({ ...baseManifest(), model_requirements: ['long-context', 'structured-output'] }, 'declared requirements')
     assertBothAccept({ ...baseManifest(), model_requirements: [] }, 'no extra requirements')

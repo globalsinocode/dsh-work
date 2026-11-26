@@ -25,7 +25,7 @@ onMounted(() => { void loadPolicy() })
       <section class="panel settings-section">
         <div class="settings-section__heading">
           <span><el-icon><User /></el-icon></span>
-          <div><h2>企业身份</h2><p>{{ authStore.identityProvider === 'local-password' ? '账号由管理员开通和维护' : '身份由企业登录系统提供，不能在 dsh-work 中修改' }}</p></div>
+          <div><h2>企业身份</h2><p>账号由管理员开通和维护</p></div>
         </div>
         <el-button v-if="authStore.identityProvider === 'local-password'" tag="a" href="/change-password" type="primary" link>修改密码</el-button>
         <dl class="identity-grid">
@@ -37,7 +37,7 @@ onMounted(() => { void loadPolicy() })
         </dl>
       </section>
 
-      <DingTalkSettingsSection v-if="authStore.identityProvider === 'local-password' || authStore.identityProvider === 'dingtalk' || authStore.identityProvider === 'prototype-sso'" />
+      <DingTalkSettingsSection />
 
       <section class="panel settings-section retention-notice">
         <h2>内容保留与账号停用</h2>

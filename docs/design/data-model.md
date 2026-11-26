@@ -36,23 +36,20 @@ flowchart LR
 | 表 | 作用 | 关键不变量 |
 | --- | --- | --- |
 | `tenants` | 租户 | 新租户自动创建平台系统 Principal |
-| `users` | 本地用户 | 主键稳定；AI Hub `external_user_id` 是外部稳定键，Subject 只是协议映射；新用户自动获得唯一默认个人空间与人类 Principal |
+| `users` | 本地用户 | 主键稳定；`identity_provider` 只允许 `local`（迁移 0129 删除 AI Hub 登录）；新用户自动获得唯一默认个人空间与人类 Principal |
 | `local_user_credentials` | 独立账号密码 | 用户名全租户唯一；密码以加盐 scrypt 保存；初始密码必须修改 |
 | `local_identity_bootstrap` | 首个独立管理员的一次性初始化 | 每租户只能消费一次 |
 | `local_auth_rate_limits` | 登录限流计数 | 键是 HMAC，不保存用户名或地址；多进程与重启共享 |
-| `authentication_sessions` | 服务端 Session | 浏览器只持有不透明 Cookie，数据库只存摘要；OIDC Token 服务端加密；来源 `ai-hub-oidc` / `local-password` / `dingtalk`（迁移 0117），`dingtalk` 会话必须带 `binding_id`、按该绑定有效性校验并按它撤销，其他来源不得带 |
+| `authentication_sessions` | 服务端 Session | 浏览器只持有不透明 Cookie，数据库只存摘要；来源 `local-password` / `dingtalk`（迁移 0117、0129，必须显式写入），`dingtalk` 会话必须带 `binding_id`、按该绑定有效性校验并按它撤销，密码会话不得带 |
 | `external_account_bindings` | 平台账号与外部渠道账号的绑定（迁移 0117，[钉钉接入方案](dingtalk-integration-plan.md) 4.2；本期 `channel = 'dingtalk'`） | 有效记录中平台账号与外部账号各自唯一（部分唯一索引）；状态只有 `valid` / `invalid`，未绑定即没有有效记录；`self_rebind_locked` 只出现在失效记录上；只存钉钉 userid、姓名与部门，不存手机号 |
 | `external_binding_tickets` | 服务端短时单次凭证：钉钉内待绑定凭证与管理员代绑确认凭证（迁移 0117） | 只存凭证哈希；原子消费，重复使用、过期、来源或目标员工 / 管理员不符一律无效；代绑凭证只存脱敏手机号与 HMAC |
 | `external_channel_status` | 外部渠道连接检查结果（迁移 0118，钉钉集成页） | 每租户每渠道一行；只存检查时间、结论与各接口权限探测结果，不存凭据 |
 | `dingtalk_departure_checks` | 每日钉钉离职检查记录（迁移 0118） | 同一租户至多一条 `running`（部分唯一索引），超过 6 小时未结束的视为中断并标为 `failed` 后再开始新检查；只有明确“用户不存在”才判为离职；判为离职超过有效绑定 10% 时 `paused` 并保存待确认的绑定 ID，管理员确认或忽略后结束 |
 | `dingtalk_app_configurations` | 钉钉企业内部应用配置（迁移 0119，DT30） | 每租户一行；`configured` 时 CorpId、AgentId、AppKey 必填；AppSecret 不存本表，页面保存的以 `credential_ref` 指向 `credential_secrets` 中的加密值，来自部署配置时 `credential_ref` 为空、只在内存使用；`cleared` 后部署配置不再自动生效 |
-| `oidc_login_transactions` | OIDC 登录事务 | state、nonce 与入口绑定，一次性使用 |
-| `application_admin_bootstrap_claims` | AI Hub 初始管理员认领 | 按应用/环境幂等消费 |
-| `identity_directory_sync_state` | AI Hub 员工目录同步游标 | 持久化 opaque cursor；员工停用即撤销其 Session，保留本地角色历史 |
-| `org_departments` | 部门树（迁移 0113，[组织架构方案](org-structure-plan.md) ORG-S1） | 每租户一个根部门（迁移创建）；`path` 为根到本部门的 ID 路径，不能移到自己下级之下；同一上级下有效部门不重名；删除置为 `removed`；写操作按租户串行 |
-| `org_department_members` | 员工所属部门（迁移 0113） | 员工可属于多个部门、至多一个主部门；`users.department_id` 只作显示，等于主部门名称，没有主部门时为空；迁移 0113 清空了独立账号的历史部门文本，迁移 0116 把 AI Hub 账号的旧组织名统一为主部门名称（无主部门则清空） |
-| `org_department_grants` | 部门授予的角色（迁移 0114，ORG-S2） | 同一部门同一角色至多一条有效授权；展开为 `user_roles`（`source_key = 'department:<grant_id>'`），随成员与部门变化重算；管理类角色不能授予；部门删除后置为 `invalid` |
-| `roles`、`user_roles`、`data_scope_grants` | 本地角色、用户角色、数据范围授权 | 独立于 AI Hub；过期角色不生效；任何变更由触发器递增本地授权版本，请求按当前版本重新计算 |
+| `org_departments` | 部门树（迁移 0113，ORG-S1，[功能规则第 10 节](../development/feature-rules.md#10-组织架构org-s1org-s2)） | 每租户一个根部门（迁移创建）；`path` 为根到本部门的 ID 路径，不能移到自己下级之下；同一上级下有效部门不重名；删除置为 `removed`；写操作按租户串行 |
+| `org_department_members` | 员工所属部门（迁移 0113） | 员工可属于多个部门、至多一个主部门；`users.department_id` 只作显示，等于主部门名称，没有主部门时为空；迁移 0113 清空了历史部门文本 |
+| `org_department_grants` | 部门授予的角色（迁移 0114，ORG-S2） | 同一部门同一角色至多一条有效授权；展开为 `user_roles`（`source_key = 'department:<grant_id>'`），随成员与部门变化重算；管理类角色（`admin:`、`audit:`、`data-protection:` 前缀）不能授予，非平台管理员授出的角色不能超过本人；部门删除后置为 `invalid` |
+| `roles`、`user_roles`、`data_scope_grants` | 本地角色、用户角色、数据范围授权 | 过期角色不生效；任何变更由触发器递增本地授权版本，请求按当前版本重新计算；`roles.permissions` 可含管理端模块权限码（`admin:<模块>:read|write`，[功能规则第 13 节](../development/feature-rules.md#13-管理端模块权限amp-s1amp-s2)），管理判定只认 `source_key = 'local'` |
 | `system_settings` | 早期的租户级设置 | 当前代码未读写 |
 | `user_preferences` | 员工端界面偏好（迁移 0094） | 每个账号一行；`ui_mode` 为 `work` 或 `collab`，无记录时为工作模式；只影响界面，不改变权限 |
 
@@ -134,8 +131,8 @@ flowchart LR
 | `skill_installations` | 管理端安装计划 | 每次安装 Run 一条；完成时必须指向已保存的版本 |
 | `skill_test_bindings` | 严格试运行与精确 Attempt 的绑定 | 不可修改（触发器）；绑定配置与 Runtime 指纹 |
 | `skill_runtime_activations`、`skill_python_executions` | Attempt 内的 Skill 激活与 Python 执行记录 | 作为试运行证据，按 Attempt 隔离 |
-| `skill_submissions`、`skill_submission_versions` | 员工 Skill 提交与其不可变版本（Skill 创建专家方案，迁移 `0108`） | 提交归属提交员工，来源字段第一期只有“对话创建”（`conversation`，须带会话）；同一会话同名草稿归为一个提交（部分唯一索引）。状态 draft / pending / approved / rejected；`skill_id` 指向审核试运行时存下的 Skill（通过前不进入 Skill 列表、`installation_key` 为空，通过时写入），`reviewed_version_id` 为审核结论针对的版本（迁移 `0109`）。版本的 `skill_version_id` 为管理员开始试运行时存下的 Skill 待发布版本（一对一；`skill_installations.channel` 新增 `submission`）。版本只保存 Skill 文件夹引用与文件索引（`artifact`）、包摘要、兼容性与脚本数，并记录保存它的 Run 与 Attempt，会话详情据此挂草稿卡片。`agent_versions.skill_creation_enabled` 为“可创建 Skill”开关 |
-| `agent_recommendations` | Attempt 内推荐的 AI 同事（推荐 AI 同事方案） | 关联 Run、Attempt、发起员工与被推荐的 Agent；只保存位置、限长的推荐理由与可选的“发给该同事的问题”（`suggested_prompt`，用于预填），名称与说明读取时取当前启用版本；会话详情只显示各 Run 当前 Attempt 的记录，同一 Attempt 再次推荐整组替换 |
+| `skill_submissions`、`skill_submission_versions` | 员工 Skill 提交与其不可变版本（功能规则 5.6，迁移 `0108`） | 提交归属提交员工，来源字段第一期只有“对话创建”（`conversation`，须带会话）；同一会话同名草稿归为一个提交（部分唯一索引）。状态 draft / pending / approved / rejected；`skill_id` 指向审核试运行时存下的 Skill（通过前不进入 Skill 列表、`installation_key` 为空，通过时写入），`reviewed_version_id` 为审核结论针对的版本（迁移 `0109`）。版本的 `skill_version_id` 为管理员开始试运行时存下的 Skill 待发布版本（一对一；`skill_installations.channel` 新增 `submission`）。版本只保存 Skill 文件夹引用与文件索引（`artifact`）、包摘要、兼容性与脚本数，并记录保存它的 Run 与 Attempt，会话详情据此挂草稿卡片。`agent_versions.skill_creation_enabled` 为“可创建 Skill”开关 |
+| `agent_recommendations` | Attempt 内推荐的 AI 同事（功能规则 2.4） | 关联 Run、Attempt、发起员工与被推荐的 Agent；只保存位置、限长的推荐理由与可选的“发给该同事的问题”（`suggested_prompt`，用于预填），名称与说明读取时取当前启用版本；会话详情只显示各 Run 当前 Attempt 的记录，同一 Attempt 再次推荐整组替换 |
 | `skill_release_records` | 发布、启用、停用、回滚记录 | 只追加 |
 | `skill_test_runs` | 早期的测试记录 | 只保留历史 |
 
@@ -146,7 +143,7 @@ flowchart LR
 | （无表） | 内置工具 | 随代码发布，见 [内置工具注册表](../../server/src/modules/runtime/builtin-tools.ts)；迁移 `0096` 删除了原工具治理表 |
 | `tool_audit_logs` | 内置与平台工具调用审计 | 直接记录工具名称（`tool_name`） |
 | `connectors`、`connector_health_checks` | 连接器与健康检查 | 健康状态与配置分离 |
-| `mcp_connector_profiles` | MCP 连接器的发现清单与生效清单 | 只支持 Streamable HTTP；新增或输入 Schema 变化的 Tool 须确认后进入生效清单 |
+| `mcp_connector_profiles` | MCP 连接器的发现清单与生效清单 | 只支持 Streamable HTTP；新增或输入 Schema 变化的 Tool 须确认后进入生效清单；`employee_identity_enabled` 为“发送员工身份”开关（迁移 0131，默认关闭，只能为 Bearer 认证且凭据独占的 Connector 开启） |
 | `credential_refs`、`credential_secrets` | 凭据引用与加密密文 | 密文为 AES-256-GCM；接口不回显、不导出密钥正文 |
 
 ## 8. 模型与 Runtime
@@ -207,7 +204,11 @@ flowchart LR
 | `audit_events` | 管理与执行审计 | 可按用户、空间、Session、Run、Attempt 追踪；不含提示词、业务正文或密钥 |
 | `tool_audit_logs` | 工具调用审计 | 只记录参数摘要 |
 | `mcp_invocation_audits` | MCP 调用审计 | 按 Attempt + 调用 ID 唯一；参数只存摘要；结果未知需管理员核对登记；登记未生效才解除重试拦截，登记已生效继续拦截 |
+| `mcp_attempt_call_contexts` | 每个 Attempt 向各 Connector 实际下发的调用上下文（EA-S1） | 主键 Attempt + Connector；只存 `personal`/`shared`，不存员工标识；`mcp_invocation_audits.call_context` 据此记录每次调用带的调用上下文（迁移 0131） |
 | `model_usage_events` | 模型用量 | 每个 Attempt 对话一行、联网搜索另一行（迁移 0122，按 `(attempt, endpoint)` 唯一）。有网关记录时 `measurement = gateway`：实际模型取厂商成功返回的请求，记录请求次数（含重试）、失败次数与缓存读写 token（厂商未返回为空，不记为 0）；没有网关记录时为 `session-log`（DSH 会话日志）或 `estimated`（按文本长度估算），`estimated` 与之一致。取消的运行有网关记录时也记录。按执行计数的聚合用 `count(distinct attempt_id)` |
+| `error_groups` | 错误记录：按指纹归并的问题（OBS-S1，迁移 0133） | 来源为员工端、管理端、服务端或服务进程；按 `(tenant, fingerprint)` 唯一；消息在服务端脱敏后保存（失败提示只存错误码与动作名）；浏览器上报每个租户每个来源每小时新增超过 200 个时并入该来源的汇总组（按租户与来源加锁计数），服务端与进程异常不受此限 |
+| `error_occurrences` | 错误记录样本 | 同一员工同一问题 1 分钟内的重复只累加 `repeat_count`；不存请求体、对话正文、查询参数与完整 User-Agent，堆栈只留帧位置；`run_id` 只来自路由参数或浏览器上报，接口链路编号经它关联运行；保留 90 天，专用任务每天分批清理 |
+| `product_events` | 页面访问（OBS-S2，迁移 0134） | 只记已登录员工的页面路由名、端（员工端/管理端）与是否在钉钉内，不记网址与页面内容；同一员工同一端同一页面 30 分钟内只记一次；保留 180 天，与错误记录同一清理任务分批删除 |
 | `operational_events`（视图） | 运营事件投影 | 只读投影，不含业务正文 |
 
 ## 数据库触发器
@@ -239,6 +240,7 @@ Run 和 Attempt 的普通状态转换不能从终态回退。只有失败或取�
 - [对象授权](../../server/migrations/0010_m4_authorization.sql)、[个人空间](../../server/migrations/0013_m5_personal_workspaces.sql)、[团队空间授权](../../server/migrations/0022_team_workspace_authorization.sql)。
 - [服务端 Session](../../server/migrations/0014_m6_ai_hub_sso.sql)、[本地授权](../../server/migrations/0016_identity_owned_authorization.sql)、[业务员工](../../server/migrations/0017_business_user_directory.sql)、[升级对账](../../server/migrations/0018_fail_closed_directory_reconciliation.sql)、[独立账号](../../server/migrations/0077_local_identity.sql)。
 - [多入口 OIDC 事务](../../server/migrations/0020_multi_origin_oidc.sql)、[团队共享文件逻辑移除](../../server/migrations/0024_workspace_file_removal.sql)、[逻辑文件与版本](../../server/migrations/0025_workspace_file_versions.sql)。
+- [删除 AI Hub 登录](../../server/migrations/0129_remove_ai_hub_login.sql)：删除 0014～0020、0042 建立的 OIDC 事务、初始管理员认领与目录同步表及会话令牌列。
 - [Agent 发布治理](../../server/migrations/0039_agent_release_governance.sql)、[自动任务](../../server/migrations/0040_agent_automations.sql)、[工具绑定修订](../../server/migrations/0047_tool_binding_revisions.sql)、[MCP 治理](../../server/migrations/0053_mcp_connector_governance.sql)。
 - [PF-01 Task 与外部操作基础](../../server/migrations/0050_task_operation_foundation.sql)、[无 Session 执行与 Task Artifact](../../server/migrations/0051_session_neutral_task_execution.sql)、[累计预算](../../server/migrations/0052_task_cumulative_budgets.sql)。
 - [持久化等待与审批](../../server/migrations/0061_persistent_wait_and_approval.sql)、[受控记忆](../../server/migrations/0062_controlled_memory.sql)、[执行身份](../../server/migrations/0064_execution_principals.sql)。
@@ -249,8 +251,11 @@ Run 和 Attempt 的普通状态转换不能从终态回退。只有失败或取�
 - [Agent 运行记录索引](../../server/migrations/0086_agent_run_history_index.sql)：详情页按 Task 的执行身份读取最近 Run。
 - [删除 Agent 数据平面](../../server/migrations/0087_remove_agent_data_plane.sql)：删除工作数据（集合、记录、提案、私有状态、安装实例）共 11 张表；旧版本定义中的 `data` 声明不再读取。
 - [企业知识库接入 WeKnora](../../server/migrations/0115_weknora_knowledge.sql)：新增连接、知识库、部门授权、会话所选知识库与引用快照五张表，给带 `workbench:use` 的角色加 `knowledge:view`；删除原有本地知识库四张表、两篇合成文档与检索函数。
-- [知识库重排序结果](../../server/migrations/0127_knowledge_rerank_outcome.sql)：连接上增加最近一次检索的重排序结果与时间，供管理端健康状态显示（知识库优化方案 O5）。
-- [知识引用来源](../../server/migrations/0128_knowledge_citation_source.sql)：引用快照增加 `source`，区分执行前检索与 Agent 检索工具（Agent 知识检索工具方案，KO9）。
+- [知识库重排序结果](../../server/migrations/0127_knowledge_rerank_outcome.sql)：连接上增加最近一次检索的重排序结果与时间，供管理端健康状态显示（知识库优化 O5）。
+- [知识引用来源](../../server/migrations/0128_knowledge_citation_source.sql)：引用快照增加 `source`，区分执行前检索与 Agent 检索工具（功能规则第 11 节，KO9）。
+- [补写 Skill 安装名称](../../server/migrations/0130_backfill_skill_installation_key.sql)：为经已删除的文本接口写入的 Skill 与种子 Skill 补写 `installation_key`（规则同 0035，审核中的员工提交、已被占用的名称除外，同名只补一行），使安装同名包生成其下一版本（功能规则 5.3）。
+- [MCP 发送员工身份](../../server/migrations/0131_mcp_employee_identity.sql)：Connector 的“发送员工身份”开关、每个 Attempt 下发的调用上下文与调用审计的 `call_context`（外部业务应用接入方案 EA-S1，功能规则第 14 节）。
+- [读取网页开关](../../server/migrations/0132_agent_web_fetch.sql)：`agent_versions.web_fetch_enabled`（默认关闭），见[读取网页方案](web-fetch-plan.md)。
 
 新增变更使用新的顺序迁移，保留已应用迁移；迁移运行器以咨询锁串行执行并校验已执行迁移的 SHA-256，修改已执行迁移会拒绝启动。应用回滚不会自动降低 Schema，至少保持上一版本兼容；破坏性清理需独立安排。操作流程见 [部署手册](../release/mac-mini-deployment-runbook.md)。
 

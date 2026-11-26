@@ -70,21 +70,14 @@ export const useAuthStore = defineStore('workbench-auth', () => {
 
   async function logout() {
     // 钉钉会话与密码会话同为本地会话，退出登录撤销该账号全部来源的会话（钉钉接入方案 4.3）。
-    if (identityProvider.value === 'local-password' || identityProvider.value === 'dingtalk') {
-      try {
-        const response = await fetch('/auth/workbench/logout', { method: 'POST', credentials: 'same-origin' })
-        if (!response.ok) throw new Error('退出登录失败，请重试')
-        // 钉钉容器内带 logged_out：登录页不再自动免登，否则刚退出就被重新登录。桌面端不变。
-        window.location.assign(isDingTalkContainer() ? '/login?logged_out=1' : '/login')
-      } catch (cause) {
-        ElMessage.error(cause instanceof Error ? cause.message : '退出登录失败')
-      }
-      return
+    try {
+      const response = await fetch('/auth/workbench/logout', { method: 'POST', credentials: 'same-origin' })
+      if (!response.ok) throw new Error('退出登录失败，请重试')
+      // 钉钉容器内带 logged_out：登录页不再自动免登，否则刚退出就被重新登录。桌面端不变。
+      window.location.assign(isDingTalkContainer() ? '/login?logged_out=1' : '/login')
+    } catch (cause) {
+      ElMessage.error(cause instanceof Error ? cause.message : '退出登录失败')
     }
-    sessionUser.value = null
-    identityProvider.value = null
-    initialized.value = false
-    window.location.assign('/auth/workbench/logout')
   }
 
   return {

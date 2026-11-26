@@ -307,17 +307,32 @@ test('free space: no command starts on a low data volume, and a running one is s
   assert.equal(result.limit, 'disk')
   assert.match(result.stderr, /服务器磁盘剩余空间不足/)
 
-  // Both notices tell the model to stop and answer: “稍后重试” made it call bash until the Attempt timed out.
+  // Both notices tell the model to stop calling container tools and answer: “稍后重试” made it call bash until the Attempt timed out.
+  // These assertions pin the wording only. Whether a model reads it depends on the tool: DSH's glob and grep replace
+  // it with their own error, so only bash and python_execute deliver it (checked against real DSH, not here).
   const refusal = await low.exec('a1', '/ws', command(), new AbortController().signal).then(() => '', (error: unknown) => (error as Error).message)
   for (const notice of [refusal, result.stderr]) {
-    assert.match(notice, /不要再调用运行命令的工具/)
-    assert.match(notice, /立即结束并答复用户/)
-    assert.doesNotMatch(notice, /稍后重试/)
+    assert.match(notice, /不要再调用 bash、文件搜索（glob、grep）和 python_execute（以本次运行实际提供的为准）/)
+    assert.match(notice, /文件搜索此时报出的“无法启动搜索”或“被终止”也是这个原因/)
+    assert.match(notice, /不要用其他工具写脚本/)
+    assert.match(notice, /其余不受此限制的工具仍可使用/)
+    assert.match(notice, /不要再生成大文件/)
+    assert.match(notice, /答复用户：哪些已经完成；哪些没有完成/)
+    assert.match(notice, /服务器存储空间不足，需要平台管理员处理后再试/)
+    assert.match(notice, /不要出现工具名、目录名、文件路径/)
+    assert.match(notice, /没有完成的部分不要说成已经完成，也不要编造结果/)
+    // wording earlier reviews found misleading
+    assert.doesNotMatch(notice, /稍后重试|立即结束|重试不会成功|write 等工具|写入 output/)
   }
+  // only a stopped command can leave a half-written file behind, and only if it was writing one
+  assert.match(result.stderr, /如果被终止的这条命令当时正在写某个文件，该文件可能不完整/)
+  assert.match(result.stderr, /没有写文件时不必提及/)
+  assert.doesNotMatch(refusal, /可能不完整/)
 })
 
 test('admission: only plain reads may run alongside other tools; bash and writes must be exclusive', () => {
-  // What DSH 0.1.2-rc.1 reports (plan 3.7), including parallel tools the policy never allows.
+  // What DSH 0.1.2-rc.1 reports (plan 3.7). web_fetch is a registry tool now (web fetch plan) and may run in parallel;
+  // subagent stays outside the registry, so its parallel mode is irrelevant.
   const reported = [
     ['read', 'parallel'], ['read_image', 'parallel'], ['web_search', 'parallel'], ['glob', 'exclusive'], ['grep', 'exclusive'],
     ['write', 'exclusive'], ['edit', 'exclusive'], ['str_replace_editor', 'exclusive'], ['todo_write', 'exclusive'],
@@ -583,3 +598,50 @@ async function waitFor(predicate: () => boolean) {
     await new Promise(resolve => setTimeout(resolve, 10))
   }
 }
+
+test('rechecks the execution image after startup, caches the answer and recovers when it is pulled again', async () => {
+  class ImageBackend extends FakeExecBackend {
+    present = true
+    inspections = 0
+    override async inspectImage() {
+      this.inspections += 1
+      if (!this.present) throw new Error('Python Skill 沙箱镜像不可用：Error response from daemon: No such image: exec@sha256:…')
+    }
+  }
+  const backend = new ImageBackend()
+  const containers = new AttemptExecutionContainers(backend, { image, user: '501:20', imageRecheckMs: 30 })
+  assert.equal(await containers.imageAvailable(), true)
+  backend.present = false
+  assert.equal(await containers.imageAvailable(), true, 'within the recheck interval the last answer is reused')
+  assert.equal(backend.inspections, 1)
+  await new Promise(resolve => setTimeout(resolve, 40))
+  const [first, second] = await Promise.all([containers.imageAvailable(), containers.imageAvailable()])
+  assert.deepEqual([first, second], [false, false])
+  assert.equal(backend.inspections, 2, 'concurrent callers share one inspection')
+  backend.present = true
+  await new Promise(resolve => setTimeout(resolve, 40))
+  assert.equal(await containers.imageAvailable(), true)
+})
+
+test('a failed image check (timeout, daemon error) keeps the last answer instead of reporting the image missing', async () => {
+  class FlakyBackend extends FakeExecBackend {
+    mode: 'ok' | 'timeout' | 'missing' = 'ok'
+    inspections = 0
+    override async inspectImage() {
+      this.inspections += 1
+      if (this.mode === 'timeout') throw new Error('Python Skill 沙箱镜像不可用：exec@sha256:…')
+      if (this.mode === 'missing') throw new Error('Error: No such object: exec@sha256:…')
+    }
+  }
+  const backend = new FlakyBackend()
+  const containers = new AttemptExecutionContainers(backend, { image, user: '501:20', imageRecheckMs: 30 })
+  backend.mode = 'timeout'
+  assert.equal(await containers.imageAvailable(), true, 'never checked before: assume the startup check still holds')
+  assert.equal(await containers.imageAvailable(), true)
+  assert.equal(backend.inspections, 2, 'a failed check is not cached, the next call checks again')
+  backend.mode = 'missing'
+  assert.equal(await containers.imageAvailable(), false)
+  await new Promise(resolve => setTimeout(resolve, 40))
+  backend.mode = 'timeout'
+  assert.equal(await containers.imageAvailable(), false, 'a failed check keeps the last answer (missing)')
+})

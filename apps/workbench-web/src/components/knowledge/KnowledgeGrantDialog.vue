@@ -9,7 +9,7 @@ import { notifyActionFailure } from '@/utils/feedback'
 import { describeKnowledgeGrants } from '@/utils/knowledge'
 
 /**
- * 管理可见部门（weknora-knowledge-plan 5.4，WK11）：员工只能授给自己直接所属的部门，不能撤销平台管理员
+ * 管理可见部门（功能规则第 11 节，WK11）：员工只能授给自己直接所属的部门，不能撤销平台管理员
  * 的授权，也不能撤到没有任何授权；授给其他部门或全公司由平台管理员在管理端操作。
  */
 const open = defineModel<boolean>({ required: true })

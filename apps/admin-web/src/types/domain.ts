@@ -88,9 +88,12 @@ export interface AdminUserProfile {
 
 export interface AdminSession {
   user: AdminUserProfile
-  identityProvider: 'prototype-sso' | 'ai-hub-oidc' | 'local-password'
+  identityProvider: 'prototype-sso' | 'local-password'
   apiAudience: 'admin'
   permissions: string[]
+  /** 各模块的可用级别（功能规则第 13 节）；旧服务端没有时由前端按权限码推算。 */
+  adminModules?: Partial<Record<'agent' | 'skill' | 'connector' | 'model' | 'dlp' | 'knowledge' | 'org' | 'identity' | 'dingtalk' | 'ops', 'none' | 'read' | 'write'>>
+  platformAdmin?: boolean
 }
 
 export interface IdentityRoleSummary {
@@ -170,15 +173,12 @@ export interface OrganizationSnapshot {
 
 export interface IdentityUserSummary {
   id: string
-  externalUserId: string | null
   username?: string | null
   loginAccount: string | null
   name: string
   email: string | null
   department: string
   status: 'active' | 'disabled'
-  identityProvider: 'local' | 'ai-hub'
-  directorySyncedAt: string | null
   authorizationVersion: number
   roles: Array<Pick<IdentityRoleSummary, 'id' | 'code' | 'name' | 'status'>>
   /** 来自部门授权的角色，只能在“组织架构”中修改。 */
@@ -186,7 +186,7 @@ export interface IdentityUserSummary {
   dataScopes: string[]
   activeSessionCount: number
   lastSeenAt: string | null
-  /** 钉钉绑定（钉钉接入 DT-S1）：只对独立账号返回，AI Hub 账号为 null。 */
+  /** 钉钉绑定（钉钉接入 DT-S1）。 */
   dingtalk?: {
     status: DingTalkBindingStatus
     boundBy: 'self' | 'admin' | null
@@ -259,6 +259,20 @@ export interface DingTalkUnboundEmployee {
   status: 'unbound' | 'invalid'
   revokeReason: string | null
   selfRebindLocked: boolean
+  /** 当前管理员能否操作这名员工的绑定（不能操作自己、平台管理员或权限更高的员工）。 */
+  manageable: boolean
+}
+
+/** 钉钉集成 › 已绑定名单（只有钉钉权限也可查看）。 */
+export interface DingTalkBoundEmployee {
+  id: string
+  name: string
+  loginAccount: string
+  department: string
+  dingtalkName: string | null
+  boundBy: 'self' | 'admin'
+  boundAt: string
+  manageable: boolean
 }
 
 export interface IdentityUserPage {
@@ -279,18 +293,6 @@ export interface LocalPermissionDefinition {
   name: string
   category: string
   description: string
-}
-
-export interface DirectorySyncState {
-  applicationId: string
-  environment: string
-  cursor: string | null
-  status: 'idle' | 'running' | 'failed'
-  lastStartedAt: string | null
-  lastSucceededAt: string | null
-  lastError: string | null
-  synchronizedUsers: number
-  updatedAt: string
 }
 
 export type RunStatus =
@@ -457,6 +459,8 @@ export interface AgentDefinition {
   agentRecommendationEnabled?: boolean
   /** 是否可创建 Skill（只在员工个人对话中生效，草稿由员工提交审核）。 */
   skillCreationEnabled?: boolean
+  /** 是否可读取网页（只能打开员工消息或联网搜索结果中的公网网址）。 */
+  webFetchEnabled?: boolean
   mcpScope?: AgentMcpScope
   updatedAt: string
   /** 草稿编辑的乐观并发修订，保存时回传为 expectedRevision；原型模式不提供。 */
@@ -591,6 +595,8 @@ export interface AgentDraftConfiguration {
   /** 编辑时省略则保留当前设置，新建时默认关闭。 */
   agentRecommendationEnabled?: boolean
   skillCreationEnabled?: boolean
+  /** 是否可读取网页（只能打开员工消息或联网搜索结果中的公网网址）。 */
+  webFetchEnabled?: boolean
   mcpScope?: AgentMcpScope
   changeSummary: string
 }
@@ -629,6 +635,8 @@ export interface AgentVersionRecord {
   projectTasksEnabled: boolean
   agentRecommendationEnabled?: boolean
   skillCreationEnabled?: boolean
+  /** 是否可读取网页（只能打开员工消息或联网搜索结果中的公网网址）。 */
+  webFetchEnabled?: boolean
   mcpScope?: AgentMcpScope
 }
 
@@ -658,7 +666,7 @@ export interface SkillDefinition {
   updatedAt: string
 }
 
-/** 员工 Skill 提交的严格试运行状态（Skill 创建专家方案 4.4）。 */
+/** 员工 Skill 提交的严格试运行状态（功能规则 5.6）。 */
 export type SkillSubmissionTrialStatus = 'not_started' | 'running' | 'unconfirmed' | 'passed' | 'failed'
 
 export interface SkillSubmissionReviewItem {
@@ -738,22 +746,6 @@ export interface SkillTestRunProgress {
   }>
 }
 
-export interface SkillConfiguration {
-  id: string
-  name: string
-  category: string
-  description: string
-  instructions: string
-  toolIds: string[]
-  testPrompt: string
-}
-
-export type CreateSkillInput = Omit<SkillConfiguration, 'id'>
-
-export interface UpdateSkillInput extends Omit<SkillConfiguration, 'id'> {
-  skillId: string
-}
-
 export interface ConnectorDefinition {
   id: string
   name: string
@@ -785,6 +777,13 @@ export interface ConnectorDefinition {
     discoveredAt: string | null
     reviewedAt: string | null
     reviewedBy: string | null
+    /** 外部业务应用接入 EA-S1：“发送员工身份”开关；旧服务端缺省。 */
+    employeeIdentity?: {
+      enabled: boolean
+      /** false 时不能开启（无认证或凭据与其他连接器共用），原因见 unavailableReason。 */
+      available: boolean
+      unavailableReason?: string
+    }
   }
 }
 
@@ -811,6 +810,8 @@ export interface McpInvocationAudit {
   capabilityName: string
   parameterDigest: string
   result: 'success' | 'failed' | 'unknown'
+  /** EA-S1：该次调用携带的调用上下文；null 或缺省表示没有发送。 */
+  callContext?: 'personal' | 'shared' | null
   occurredAt: string
   resolvedResult?: 'success' | 'failed' | null
   resolvedBy?: string | null
@@ -869,11 +870,6 @@ export interface HealthComponent {
   checkedAt: string
 }
 
-export interface UsagePoint {
-  day: string
-  runs: number
-  tokens: number
-}
 
 export interface ListPage<T> {
   items: T[]
@@ -1092,7 +1088,7 @@ export interface ModelRoute {
 export interface PlatformStatus {
   architecture: 'node-modular-monolith'
   persistence: 'prototype-memory' | 'postgres-foundation' | 'postgres'
-  sso: 'mock' | 'ai-hub-oidc' | 'local-password'
+  sso: 'mock' | 'local-password'
   dshRuntime: 'not-connected' | 'poc-validated' | 'connected'
   database: 'not-configured' | 'configured' | Record<string, unknown>
   artifactStorage: 'not-configured' | 'local-mvp'
@@ -1222,4 +1218,125 @@ export interface DingTalkSettingsInput {
   bindingTicketTtlSeconds: number
   adminDailyBindLimit: number
   timeoutMs: number
+}
+
+/** 错误记录（错误记录方案 6.5，OBS-S1），与 Admin OpenAPI 的 error-records 接口对应。 */
+export type ErrorSource = 'workbench' | 'admin' | 'server' | 'process'
+export type ErrorKind = 'render' | 'script' | 'promise' | 'api' | 'notice' | 'load' | 'stream' | 'http' | 'uncaught' | 'overflow'
+export type ErrorRange = '7d' | '30d' | '90d'
+
+export interface ErrorGroupFilter {
+  range: ErrorRange
+  source?: ErrorSource
+  includeNotice: boolean
+  release?: string
+  sort: 'recent' | 'count'
+}
+
+export interface ErrorGroupSummary {
+  id: string
+  source: ErrorSource
+  kind: ErrorKind
+  message: string
+  route: string | null
+  count: number
+  people: number
+  anonymous: boolean
+  firstSeenAt: string
+  lastSeenAt: string
+  lastRelease: string | null
+}
+
+export interface ErrorSample {
+  occurredAt: string
+  userId: string | null
+  userName: string | null
+  route: string | null
+  client: string | null
+  release: string | null
+  traceId: string | null
+  runId: string | null
+  repeatCount: number
+}
+
+export interface ErrorGroupDetail extends ErrorGroupSummary {
+  totalCount: number
+  stack: string | null
+  stackResolved: boolean
+  samples: ErrorSample[]
+}
+
+export interface RunProblemSummary {
+  failed: number
+  timedOut: number
+  cancelled: number
+  emptyAnswer: number
+  totalRuns: number
+  reasons: Array<{ code: string; label: string; runs: number; people: number; lastAt: string }>
+  tools: Array<{ tool: string; failed: number; denied: number; topReason: string }>
+}
+
+export interface ErrorLookupResult {
+  query: string
+  kind: 'trace' | 'run' | 'unknown'
+  serverFailures: Array<ErrorSample & { groupId: string; message: string }>
+  clientReports: Array<ErrorSample & { groupId: string; message: string; source: ErrorSource }>
+  runs: Array<{ runId: string; status: string; errorCode: string | null; agentName: string | null; requestedBy: string | null; createdAt: string }>
+}
+
+/** 运营概览的使用情况（OBS-S2），与 Admin OpenAPI 的 usage-analytics 接口对应。 */
+export type UsageRange = '7d' | '30d' | '90d'
+export type UsageEntry = 'personal' | 'project' | 'automation' | 'routine'
+
+export interface UsageOverview {
+  range: UsageRange
+  from: string
+  to: string
+  totals: {
+    employees: number
+    activeEmployees: number
+    averageDailyActive: number
+    newConversations: number
+    runs: number
+    succeededRuns: number
+    finishedRuns: number
+    tokens: number
+    dingtalkEmployees: number
+  }
+  daily: Array<{ day: string; activeEmployees: number; runs: number }>
+  agents: Array<{ name: string; runs: number; people: number }>
+  pages: Array<{ page: string; people: number; views: number }>
+  entries: Array<{ entry: UsageEntry; runs: number }>
+  failures: Array<{ code: string; runs: number }>
+  departments: Array<{ name: string; employees: number; activeEmployees: number }>
+  departmentOptions: string[]
+}
+
+export interface UsagePerson {
+  userId: string
+  name: string
+  department: string
+  lastActiveAt: string | null
+  activeDays: number
+  conversations: number
+  runs: number
+  succeededRuns: number
+  finishedRuns: number
+  tokens: number
+  topAgent: string | null
+  topPage: string | null
+}
+
+export interface UsageIdlePerson {
+  userId: string
+  name: string
+  department: string
+  createdAt: string
+  lastActiveAt: string | null
+}
+
+export interface UsagePersonDetail extends UsagePerson {
+  daily: Array<{ day: string; runs: number }>
+  pages: Array<{ page: string; views: number }>
+  entries: Array<{ entry: UsageEntry; runs: number }>
 }

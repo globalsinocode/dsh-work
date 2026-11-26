@@ -111,6 +111,20 @@ export function toRuntimeModelRoute(route: ModelRouteSnapshot): NonNullable<Runt
  * 数据防护方案 D12 补充：联网搜索经网关透传 DeepSeek 官方的搜索接口，并使用默认路由 Provider 的密钥。
  * 默认路由不是 DeepSeek 官方时本轮不装配 web_search（就地移除），返回写入 Manifest 的不可用说明。
  */
+/**
+ * 读取网页方案 6.3：DSH 有代理配置时 `web_fetch` 对域名不做公网地址校验，本次不装配并记入 unavailable_tools。
+ * 原地从 toolNames 中移除。
+ */
+export function removeProxiedWebFetch(
+  toolNames: string[],
+  proxyConfigured: boolean,
+): NonNullable<RuntimeManifest['unavailable_tools']> {
+  const index = toolNames.indexOf('web_fetch')
+  if (index < 0 || !proxyConfigured) return []
+  toolNames.splice(index, 1)
+  return [{ tool: 'web_fetch', reason: 'proxy_configured' }]
+}
+
 export function removeUnsupportedWebSearch(
   toolNames: string[],
   route: Pick<ModelRouteSnapshot, 'baseUrl'>,

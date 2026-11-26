@@ -5,7 +5,8 @@ import { unavailableSkillTools } from '../runtime/builtin-tools.ts'
 import { redactSensitiveText } from '../../security/safe-observability.ts'
 import { authorizationDenied } from '../../domain/authorization-errors.ts'
 import { installedSkillReferences, type KnownBuiltinSkill } from '../../domain/builtin-skill-ref.ts'
-import { requirePlatformAdminActor } from './platform-admin-actor.ts'
+import { loadLocalAdminPermissions, requireAdminAccessActor, requireAdminModuleActor } from './admin-actor.ts'
+import { adminModuleForPurpose, type AdminLevel, type AdminModule } from '../../domain/admin-permissions.ts'
 import { resolveAudienceCeiling, type AudienceCeiling } from './agent-audience-ceiling.ts'
 import type { RuntimeManifest } from '../runtime/runtime-types.ts'
 import { invalidRequest, notFound } from '../../domain/request-errors.ts'
@@ -64,17 +65,6 @@ export interface AgentRoutineAuthorizationInput {
   additionalSkillReferences?: string[]
 }
 
-/**
- * 后台主体校验所需的目录绑定（AG-03）：AI Hub 身份按
- * `identity_directory_sync_state` 的 last_succeeded_at 判断目录新鲜度，
- * 超过 maxSyncAgeMs 即 fail-closed。null 表示目录不可用，仅独立账号可继续。
- */
-export interface AutomationDirectoryBinding {
-  applicationId: string
-  environment: string
-  maxSyncAgeMs: number
-}
-
 export interface SessionAuthorizationContext {
   roleIds: string[]
   dataScopes: string[]
@@ -126,21 +116,18 @@ export class PostgresAuthorizationService {
    * re-run full authorization on every batch.
    */
   private readonly teamReadAccessCache = new Map<string, { revision: number; authFingerprint: string; checkedAt: number }>()
-  private readonly automationDirectory: AutomationDirectoryBinding | null
   private readonly knownBuiltinSkill?: KnownBuiltinSkill
 
   constructor(
     database: DatabaseClient,
     options: {
       streamAccessTtlMs?: number
-      automationDirectory?: AutomationDirectoryBinding | null
       /** 平台内置 Skill 注册表；执行前复核只对其中登记的内置 Skill 跳过 Skill 授权。 */
       knownBuiltinSkill?: KnownBuiltinSkill
     } = {},
   ) {
     this.database = database
     this.streamAccessTtlMs = options.streamAccessTtlMs ?? 10_000
-    this.automationDirectory = options.automationDirectory ?? null
     this.knownBuiltinSkill = options.knownBuiltinSkill
   }
 
@@ -442,42 +429,12 @@ export class PostgresAuthorizationService {
   }
 
   /**
-   * 后台主体校验（AG-03）：自动任务触发时重查「本人账号当前仍有效」。
-   *
-   * 按持久身份来源决定是否复核目录，而不是按当前启动模式。
-   * AI Hub 用户在目录未配置、从未同步或超出信任窗口时 fail-closed；
-   * 独立账号不依赖外部目录。两者均须通过 active + 租户 + 当前角色检查。
+   * 后台主体校验（AG-03）：自动任务触发时重查「本人账号当前仍有效」——active + 租户 + 当前角色。
    *
    * 不逐次写审计——本方法按扫描周期高频调用，失败证据由调用方落在
    * automation_executions 的 reason 字段。
    */
   async resolveAutomationSubject(userId: string): Promise<IdentityRow> {
-    const [user] = await this.database<{ identityProvider: 'local' | 'ai-hub' }[]>`
-      select identity_provider as "identityProvider" from users
-       where tenant_id = ${tenantId} and id = ${userId}
-    `
-    if (!user) throw authorizationDenied('当前用户不存在')
-    if (user.identityProvider === 'ai-hub') {
-      if (!this.automationDirectory) {
-        throw authorizationDenied('AI Hub 员工目录不可用，该身份的自动任务暂停触发')
-      }
-      const [state] = await this.database<{ lastSucceededAt: string | null }[]>`
-        select last_succeeded_at as "lastSucceededAt"
-          from identity_directory_sync_state
-         where application_id = ${this.automationDirectory.applicationId}
-           and environment = ${this.automationDirectory.environment}
-      `
-      const lastSucceededAt = state?.lastSucceededAt
-        ? new Date(state.lastSucceededAt).getTime()
-        : null
-      if (
-        lastSucceededAt === null
-        || !Number.isFinite(lastSucceededAt)
-        || Date.now() - lastSucceededAt > this.automationDirectory.maxSyncAgeMs
-      ) {
-        throw authorizationDenied('员工目录同步状态不可用或已过期，自动任务暂停触发')
-      }
-    }
     return this.requireIdentity(userId)
   }
 
@@ -792,28 +749,30 @@ export class PostgresAuthorizationService {
     return row?.type ?? null
   }
 
-  async requirePlatformAdmin(userId: string) {
-    return requirePlatformAdminActor(this.database, userId)
+  /** 服务层模块权限复核（功能规则第 13 节），只认本地授予的角色。 */
+  async requireAdminModule(userId: string, module: AdminModule, level: AdminLevel) {
+    return requireAdminModuleActor(this.database, userId, module, level)
   }
 
-  async requireAdminReader(userId: string) {
-    const [row] = await this.database<{ id: string; displayName: string; department: string }[]>`
-      select u.id, u.display_name as "displayName",
-             coalesce(u.department_id, '未分配部门') as department
-        from users u
-       where u.tenant_id = ${tenantId} and u.id = ${userId}
-         and u.status = 'active'
-         and exists (
-           select 1 from user_roles ur
-           join roles r on r.tenant_id = ur.tenant_id and r.id = ur.role_id
-            where ur.tenant_id = u.tenant_id and ur.user_id = u.id
-              and ur.source_key = 'local' and r.status = 'active'
-              and (ur.valid_until is null or ur.valid_until > now())
-              and (r.permissions ? 'admin:*' or r.permissions ? 'admin:write' or r.permissions ? 'admin:read')
-         )
-    `
-    if (!row) throw authorizationDenied(`操作人不存在、已停用或没有管理读取权限：${userId}`)
-    return row
+  /** 能使用管理端模块功能或管理助手（持有任一模块管理权限）。 */
+  async requireAdminAccess(userId: string) {
+    return requireAdminAccessActor(this.database, userId)
+  }
+
+  /** 本地授予的权限码，供按模块过滤读取结果（例如管理助手的状态查询）。 */
+  async localAdminPermissions(userId: string) {
+    return loadLocalAdminPermissions(this.database, userId)
+  }
+
+  /**
+   * 管理端 Run 的用途对应的权限（功能规则第 13 节）：`admin-assistant` 只需能使用管理助手；
+   * 专用 Run 需要所属模块的修改权限。未知用途拒绝。
+   */
+  async requireAdminRunPurpose(userId: string, purpose: string) {
+    if (purpose === 'admin-assistant') return this.requireAdminAccess(userId)
+    const module = adminModuleForPurpose(purpose)
+    if (!module) throw authorizationDenied(`未登记权限归属的管理 Run 用途：${purpose}`)
+    return this.requireAdminModule(userId, module, 'write')
   }
 
   /**

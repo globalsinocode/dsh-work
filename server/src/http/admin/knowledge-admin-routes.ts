@@ -5,12 +5,12 @@ const basePath = '/api/admin/v1/knowledge'
 
 type KnowledgeAdminStore = Pick<
   PostgresKnowledgeAdminService,
-  'overview' | 'updateConnection' | 'testConnection' | 'listBases' | 'departments'
+  'overview' | 'updateConnection' | 'testConnection' | 'verifyEmbeddingModel' | 'listBases' | 'departments'
   | 'createBase' | 'updateOwner' | 'addGrant' | 'revokeGrant' | 'deleteBase' | 'restoreBase'
 >
 
 /**
- * 管理端“企业知识库”（weknora-knowledge-plan 第 9 节，WK-S3）。读取需要管理读权限，写入由服务层再按平台管理员
+ * 管理端“企业知识库”（功能规则第 11 节，WK-S3）。读取需要管理读权限，写入由服务层再按平台管理员
  * 校验。API Key 只写不读：读取接口只返回末四位与到期时间。
  */
 export function registerKnowledgeAdminRoutes(
@@ -44,6 +44,16 @@ export function registerKnowledgeAdminRoutes(
     }))
   })
 
+  router.post(`${basePath}/connection/verify-embedding-model`, async (request, context) => {
+    const body = await readJsonBody<Record<string, unknown>>(request)
+    if (typeof body.embeddingModelId !== 'string') throw routeValidationFailed('embeddingModelId 必须为字符串')
+    return ok(await knowledge.verifyEmbeddingModel(actor(context), {
+      embeddingModelId: body.embeddingModelId,
+      ...(typeof body.baseUrl === 'string' && body.baseUrl ? { baseUrl: body.baseUrl } : {}),
+      ...(typeof body.apiKey === 'string' && body.apiKey ? { apiKey: body.apiKey } : {}),
+    }))
+  })
+
   router.get(`${basePath}/bases`, async () => ok(await knowledge.listBases()))
 
   router.get(`${basePath}/departments`, async () => ok(await knowledge.departments()))
@@ -67,7 +77,7 @@ export function registerKnowledgeAdminRoutes(
   router.delete(`${basePath}/bases/:knowledgeBaseId`, async (_request, context) =>
     ok(await knowledge.deleteBase(actor(context), context.params['knowledgeBaseId'] ?? '')))
 
-  // 优化方案 O9：恢复“原连接已更换”的知识库，服务层先确认当前连接中存在该知识库。
+  // 功能规则第 11 节：恢复“原连接已更换”的知识库，服务层先确认当前连接中存在该知识库。
   router.post(`${basePath}/bases/:knowledgeBaseId/restore`, async (_request, context) =>
     ok(await knowledge.restoreBase(actor(context), context.params['knowledgeBaseId'] ?? '')))
 

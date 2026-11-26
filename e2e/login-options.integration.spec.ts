@@ -10,52 +10,44 @@ async function login(page: Page, username = 'browser.admin@example.invalid', pas
   await expect(page).toHaveURL(`${adminUrl}/identity`)
 }
 
-test('LOGIN-OPTIONS-P1 source column distinguishes independent and AI Hub accounts without binding controls', async ({ page }, testInfo) => {
+test('LOGIN-OPTIONS-P1 employee list shows login accounts and profile email without account sources or binding controls', async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 1600, height: 1000 })
   await login(page)
   const panel = page.getByRole('tabpanel', { name: '员工授权', exact: true })
   await expect(page.getByRole('navigation', { name: '管理后台主导航' })).not.toContainText('登录设置')
-  await expect(panel.getByText('来源', { exact: true })).toBeVisible()
+  await expect(panel.getByRole('columnheader', { name: '来源', exact: true })).toHaveCount(0)
+  await expect(panel.getByText('AI Hub', { exact: true })).toHaveCount(0)
   const local = panel.getByRole('row').filter({ hasText: 'browser.admin@example.invalid' })
-  const upstream = panel.getByRole('row').filter({ hasText: 'hub.employee@example.invalid' })
+  const staff = panel.getByRole('row').filter({ hasText: 'staff.employee@example.invalid' })
   await expect(panel.getByRole('columnheader', { name: '登录账号', exact: true })).toBeVisible()
-  await expect(upstream.getByText('profile.employee@example.invalid', { exact: true })).toBeVisible()
-  await expect(upstream.getByText('暂无访问记录', { exact: true })).toBeVisible()
+  await expect(staff.getByText('profile.employee@example.invalid', { exact: true })).toBeVisible()
+  await expect(staff.getByText('暂无访问记录', { exact: true })).toBeVisible()
   await expect(local.getByText('未提供邮箱', { exact: true })).toBeVisible()
   await expect(local.getByText('1 个活动会话', { exact: true })).toBeVisible()
-  await expect(local.getByText('独立账号', { exact: true })).toBeVisible()
-  await expect(upstream.getByText('AI Hub', { exact: true })).toBeVisible()
-  await page.screenshot({ path: testInfo.outputPath('account-sources.png'), fullPage: true, animations: 'disabled' })
-  await upstream.getByRole('button', { name: '配置', exact: true }).click()
+  await page.screenshot({ path: testInfo.outputPath('account-list.png'), fullPage: true, animations: 'disabled' })
+  await staff.getByRole('button', { name: '配置', exact: true }).click()
   const drawer = page.getByRole('dialog', { name: '员工授权配置', exact: true })
-  await expect(drawer.getByRole('row', { name: '登录账号 hub.employee@example.invalid', exact: true })).toBeVisible()
-  await expect(drawer.getByRole('row', { name: 'AI Hub 用户标识 fixture-upstream-admin', exact: true })).toBeVisible()
-  await expect(drawer.getByRole('row').filter({ hasText: '目录同步时间' })).not.toContainText('暂无同步记录')
-  await expect(drawer.getByText('AI Hub 账号，登录凭据和账号启停由 AI Hub 管理。', { exact: true })).toBeVisible()
-  await expect(drawer.getByRole('button', { name: /开通独立登录|重置密码|停用账号|启用账号/ })).toHaveCount(0)
-  await expect(drawer.getByRole('combobox', { name: '选择要分配的角色' })).toBeVisible()
-  await drawer.getByRole('button', { name: 'Close this dialog' }).click()
-  const reader = panel.getByRole('row').filter({ hasText: 'browser.reader@example.invalid' })
-  await reader.getByRole('button', { name: '配置', exact: true }).click()
+  await expect(drawer.getByRole('row', { name: '登录账号 staff.employee@example.invalid', exact: true })).toBeVisible()
+  await expect(drawer.getByRole('row').filter({ hasText: '账号来源' })).toHaveCount(0)
   await expect(drawer.getByRole('button', { name: '重置密码', exact: true })).toBeVisible()
   await expect(drawer.getByRole('button', { name: '停用账号', exact: true })).toBeVisible()
+  await expect(drawer.getByRole('combobox', { name: '选择要分配的角色' })).toBeVisible()
   await drawer.getByRole('button', { name: 'Close this dialog' }).click()
   for (const method of ['GET', 'PATCH']) {
     const response = await page.request.fetch(`${adminUrl}/api/admin/v1/identity/login-settings`, { method, headers: { Origin: adminUrl } })
     expect(response.status()).toBe(404)
   }
   const users = await (await page.request.get(`${adminUrl}/api/admin/v1/identity/users`)).json()
-  const userId = users.data.items.find((user: { externalUserId: string }) => user.externalUserId === 'fixture-upstream-admin').id
+  const userId = users.data.items.find((user: { loginAccount: string }) => user.loginAccount === 'staff.employee@example.invalid').id
   const binding = await page.request.post(`${adminUrl}/api/admin/v1/identity/users/${userId}/local-account`, { headers: { Origin: adminUrl }, data: { username: 'unwanted-binding', password: 'fixture-only forbidden password' } })
   expect(binding.status()).toBe(404)
 })
 
-test('LOGIN-OPTIONS-P1 read-only administrators can see account sources without editing credentials', async ({ page }) => {
+test('LOGIN-OPTIONS-P1 read-only administrators can see login accounts without editing credentials', async ({ page }) => {
   await login(page, 'browser.reader@example.invalid', 'Reader123456')
   const panel = page.getByRole('tabpanel', { name: '员工授权', exact: true })
   const local = panel.getByRole('row').filter({ hasText: 'browser.admin@example.invalid' })
-  await expect(local.getByText('独立账号', { exact: true })).toBeVisible()
-  await expect(panel.getByRole('row').filter({ hasText: 'hub.employee@example.invalid' }).getByText('AI Hub', { exact: true })).toBeVisible()
+  await expect(panel.getByRole('row').filter({ hasText: 'staff.employee@example.invalid' })).toBeVisible()
   await expect(page.getByRole('button', { name: '新建账号', exact: true })).toHaveCount(0)
   await local.getByRole('button', { name: '查看', exact: true }).click()
   await expect(page.getByRole('dialog', { name: '员工授权配置' }).getByRole('button', { name: /重置密码|开通独立登录|停用账号/ })).toHaveCount(0)
@@ -66,10 +58,10 @@ test('LOGIN-OPTIONS-P1 login accounts can be searched independently from profile
   await login(page)
   const panel = page.getByRole('tabpanel', { name: '员工授权', exact: true })
   const search = page.getByRole('textbox', { name: '搜索员工', exact: true })
-  await search.fill('hub.employee')
+  await search.fill('staff.employee')
   await panel.getByRole('button', { name: '查询', exact: true }).click()
   await expect(panel.getByText('第 1 页，共 1 名员工', { exact: true })).toBeVisible()
-  await expect(panel.getByText('hub.employee@example.invalid', { exact: true })).toBeVisible()
+  await expect(panel.getByText('staff.employee@example.invalid', { exact: true })).toBeVisible()
   await expect(panel.getByText('profile.employee@example.invalid', { exact: true })).toBeVisible()
   await expect(panel.getByText('browser.admin@example.invalid', { exact: true })).toHaveCount(0)
   await search.fill('no-such-login-account')
@@ -79,7 +71,7 @@ test('LOGIN-OPTIONS-P1 login accounts can be searched independently from profile
   await search.fill('browser.reader@example.invalid')
   await search.press('Enter')
   await expect(panel.getByText('browser.reader@example.invalid', { exact: true })).toBeVisible()
-  await expect(panel.getByText('hub.employee@example.invalid', { exact: true })).toHaveCount(0)
+  await expect(panel.getByText('staff.employee@example.invalid', { exact: true })).toHaveCount(0)
   await search.fill('')
   await search.press('Enter')
   await expect(panel.getByText('第 1 页，共 3 名员工', { exact: true })).toBeVisible()
@@ -88,30 +80,28 @@ test('LOGIN-OPTIONS-P1 login accounts can be searched independently from profile
 test('LOGIN-OPTIONS-P1 account details and fixed row actions remain readable at supported narrow desktop width', async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 1120, height: 900 })
   await login(page)
-  const upstream = page.getByRole('tabpanel', { name: '员工授权', exact: true }).getByRole('row').filter({ hasText: 'hub.employee@example.invalid' })
-  await expect(upstream.getByRole('button', { name: '配置', exact: true })).toBeInViewport()
-  await expect(upstream.getByText('hub.employee@example.invalid', { exact: true })).toBeInViewport()
-  await upstream.getByRole('button', { name: '配置', exact: true }).click()
+  const staff = page.getByRole('tabpanel', { name: '员工授权', exact: true }).getByRole('row').filter({ hasText: 'staff.employee@example.invalid' })
+  await expect(staff.getByRole('button', { name: '配置', exact: true })).toBeInViewport()
+  await expect(staff.getByText('staff.employee@example.invalid', { exact: true })).toBeInViewport()
+  await staff.getByRole('button', { name: '配置', exact: true }).click()
   const drawer = page.getByRole('dialog', { name: '员工授权配置', exact: true })
-  await expect(drawer.getByText('hub.employee@example.invalid', { exact: true })).toBeInViewport()
+  await expect(drawer.getByRole('row', { name: '登录账号 staff.employee@example.invalid', exact: true })).toBeInViewport()
   await page.screenshot({ path: testInfo.outputPath('account-details-narrow.png'), fullPage: true, animations: 'disabled' })
 })
 
 for (const portal of [{ audience: 'admin', url: adminUrl }, { audience: 'workbench', url: workbenchUrl }]) {
-  test(`LOGIN-OPTIONS-P1 ${portal.audience} automatically exposes configured AI Hub and recovers when unavailable`, async ({ page }) => {
+  test(`LOGIN-OPTIONS-P1 ${portal.audience} offers only password login and no AI Hub entry`, async ({ page }) => {
     const configuration = await (await page.request.get(`${portal.url}/auth/${portal.audience}/configuration`)).json()
-    expect(configuration).toMatchObject({ localEnabled: true, aiHubEnabled: true })
+    expect(configuration).toMatchObject({ mode: 'local', localEnabled: true })
+    expect(configuration).not.toHaveProperty('aiHubEnabled')
     await page.goto(`${portal.url}/login?return_to=%2Fsettings`)
     await expect(page.getByLabel('登录账号', { exact: true })).toBeVisible()
-    await page.getByRole('button', { name: '使用 AI Hub 账号登录', exact: true }).click()
-    await expect(page.getByRole('alert')).toContainText('AI Hub 暂不可用')
-    await expect(page.getByLabel('登录账号', { exact: true })).toBeVisible()
-    expect(new URL(page.url()).searchParams.get('return_to')).toBe(`${portal.url}/settings`)
-    expect(new URL(page.url()).pathname).toBe('/login')
+    await expect(page.getByRole('button', { name: /AI Hub/ })).toHaveCount(0)
+    expect((await page.request.get(`${portal.url}/auth/${portal.audience}/oidc/login`, { maxRedirects: 0 })).status()).toBe(404)
   })
 }
 
-test('LOGIN-OPTIONS-P1 required fields and duplicate local or AI Hub login accounts are explained in the form', async ({ page }, testInfo) => {
+test('LOGIN-OPTIONS-P1 required fields and duplicate login accounts are explained in the form', async ({ page }, testInfo) => {
   await login(page)
   await page.getByRole('button', { name: '新建账号', exact: true }).click()
   const form = page.getByRole('dialog', { name: '新建账号', exact: true })
@@ -123,7 +113,7 @@ test('LOGIN-OPTIONS-P1 required fields and duplicate local or AI Hub login accou
   for (const label of ['登录账号', '姓名', '初始密码']) {
     await expect(form.getByLabel(label, { exact: true })).toHaveAttribute('required', '')
   }
-  // 配置了 AI Hub 时组织架构照常可用（ORG-04）：部门从部门树选择、可不选，不再有自由填写的部门。
+  // 部门从部门树选择、可不选，不再有自由填写的部门。
   await expect(form.getByText('部门', { exact: true })).toBeVisible()
   await expect(form.getByText('选中的部门即为该员工的主部门；之后可在“组织架构”中调整。')).toBeVisible()
   await expect(form.getByLabel('邮箱', { exact: true })).not.toHaveAttribute('required')
@@ -139,7 +129,7 @@ test('LOGIN-OPTIONS-P1 required fields and duplicate local or AI Hub login accou
     const nameLabel = await form.getByText('姓名', { exact: true }).boundingBox()
     return errorBox && nameLabel ? nameLabel.y - errorBox.y - errorBox.height : 0
   }).toBeGreaterThan(0)
-  for (const existing of ['BROWSER.ADMIN@EXAMPLE.INVALID', 'HUB.EMPLOYEE@EXAMPLE.INVALID']) {
+  for (const existing of ['BROWSER.ADMIN@EXAMPLE.INVALID', 'STAFF.EMPLOYEE@EXAMPLE.INVALID']) {
     await account.fill(existing)
     await account.press('Tab')
     await expect(form.getByText('登录账号已存在，请使用其他手机号或邮箱', { exact: true })).toBeVisible()
@@ -156,7 +146,7 @@ test('LOGIN-OPTIONS-P1 required fields and duplicate local or AI Hub login accou
   await expect(form.getByText('账号检查暂不可用，请重试', { exact: true })).toBeVisible()
   await expect(form.getByLabel('姓名', { exact: true })).toHaveValue('重复账号验收员工')
   await page.unroute('**/api/admin/v1/identity/login-account/check')
-  await account.fill('hub.employee@example.invalid')
+  await account.fill('staff.employee@example.invalid')
   await account.press('Tab')
   await expect(form.getByText('登录账号已存在，请使用其他手机号或邮箱', { exact: true })).toBeVisible()
   expect(createRequests).toEqual([])

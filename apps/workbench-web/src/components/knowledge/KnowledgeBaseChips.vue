@@ -3,7 +3,7 @@ import { Close, Notebook } from '@element-plus/icons-vue'
 
 import type { SessionKnowledgeBase } from '@/types/knowledge'
 
-/** 输入框上方“本对话检索”的知识库标签（weknora-knowledge-plan 5.7）；已不可用的标出原因，仍可移除。 */
+/** 输入框上方“本对话检索”的知识库标签（功能规则第 11 节）；已不可用的标出原因，仍可移除。 */
 defineProps<{ items: SessionKnowledgeBase[] }>()
 const emit = defineEmits<{ remove: [id: string] }>()
 </script>

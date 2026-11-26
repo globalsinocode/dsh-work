@@ -1,5 +1,5 @@
 // P1 fixture: real application and password authentication, disposable database,
-// synthetic accounts, optional unreachable AI Hub configuration, no real provider or DSH process.
+// synthetic accounts, no real provider or DSH process.
 import { spawn, type ChildProcess } from 'node:child_process'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -9,7 +9,6 @@ import { createThrowawayDatabase } from '../../server/src/infrastructure/postgre
 import { loadIdentityConfiguration } from '../../server/src/modules/identity/config.ts'
 import { LocalAuthService } from '../../server/src/modules/identity/local-auth-service.ts'
 import { IdentityAdministrationService } from '../../server/src/modules/identity/administration-service.ts'
-import { IdentitySessionRepository } from '../../server/src/modules/identity/session-repository.ts'
 
 const database = await createThrowawayDatabase({ namePrefix: 'dsh_local_auth_browser' })
 const dataRoot = await mkdtemp(join(tmpdir(), 'dsh-local-auth-browser-'))
@@ -27,14 +26,8 @@ const environment: NodeJS.ProcessEnv = {
   DSH_WORK_COOKIE_SECURE: 'false',
   DSH_RUNTIME_HOME: join(dataRoot, 'runtime-unavailable'),
 }
-const aiHubFixture = process.argv.includes('--ai-hub')
-if (aiHubFixture) Object.assign(environment, {
-  AI_HUB_PLATFORM_URL: 'http://localhost:9', AI_HUB_OIDC_ISSUER: 'http://localhost:9/fixture',
-  AI_HUB_APPLICATION_ID: 'login-options-fixture', AI_HUB_CLIENT_ID: 'login-options-fixture',
-  AI_HUB_CLIENT_SECRET: 'login-options-fixture-only-not-a-real-secret',
-  DSH_WORK_ADMIN_PORT: process.env.DSH_WORK_LOCAL_AUTH_ADMIN_PORT ?? '4680',
-  DSH_WORK_WORKBENCH_PORT: process.env.DSH_WORK_LOCAL_AUTH_WORKBENCH_PORT ?? '4674',
-})
+// `--accounts`：员工授权页验收用的额外账号（普通员工与只读管理员）。
+const accountFixture = process.argv.includes('--accounts')
 let child: ChildProcess | undefined
 let closing = false
 async function cleanup(code = 0) {
@@ -57,11 +50,10 @@ try {
   const admin = await authentication.bootstrap({
     username: 'browser.admin@example.invalid', name: '独立登录验收管理员', password: 'AdminPass123',
   })
-  if (aiHubFixture) {
-    const directory = new IdentitySessionRepository(database.client)
-    const administration = new IdentityAdministrationService(database.client, true)
-    const upstream = await directory.synchronizeIdentity({ externalUserId: 'fixture-upstream-admin', subject: 'hub.employee@example.invalid', displayName: '配置验收上游管理员', email: 'profile.employee@example.invalid', businessUser: true, status: 'ACTIVE', updatedAt: '2026-10-12T06:00:00Z' })
-    await administration.grantRole({ userId: upstream.userId, roleId: 'role-platform-admin', actorId: admin.userId })
+  if (accountFixture) {
+    const administration = new IdentityAdministrationService(database.client)
+    const staff = await authentication.createAccount({ username: 'staff.employee@example.invalid', name: '配置验收员工', email: 'profile.employee@example.invalid', password: 'Staff123456' }, admin.userId)
+    await administration.grantRole({ userId: staff.userId, roleId: 'role-employee', actorId: admin.userId })
     const reader = await authentication.createAccount({ username: 'browser.reader@example.invalid', name: '配置验收只读管理员', password: 'Reader123456' }, admin.userId)
     await administration.grantRole({ userId: reader.userId, roleId: 'role-auditor', actorId: admin.userId })
     await database.client`update local_user_credentials set must_change_password = false where user_id = ${reader.userId}`

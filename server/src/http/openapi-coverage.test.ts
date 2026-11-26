@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs'
 import test from 'node:test'
 
 import { Router } from './router.ts'
+import { decideAdminRouteAccess } from '../domain/admin-permissions.ts'
 
 // Every route main.ts registers must be documented in the OpenAPI files, and every documented
 // operation must exist. Paths are compared with parameter names erased (`:id` ≡ `{agentId}`).
@@ -76,4 +77,12 @@ test('every registered API route is documented in OpenAPI and every documented o
   assert.deepEqual([...auth].filter(route => !authRoutes.has(route)), [], 'operations in openapi-auth.json without a route')
   // The mobile H5 document is a subset of the workbench API.
   assert.deepEqual([...documented('mobile-h5')].filter(route => !code.workbench.has(route)), [], 'operations in openapi-mobile-h5.json without a route')
+})
+
+test('every registered admin-audience route has a permission owner (功能规则第 13 节：未登记路径默认拒绝)', async () => {
+  const unowned = (await applicationRoutes())
+    .filter(({ path }) => path.startsWith('/api/admin/v1/'))
+    .filter(({ method, path }) => !decideAdminRouteAccess(['admin:*'], path.replace(/:[A-Za-z_]\w*/g, 'x'), method).allowed)
+    .map(({ method, path }) => `${method} ${path}`)
+  assert.deepEqual(unowned, [])
 })

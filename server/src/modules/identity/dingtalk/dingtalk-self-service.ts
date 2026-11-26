@@ -31,7 +31,7 @@ export class PostgresDingTalkSelfBindingService implements DingTalkSelfBindingSt
   }
 
   async get(userId: string): Promise<DingTalkSelfBindingView> {
-    // AI Hub 账号不绑定钉钉。
+    // 只有独立账号绑定钉钉。
     const [local] = await this.database`
       select 1 from users where tenant_id = ${tenantId} and id = ${userId} and identity_provider = 'local'
     `

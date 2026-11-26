@@ -144,7 +144,7 @@ onMounted(refresh)
           <el-table-column label="操作" fixed="right" width="220">
             <template #default="{ row }">
               <el-button link :icon="View" @click="openDetail(row)">查看</el-button>
-              <template v-if="row.status === 'pending' && auth.canManage">
+              <template v-if="row.status === 'pending' && auth.canWrite('agent')">
                 <el-button link type="primary" @click="review(row, 'approved')">批准发布</el-button>
                 <el-button link type="danger" @click="review(row, 'rejected')">拒绝</el-button>
               </template>
@@ -170,7 +170,7 @@ onMounted(refresh)
       </template>
       <template #footer>
         <el-button @click="detailOpen = false">关闭</el-button>
-        <template v-if="selected?.status === 'pending' && auth.canManage">
+        <template v-if="selected?.status === 'pending' && auth.canWrite('agent')">
           <el-button type="danger" plain @click="review(selected, 'rejected')">拒绝</el-button>
           <el-button type="primary" @click="review(selected, 'approved')">批准并发布</el-button>
         </template>

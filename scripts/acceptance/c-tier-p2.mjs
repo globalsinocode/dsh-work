@@ -1,6 +1,21 @@
 #!/usr/bin/env node
-// C 档 P2 验收（执行隔离方案第 9 节）：只经员工端公开接口驱动真实 DSH，逐场景留证。
-// 不读写数据库，不代办 OIDC 登录；结论由验收人复核 evidence.json 后填写。
+// C 档 P2 验收（执行隔离方案第 9 节；2026-10-28 已在 Mac mini 通过）：只经员工端公开接口驱动真实 DSH，逐场景留证。
+// 不读写数据库，不代办登录；结论由验收人复核 evidence.json 后填写。
+//
+// 用法（在 Mac mini 部署目录运行）：
+//   1. 启动检查：server.stderr.log 中 `execution container toolchain:` 一行列出 bash、rg、soffice、pdftoppm、python3
+//      与 noto-cjk-sc；`curl http://127.0.0.1:4190/health` 中执行容器为 available 且没有 diskLow。
+//   2. 测试员工（只有 employee 角色）在浏览器登录员工端，把会话 Cookie（`<名>=<值>`）写入只有本人可读的文件：
+//      `install -m 0600 /dev/null "$HOME/c-tier-cookie.txt"` 后用编辑器写入；不要粘贴到对话或命令参数。
+//   3. NODE_EXTRA_CA_CERTS="$DWP_ROOT/certs/root-ca.crt" node "$DWP_ROOT/current/scripts/acceptance/c-tier-p2.mjs" \
+//        --base "https://$DWP_IP:4174" --environment mac-mini-production --cookie-file "$HOME/c-tier-cookie.txt" \
+//        --health-url http://127.0.0.1:4190/health --image "<DSH_WORK_EXECUTION_IMAGE 同一引用>" \
+//        --data-root "<DSH_WORK_DATA_ROOT>" --out "$DWP_ROOT/acceptance/c-tier-p2-$(date +%Y%m%d-%H%M)"
+//      --base 必须是员工端入口；--health-url 必须是回环 4190（fetch 禁止访问该端口，脚本用 node:http 读取）。
+//      可选：--python-skill <skillId>、--scenarios office-xlsx,office-revise、--timeout <秒>（默认 900）。
+//   4. 结束后 `rm "$HOME/c-tier-cookie.txt"` 并在员工端退出登录。
+//   退出码：0 无自动核对失败（仍需人工复核），1 有失败，2 参数或登录错误。验收人复核后在 evidence.json 填写
+//   reviewer、conclusion，把 status 改为 verified 或 rejected；结论写入发布说明或仓库外证据，不提交到仓库。
 import { execFileSync } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
 import { get as httpGet } from 'node:http'
@@ -125,7 +140,7 @@ class Client {
     }
   }
 
-  /** Local-auth rehearsal only: deployments sign in through AI Hub, so they pass --cookie-file. */
+  /** Signs in with a test account file; deployments may pass --cookie-file instead. */
   async login(file) {
     const { username, password } = JSON.parse(readFileSync(file, 'utf8'))
     const response = await fetch(`${this.base}/auth/workbench/login`, {

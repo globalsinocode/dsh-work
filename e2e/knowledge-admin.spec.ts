@@ -23,9 +23,9 @@ test('KB-ADM-P0: 企业知识库在独立分组中，列出全部知识库并标
   await expect(page.getByRole('row', { name: /旧版质量手册/ })).toContainText('已删除')
   await expect(page.getByRole('row', { name: /旧版质量手册/ })).toContainText('无可见部门')
   await expect(page.getByRole('row', { name: /销售话术库/ })).toContainText('需重建')
-  // 优化方案 O7：WeKnora 中被配置了摘要模型的知识库标出。
+  // 功能规则第 11 节：WeKnora 中被配置了摘要模型的知识库标出。
   await expect(page.getByRole('row', { name: /销售话术库/ })).toContainText('已配置摘要模型')
-  // 优化方案 O5：最近一次检索的重排序降级时页头提示。
+  // 功能规则第 11 节：最近一次检索的重排序降级时页头提示。
   await expect(page.getByText(/重排序模型不可用，已降级为不重排/).first()).toBeVisible()
   await page.getByRole('radio', { name: '需要处理' }).click({ force: true })
   await expect(rows).toHaveCount(2)
@@ -80,7 +80,7 @@ test('KB-ADM-P0: 连接配置只显示 Key 末四位，修改嵌入模型与停�
 
   await page.getByLabel('统一嵌入模型 ID').fill('bge-m3-v2')
   await expect(page.getByText(/现有 5 个知识库仍按原模型检索/)).toBeVisible()
-  // 优化方案 O8：填成模型名称时当场提示，保存前再确认一次。
+  // 功能规则第 11 节：填成模型名称时当场提示，保存前再确认一次。
   await expect(page.getByText('这看起来不是 WeKnora 的模型 ID（应为 UUID，不是模型名称）。')).toBeVisible()
   await page.getByRole('button', { name: '保存' }).click()
   const confirmModel = page.getByRole('dialog', { name: '确认保存连接配置' })
@@ -98,7 +98,30 @@ test('KB-ADM-P0: 连接配置只显示 Key 末四位，修改嵌入模型与停�
   await expect(health).toContainText('128 次')
 })
 
-test('KB-ADM-P0: 更换 WeKnora 地址后原有知识库标为原连接已更换，可逐个恢复（优化方案 O9）', async ({ page }) => {
+test('KB-ADM-06: 校验嵌入模型给出可用或解析失败的结果，不保存配置', async ({ page }) => {
+  await page.goto(`${adminUrl}/knowledge`)
+  await page.getByRole('tab', { name: '连接配置' }).click()
+  const verify = page.getByRole('button', { name: '校验嵌入模型' })
+  await page.getByLabel('统一嵌入模型 ID').fill('')
+  await expect(verify).toBeDisabled()
+
+  await page.getByLabel('统一嵌入模型 ID').fill('5d0f6c2a-7b1e-4c3d-9a8e-2f4b6d8c1a90')
+  await verify.click()
+  await expect(page.getByText('嵌入模型可用：已用它解析了一份测试文本。')).toBeVisible()
+
+  // 改了模型 ID：旧结果不再适用，随即清除。
+  await page.getByLabel('统一嵌入模型 ID').fill('bge-m3')
+  await expect(page.getByText('嵌入模型可用：已用它解析了一份测试文本。')).toHaveCount(0)
+  await verify.click()
+  await expect(page.getByText(/嵌入模型不可用：测试文本解析失败（model not found）。常见原因是填了模型名称而不是模型 ID。/)).toBeVisible()
+
+  // 校验不保存：重新打开页面仍是已保存的模型。
+  await page.reload()
+  await page.getByRole('tab', { name: '连接配置' }).click()
+  await expect(page.getByLabel('统一嵌入模型 ID')).toHaveValue('5d0f6c2a-7b1e-4c3d-9a8e-2f4b6d8c1a90')
+})
+
+test('KB-ADM-P0: 更换 WeKnora 地址后原有知识库标为原连接已更换，可逐个恢复（功能规则第 11 节）', async ({ page }) => {
   await page.goto(`${adminUrl}/knowledge`)
   await page.getByRole('tab', { name: '连接配置' }).click()
   await page.getByLabel('WeKnora 地址').fill('https://weknora-new.internal.example.com')

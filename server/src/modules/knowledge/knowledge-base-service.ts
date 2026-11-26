@@ -1,6 +1,6 @@
 import type { KnowledgeLevel } from './knowledge-access.ts'
 
-/** 员工端“知识库”的读写端口（weknora-knowledge-plan 第 8 节，WK-S2）。P0 冒烟服务提供内存实现。 */
+/** 员工端“知识库”的读写端口（功能规则第 11 节，WK-S2）。P0 冒烟服务提供内存实现。 */
 export interface KnowledgeStatusView {
   /** WeKnora 已配置、账号为本地身份且具备查看级别时为 true；为 false 时员工端不显示入口。 */
   enabled: boolean

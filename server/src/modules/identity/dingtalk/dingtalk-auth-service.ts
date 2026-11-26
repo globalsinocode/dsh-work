@@ -5,7 +5,7 @@ import type { DatabaseClient, DatabaseTransaction } from '../../../infrastructur
 import {
   assertAudienceAccess, IdentityAccessError, normalizeReturnTo, resolveRequestOrigin,
   serializeCookie, validateRequestOrigin,
-} from '../auth-service.ts'
+} from '../request-security.ts'
 import { LoginRateLimiter } from '../login-rate-limiter.ts'
 import { hashOpaque, randomOpaque } from '../secure-values.ts'
 import { IdentitySessionRepository } from '../session-repository.ts'

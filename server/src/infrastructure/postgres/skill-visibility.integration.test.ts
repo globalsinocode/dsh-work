@@ -146,7 +146,7 @@ test('存量 Skill 默认全员可见；可见范围只接受全员或非空的�
   await assert.rejects(restrict(skill.skillId, []), /非空的角色 ID 列表/)
   await assert.rejects(restrict(skill.skillId, ['role-not-exists']), /角色不存在或已停用/)
   await assert.rejects(skills.setVisibleRoles({ skillId: skill.skillId, roleIds: [SALES], reason: ' ', actor: ADMIN }), /调整原因/)
-  await assert.rejects(skills.setVisibleRoles({ skillId: skill.skillId, roleIds: [SALES], reason: '原因', actor: EMPLOYEE }), /不是平台管理员/)
+  await assert.rejects(skills.setVisibleRoles({ skillId: skill.skillId, roleIds: [SALES], reason: '原因', actor: EMPLOYEE }), /没有.*的修改权限/)
 
   const updated = await restrict(skill.skillId, [SALES, SALES])
   assert.deepEqual(updated.visibleRoleIds, [SALES])

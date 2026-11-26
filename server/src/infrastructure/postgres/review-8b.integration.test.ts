@@ -34,9 +34,9 @@ before(async () => {
 })
 after(async () => { await db?.dispose(); if (directory) await rm(directory, { recursive: true, force: true }) })
 
-async function seedSkill(name: string, python = false, dependencies: string[] = []) {
+async function seedSkill(name: string, python = false, dependencies: string[] = [], pythonEntries?: string[]) {
   const id = `skill-${name}`, versionId = `sv-${randomUUID()}`
-  const files = { 'SKILL.md': strToU8(`---\nname: ${name}\ndescription: A synthetic scenario fixture with no external business data.\n---\nReturn the deterministic fixture total and never access external services.\n`),
+  const files = { 'SKILL.md': strToU8(`---\nname: ${name}\ndescription: A synthetic scenario fixture with no external business data.\n${pythonEntries ? `python-entries: [${pythonEntries.join(', ')}]\n` : ''}---\nReturn the deterministic fixture total and never access external services.\n`),
     ...(python ? { 'scripts/calc.py': strToU8('print(12)\n'), 'scripts/other.py': strToU8('print(99)\n') } : {}) }
   const artifact = await store.put(parseSkillPackage(zipSync(files)))
   await db.client`insert into skills (id, tenant_id, key, name, owner_user_id, created_by, status)
@@ -56,9 +56,9 @@ async function seedSkill(name: string, python = false, dependencies: string[] = 
   return { id, versionId, reference: `${id}@0.1.0` }
 }
 
-async function fixture() {
+async function fixture(pythonEntries?: string[]) {
   const name = randomUUID().slice(0, 8)
-  const child = await seedSkill(`calc-${name}`, true)
+  const child = await seedSkill(`calc-${name}`, true, [], pythonEntries)
   const root = await seedSkill(`root-${name}`, false, [child.reference])
   // The callback below creates explicit SYNTHETIC evidence to test persistence and
   // publication. It never claims to run a real DSH model or Python container.
@@ -191,4 +191,12 @@ test('admin trial API forwards immutable scenarios and rejects malformed or unau
     server.closeAllConnections()
     await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()))
   }
+})
+
+test('a scenario may only require Python entries the Skill declares in python-entries', async () => {
+  const item = await fixture(['scripts/calc.py'])
+  assert.equal((await item.trial('numbers', true)).status, 'passed')
+  const undeclared = { ...item.scenario('other', true), requiredPythonEntries: [{ skill: item.child.reference, entry: 'scripts/other.py' }] }
+  await assert.rejects(item.skills.startSkillTest({ skillId: item.root.id, actor, scenario: undeclared }),
+    (error: Error & { code?: string }) => error.code === 'invalid_test_scenario' && /scripts\/other\.py 未在 Skill 的 python-entries 中登记/.test(error.message))
 })

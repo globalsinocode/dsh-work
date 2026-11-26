@@ -87,7 +87,7 @@ test('malicious content and database-injected traversal paths never reach storag
 })
 
 test('authorization denies non-admin changes and records blocked decisions without granting access', async () => {
-  await assert.rejects(authorization.requirePlatformAdmin('林岚'), /不是平台管理员/)
+  await assert.rejects(authorization.requireAdminModule('林岚', 'agent', 'write'), /没有Agent的修改权限/)
   await assert.rejects(
     authorization.authorizeRuntime({
       userId: 'U00008',

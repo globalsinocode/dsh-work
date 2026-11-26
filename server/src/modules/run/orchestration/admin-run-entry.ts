@@ -36,8 +36,7 @@ export class AdminRunEntry implements AdminRunLauncher {
   async startAdminRun(input: { userId: string; sessionId: string; prompt: string; idempotencyKey: string; source: string; purpose?: AdminRunPurpose; testSkill?: RuntimeSkillConfiguration; history?: RuntimeManifest['input']['conversation_history'] }) {
     assertPrompt(input.prompt)
     const purpose = input.testSkill ? 'admin-skill-test' : input.purpose ?? 'admin-skill-install'
-    if (purpose === 'admin-assistant') await this.deps.authorization?.requireAdminReader(input.userId)
-    else await this.deps.authorization?.requirePlatformAdmin(input.userId)
+    await this.deps.authorization?.requireAdminRunPurpose(input.userId, purpose)
     await this.deps.conversations.requireSession(input.sessionId, input.userId, 'admin')
     await this.deps.runtime.assertAvailable?.()
     const run = await this.deps.runs.createRun({ tenantId, sessionId: input.sessionId, requestedBy: input.userId, idempotencyKey: input.idempotencyKey })
@@ -109,8 +108,8 @@ export class AdminRunEntry implements AdminRunLauncher {
     if (!run || run.requestedBy !== userId) throw accessDenied('管理助手运行不存在或不可访问')
     const attempt = run.currentAttemptId ? await this.deps.runs.getAttempt(tenantId, run.currentAttemptId) : null
     const purpose = (attempt?.manifest as RuntimeManifest | undefined)?.purpose
-    if (purpose === 'admin-assistant') await this.deps.authorization?.requireAdminReader(userId)
-    else await this.deps.authorization?.requirePlatformAdmin(userId)
+    // 尚无 Attempt 时按重试的默认用途（Skill 安装）复核，与 retry 分支一致。
+    await this.deps.authorization?.requireAdminRunPurpose(userId, purpose ?? 'admin-skill-install')
     await this.deps.conversations.requireSession(run.sessionId!, userId, 'admin')
     return run
   }

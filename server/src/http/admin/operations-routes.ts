@@ -41,7 +41,6 @@ export function registerOperationsRoutes(
   router.get(`${basePath}/operations/runs/:runId`, async (_request, context) =>
     envelope('admin', await service.getRunOperations(context.params.runId ?? ''), 'postgres'))
   router.get(`${basePath}/health`, async () => envelope('admin', await service.getHealth(), 'postgres'))
-  router.get(`${basePath}/usage`, async () => envelope('admin', await service.getUsage(), 'postgres'))
   router.get(`${basePath}/platform-status`, async () => envelope('admin', await service.getPlatformStatus(), 'postgres'))
   // 1A-T7 授权来源对账清单（convergence §2 / plan 6.3）。仅在 postgres 适配器下注册。
   if (reconciliation) {

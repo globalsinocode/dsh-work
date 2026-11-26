@@ -481,17 +481,30 @@
     },
     "unavailable_tools": {
       "type": "array",
-      "description": "数据防护方案 D12 补充：本次未装配的平台工具及原因（默认路由不是 DeepSeek 官方时联网搜索不可用），运行说明告知模型。",
+      "description": "本次未装配的平台工具及原因，运行说明告知模型：默认路由不是 DeepSeek 官方时联网搜索不可用（数据防护方案 D12 补充）；DSH 有代理配置时读取网页不可用（读取网页方案 6.3）。",
       "minItems": 1,
       "maxItems": 8,
       "items": {
-        "type": "object",
-        "required": ["tool", "reason"],
-        "additionalProperties": false,
-        "properties": {
-          "tool": { "enum": ["web_search"] },
-          "reason": { "enum": ["model_route_unsupported"] }
-        }
+        "oneOf": [
+          {
+            "type": "object",
+            "required": ["tool", "reason"],
+            "additionalProperties": false,
+            "properties": {
+              "tool": { "const": "web_search" },
+              "reason": { "const": "model_route_unsupported" }
+            }
+          },
+          {
+            "type": "object",
+            "required": ["tool", "reason"],
+            "additionalProperties": false,
+            "properties": {
+              "tool": { "const": "web_fetch" },
+              "reason": { "const": "proxy_configured" }
+            }
+          }
+        ]
       }
     },
     "model_route": {

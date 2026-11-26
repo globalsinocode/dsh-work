@@ -1,18 +1,17 @@
 # Mac mini 部署手册
 
-更新时间：2026-11-05（新增第 14 节：钉钉移动端公网员工端入口）
+更新时间：2026-11-20（新增 12.3 节外部业务应用调用上下文，迁移 0131）；2026-11-16（删除 AI Hub 登录：第 5 节改为账号说明，首位管理员改由 `local-bootstrap.js` 初始化；新增 12.2 节升级步骤；删除已执行的模型路由升级步骤）
 
-本流程用于在**已经部署 AI Hub、已经安装 DSH 的同一台 Apple Silicon Mac mini** 上，
-首次部署 dsh-work。参考 AI Hub 的
-[Mac mini 镜像部署文档](https://github.com/tonycc/ai-hub/blob/main/docs/macmini-image-deployment.md)，
+本流程用于在**已经安装 DSH 的 Apple Silicon Mac mini** 上首次部署 dsh-work。
 所有 dsh-work 命令以本仓库现有部署脚本为准；本文统一维护首次安装、升级、恢复和地址变更。
+dsh-work 不依赖同机的其他服务；同一台机器若还运行其他应用，只需避开端口冲突、互不改动对方的目录与数据。
 
-目标顺序：确认现有环境 → 登记 AI Hub 应用 → 验证并下载 Release → 配置与预检 →
-部署指定版本 → 登录和备份验收 → 启用后续自动部署。
+目标顺序：确认现有环境 → 验证并下载 Release → 配置与预检 →
+部署指定版本 → 初始化管理员、登录和备份检查 → 启用后续自动部署。
 
 本文是操作手册，不代表已经在 Mac mini 上执行或验收。当前已确认的服务器访问基线是
 `deploy@192.168.1.99`，服务器报告的 DSH 为 `0.1.2-rc.1`、Commit
-`76fda729799fe9b3848dbe2c211d4b231032b81e`。目录、证书、OIDC 凭据和备份挂载仍须在
+`76fda729799fe9b3848dbe2c211d4b231032b81e`。目录、证书和备份挂载仍须在
 服务器上按本文核验，不能仅依据示例值认定已经满足条件。
 代码保留的 `0.1.1-rc.2` 本地开发兼容模式不适用于本流程，也不能作为服务器降级选项。
 
@@ -20,21 +19,18 @@
 
 | 组件 | 地址示例 | 本次操作 |
 | --- | --- | --- |
-| 已有 AI Hub 门户/API | `https://192.168.1.99` | 复用，只登记 dsh-work 应用及凭据 |
-| 已有 authentik | `https://192.168.1.99:8443` | 复用，不重装、不直接改蓝图 |
-| 已有 AI Hub PostgreSQL | `127.0.0.1:5433` | 不操作 |
 | 新增 dsh-work 员工端 | `https://192.168.1.99:4174/workbench` | Nginx 容器提供 HTTPS |
 | 新增 dsh-work 管理端 | `https://192.168.1.99:4180/overview` | 同一个 Nginx 容器提供 HTTPS |
 | 新增 dsh-work 后端 | `127.0.0.1:4190` | 宿主机 Node 模块化单体，由 launchd 管理 |
 | 新增 dsh-work PostgreSQL | `127.0.0.1:5434` | 独立 Compose 项目 `dsh-work` 和数据卷 |
 | 已有 DSH | 宿主机固定版本的独立安装目录 | 后端通过 stdio 启动；不随应用自动升级 |
 
-dsh-work 不是 AI Hub 的另一个容器，也不是纯镜像部署。其前后端及生产依赖由 GitHub
+dsh-work 不是纯镜像部署。其前后端及生产依赖由 GitHub
 构建为 Release 压缩包；Mac mini 不需要克隆或编译 dsh-work，但仍需保留已安装 DSH 的
 独立 Git checkout、依赖及构建产物。无需新增 Linux VM、K8s、微服务或生产 Self-hosted Runner。
 
-复用 AI Hub 已建立的离线根 CA。相同 IP 可以使用同一张服务器证书，在 dsh-work 中保存
-独立副本；不要重建 CA、修改 AI Hub 的 `runtime.env`，也不要复制它的数据库/OIDC/备份密钥。
+HTTPS 使用企业内网根 CA 签发的服务器证书（含 Mac mini IP 的 SAN）。dsh-work 保存证书的
+独立副本；CA 私钥不放到 Mac mini，也不要复制其他应用的数据库或备份密钥。
 
 ## 2. 准备非敏感参数
 
@@ -46,15 +42,15 @@ dsh-work 不是 AI Hub 的另一个容器，也不是纯镜像部署。其前后
 | 仓库 | `tonycc/dsh-work` | dsh-work 的公开 GitHub 仓库 |
 | Release Tag | `v2026.09.07-01` | 管理员批准的、已发布的不可变 Release，格式为 `vYYYY.MM.DD-NN` |
 | Mac mini IP | `192.168.1.99` | 当前部署主机的 RFC1918 私有保留地址 |
-| dsh-work 根目录 | `/Users/deploy/services/dsh-work` | 首次安装的新目录；不能是 AI Hub 或 DSH 目录 |
-| AI Hub 根目录 | `/Users/deploy/services/ai-hub` | 现有部署的真实目录，只读引用其证书 |
+| dsh-work 根目录 | `/Users/deploy/services/dsh-work` | 首次安装的新目录；不能是 DSH 或其他应用的目录 |
+| 证书来源目录 | `/Users/deploy/certs-staging` | 部署人员交接的 `server.crt`、`server.key`、`root-ca.crt` 所在目录，只读引用 |
 | DSH 安装目录 | `/Users/deploy/services/deepseek-harness` | 已安装且完成构建的独立 checkout |
-| DSH 配置目录 | `/Users/deploy/.dsh` | DSH 的独立配置目录（`DSH_HOME`），不是安装目录；模型路由生效后不再需要保存厂商密钥（见 12.2） |
+| DSH 配置目录 | `/Users/deploy/.dsh` | DSH 的独立配置目录（`DSH_HOME`），不是安装目录；不保存模型厂商密钥（由管理端录入，见 4.2） |
 | Node 可执行文件 | `/opt/homebrew/bin/node` | 满足预检要求的真实绝对路径 |
 | 异机备份目录 | `/Volumes/dsh-work-backups` | 已挂载、可写、启用加密和访问控制的 NAS/异机存储 |
 
 以下命令在 Mac mini 的一个持续 Bash 会话中**逐段执行**；每段检查成功后再继续，不能把
-整篇文档当作一段脚本运行。自动化 Agent 不得读取或回显密钥；需人工编辑配置、登记应用
+整篇文档当作一段脚本运行。自动化 Agent 不得读取或回显密钥；需人工编辑配置、初始化管理员
 或批准生产变更时，应交由有权限的人员在本地完成。
 
 从运维终端进入服务器：
@@ -78,8 +74,7 @@ DWP_TAG='v2026.09.07-01'
 DWP_VERSION="${DWP_TAG#v}"
 DWP_IP='192.168.1.99'
 DWP_ROOT='/Users/deploy/services/dsh-work'
-DWP_AIH_ROOT='/Users/deploy/services/ai-hub'
-DWP_CERT_SOURCE="${DWP_AIH_ROOT}/tls"
+DWP_CERT_SOURCE='/Users/deploy/certs-staging'
 DWP_RUNTIME_HOME='/Users/deploy/services/deepseek-harness'
 DWP_DSH_HOME='/Users/deploy/.dsh'
 DWP_NODE='/opt/homebrew/bin/node'
@@ -88,7 +83,7 @@ DWP_OFFHOST='/Volumes/dsh-work-backups'
 [[ "${DWP_REPOSITORY}" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]
 [[ "${DWP_TAG}" =~ ^v[0-9]{4}\.(0[1-9]|1[0-2])\.(0[1-9]|[12][0-9]|3[01])-[0-9]{2}$ ]]
 [[ "${DWP_ROOT}" == "/Users/$(id -un)/"* ]]
-[[ "${DWP_ROOT}" != "${DWP_AIH_ROOT}" && "${DWP_ROOT}" != "${DWP_RUNTIME_HOME}" ]]
+[[ "${DWP_ROOT}" != "${DWP_RUNTIME_HOME}" ]]
 [[ "${DWP_ROOT}" != *[[:space:]]* ]]
 ```
 
@@ -143,17 +138,17 @@ ifconfig | awk -v ip="${DWP_IP}" '
 df -h "/Users/$(id -un)"
 ```
 
-缺少工具时由运维补齐。AI Hub 已安装的 Docker Desktop 和 GitHub CLI 可以复用；dsh-work
+缺少工具时由运维补齐。已安装的 Docker Desktop 和 GitHub CLI 可以复用；dsh-work
 运行需要额外确认 Git、Node 和已构建 DSH，不需要为运行发布包再安装 pnpm。
 GitHub CLI 必须在这个服务账号下认证，具备读取 dsh-work 内容和来源证明的权限；不要把令牌
 粘贴到对话、命令参数或 `runtime.env`。
 
 服务器出站还需能访问 GitHub API、Release 资产/来源证明服务，以及 Compose 中固定
-PostgreSQL/Nginx 镜像所在的 Docker Hub。AI Hub 已能从 GHCR 拉取镜像，不代表 Docker Hub
+PostgreSQL/Nginx 镜像所在的 Docker Hub。能从 GHCR 拉取镜像不代表 Docker Hub
 也一定可达；网络受限时先由运维确认出站策略，不能改用未经验证的镜像来绕过。
 
 确认服务账号保持图形登录会话、Docker Desktop 登录后自动启动、Mac mini 不自动睡眠，且
-磁盘除 AI Hub 用量外仍有足够余量；脚本最低要求部署盘空闲 5 GiB，这不是生产容量规划值。
+磁盘除同机其他应用用量外仍有足够余量；脚本最低要求部署盘空闲 5 GiB，这不是生产容量规划值。
 防火墙仅向受信任内网新增放行 **4174、4180**；不要开放 4190、5434 或配置公网转发。启用钉钉移动端时，只按第 14 节为员工端增加经路径白名单的公网入口，管理端、4190 与 5434 仍不上公网。
 
 首次安装根目录应尚不存在；已有目录、服务或数据卷时停止本流程，先确认是旧部署还是失败
@@ -177,9 +172,9 @@ for DWP_PORT in 4174 4180 4190 5434; do
 done
 ```
 
-443、8443、5433 已被 AI Hub 使用是正常现象，不能为 dsh-work 停掉占用这些端口的容器。
+其他端口被同机其他应用占用是正常现象，不能为 dsh-work 停掉占用这些端口的容器。
 
-### 4.2 AI Hub、证书、备份和 DSH
+### 4.2 证书、备份和 DSH
 
 ```bash
 test -r "${DWP_CERT_SOURCE}/server.crt"
@@ -188,10 +183,8 @@ test -r "${DWP_CERT_SOURCE}/root-ca.crt"
 [[ ! -e "${DWP_CERT_SOURCE}/root-ca.key" ]]
 [[ ! -e "${DWP_CERT_SOURCE}/internal-ca.key" ]]
 
-curl --fail --silent --show-error --connect-timeout 10 --max-time 30 \
-  --cacert "${DWP_CERT_SOURCE}/root-ca.crt" "https://${DWP_IP}/health/ready"
-curl --fail --silent --show-error --connect-timeout 10 --max-time 30 \
-  --cacert "${DWP_CERT_SOURCE}/root-ca.crt" "https://${DWP_IP}:8443/-/health/ready/"
+openssl verify -CAfile "${DWP_CERT_SOURCE}/root-ca.crt" "${DWP_CERT_SOURCE}/server.crt"
+openssl x509 -in "${DWP_CERT_SOURCE}/server.crt" -noout -text | grep -F "IP Address:${DWP_IP}"
 
 [[ -d "${DWP_OFFHOST}" && ! -L "${DWP_OFFHOST}" && -w "${DWP_OFFHOST}" ]]
 df -h "${DWP_OFFHOST}"
@@ -205,68 +198,28 @@ test -d "${DWP_RUNTIME_HOME}/node_modules/tsx"
 test -d "${DWP_DSH_HOME}"
 ```
 
-AI Hub 必须健康，DSH tracked files 必须干净。当前 DSH 锁定版本为 `0.1.2-rc.1`、
+服务器证书须由该根 CA 签发并含 Mac mini IP；DSH tracked files 必须干净。当前 DSH 锁定版本为 `0.1.2-rc.1`、
 Commit 为 `76fda729799fe9b3848dbe2c211d4b231032b81e`；第 8 节会用目标发布包再次
 进行严格比对和真实 ACP 握手。“已经安装 DSH”不等于版本一定兼容；不一致时先停止并按
 [Runtime 交付基线](dsh-runtime-delivery.md)安排独立升级，不能在现有目录直接拉取最新版。
 模型厂商密钥不再放在 `DSH_HOME`：部署后由管理员在管理端“模型管理”为默认路由的 Provider 录入
-API Key（以 `DSH_CREDENTIAL_MASTER_KEY` 加密保存），模型请求经平台模型网关转发（见 12.2）。不要复制其他人员的
+API Key（以 `DSH_CREDENTIAL_MASTER_KEY` 加密保存），模型请求经平台模型网关转发；录入前所有 Agent 运行以 `MODEL_CREDENTIAL_INVALID` 失败。联网搜索只在默认路由的 Provider 为 DeepSeek 官方时可用。不要复制其他人员的
 整个 DSH 配置目录，也不能把仅通过握手的环境记录为业务验收通过。
 
-备份目录必须确实位于 NAS/另一台机器。可在 AI Hub 已有的异机挂载卷中准备 dsh-work
-独立子目录，但不能混用备份文件或回执。禁止用 `mkdir /Volumes/...` 创建本机空目录假装
+备份目录必须确实位于 NAS/另一台机器。可在已有的异机挂载卷中准备 dsh-work
+独立子目录，但不能与其他应用混用备份文件或回执。禁止用 `mkdir /Volumes/...` 创建本机空目录假装
 已挂载；预检还会拒绝与部署根目录在同一文件系统的路径。不同本地分区或 USB 盘也不等于异机。
 
-若服务账号不能读取 AI Hub 的证书，由管理员把三个证书文件安全交接到独立暂存目录，再
-修改 `DWP_CERT_SOURCE`；不要放宽整个 AI Hub 配置目录的权限。发现 CA 私钥留在服务器
+若服务账号不能读取证书来源目录，由管理员把三个证书文件安全交接到独立暂存目录，再
+修改 `DWP_CERT_SOURCE`；不要放宽其他应用配置目录的权限。发现 CA 私钥留在服务器
 时停止部署，按证书安全流程处理；不要复制它，也不要关闭 TLS 验证。
 
-## 5. 在现有 AI Hub 登记应用
+## 5. 账号与登录
 
-由有权限的人员登录现有 AI Hub 门户操作；不重新生成 AI Hub 配置、不直接修改 authentik。
-
-1. 确保员工目录中至少有一位状态为 `ACTIVE`、`business_user=true` 的业务员工。
-   `ai-hub-platform-admin`、`akadmin` 等平台/身份服务运维账号不能充当 dsh-work 首位业务管理员。
-2. 在“应用中心”创建一个 `dsh-work` 应用，选择业务负责人，能力使用 `API_CLIENT`，
-   应用状态设为启用。不要另建 `dsh-work-admin`。
-3. 创建 `production` 环境，**单独指定该环境的初始管理员**，填写下表。
-
-| AI Hub 环境字段 | 应填写的值 |
-| --- | --- |
-| 环境标识 | `production` |
-| 版本 | 目标 dsh-work Release 版本，如 `2026.09.07-01` |
-| 门户入口 | `https://192.168.1.99:4174/workbench` |
-| API 地址 | `https://192.168.1.99:4174/api` |
-| 健康检查 | `https://192.168.1.99:4174/health` |
-| OIDC 回调地址，第 1 行 | `https://192.168.1.99:4174/auth/workbench/callback` |
-| OIDC 回调地址，第 2 行 | `https://192.168.1.99:4180/auth/admin/callback` |
-| 初始管理员 | 准备首次登录 dsh-work 管理端的 ACTIVE 业务员工 |
-| 状态 | 启用（`ACTIVE`） |
-
-回调必须逐字一致，不加尾部 `/`，不用 `localhost`、4190 或旧版 AI Hub 的 8088/9443。
-AI Hub 访问登记的 API/健康地址也应走这套可信 HTTPS；不能以关闭证书验证解决可达性问题。
-
-环境凭据应包含以下 Scope：
-
-```text
-openid profile email offline_access ai_hub.identity platform.me.read
-platform.application.bootstrap platform.directory.read
-```
-
-在密钥管理中创建该 `production` 环境的凭据，将一次性显示的 Secret 直接保存到受控密码
-管理器和 Mac mini 的 dsh-work 配置文件。已有此环境且凭据有效时直接使用，不为重复执行
-安装流程而轮换；不复用 AI Hub 门户凭据或 `local` 环境凭据。
-
-记录实际的 Application ID、环境、Issuer、Client ID 和 Audience。当前 AI Hub 通常会为
-首版凭据生成 `dsh-work__production__v1` 这样的 Client ID，以及
-`https://<IP>:8443/application/o/ai-hub-dsh-work-production-v1/` 这样的 Issuer。
-**以凭据界面的实际输出为准**：不能照抄模板中的 `/application/o/dsh-work/`，也不能把
-`AI_HUB_OIDC_AUDIENCE` 固定写成应用标识 `dsh-work`；通常它应等于实际 Client ID。
-凭据版本号也不是 dsh-work 的发布版本号。
-
-负责人、登记人不自动获得应用权限。dsh-work 的角色和数据范围由自身管理；不要在 AI Hub
-登记 `dsh_work.*` 权限或启用无关能力。更完整的身份规则见
-[AI Hub 身份接入说明](ai-hub-sso-integration.md)。
+dsh-work 只使用自己的独立账号登录（员工端在钉钉客户端内另可免登，见第 14 节），部署不需要
+登记任何外部身份应用，`runtime.env` 也不需要身份平台凭据。首位平台管理员在部署成功后按
+第 9.2 节用 `local-bootstrap.js` 初始化，之后的员工账号都由管理员在“员工与权限”开通。
+账号规则见 [独立账号登录](local-authentication.md)。
 
 ## 6. 下载并验证指定 Release
 
@@ -327,7 +280,7 @@ openssl x509 -in "${DWP_ROOT}/certs/server.crt" -noout -checkend 2592000
 ```
 
 最后一条要求至少还有 30 天有效期；不足时先由运维工作站使用原根 CA 续签。首次安装并不
-需要创建新 CA。客户端若已信任 AI Hub 使用的同一根 CA，也不需要再次安装另一套根证书。
+需要创建新 CA。客户端若已信任该根 CA，也不需要再次安装另一套根证书。
 
 在 Mac mini 本地编辑 `runtime.env`，不要回显到 Agent 执行日志或聊天。保留模板中其他配置，
 逐项替换以下内容；表中“所选目录”均填写第 2 节的**实际值**，而不是 `DWP_*` 变量名。
@@ -344,7 +297,7 @@ openssl x509 -in "${DWP_ROOT}/certs/server.crt" -noout -checkend 2592000
 | `DSH_WORK_BIND_ADDRESSES` | 初次部署填同一个 LAN IP；后续多 IP 用无空格逗号分隔，第一项与兼容字段一致 |
 | `DSH_WORK_WORKBENCH_PORT`、`DSH_WORK_ADMIN_PORT` | `4174`、`4180` |
 | `DSH_WORK_POSTGRES_PORT` | `5434` |
-| `DSH_WORK_POSTGRES_DB`、`DSH_WORK_POSTGRES_USER` | 两者均为 `dsh_work`，与 AI Hub 独立 |
+| `DSH_WORK_POSTGRES_DB`、`DSH_WORK_POSTGRES_USER` | 两者均为 `dsh_work`，与同机其他应用的数据库独立 |
 | `DSH_WORK_POSTGRES_PASSWORD` | 新生成的独立随机密码，建议使用至少 32 随机字节的十六进制形式 |
 | `DSH_WORK_DATABASE_URL` | `postgres://dsh_work:<同一数据库密码>@127.0.0.1:5434/dsh_work` |
 | `DSH_WORK_DATA_ROOT` | `<dsh-work 根目录>/data`；`skills/` 保存不可变 Skill 文件夹，必须持久化并与数据库成组备份 |
@@ -355,24 +308,15 @@ openssl x509 -in "${DWP_ROOT}/certs/server.crt" -noout -checkend 2592000
 | `DSH_WORK_MODEL_GATEWAY_HOST`、`DSH_WORK_MODEL_GATEWAY_PORT` | 平台模型网关监听地址，保持 `127.0.0.1` 与 `0`（系统分配端口）；只供本机 DSH Worker 访问，不在 Nginx 中暴露。启动日志 `dsh-work model gateway listening on …` 一行给出实际地址 |
 | `DSH_EXPECTED_VERSION`、`DSH_EXPECTED_COMMIT` | 生产主 Runtime Lock：`0.1.2-rc.1` 和 `76fda729799fe9b3848dbe2c211d4b231032b81e` |
 | `DSH_RUNTIME_COMPATIBILITY` | 必须保持未设置；这是本地开发专用开关 |
-| `DSH_WORK_EXECUTION_IMAGE` | **必填**（执行隔离方案 4.9：执行容器为必需）。所有 DSH 子进程、员工侧运行的 `bash` 与 `python_execute` 都在每 Attempt 的执行容器内运行，所有已发布 Agent 的员工侧运行都具备运行命令的能力。镜像须按摘要锁定并通过启动时的工具链检查（必需 `bash`、`rg`、LibreOffice `soffice` 与 `pdftoppm`，`python_execute` 另需 `python3`；服务日志 `execution container toolchain:` 一行列出检查到的工具与版本），服务须以非 root 账号运行，需要 Docker 26 及以上。当前镜像为 `ghcr.io/tonycc/dsh-work/execution@sha256:a59f988be919b4332a79d5a4ad92fff3af542e56cbffbb58dc47bf6be195f42c`（2026-10-27 构建，GHCR 包为公开，无需登录即可拉取）。正式执行镜像由 [执行镜像工作流](../../.github/workflows/execution-image.yml) 从 [deploy/execution-image](../../deploy/execution-image/Dockerfile) 构建、检查并推送 GHCR（附来源证明），运行摘要见该次运行的 Summary；在 Mac mini 上按摘要拉取一次（`docker pull ghcr.io/<owner>/<repo>/execution@sha256:…`，可先用 `gh attestation verify oci://<同一引用> --repo <owner>/<repo>` 核对来源），再把同一引用填入本项。服务以 `--pull never` 运行，不联网拉取；部署预检在镜像未设置、未按摘要锁定或本机不存在时拒绝部署。更换镜像时先拉取新镜像，再部署改了引用的配置。启动检查（含 DSH 工具调度的独占性核对）失败时服务照常启动，但不在宿主执行 DSH：所有 Agent 运行在创建前以“执行容器不可用”失败，`/health` 的 `executionCapabilities.executionContainer` 与管理端 Runtime 页面显示不可用，原因见服务日志；修复后重启服务。Office/PDF 成果的解析文本另由同一镜像的一次性容器（`dsh-py-*`，最多 2 个）生成，失败只记日志；镜像须以 `名称@sha256:` 引用（本地镜像 ID 不能用于解析容器）。运行中的执行容器以 `dsh-exec-*` 命名，启动时与 `dsh-py-*` 一并清扫。每个 Attempt 工作区上限 2 GB；数据卷剩余空间低于 10 GB 或 10% 时不运行命令（`/health` 的 `executionCapabilities.executionContainer.diskLow` 与管理端 Runtime 页面告警）。`<数据根>/dsh-attempts/` 下的 Attempt 工作区在 Attempt 结束后删除（失败的保留 3 天），服务启动后与每 6 小时按同一规则清扫历史目录，`manifest.json` 等元数据文件保留。验收按 [C 档 P2 验收清单](c-tier-p2-acceptance.md) |
+| `DSH_WORK_EXECUTION_IMAGE` | **必填**（执行隔离方案 4.9：执行容器为必需）。所有 DSH 子进程、员工侧运行的 `bash` 与 `python_execute` 都在每 Attempt 的执行容器内运行，所有已发布 Agent 的员工侧运行都具备运行命令的能力。镜像须按摘要锁定并通过启动时的工具链检查（必需 `bash`、`rg`、LibreOffice `soffice` 与 `pdftoppm`，`python_execute` 另需 `python3`；服务日志 `execution container toolchain:` 一行列出检查到的工具与版本），服务须以非 root 账号运行，需要 Docker 26 及以上。当前镜像为 `ghcr.io/tonycc/dsh-work/execution@sha256:a59f988be919b4332a79d5a4ad92fff3af542e56cbffbb58dc47bf6be195f42c`（2026-10-27 构建，GHCR 包为公开，无需登录即可拉取）。正式执行镜像由 [执行镜像工作流](../../.github/workflows/execution-image.yml) 从 [deploy/execution-image](../../deploy/execution-image/Dockerfile) 构建、检查并推送 GHCR（附来源证明），运行摘要见该次运行的 Summary；在 Mac mini 上按摘要拉取一次（`docker pull ghcr.io/<owner>/<repo>/execution@sha256:…`，可先用 `gh attestation verify oci://<同一引用> --repo <owner>/<repo>` 核对来源），再把同一引用填入本项。服务以 `--pull never` 运行，不联网拉取；部署预检在镜像未设置、未按摘要锁定或本机不存在时拒绝部署。更换镜像时先拉取新镜像，再部署改了引用的配置。启动检查（含 DSH 工具调度的独占性核对）失败时服务照常启动，但不在宿主执行 DSH：所有 Agent 运行在创建前以“执行容器不可用”失败，`/health` 的 `executionCapabilities.executionContainer` 与管理端 Runtime 页面显示不可用，原因见服务日志；修复后重启服务。服务运行中执行镜像被删除（例如清理 Docker 腾空间）时，`/health` 与管理端约 15 秒内转为“不可用”，新的 Agent 运行在创建前被拒绝，服务日志记录 `execution image is missing`；按摘要重新拉取同一镜像后自动恢复，无需重启。只有 docker 明确答复镜像不存在才按缺失处理；检查本身超时或出错时保留上一次结论并记录 `execution image check failed`。Office/PDF 成果的解析文本另由同一镜像的一次性容器（`dsh-py-*`，最多 2 个）生成，失败只记日志；镜像须以 `名称@sha256:` 引用（本地镜像 ID 不能用于解析容器）。运行中的执行容器以 `dsh-exec-*` 命名，启动时与 `dsh-py-*` 一并清扫。每个 Attempt 工作区上限 2 GB；数据卷剩余空间低于 10 GB 或 10% 时不运行命令（`/health` 的 `executionCapabilities.executionContainer.diskLow` 与管理端 Runtime 页面告警）。`<数据根>/dsh-attempts/` 下的 Attempt 工作区在 Attempt 结束后删除（失败的保留 3 天），服务启动后与每 6 小时按同一规则清扫历史目录，`manifest.json` 等元数据文件保留。C 档 P2 已于 2026-10-28 验收通过，复验运行随 Release 发布的 `scripts/acceptance/c-tier-p2.mjs` |
 | `DSH_WORK_EXECUTION_CONTAINER`、`DSH_WORK_PYTHON_IMAGE`、`DSH_WORK_PYTHON_PACKAGES`、`DSH_WORK_PYTHON_USER`、`DSH_WORK_EXECUTION_MAX_CONTAINERS` | 已删除（执行隔离方案 4.9），从 `runtime.env` 中移除。仍设置时服务只在启动日志提示被忽略；把开关改为 `off` 不会回到宿主执行，需要回退时部署上一个 Release |
 | `DSH_WORK_TLS_CERT_FILE`、`DSH_WORK_TLS_KEY_FILE` | `<dsh-work 根目录>/certs/server.crt`、`<dsh-work 根目录>/certs/server.key` |
 | `DSH_WORK_CA_CERT_FILE`、`NODE_EXTRA_CA_CERTS` | 两者均为 `<dsh-work 根目录>/certs/root-ca.crt` |
-| `DSH_WORK_AUTH_MODE`、`DSH_WORK_COOKIE_SECURE` | 不设置认证模式（禁止 `prototype`）、`true`；AI Hub 按接入配置自动可用 |
+| `DSH_WORK_AUTH_MODE`、`DSH_WORK_COOKIE_SECURE` | 不设置认证模式（禁止 `prototype`）、`true` |
 | `DSH_WORK_SESSION_SECRET` | 另一份独立高熵随机值，至少 32 字符，不与数据库密码共用 |
-| `DSH_WORK_DIRECTORY_SYNC_INTERVAL_SECONDS` | `900`，生产不可设为 `0` |
-| `AI_HUB_PLATFORM_URL` | `https://<Mac mini IP>`，使用 443 |
-| `AI_HUB_APPLICATION_ID`、`AI_HUB_ENVIRONMENT` | `dsh-work`、`production` |
-| `AI_HUB_OIDC_ISSUER` | AI Hub 为该环境凭据返回的完整 Issuer，包含正确的路径和尾部 `/` |
-| `AI_HUB_CLIENT_ID`、`AI_HUB_CLIENT_SECRET` | 该环境的真实凭据，两端共用 |
-| `AI_HUB_OIDC_AUDIENCE` | 实际 Audience，通常等于上述 Client ID，不是固定的 `dsh-work` |
-| `AI_HUB_WORKBENCH_PORTAL_URL` | `https://<Mac mini IP>:4174` |
-| `AI_HUB_WORKBENCH_REDIRECT_URI` | `https://<Mac mini IP>:4174/auth/workbench/callback` |
-| `AI_HUB_ADMIN_PORTAL_URL` | `https://<Mac mini IP>:4180` |
-| `AI_HUB_ADMIN_REDIRECT_URI` | `https://<Mac mini IP>:4180/auth/admin/callback` |
 | `DSH_WORK_WORKBENCH_ORIGINS`、`DSH_WORK_ADMIN_ORIGINS` | 初次分别填 `https://<Mac mini IP>:4174`、`https://<Mac mini IP>:4180`；后续可追加已批准 IP/域名 Origin |
 | `DSH_WORK_WORKBENCH_DEFAULT_ORIGIN`、`DSH_WORK_ADMIN_DEFAULT_ORIGIN` | 初次与上述单入口相同；启用固定域名后可改为相应域名 Origin |
+| `DSH_WORK_SOURCE_MAP_DIR` | 可选，通常不设置。错误记录还原前端堆栈所用源码映射的目录，缺省为发布包内的 `sourcemaps/`（打包时从前端产物移出，按版本分目录，不经 Nginx 提供） |
 
 密码可在受控本地终端用 `openssl rand -hex 32` 分别生成，或由密码管理器生成；不要让
 Agent 把生成值输出到对话。非十六进制数据库密码需正确 URL 编码后再放入连接串。
@@ -393,23 +337,9 @@ fi
 bash "${DWP_BUNDLE}/scripts/deploy/preflight.sh" "${DWP_ROOT}" "${DWP_BUNDLE}"
 ```
 
-预检会核对 Node、OIDC 配置、数据库连接串、证书链/IP SAN/私钥匹配、异机挂载、磁盘、DSH
+预检会核对 Node、身份配置、数据库连接串、证书链/IP SAN/私钥匹配、异机挂载、磁盘、DSH
 生产主版本及构建，拒绝本地兼容模式，并完成一次不发送 Prompt 的 ACP 握手和临时 Session
-创建。首次部署也要求异机目录已就绪；
-AI Hub 的“首次无旧数据可不提供备份回执”不能用于跳过 dsh-work 的挂载预检。
-
-继续检查该环境的 OIDC Discovery 可达，以下命令只加载配置，不输出任何 Secret：
-
-```bash
-(
-  set -a
-  source "${DWP_ROOT}/runtime.env"
-  set +a
-  curl --fail --silent --show-error --connect-timeout 10 --max-time 30 \
-    --cacert "${DSH_WORK_CA_CERT_FILE}" \
-    "${AI_HUB_OIDC_ISSUER%/}/.well-known/openid-configuration" --output /dev/null
-)
-```
+创建。首次部署也要求异机目录已就绪。
 
 确认这次安装获准后，部署前面已验证的指定版本：
 
@@ -426,257 +356,7 @@ bash "${DWP_BUNDLE}/scripts/deploy/release.sh" "${DWP_VERSION}" "${DWP_ROOT}"
 也不要重跑同版本 `release.sh`，脚本会拒绝覆盖活动 Release。`DSH_WORK_AUTO_DEPLOY_ENABLED=false`
 只暂停 watcher，不禁止这里明确执行的人工部署。
 
-### 8.1 发布前门禁：迁移账本一致与自动部署已停止
-
-发布前必须先证明 release 迁移与生产账本的完整 `(version, checksum)` 集合一致：没有待应用迁移、
-没有生产独有版本、没有已执行迁移被改过或 checksum 为 NULL。只比较文件名会漏过这些情况。
-
-```bash
-set -euo pipefail
-DWP_ROOT=<deploy_root>
-RUNTIME_ENV="${DWP_ROOT}/runtime.env"
-RELEASE_DIR=<clean-checkout-of-target-commit>
-LEDGER=$(mktemp)
-RELEASE_MIGRATIONS=$(mktemp)
-trap 'rm -f "${LEDGER}" "${RELEASE_MIGRATIONS}"' EXIT
-
-set -a
-# shellcheck disable=SC1090
-source "${RUNTIME_ENV}"
-set +a
-
-node --input-type=module - "${RELEASE_DIR}/server/migrations" > "${RELEASE_MIGRATIONS}" <<'NODE'
-import { createHash } from 'node:crypto'
-import { readdir, readFile } from 'node:fs/promises'
-import { resolve } from 'node:path'
-const directory = process.argv[2]
-const files = (await readdir(directory)).filter(name => /^\d{4}_[a-z0-9_]+\.sql$/.test(name)).sort()
-for (const version of files) {
-  const sql = await readFile(resolve(directory, version), 'utf8')
-  const checksum = createHash('sha256').update(sql.replaceAll('\r\n', '\n')).digest('hex')
-  process.stdout.write(`${version}\t${checksum}\n`)
-}
-NODE
-
-# 与 release.sh 的 run_compose 一致：base compose + 已生成端点 compose 两个 -f。
-docker compose --env-file "${RUNTIME_ENV}" \
-  -f "${RELEASE_DIR}/deploy/compose.yaml" \
-  -f "${DWP_ROOT}/generated/compose.endpoints.yaml" \
-  exec -T postgres \
-  psql -U "${DSH_WORK_POSTGRES_USER}" -d "${DSH_WORK_POSTGRES_DB}" -At -F $'\t' \
-  -c "select version, coalesce(checksum,'NULL') from schema_migrations order by version" \
-  > "${LEDGER}"
-
-! grep -q $'\tNULL$' "${LEDGER}"
-diff -u "${RELEASE_MIGRATIONS}" "${LEDGER}"
-```
-
-`diff` 无输出且退出 0 才继续；任何差异都停止发布并调查，不得为了放行而写库或修改已发布迁移。
-
-同时停止自动部署并排除在途竞态。只把 `DSH_WORK_AUTO_DEPLOY_ENABLED` 改成 `false` 或只 `grep`
-配置，不能中止已经越过入口检查的 watcher：
-
-```bash
-set -euo pipefail
-DWP_ROOT=<deploy_root>
-LABEL=com.company.dsh-work.release-watcher
-TARGET="gui/$(id -u)/${LABEL}"
-
-grep -E '^(DSH_WORK_GITHUB_REPOSITORY|DSH_WORK_AUTO_DEPLOY_ENABLED)=' "${DWP_ROOT}/runtime.env"
-grep -qx 'DSH_WORK_GITHUB_REPOSITORY=globalsinocode/dsh-work' "${DWP_ROOT}/runtime.env"
-grep -qx 'DSH_WORK_AUTO_DEPLOY_ENABLED=false' "${DWP_ROOT}/runtime.env"
-
-launchctl bootout "${TARGET}" 2>/dev/null || true
-if launchctl print "${TARGET}" >/dev/null 2>&1; then
-  echo "release watcher 仍在运行，停止发布" >&2
-  exit 1
-fi
-
-for lock in "${DWP_ROOT}/automation/.watch.lock" "${DWP_ROOT}/.release.lock"; do
-  if [[ -r "${lock}/pid" ]]; then
-    pid=$(<"${lock}/pid")
-    if [[ "${pid}" =~ ^[0-9]+$ ]] && kill -0 "${pid}" 2>/dev/null; then
-      echo "存在活动部署锁：${lock} (PID ${pid})，停止发布" >&2
-      exit 1
-    fi
-    echo "存在陈旧锁：${lock}；先按第 11 节调查和清理，不自动删除" >&2
-    exit 1
-  elif [[ -e "${lock}" ]]; then
-    echo "存在无法判定的锁：${lock}，停止发布" >&2
-    exit 1
-  fi
-done
-```
-
-恢复自动部署不是发布步骤：生产手动部署与验收完成后，由用户按第 10 节明确决定是否把
-`DSH_WORK_AUTO_DEPLOY_ENABLED` 改回 `true`，再从已验证 bundle 执行 `install-release-watcher.sh`
-并检查 `launchctl print`。
-
-### 8.2 授权复核超时热修（2026.11.24-01）的观测与验收
-
-该版本把平台授权复核从“5 秒硬失败”改为“5 秒慢日志 + 10 秒硬失败”，并补齐阶段/耗时/晚到的证据；
-发布与验收要点：
-
-1. 部署后立即记录 `DEPLOYED_AT`（UTC），例如 `date -u +%Y-%m-%dT%H:%M:%SZ`；后文查询必须用它作下界，
-   不能使用滚动 24 小时窗口混入部署前旧故障。部署脚本未落 times 文件时，用
-   `date -u -r "${DWP_ROOT}/active-release" '+%Y-%m-%dT%H:%M:%SZ'` 取 UTC（macOS 的 BSD `stat`
-   没有 `-u`，不要用 `stat -u`）。
-2. 健康检查按第 9.1 节执行：公网工作台 Origin 使用生产自管 CA 检查 `/health`，宿主回环检查
-   `http://127.0.0.1:4190/health/ready`；不要从公网 Origin 断言 `/health/ready`（Nginx 未把它定义成外部就绪契约）。
-3. 观测：结构化授权日志 `authorization.check`（`slow` / `recovered` / `late_success` / `late_error` /
-   `timeout` / `error` / `denied`）带 `run_id`、`attempt_id`、`phase`、`duration_ms`、`slow_ms`、
-   `timeout_ms`。**warn（slow/timeout/error 等）走 `server.stderr.log`，info（recovered）走
-   `server.stdout.log`，两路都要查**；只查 stderr 会把 `recovered` 漏掉。`run.failed` 事件额外带
-   `authorization_phase` / `authorization_check_ms` / `authorization_slow_ms` / `authorization_timeout_ms` / `authorization_outcome`。
-4. 以部署截点查询（psql 中先执行：`\set deployed_at '2026-11-24T...Z'`）：
-   脚本化执行时不要用 `psql -c` 配 `:'deployed_at'`（psql 不对 `-c` 字符串做变量插值，会报
-   `syntax error at or near ":"`）；用 stdin heredoc 或直接写字面量时间。建议同时给 `ended_at` 口径，
-   覆盖“部署前创建、部署后失败”的长跑 attempt。
-
-```sql
-select count(*) from run_attempts
- where error_code = 'AUTHORIZATION_CHECK_UNAVAILABLE'
-   and created_at >= :'deployed_at'::timestamptz;
-
-select count(*) from run_attempts
- where error_code = 'AUTHORIZATION_CHECK_UNAVAILABLE'
-   and ended_at >= :'deployed_at'::timestamptz;
-
-select occurred_at, safe_metadata from run_events
- where event_type = 'run.failed'
-   and safe_metadata->>'error_code' = 'AUTHORIZATION_CHECK_UNAVAILABLE'
-   and occurred_at >= :'deployed_at'::timestamptz
- order by occurred_at desc limit 20;
-```
-
-期望自部署截点起计数为 0；若不为 0，每条失败事件都必须能由 `authorization_*` 元数据和同一
-run/attempt/phase 的 slow/timeout/late 日志解释。
-
-5. 诊断期需要数据库慢查询证据时，临时开启并记录后恢复（不要在排障后长期保留）：
-
-```bash
-docker compose --env-file "${DWP_ROOT}/runtime.env" \
-  -f "${DWP_ROOT}/current/deploy/compose.yaml" \
-  -f "${DWP_ROOT}/generated/compose.endpoints.yaml" exec -T postgres \
-  psql -U "${DSH_WORK_POSTGRES_USER}" -d "${DSH_WORK_POSTGRES_DB}" -c "alter system set log_min_duration_statement = 3000"
-docker compose --env-file "${DWP_ROOT}/runtime.env" \
-  -f "${DWP_ROOT}/current/deploy/compose.yaml" \
-  -f "${DWP_ROOT}/generated/compose.endpoints.yaml" exec -T postgres \
-  psql -U "${DSH_WORK_POSTGRES_USER}" -d "${DSH_WORK_POSTGRES_DB}" -c "select pg_reload_conf()"
-# 排查结束后恢复：alter system reset log_min_duration_statement; select pg_reload_conf();
-```
-
-6. 受控 5–10 秒慢授权验收（Task 9 Step 3）：普通业务 Run 成功只能算冒烟。必须在隔离/受控环境让一次
-   `setup` 或 `scheduled` 授权稳定延迟 6～8 秒且最终成功，确认 Run 未被工具侧旧 6 秒预算拒绝、
-   日志先 `slow` 后 `recovered`、同一 run/attempt/phase 可关联、Run 最终成功且没有第二个并发授权重试。
-   没有可安全使用的受控延迟设施时，标记“环境阻塞，待专用验收环境执行”，不得用普通快速 Run 替代。
-7. 一周复核：仍以 `DEPLOYED_AT` 为下界统计；0 次，或每条都能在慢日志/事件里看到 phase、耗时与 late 结果。
-   复核完成后由用户决定是否恢复自动 watcher（按 8.1 与第 10 节）。
-
-事件背景、根因与回滚见[授权复核超时事件记录](incident-2026-11-24-authorization-timeout.md)。
-
-### 8.3 2026.11.24-02 补充：Nginx 宿主后端与启动探针
-
-该版本处理 11-24 上线后记录的三处缺陷：Nginx 上游解析到不可达 IPv6 导致 502
-`no live upstreams`；服务启动时执行能力探针偶发失败导致整个服务以
-`UnavailableRuntime` 运行到人工重启；任务线程对 Session 目标先探测 `/runs` 造成 404 噪声并
-使详情页误报“不存在”。无 schema、UI 框架或公共 API 变更。
-
-1. **部署前确认上游地址。** 默认 `DSH_WORK_UPSTREAM_HOST=host.docker.internal`；若容器内该名字
-   同时解析出不可达 IPv6（Docker Desktop 常见 `fdc4:…`），把 `runtime.env` 的
-   `DSH_WORK_UPSTREAM_HOST` 设为宿主网关 IPv4（当前现场为 `192.168.65.254`，以实测为准）：
-
-   ```bash
-   docker compose --env-file "${DWP_ROOT}/runtime.env" \
-     -f "${DWP_ROOT}/current/deploy/compose.yaml" \
-     -f "${DWP_ROOT}/generated/compose.endpoints.yaml" exec -T web sh -c \
-     'cat /etc/hosts; nslookup host.docker.internal 127.0.0.11 || true'
-   ```
-
-   只接受单个 IPv4 或可解析且可连通的 IPv4 名称；不要同时保留一个不可达 IPv6 解析。
-   `max_fails=0` 只阻止“一次失败把唯一上游标记 down 十秒”，后端真实不可用时单个请求仍返回 502。
-
-2. **启动探针有界重试。** DSH 与执行容器探针各最多 3 次、间隔 2 秒、总预算 20 秒；超过预算
-   仍按原逻辑 fail-closed（`UnavailableRuntime`，不降级到宿主执行），日志逐次记录
-   `startup probe <capability> attempt N/3 failed`。发布健康检查窗口不变，若首次启动日志出现
-   `execution container toolchain: …` 即表示执行能力可用，不需要再人工 kickstart。
-
-3. **部署前门禁与部署**：仍按 8.1；watcher 必须已停止且无活动锁。部署后立即记录新的
-   `DEPLOYED_AT`（UTC），所有观测用它作下界。
-
-4. **验收**：
-
-   - `active-release` 为 `v2026.11.24-02`，公网 `/health` 与宿主 `/health/ready` 正常；
-   - 110 次请求（60 顺序 + 50 并发，`xargs -P 10`）打员工端 `/api/workbench/v1/session`，
-     期望全部 401（或 200），**0 个 502/499**。这**只是冒烟**：11-24-01 的实测出现过
-     “探测全 401、同期 Nginx 仍 397 次 IPv6 connect 失败 + 24 次 no live upstreams”；
-     502 是否修复必须以部署后 Nginx 日志为准——`connect() to [fdc…]` 与
-     `no live upstreams` 均为 0（`docker logs` 是滚动缓冲，计数只是下限）；
-   - 以新 `DEPLOYED_AT` 执行 8.2 第 4 步 SQL，期望 0；`authorization.check` 慢日志可按
-     run/attempt/phase 关联（warn 在 stderr、recovered 在 stdout）；
-   - 吴军重跑一次：`run.started`、`assistant.delta`、`assistant.completed`、`run.completed` 均出现，
-     `run_attempts.error_code` 为空；
-   - 任务线程：任务对话仍使用 `/thread/session-…`；打开时不再出现 `/runs/<sessionId>` 404
-     或“不存在”误报；“最近执行”用 `/thread/run-…` 正常进入执行详情；旧链接仍兼容；
-   - 受控 5–10 秒慢授权：有受控环境才执行；已有真实生产慢样本（slow→recovered、Run 成功）
-     可记“真实样本验收”，否则写“环境阻塞”，不得用普通 Run 替代。
-
-5. **已知边界（P1，不属本版本）**：DSH 每次 boot 都会重写
-   `$DSH_HOME/profiles/acp/cordis.yml`，部署侧 preflight 与启动仍可能竞争；本版本只做有界重试，
-   不改变部署脚本顺序。若日志确认竞争，应另开任务做临时 `DSH_HOME` 隔离演练。
-
-6. **回滚**：无 schema，可回退 `v2026.11.24-01`；注意回退后 502/503 缺陷会回来。
-
-**11-25-01 更新（以上第 2 点与部署健康检查窗口已由 8.4 取代）**：启动探针改为按尝试次数
-重试；web 容器 healthcheck 改为静态 `/nginx-health`，不再依赖宿主探针；公网 `/health`
-等待预算与 `/health/ready` 断言迁入 `scripts/deploy/release-wait.mjs`。
-
-### 8.4 2026.11.25-01 补充：启动重试与部署就绪门禁
-
-`v2026.11.24-02` 的启动探针“有界重试”因 `deadlineMs=20 s` 小于单次 DSH preflight 的
-`30 s` 超时而未生效：首超时后 `2/3`、`3/3` 永不执行，服务以 `UnavailableRuntime` 运行约
-15 小时，直到人工 `kickstart -k` 才恢复（详见
-[启动探针重试失效事件](incident-2026-11-24-startup-probe-retry-outage.md)）。本版本修复：
-
-1. **重试预算**：启动探针不再使用总 `deadlineMs`，由尝试次数约束（3 次、间隔 2 s）；单次
-   preflight 仍为 30 s，DSH 探针最坏约 `3×30 s + 2×2 s ≈ 94 s`（仅 DSH，不含
-   execution-container 探针）。第 2/3 或 3/3 次成功会输出
-   `startup probe <capability> recovered on attempt N/3`。
-2. **健康等待与启动预算**：启动预算分为两段。
-   - **容器存活**：web 容器的 healthcheck 改为静态 `https://127.0.0.1:8443/nginx-health`
-     （`deploy/nginx/default.conf.template` 新增的 Nginx 存活端点），只验证 Nginx 容器本身，
-     秒级 healthy；不再依赖宿主服务端探针，因此不会在合法冷启动期间被判 `unhealthy`。
-     旧的 `/health/live` 后端依赖探针（约 110 s 容忍窗口）已移除。
-   - **服务就绪**：`release.sh` 调用 `scripts/deploy/release-wait.mjs`，公网 `/health` 等待
-     预算为 **1500 s（25 分钟）**，覆盖 DSH 探针（约 94 s）与 execution-container 三次探针
-     （单次上限约 400 s，总上界约 21–22 分钟）；每约 30 s 输出一次
-     `release health check waiting (…s/1500s)`，超时输出
-     `release health check failed: …` 并按 `fail_after_migration` 回滚。
-3. **部署就绪门禁**：`/health/ready` 返回 200 后，`release-wait.mjs` 一次性断言
-   `executionCapabilities.dsh.status` 与 `executionCapabilities.executionContainer.status`
-   均为 `available`；缺失时立即输出
-   `release readiness check failed: required execution capabilities unavailable (…)` 并按
-   `fail_after_migration` 回滚，**不再把“能力不可用”判为部署成功**。只有 database 检查
-   （`/health/ready` 返回 503）会重试（最多 30 次、间隔 2 s、单次 10 s 超时）；`python`
-   不可用只告警。能力项状态在服务监听后已固定，重试不会让能力恢复，因此不做能力重试。
-
-   **部署脚本注意**：11-24-02 部署用的是 11-24-01 的偏离脚本（`release.sh` 副本），
-   因此本版本新增的就绪门禁不会自动生效。部署 11-25-01 前必须从新 release bundle
-   重新生成/更新 `deviations/` 脚本（或以新 bundle 的 `scripts/deploy/release.sh` 为准），
-   并在部署日志确认出现 `release readiness check passed`；只覆盖版本号而继续使用旧副本
-   会重新失去该门禁。
-4. **验收**：首次启动（不人工 kickstart）日志出现 `execution container toolchain: …`；
-   部署日志出现 `release health check passed after …s` 与 `release readiness check passed`；
-   若启动超时或能力不可用，日志分别出现 `release health check failed` /
-   `release readiness check failed` 并回滚；`/health/ready` 三项能力状态可见。compose web
-   容器应在秒级 healthy（静态 `/nginx-health`），部署记录记录其从启动到 healthy 的时长。
-5. **边界**：启动能力持续不可用时的自动恢复（后台重探或 fail-fast 交给 launchd）仍是 P1，
-   本版本不改变“核心 API 保持可用”的现有设计。
-
-迁移账本的生产独有历史版本按[登记偏离](migration-ledger-deviation-2026-11-24.md)处理，
-每次发布仍按 8.1 的四项不变量复核。
-
-## 9. 完成首次验收与备份
+## 9. 完成首次检查与备份
 
 ### 9.1 服务和入口
 
@@ -692,16 +372,11 @@ for DWP_PORT in 4174 4180; do
   curl --fail --silent --show-error --max-time 30 \
     --cacert "${DWP_ROOT}/certs/root-ca.crt" "https://${DWP_IP}:${DWP_PORT}/health"
 done
-curl --fail --silent --show-error --max-time 30 \
-  --cacert "${DWP_CERT_SOURCE}/root-ca.crt" "https://${DWP_IP}/health/ready"
-curl --fail --silent --show-error --max-time 30 \
-  --cacert "${DWP_CERT_SOURCE}/root-ca.crt" "https://${DWP_IP}:8443/-/health/ready/"
 ```
 
-确认 `postgres`、`web` 健康，且 AI Hub 仍健康。Nginx 通过 `DSH_WORK_UPSTREAM_HOST`
-（默认 `host.docker.internal`）访问宿主机后端：若回环健康而 HTTPS 返回 502，检查
-Docker Desktop 到宿主机的连接、容器内该名字是否优先解析到不可达 IPv6，以及 Nginx 日志；
-按 8.3 固定上游 IPv4。不要为排障把 4190 暴露到全网，也不要忽略 HTTPS 检查。
+确认 `postgres`、`web` 健康。Nginx 通过 `host.docker.internal:4190`
+访问宿主机后端：若回环健康而 HTTPS 返回 502，检查 Docker Desktop 到宿主机的连接和
+Nginx 日志；不要为排障把 4190 暴露到全网，也不要忽略 HTTPS 检查。
 端口发布由预检生成的 `generated/compose.endpoints.yaml` 管理；不要省略该文件直接运行
 Compose，否则无法验证实际入口集合。
 
@@ -709,12 +384,23 @@ Compose，否则无法验证实际入口集合。
 
 ### 9.2 身份与实际任务
 
-1. 用第 5 节指定的 `production` 初始管理员打开 `https://<IP>:4180/overview`，完成
-   AI Hub 登录，确认自动获得 dsh-work 本地平台管理员。部署不会创建另一个默认管理员密码。
-2. 在“员工与权限”同步目录；给测试员工分配本地 `employee` 角色，再登录员工端。
-3. 至少配置第二位有效平台管理员，检查权限撤销后下一请求被拒绝。
-4. 在 AI Hub 接入治理中执行 `OIDC_ONLY` 认证，不以启用通知等无关能力换取通过。
-5. 使用已配置的 DSH 模型凭据完成一个无敏感内容的小任务，确认输出、事件流、取消和成果
+1. 在加载 `runtime.env` 的受控终端初始化首位平台管理员；命令交互输入登录账号（手机号或
+   邮箱）、姓名和密码，密码不回显。部署不会创建默认管理员密码，初始化账本只能消费一次：
+
+   ```bash
+   (
+     set -a
+     source "${DWP_ROOT}/runtime.env"
+     set +a
+     cd "${DWP_ROOT}/current"
+     "${DSH_WORK_NODE_BIN}" server/dist/modules/identity/local-bootstrap.js
+   )
+   ```
+
+   然后打开 `https://<IP>:4180/overview` 用该账号登录。
+2. 在“员工与权限”新建测试员工账号并分配本地 `employee` 角色，用初始密码登录员工端，按提示改密。
+3. 至少配置第二位有效平台管理员，检查权限撤销后下一请求被拒绝、停用账号后其新请求被拒绝。
+4. 使用已配置的 DSH 模型凭据完成一个无敏感内容的小任务，确认输出、事件流、取消和成果
    可用。ACP 握手和健康检查通过不等于模型/工具调用已经验收。
 
 ### 9.3 首份异机备份
@@ -727,24 +413,18 @@ bash "${DWP_ROOT}/current/scripts/deploy/backup.sh" "${DWP_ROOT}"
 
 应同时得到本机 `backups/<UTC时间戳>/` 及异机目录中的 `.tar.gz`、`.sha256`、
 `.tar.gz.verified.json`。脚本重新读取异机归档并校验哈希；该回执**不代表已完成恢复演练**。
-安排隔离恢复验证，不能在仍承载 AI Hub 的 Docker 环境中误删共享数据。
+安排隔离恢复验证，不能在仍承载其他应用的 Docker 环境中误删共享数据。
 
-dsh-work 归档没有 AI Hub 那样的应用层加密，NAS 必须有静态加密和最小权限。该备份覆盖
+dsh-work 归档没有应用层加密，NAS 必须有静态加密和最小权限。该备份覆盖
 dsh-work 数据库、`DSH_WORK_DATA_ROOT` 与发布清单，不覆盖 `runtime.env`、证书私钥、
 外部 `DSH_HOME` 或 DSH 安装目录；这些应另行受控托管并验证灾难恢复，不把 Secret 提交 Git。
 恢复验收必须抽查 `${DSH_WORK_DATA_ROOT}/skills/packages` 中的文件夹能够按数据库中的
 `artifact_ref` 找到并通过摘要校验；只恢复数据库或只恢复数据目录都会造成 Skill 不可执行。
 
-### 9.4 目标环境部署验收
+## 10. 首次检查后启用自动部署
 
-完成 9.1～9.3 后，按 [PF-07 手册的目标环境部署验收清单](../development/pf07-platform-acceptance.md#目标环境部署验收) 逐项检查并留证。首次部署和之后的每次发布都要执行；恢复演练只在隔离环境进行，不在本机运行 `restore.sh`。清单完成前，不在该环境开放新版本带来的新能力；已开放的能力继续运行并按发布问题跟踪，清单未通过时回退版本或停用相关 Agent；需要先验收后安装的环境应关闭自动部署。交接记录须包含清单结论、Run/Attempt 引用和证据位置。
-
-## 10. 验收后启用自动部署
-
-watcher 只跟随 GitHub 的最新稳定 Release，安装后会立即运行。先确认最新版本就是刚验收
-的版本；若已有新版本，先评估它，不要在未获准时启用自动升级。恢复自动部署还要求该版本已完成
-稳定性复核：11-25-01 的最早恢复时刻为 `DEPLOYED_AT + 168h`，不足 168 小时只作中期复核
-（复核安排见 `docs/release/followup-plan-2026-11-25.md` Phase 5）：
+watcher 只跟随 GitHub 的最新稳定 Release，安装后会立即运行。先确认最新版本就是刚检查
+的版本；若已有新版本，先评估它，不要在未获准时启用自动升级：
 
 ```bash
 DWP_LATEST_TAG="$(gh release view --repo "${DWP_REPOSITORY}" --json tagName --jq .tagName)"
@@ -776,10 +456,9 @@ launchctl print "gui/$(id -u)/com.company.dsh-work.release-watcher"
 2. 发布人员在 GitHub Actions 人工运行 **Manual release**，发布新的不可变稳定版本。
 3. Mac mini 通常在下一次 300 秒轮询时发现，自动验证 → 停止旧后端并备份 → 验证异机副本 →
    向前迁移 → 切换应用 → 健康检查。不需要每次手工执行 `release.sh`。
-4. 查看 `active-release` 和日志，按 9.4 节完成该版本的部署验收。watcher 没有等待验收的拦截点，新版本会先被安装；需要先验收后安装时，保持 `DSH_WORK_AUTO_DEPLOY_ENABLED=false` 并人工升级。
+4. 查看 `active-release` 和日志，按 9.1 节确认服务健康。watcher 没有人工确认的拦截点，新版本会先被安装；需要先检查后安装时，保持 `DSH_WORK_AUTO_DEPLOY_ENABLED=false` 并人工升级。
 
-与 AI Hub 的区别仍然保留：AI Hub watcher 只暂存，提升需要其新鲜加密异机备份回执；
-dsh-work 自己创建并校验备份，因而可以自动提升。两者不能互用发布脚本或备份回执。
+dsh-work 自己创建并校验备份，因而可以自动提升。不要与同机其他应用互用发布脚本或备份回执。
 
 ## 11. 日常运维与失败处理
 
@@ -805,8 +484,7 @@ docker compose --env-file "${DWP_ROOT}/runtime.env" \
 | Release 验证失败 | 检查 Tag、不可变设置、CI 来源和服务账号 gh 认证，不跳过验证。若报 `no valid Sigstore verifiers could be initialized`，说明 `~/.cache/gh/.sigstore` 的 TUF 缓存过期：用 `XDG_CACHE_HOME=$(mktemp -d)` 指向全新缓存后重试，仍失败则停止发布并检查网络，不得跳过验证 |
 | DSH Lock/ACP 失败 | 核对已安装 checkout、构建、权限与发布包 Lock，单独安排 Runtime 变更 |
 | NAS 不可用或备份失败 | 恢复真实异机挂载及权限；不删除备份门禁，不用本机目录替代 |
-| 登录报 Issuer/Audience/回调错误 | 对照 AI Hub 当前 `production` 凭据及两个完整 HTTPS 回调，不轮换全平台密钥 |
-| 初始管理员登录后无权限 | 检查是否为环境指定的 ACTIVE 业务员工、Bootstrap Scope 和认领状态，不新建第二个应用绕过 |
+| 初始管理员登录后无权限 | 确认登录的是 `local-bootstrap.js` 初始化的账号且未被停用；初始化账本只能消费一次，丢失管理员时由另一位平台管理员恢复，不重复初始化 |
 | `automation/state/blocked-release` 存在 | 说明某版本部署进入变更阶段后失败或被回滚；先排障并优先发布修复版本，不反复清空状态 |
 
 应用回滚前先暂停自动升级，确认没有正在运行的部署/备份，并人工确认旧应用兼容当前数据库
@@ -821,13 +499,13 @@ bash "${DWP_ROOT}/current/scripts/deploy/rollback.sh" "${DWP_ROLLBACK_VERSION}" 
 切软链接。它只回滚应用，不降级数据库，不能用来修复破坏性迁移；破坏性迁移之后要先恢复发布前备份。备份恢复属于破坏性操作，
 需在确认的维护窗口按本文第 12 节执行。
 
-最后安排共享服务器的维护窗口，验证 Mac mini 重启并登录、Docker Desktop 重启后两个
-应用都恢复；不要在 AI Hub 业务期间擅自重启整机或 Docker Desktop。制定定时备份、保留、
+最后安排共享服务器的维护窗口，验证 Mac mini 重启并登录、Docker Desktop 重启后
+各应用都恢复；不要在同机其他应用的业务期间擅自重启整机或 Docker Desktop。制定定时备份、保留、
 磁盘/入口/证书告警和证书续期计划；安装 watcher 不会自动配置这些作业。同一证书的两个
 项目副本续期后都需要分别更新并生效。
 
 部署交接只记录账号、目录、Release Tag/Commit、DSH Lock、健康/登录/任务/备份与重启
-验收结论，以及 9.4 节要求的清单结论、Run/Attempt 引用和证据位置，不记录密码、Token 或私钥。绝不执行 `docker compose down -v`、删除数据卷，
+检查结论，不记录密码、Token 或私钥。绝不执行 `docker compose down -v`、删除数据卷，
 或覆盖已有 `runtime.env` 来处理部署失败。
 
 ## 12. 升级与备份恢复
@@ -836,7 +514,7 @@ bash "${DWP_ROOT}/current/scripts/deploy/rollback.sh" "${DWP_ROLLBACK_VERSION}" 
 
 1. 验证不可变 Release、Release 资产、Sigstore 构建来源和 SHA-256，并从已验证归档重新
    建立非活动 Release 目录；
-2. 校验 macOS/ARM64、Docker Desktop、Node、证书、AI Hub 生产配置、发布包的 DSH
+2. 校验 macOS/ARM64、Docker Desktop、Node、证书、身份配置、发布包的 DSH
    Lock，并与宿主机已安装的 DSH 做一次真实 ACP 启动握手；
 3. 已有版本时先停止旧后端，并使用旧版本 Compose 生成数据库与持久文件备份；首次部署
    则直接初始化 PostgreSQL；
@@ -889,27 +567,171 @@ bash current/scripts/deploy/restore.sh \
 3. 服务启动时会用新镜像复查所有已发布 Skill 的依赖：缺包的 Skill 记入服务日志（`skill python dependencies missing in execution image`），在管理端 Skill 列表标“依赖缺失”；员工直接选用时在运行前被拒绝，固定引用它的 AI 同事本次不装配它、其余照常。去掉包之前先确认没有已发布 Skill 依赖它。
 4. 镜像摘要是脚本型 Skill 试运行证据的一部分：换镜像后，待发布的脚本型 Skill 版本须重新严格试运行才能发布；已发布且依赖仍满足的版本不受影响。
 
-### 12.2 模型路由生效（MR-S2 + DLP-S1）的升级步骤
+### 12.2 删除 AI Hub 登录（AH-S1，迁移 0129）的升级步骤
 
-首次升级到模型路由生效的版本时（迁移 `0121_model_gateway_requests`），执行模型改为“平台默认路由 + 平台模型网关”，DSH 不再使用 `DSH_HOME` 中的厂商密钥：
+适用于从 `v2026.11.09-01` 或更早版本首次升级到包含迁移 `0129_remove_ai_hub_login` 的版本（`v2026.11.16-01` 起）。该版本删除 AI Hub 登录，同时带上 `v2026.11.09-01` 之后合入的 MCP 调用对账、知识检索工具、管理端模块权限等改动（迁移 0126～0128 只新增列，可向后兼容）。之后的版本照此流程升级：`v2026.11.26-01` 还会执行 0130～0135——0130 只为空值行补写 Skill 安装名称，0131～0135 只新增列、表或索引（MCP 员工身份、读取网页、错误记录、页面访问与索引），都可向后兼容，不需要改 `runtime.env`；不可回退的仍只有 0129。下文以 `v2026.11.26-01` 为例，换成实际要部署的版本。
 
-1. 确认 `runtime.env` 已配置 `DSH_CREDENTIAL_MASTER_KEY`（见第 7 节参数表）；
-2. 升级前在 Runtime 页面把调度切换为排空，等待执行中的 Attempt 结束。升级前创建、缺少路由快照的 Attempt 在升级后执行时会以 `MODEL_ROUTE_UNAVAILABLE` 失败，包括已排队未开始的 Attempt 与等待审批的恢复（批准后新建的 Attempt 沿用来源快照）；员工重新执行即可，待审批的操作在升级前处理完或升级后重新发起；
-3. 升级后在管理端“模型管理”为默认路由的 Provider 点击“密钥”录入 API Key。列表显示“需录入 API Key”的 Provider 仍是旧的 DSH 受管引用，模型网关无法使用；录入前所有 Agent 运行以 `MODEL_CREDENTIAL_INVALID` 失败；
-4. 发一条员工对话确认成功，再把 Runtime 调度恢复为接受；
-5. 确认无误后可以从 `DSH_HOME` 移除 DeepSeek 密钥（工具目录探测与 MCP 连接检查不发出模型请求，不受影响）。
+**影响：** 迁移 0129 删除表和列，**不能回退到旧版本**；失败后只能发布修复版本，或用本次升级前的备份恢复数据库再回滚应用（第 12 节）。升级过程中后端会停止几分钟，执行中的对话会中断；员工的独立账号会话 Cookie 名不变，升级后无需重新登录。
 
-联网搜索只在默认路由的 Provider 为 DeepSeek 官方时可用；更换为其他厂商后，开启联网搜索的 AI 同事本轮不装配该工具，并在回答中说明暂时不可用。
+#### 1. 发布端准备 Release
+
+1. 确认 `main` 上包含 PR #129，`server/package.json` 的 `releaseVersion` 为目标版本（例如 `2026.11.26-01`），该 Commit 的 CI 四个 Job 全部成功。
+2. 按第 3 节在 Actions 运行 **Manual release**，输入同一版本号，等待生成 `v2026.11.26-01` 及其资产与来源证明。
+
+#### 2. Mac mini 升级前只读检查
+
+在 Mac mini 的持续 Bash 会话中按第 2 节设置 `DWP_*`（`DWP_TAG='v2026.11.26-01'`，`DWP_ROOT` 填实际部署目录）。第 2 节开启了 `set -e`：本节的检查命令都写成“没有匹配也不退出”，不要去掉其中的 `|| true` 或 `if`，否则当前会话会退出并丢失 `DWP_*`。
+
+```bash
+cat "${DWP_ROOT}/active-release"   # 应为当前生产版本，例如 v2026.11.09-01
+grep -E '^DSH_WORK_AUTO_DEPLOY_ENABLED=' "${DWP_ROOT}/runtime.env" || echo 'DSH_WORK_AUTO_DEPLOY_ENABLED 未设置（等同关闭）'
+```
+
+**检查可信入口是否已配置。** 新版本不再从 `AI_HUB_*_PORTAL_URL` 回退，缺少下面两项时预检会在迁移前失败：
+
+```bash
+{ grep -E '^(DSH_WORK_(WORKBENCH|ADMIN)_(ORIGINS|DEFAULT_ORIGIN)|AI_HUB_[A-Z_]+)=' "${DWP_ROOT}/runtime.env" || true; } \
+  | sed -E 's/^(AI_HUB_[A-Z_]*SECRET)=.*/\1=***/'
+```
+
+- `DSH_WORK_WORKBENCH_ORIGINS`、`DSH_WORK_ADMIN_ORIGINS` 必须有值（例如 `https://<Mac mini IP>:4174`、`https://<Mac mini IP>:4180`）；默认入口两项可不设，不设时取各自列表的第一项。
+- 输出里的 `AI_HUB_*` 行是旧配置，第 4 步删除。
+
+**复查生产库没有 AI Hub 数据。** 两条都应为 0（2026-11-15 已确认；库中仍有 AI Hub 用户时迁移 0129 会失败并回滚）：
+
+```bash
+docker compose --env-file "${DWP_ROOT}/runtime.env" \
+  -f "${DWP_ROOT}/current/deploy/compose.yaml" \
+  -f "${DWP_ROOT}/generated/compose.endpoints.yaml" \
+  exec -T postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc "
+    select count(*) from users where identity_provider <> '\''local'\'';
+    select count(*) from authentication_sessions where authentication_provider = '\''ai-hub-oidc'\'';"'
+```
+
+**确认异机备份目录可写、磁盘有余量。** 下面在子 shell 中按 `runtime.env` 的实际解析读取备份目录，不改动当前会话的变量；这只是提前发现问题，最终以 `release.sh` 预检为准（它还检查目录不是符号链接、与部署目录不在同一文件系统）：
+
+```bash
+(
+  set -a; . "${DWP_ROOT}/runtime.env"; set +a
+  if [[ -d "${DSH_WORK_OFF_HOST_BACKUP_DIRECTORY}" && -w "${DSH_WORK_OFF_HOST_BACKUP_DIRECTORY}" ]]; then
+    df -h "${DSH_WORK_OFF_HOST_BACKUP_DIRECTORY}" "${DWP_ROOT}"
+  else
+    echo "异机备份目录不可用：${DSH_WORK_OFF_HOST_BACKUP_DIRECTORY}" >&2
+  fi
+)
+```
+
+#### 3. 进入维护窗口
+
+1. 通知员工维护时间。
+2. 在管理端 Runtime 页面把调度切换为“排空”，等待执行中的 Attempt 结束（排空期间员工新发起的任务会排队）。
+
+#### 4. 整理运行配置
+
+在 Mac mini 本地编辑，不要把内容回显到聊天或日志。先留一份原配置：
+
+```bash
+cp -p "${DWP_ROOT}/runtime.env" "${DWP_ROOT}/runtime.env.before-ah-s1"
+chmod 600 "${DWP_ROOT}/runtime.env.before-ah-s1"
+```
+
+然后用本地编辑器修改 `${DWP_ROOT}/runtime.env`：
+
+1. 第 2 步检查缺少 `DSH_WORK_WORKBENCH_ORIGINS` / `DSH_WORK_ADMIN_ORIGINS` 时补上；有 `AI_HUB_WORKBENCH_PORTAL_URL` / `AI_HUB_ADMIN_PORTAL_URL` 的，把它们的值分别填进这两项。
+2. 删除所有 `AI_HUB_*` 行，以及 `DSH_WORK_DIRECTORY_SYNC_INTERVAL_SECONDS`、`DSH_WORK_ADMIN_BOOTSTRAP_ENABLED`、`DSH_WORK_OIDC_*`；删除 `DSH_WORK_AUTH_MODE`（若有）。这些变量新版本不再读取；不删也能启动，但启动日志会持续警告。例外：`DSH_WORK_AUTH_MODE` 只有值为 `local` 或 `oidc` 时才被忽略，其他值（包括 `prototype`）会让服务拒绝启动，必须删除。
+3. 其他配置（数据库、证书、`DSH_CREDENTIAL_MASTER_KEY`、执行镜像、钉钉等）保持不变。
+
+```bash
+/bin/bash -n "${DWP_ROOT}/runtime.env"
+grep -cE '^(AI_HUB_|DSH_WORK_OIDC_|DSH_WORK_DIRECTORY_SYNC_INTERVAL_SECONDS=|DSH_WORK_ADMIN_BOOTSTRAP_ENABLED=|DSH_WORK_AUTH_MODE=)' "${DWP_ROOT}/runtime.env" || true   # 应输出 0
+grep -E '^DSH_WORK_(WORKBENCH|ADMIN)_ORIGINS=.+' "${DWP_ROOT}/runtime.env" || echo '缺少可信入口，回到上一步补齐'   # 应输出两行
+```
+
+#### 5. 下载、验证并执行升级
+
+按第 6 节下载并验证 `v2026.11.26-01`（得到 `DWP_BUNDLE`），先记下后端错误日志当前的行数（launchd 日志是追加写入的，检查时只看这之后的内容），再用新包里的脚本升级：
+
+```bash
+DWP_LOG="${DWP_ROOT}/logs/server.stderr.log"
+DWP_LOG_LINES="$(wc -l < "${DWP_LOG}" 2>/dev/null || echo 0)"
+bash "${DWP_BUNDLE}/scripts/deploy/release.sh" "${DWP_VERSION}" "${DWP_ROOT}"
+```
+
+脚本依次执行：Release 与来源验证 → 预检（含身份配置与入口）→ 停止旧后端并备份、异机校验 → 迁移 0126～0129 及之后的迁移（`v2026.11.26-01` 为 0126～0135）→ 切换 `current` → 健康检查。
+
+| 失败位置 | 现象 | 处理 |
+| --- | --- | --- |
+| 预检 | 输出 `DSH_WORK_WORKBENCH_ORIGINS 未配置`（或 `ADMIN`）后接 `Production identity configuration is invalid` | 数据库与应用都未改动；按第 4 步补齐 `runtime.env` 后重跑 |
+| 备份 / 异机校验 | 备份目录不可用或校验失败 | 迁移未开始；恢复异机目录后重跑 |
+| 迁移 0129 | `release.sh` 终端输出含 `仍有 N 个 AI Hub 用户` 与 `database migration failed`（不写入日志文件） | 每个迁移各自一个事务：0126～0128 已生效（只新增列，旧版本可用），0129 已回滚，脚本已恢复旧版本；先处理这些账号（只可能是遗留数据），再重跑 |
+| 迁移后健康检查 | 输出 `database migrations were applied ... service stays stopped` | 服务保持停止，不能手工启动旧版本；查看 `logs/server.stderr.log` 排障，优先发布修复版本。必要时按第 12 节用本次备份 `restore.sh` 后立即 `rollback.sh`：此时 `current` 指向新版本，`restore.sh` 会先用新版本在恢复后的旧 Schema 上启动服务，回滚完成前保持 Runtime 排空、不对员工开放。新版本从未激活时 `active-release` 仍是旧版本，回滚会把旧版本自己记入 `automation/state/blocked-release`；以后开启自动部署前先确认并清理该文件 |
+
+#### 6. 升级后检查
+
+```bash
+cat "${DWP_ROOT}/active-release"   # 应为 v2026.11.26-01
+curl --fail --silent --show-error --max-time 30 http://127.0.0.1:4190/health
+for DWP_AUDIENCE_PORT in workbench:4174 admin:4180; do
+  DWP_AUDIENCE="${DWP_AUDIENCE_PORT%%:*}"; DWP_PORT="${DWP_AUDIENCE_PORT##*:}"
+  curl --fail --silent --show-error --max-time 30 --cacert "${DWP_ROOT}/certs/root-ca.crt" \
+    "https://${DWP_IP}:${DWP_PORT}/auth/${DWP_AUDIENCE}/configuration"; echo
+done
+```
+
+只看本次升级之后新写入的错误日志，确认没有旧配置警告：
+
+```bash
+DWP_NEW_LOG="$(tail -n "+$(( DWP_LOG_LINES + 1 ))" "${DWP_LOG}")"
+if [[ "${DWP_NEW_LOG}" == *'AI Hub 登录已删除'* ]]; then
+  printf '%s\n' "${DWP_NEW_LOG}" | grep 'AI Hub 登录已删除' | tail -1
+else
+  echo '本次启动没有旧配置警告'
+fi
+```
+
+- 两个 `configuration` 响应只含 `mode: "local"`、`localEnabled: true`（员工端另有钉钉 `corpId`），不含 `aiHubEnabled`；这是区分新旧版本的依据（旧版本未配置 AI Hub 时也不注册 `/oidc/login`，所以不用该地址判断）。
+- 有旧配置警告时，按列出的变量回到第 4 步删除，先执行 `DWP_LOG_LINES="$(wc -l < "${DWP_LOG}")"` 记下行数，再重启后端（`launchctl kickstart -k "gui/$(id -u)/com.company.dsh-work.server"`），然后重跑上面的日志检查。
+
+在浏览器中：
+
+1. 管理端与员工端登录页只有账号密码，没有 AI Hub 入口；平台管理员能登录管理端，“员工与权限”列表正常、没有“来源”列。
+2. 用一名普通员工登录员工端；配置了钉钉的环境，在钉钉内打开一次确认免登正常。
+3. 把 Runtime 调度**先切回“接受”**，再发一条无敏感内容的员工对话，确认回答、事件流与成果正常。
+
+确认一切正常后，删除第 4 步留的 `runtime.env.before-ah-s1`（含密钥，不要长期保留）。
+
+### 12.3 外部业务应用调用上下文（EA-S1，迁移 0131）
+
+适用于升级到包含迁移 `0131_mcp_employee_identity` 的版本。迁移只新增列和表，可以向后兼容，不需要改 `runtime.env`；所有 MCP 连接器的“发送员工身份”默认关闭，升级后行为不变。按第 12 节常规升级即可，不需要单独的维护窗口。
+
+**为某个外部业务应用开启“发送员工身份”**（[功能规则第 14 节](../development/feature-rules.md#14-外部业务应用接入ea-s1)、[外部业务应用接入方案](../design/external-app-integration-plan.md)第 6 节）：
+
+1. 与外部应用的开发方按[方案第 6 节](../design/external-app-integration-plan.md#6-外部应用的接入约定)逐项核对接入约定，至少包括：
+   - 外部应用校验 Bearer 凭据，凭据只给 dsh-work 使用；跨网络访问用 HTTPS；
+   - 调用工具时拒绝以下请求：缺少 `X-DSH-Work-Visibility` 或取值不是 `personal`、`shared`；`personal` 却没有任何 `X-DSH-Work-Viewer-*`；`shared` 却带有 `X-DSH-Work-Viewer-*`；
+   - 按 `X-DSH-Work-Viewer-Mobile` 识别员工（其次钉钉 userid、邮箱，都对应不上按无权限处理），按员工在本系统中的权限返回数据；`shared` 调用只返回所有员工可见的数据；
+   - 写入只在 `personal` 时允许，按该员工的业务权限判断；写工具在参数中定义幂等键并按它去重，结果返回可核对的回执，记录该员工为操作人；
+   - 访问日志不原样记录手机号与邮箱。
+2. 在管理端“MCP 连接器”中，用该应用单独签发的 Bearer Token 登记连接器。不要复用其他连接器的 Token：凭据共用的连接器不能开启“发送员工身份”。
+3. 打开连接器详情，开启“发送员工身份”并确认。只影响此后新启动的运行。
+4. 按[验收目录 PF-MCP-P2](../../e2e/catalog/admin-platform.md#pf-mcp-p2-真实-mcp-与-dsh-发布前验收) 第 4 步核对：
+   - 一名员工在个人对话中只拿到本人有权的数据；
+   - 在项目空间中只拿到所有员工可见的数据，且写入被拒绝；
+   - 管理端连接器详情的“最近调用”显示对应的调用上下文。
+
+   核对记录中不写手机号原文。
+5. 怀疑 Bearer 凭据泄露时，在连接器“更多”中选“轮换 Token”（凭据需重新录入时为“录入 Token”），并让外部应用作废旧 Token。持有旧凭据的人在更换前可以冒充任意员工调用该应用。
+
+列表中标为“发送员工身份（未生效）”的连接器，表示开关已开启但当前不满足条件（如凭据与其他连接器共用），运行中不会发送员工身份；在“更多”中选“轮换 Token”换上本连接器单独的凭据即可（轮换会把共用的凭据拆开）。
 
 ## 13. 多 IP、固定域名与证书
 
-入口配置由 dsh-work 自己管理，不改写 AI Hub 的配置、数据库或网络。两者独立升级、回滚；同机维护仍需协调共同的 Docker Desktop 和宿主机故障域。
+入口配置由 dsh-work 自己管理，不改写同机其他应用的配置、数据库或网络；同机维护仍需协调共同的 Docker Desktop 和宿主机故障域。
 
 1. 在网卡/DNS 上准备实际可达的地址，绑定 IP 必须是本机已分配的 RFC1918 IPv4。生产 Origin 使用完整 HTTPS 协议、主机和端口，不带路径、查询或 Fragment。
 2. 在离线运维工作站使用企业 CA 签发覆盖旧、新全部 IP/域名的证书。没有现成 CA 时才使用 `init-intranet-ca.sh` 建立一套。每个项目优先使用独立服务器私钥，CA 私钥不放到 Mac mini。
 3. 将服务器证书、私钥、根证书安装到 `runtime.env` 既有路径。私钥权限 `0600`；客户端信任根 CA。切换期间保留旧入口的证书覆盖和可达性。
-4. 在 AI Hub 的同一个应用环境登记所有入口的完整回调，每行一个。每个入口不新建应用或凭据；Issuer 保持平台实际签发的固定地址，不随用户访问 Origin 改写。
-5. 依次执行 `plan`、`check`、`apply --confirm`。多值配置使用逗号分隔，不手改生成的 Compose。
+4. 依次执行 `plan`、`check`、`apply --confirm`。多值配置使用逗号分隔，不手改生成的 Compose。
 
 离线工作站签发示例（将示例域名和目录替换为实际值）：
 
@@ -937,7 +759,7 @@ bash current/scripts/deploy/set-macmini-endpoints.sh plan \
 
 从部署根目录执行；确认预览后保留全部参数，把 `plan` 替换为 `check`；通过后再替换为 `apply` 并追加 `--confirm`。域名入口使用相同的 Origin 参数，默认入口必须属于允许列表。保持员工端 4174、管理端 4180 的当前端口约束。
 
-命令只修改入口字段，保留其他凭据，并复用发布锁。逐个入口验证 HTTPS、登录回调、刷新、退出和写请求；未知 Host/Origin 及跨入口回调应拒绝。`/health` 成功不能替代登录验证。确保后端与 AI Hub 容器均能解析固定认证域名。
+命令只修改入口字段，保留其他凭据，并复用发布锁。逐个入口验证 HTTPS、登录、刷新、退出和写请求；未知 Host/Origin 应拒绝。`/health` 成功不能替代登录验证。
 
 恢复上一份地址配置：
 
@@ -946,7 +768,7 @@ bash current/scripts/deploy/set-macmini-endpoints.sh rollback \
   --deploy-root /Users/deploy/services/dsh-work --confirm
 ```
 
-地址回滚不恢复 DNS、AI Hub 回调或证书文件，需分别核对。域名不变仅改变其 DNS IP 通常无需重签；新增直接访问的 IP/域名必须已在 SAN 中。所有副本续期后分别生效。
+地址回滚不恢复 DNS 或证书文件，需分别核对。域名不变仅改变其 DNS IP 通常无需重签；新增直接访问的 IP/域名必须已在 SAN 中。所有副本续期后分别生效。
 
 旧自签 CA 若曾将私钥放在服务器，应换成离线 CA 签发方案并在客户端完成信任切换；不要沿用服务器持有根私钥的模式。异机备份目录仍为所有发布的前置条件。
 
@@ -957,13 +779,13 @@ bash current/scripts/deploy/set-macmini-endpoints.sh rollback \
 ### 14.1 上线前必须确认
 
 1. **安全基线（方案 8.3）已定：** 登录与免登接口按 IP 与账号限流、连续失败锁定（应用内已按账号与钉钉 userid 限流，**按 IP 限流在公网反向代理上配置**，见 14.3）；访问日志与异常登录告警；是否另加 WAF 或网关 IP 控制。员工首次在钉钉内绑定需要公网上的账号密码登录，网关不能只放行免登。
-2. **AI Hub 静默回退检查：** 只要 `runtime.env` 中配置了 `AI_HUB_PLATFORM_URL`、`AI_HUB_OIDC_ISSUER`、`AI_HUB_APPLICATION_ID`、`AI_HUB_CLIENT_ID`、`AI_HUB_CLIENT_SECRET`（含 `WORKBENCH_`/`ADMIN_` 前缀的同名变量）中任一项，启动就会尝试 AI Hub（OIDC）配置；`AI_HUB_*_PORTAL_URL`、`AI_HUB_*_REDIRECT_URI` 由入口脚本维护，不会单独触发。OIDC 要求所有员工端 origin 与 `DSH_WORK_WORKBENCH_PORT` 同端口。端口不一致（例如 443 的公网 origin）时**不会报错，而是静默回退为本地模式并关闭 AI Hub 登录**（`loadStartupIdentityConfiguration`，启动日志只有一行 `AI Hub 登录未启用：…`）。本节的公网入口使用 4174 端口（14.2），不触发回退；若以后改用 443，须先从 `runtime.env` 删除上述 AI Hub 接入变量（组织架构方案 OD1 计划删除 AI Hub），否则 AI Hub 登录会被静默关闭。上线后检查启动日志没有 `AI Hub 登录未启用`，并在桌面端确认登录页的 AI Hub 入口与预期一致。
+2. **旧配置清理：** 本版本起不再读取 `AI_HUB_*` 等 AI Hub 变量，启动日志会列出仍残留的变量；升级时从 `runtime.env` 删除它们（`set-macmini-endpoints.sh` 运行时也会删除以前写入的 `AI_HUB_*_PORTAL_URL`、`AI_HUB_*_REDIRECT_URI`）。可信入口只来自 `DSH_WORK_*_ORIGINS`。
 3. **钉钉企业内部应用已创建**，并按方案 8.1“DT-S1 钉钉后台配置清单”完成配置（14.4）。
 
 ### 14.2 域名、证书与 origin
 
 1. 申请员工端独立域名（例如 `m.<企业域名>`），网关对外使用**公网受信证书**（钉钉客户端不信任企业自签根证书）。证书只覆盖员工端域名，不覆盖管理端。
-2. **公网入口使用 4174 端口：** `https://m.example.com:4174`。当前入口脚本（`set-macmini-endpoints.sh`、`render-endpoint-compose.mjs`）要求所有员工端 origin 使用 `DSH_WORK_WORKBENCH_PORT`（4174），并把各 origin 的主机名生成为 4174 Nginx 的 `server_name`；端口一致也满足 AI Hub 的同端口校验（14.1 第 2 项）。改用 443 需要先扩展入口脚本对公网 origin 的端口规则，属于后续工作，不能只改 `runtime.env` 绕过。
+2. **公网入口使用 4174 端口：** `https://m.example.com:4174`。当前入口脚本（`set-macmini-endpoints.sh`、`render-endpoint-compose.mjs`）要求所有员工端 origin 使用 `DSH_WORK_WORKBENCH_PORT`（4174），并把各 origin 的主机名生成为 4174 Nginx 的 `server_name`。改用 443 需要先扩展入口脚本对公网 origin 的端口规则，属于后续工作，不能只改 `runtime.env` 绕过。
 3. **Mac mini 侧的两项前置（缺一项入口脚本就会失败）：**
    - **内网证书加入公网域名：** `check` 调用的 `preflight.sh` 要求内网服务器证书含每个 origin 主机名的 DNS SAN。按第 13 节在离线工作站重签，追加 `--dns m.example.com`，安装到 `runtime.env` 既有路径。这张证书只供网关到 Mac mini 这一跳使用，员工看到的是网关的公网证书。
    - **Mac mini 把公网域名解析到本机：** `apply` 会用内网根证书逐个请求 `<origin>/health`。在 Mac mini 上配置内网 DNS（分区解析）或 `/etc/hosts`，使 `m.example.com` 指向 `192.168.1.99`，这些检查才会到达本机 4174 Nginx，而不是公网网关（网关不转发 `/health`，证书也不是企业根证书签发）。
@@ -1053,7 +875,7 @@ proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
 proxy_set_header Connection "";
 ```
 
-AI Hub 登录（`/auth/workbench/oidc/*`、`/auth/workbench/callback`）与切换账号不在公网白名单内；钉钉内只用账号密码与钉钉免登。仍配置 AI Hub 时，公网登录页会显示“使用 AI Hub 账号登录”，点击后得到网关的 404；公网上线前最好按组织架构方案 OD1 停用 AI Hub，或接受这一入口在公网不可用。示例已在固定版本的 Nginx 镜像中做过语法检查与路径白名单探测（允许的路径带原始 Host 转发、其余返回 404、登录接口超限返回 503）；实际网关上线前仍须按 14.5 验证。
+切换账号不在公网白名单内；钉钉内只用账号密码与钉钉免登。示例已在固定版本的 Nginx 镜像中做过语法检查与路径白名单探测（允许的路径带原始 Host 转发、其余返回 404、登录接口超限返回 503）；实际网关上线前仍须按 14.5 验证。
 
 ### 14.4 钉钉企业内部应用与服务端配置
 
@@ -1070,14 +892,14 @@ AI Hub 登录（`/auth/workbench/oidc/*`、`/auth/workbench/callback`）与切�
 1. 管理端“钉钉集成”：应用配置显示 CorpId、AgentId 与配置来源，“钉钉内入口”列出公网 origin；“重新检查连接”后凭据与各项接口权限为“已开通”。“配置异常”时按提示检查权限、通讯录范围与出口 IP。
 2. 公网入口：`curl -sS -o /dev/null -w '%{http_code}\n' https://m.example.com:4174/auth/admin/configuration` 返回 404；`/api/admin/v1/session` 返回 404；`/auth/workbench/configuration` 返回 200 且含 `dingtalk.corpId`。
 3. 用未登记的 Host 访问后端返回 421；跨站 `Origin` 的登录请求返回 403。
-4. 启动日志没有 `AI Hub 登录未启用`（或确认这是预期的本地模式）。
+4. 启动日志没有“AI Hub 登录已删除，以下旧配置不再读取”的警告（有则从 `runtime.env` 删除所列变量）。
 5. 在 iOS 与 Android 钉钉中从工作台打开 dsh-work：未绑定时显示“当前钉钉账号”与“登录并绑定”，登录后进入协作模式；再次打开免登。按 `e2e/catalog/dingtalk.md` 的 DT-P2 记录真机结果（返回键、软键盘、上传下载、安全区）。
 
 回退：网关先撤下公网入口；用 `set-macmini-endpoints.sh` 去掉公网 origin（`plan`、`check`、`apply --confirm`，参数中不再包含 `https://m.example.com:4174`），或在刚变更后用 `rollback --confirm` 恢复上一份入口配置——不要手改 `DSH_WORK_WORKBENCH_ORIGINS`，否则与生成的 Nginx `server_name` 不一致；再在“钉钉集成 › 应用配置”点“清除配置”（删除已加密的 AppSecret，立即生效）。已写入的绑定记录保留，钉钉免登接口返回“未启用”。
 
 ## 15. 企业知识库（WeKnora）连接
 
-设计见[企业知识库接入 WeKnora 方案](../design/weknora-knowledge-plan.md)与[企业知识库优化方案](../design/weknora-knowledge-optimization-plan.md)。连接在管理端“知识库 → 企业知识库 → 连接配置”中维护。
+规则见[功能规则第 11 节](../development/feature-rules.md#11-企业知识库weknorawk-s1-起)。连接在管理端“知识库 → 企业知识库 → 连接配置”中维护。
 
 ### 15.1 上线前必须确认
 

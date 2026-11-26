@@ -9,7 +9,8 @@ import type { AgentRuntimePort, McpConnectionSnapshot, McpRuntimeConnection, Run
 import { normalizeAgentMcpScope } from './agent-mcp-scope.ts'
 import { mcpCapabilityDigest, mergeMcpCapabilities, normalizeMcpCapabilities, pendingMcpCapabilities, type McpCapability } from './mcp-capabilities.ts'
 import { normalizeBearerToken, type PostgresEncryptedCredentialStore } from './postgres-encrypted-credential-store.ts'
-import { requirePlatformAdminActor } from '../authorization/platform-admin-actor.ts'
+import { requireAdminModuleActor } from '../authorization/admin-actor.ts'
+import { mcpCallContextHeaders, mcpCallVisibility, type McpCallContextViewer, type McpCallVisibility } from '../../domain/mcp-call-context.ts'
 
 const tenantId = 'tenant-dsh-work'
 
@@ -44,6 +45,8 @@ interface McpConnectorRow {
   discoveredAt: Date | null
   reviewedAt: Date | null
   reviewedBy: string | null
+  employeeIdentityEnabled: boolean
+  credentialShared: boolean
 }
 
 interface CredentialRevision {
@@ -64,6 +67,15 @@ interface RuntimeConnectionRow {
   credentialStatus: string | null
   credentialBackend: string | null
   credentialVersion: number | null
+  employeeIdentityEnabled: boolean
+  credentialShared: boolean
+}
+
+/** 本次 Attempt 的调用上下文来源，按需加载一次，供各 Connector 共用。 */
+interface AttemptCallContextSource {
+  visibility: McpCallVisibility
+  viewer?: McpCallContextViewer
+  agentId: string | null
 }
 
 export class PostgresMcpConnectorService implements McpScopePort {
@@ -95,7 +107,9 @@ export class PostgresMcpConnectorService implements McpScopePort {
              p.server_name as "serverName", p.approval_status as "approvalStatus",
              p.capability_digest as "capabilityDigest", p.approved_digest as "approvedDigest",
              p.capability_snapshot as "capabilitySnapshot", p.approved_snapshot as "approvedSnapshot",
-             p.discovered_at as "discoveredAt", p.reviewed_at as "reviewedAt", reviewer.display_name as "reviewedBy"
+             p.discovered_at as "discoveredAt", p.reviewed_at as "reviewedAt", reviewer.display_name as "reviewedBy",
+             p.employee_identity_enabled as "employeeIdentityEnabled",
+             ${credentialSharedColumn(this.database)}
         from connectors c
         join mcp_connector_profiles p on p.tenant_id = c.tenant_id and p.connector_id = c.id
         join users creator on creator.tenant_id = c.tenant_id and creator.id = c.created_by
@@ -113,7 +127,7 @@ export class PostgresMcpConnectorService implements McpScopePort {
   }
 
   async testMcpConnection(input: TestMcpConnectionInput): Promise<McpConnectionTestResult> {
-    const actor = await requirePlatformAdminActor(this.database, input.actor)
+    const actor = await requireAdminModuleActor(this.database, input.actor, 'connector', 'write')
     try {
       const inspected = await this.inspectRegistrationInput(input)
       await this.audit(
@@ -140,7 +154,7 @@ export class PostgresMcpConnectorService implements McpScopePort {
 
   /** 登记前再次通过 DSH 发现；登记时看到的完整清单即为首个生效清单。 */
   async registerMcpConnector(input: RegisterMcpConnectorInput): Promise<ConnectorDefinition> {
-    const actor = await requirePlatformAdminActor(this.database, input.actor)
+    const actor = await requireAdminModuleActor(this.database, input.actor, 'connector', 'write')
     const id = `connector-mcp-${randomUUID()}`
     if (!input.scopeDescription.trim()) throw stateConflict('整体权限范围不能为空')
     const inspected = await this.inspectRegistrationInput(input, id)
@@ -193,7 +207,7 @@ export class PostgresMcpConnectorService implements McpScopePort {
    * Tool 立即下线；新增或 Schema 变化的 Tool 进入待确认，须管理员确认后才生效。
    */
   async checkMcpConnector(input: { connectorId: string; actor: string }): Promise<ConnectorDefinition> {
-    const actor = await requirePlatformAdminActor(this.database, input.actor)
+    const actor = await requireAdminModuleActor(this.database, input.actor, 'connector', 'write')
     const checkedCredential = await this.readCredentialRevision(this.database, input.connectorId)
     const started = performance.now()
     let status: 'healthy' | 'offline' = 'offline'
@@ -265,7 +279,7 @@ export class PostgresMcpConnectorService implements McpScopePort {
 
   /** 把当前发现清单整体确认为生效清单；清单已再次变化时返回冲突，要求刷新后再确认。 */
   async approveMcpCapabilities(input: { connectorId: string; capabilityDigest: string; actor: string }): Promise<ConnectorDefinition> {
-    const actor = await requirePlatformAdminActor(this.database, input.actor)
+    const actor = await requireAdminModuleActor(this.database, input.actor, 'connector', 'write')
     let approvedCount = 0
     await this.database.begin(async transaction => {
       const [profile] = await transaction<{ capabilityDigest: string | null; capabilitySnapshot: McpCapability[] }[]>`
@@ -294,7 +308,7 @@ export class PostgresMcpConnectorService implements McpScopePort {
 
   /** 受控软删除：后续解析立即排除该连接器；独占密文删除，治理证据与调用审计保留。 */
   async deleteMcpConnector(input: { connectorId: string; actor: string }): Promise<McpConnectorDeletionResult> {
-    const actor = await requirePlatformAdminActor(this.database, input.actor)
+    const actor = await requireAdminModuleActor(this.database, input.actor, 'connector', 'write')
     let credentialDestroyed = false
     await this.database.begin(async transaction => {
       const [connector] = await transaction<{ credentialRefId: string | null }[]>`
@@ -327,7 +341,7 @@ export class PostgresMcpConnectorService implements McpScopePort {
   }
 
   async rotateMcpCredential(input: { connectorId: string; bearerToken: string; actor: string }): Promise<ConnectorDefinition> {
-    const actor = await requirePlatformAdminActor(this.database, input.actor)
+    const actor = await requireAdminModuleActor(this.database, input.actor, 'connector', 'write')
     if (!this.credentialSecrets) throw mcpCredentialStoreUnavailable()
     const secrets = this.credentialSecrets
     await this.database.begin(async transaction => {
@@ -383,7 +397,7 @@ export class PostgresMcpConnectorService implements McpScopePort {
   }
 
   async setMcpConnectorStatus(input: { connectorId: string; status: 'enabled' | 'disabled'; actor: string }): Promise<ConnectorDefinition> {
-    const actor = await requirePlatformAdminActor(this.database, input.actor)
+    const actor = await requireAdminModuleActor(this.database, input.actor, 'connector', 'write')
     await this.database.begin(async transaction => {
       const [connector] = await transaction<{ authType: string; credentialBackend: string | null; credentialVersion: number | null }[]>`
         select c.auth_type as "authType", cr.backend as "credentialBackend", cs.version as "credentialVersion"
@@ -417,7 +431,7 @@ export class PostgresMcpConnectorService implements McpScopePort {
       select id, run_id as "runId", attempt_id as "attemptId", connector_id as "connectorId",
              actor_user_id as "actorUserId", executor_principal_id as "executorPrincipalId",
              capability_name as "capabilityName",
-             parameter_digest as "parameterDigest", result, occurred_at as "occurredAt",
+             parameter_digest as "parameterDigest", result, call_context as "callContext", occurred_at as "occurredAt",
              resolved_result as "resolvedResult", resolved_by as "resolvedBy",
              resolved_at as "resolvedAt", resolution_note as "resolutionNote"
         from mcp_invocation_audits
@@ -478,7 +492,7 @@ export class PostgresMcpConnectorService implements McpScopePort {
     note: string
     actor: string
   }): Promise<void> {
-    const actor = await requirePlatformAdminActor(this.database, input.actor)
+    const actor = await requireAdminModuleActor(this.database, input.actor, 'connector', 'write')
     if (input.result !== 'success' && input.result !== 'failed') throw invalidRequest('result 仅支持 success 或 failed')
     const note = typeof input.note === 'string' ? input.note.trim() : ''
     if (!note || note.length > 1000) throw invalidRequest('请填写 1～1000 字的核对依据')
@@ -547,7 +561,39 @@ export class PostgresMcpConnectorService implements McpScopePort {
     const pins = manifest.mcp_connections ?? []
     if (!pins.length) return []
     await this.assertPinnedConnections(pins)
-    return Promise.all(pins.map(pin => this.resolveRuntimeConnection(pin.connector_id, pin)))
+    let source: Promise<AttemptCallContextSource | null> | undefined
+    const callContext = () => (source ??= this.loadAttemptCallContext(manifest))
+    return Promise.all(pins.map(pin => this.resolveRuntimeConnection(pin.connector_id, pin, { manifest, callContext })))
+  }
+
+  /** EA-S1：开启或关闭“发送员工身份”。只影响此后新启动的 Attempt。 */
+  async setMcpEmployeeIdentity(input: { connectorId: string; enabled: boolean; actor: string }): Promise<ConnectorDefinition> {
+    if (typeof input.enabled !== 'boolean') throw invalidRequest('enabled 必须是布尔值')
+    const actor = await requireAdminModuleActor(this.database, input.actor, 'connector', 'write')
+    const changed = await this.database.begin(async transaction => {
+      const [connector] = await transaction<{ authType: string; credentialShared: boolean; enabled: boolean }[]>`
+        select c.auth_type as "authType", p.employee_identity_enabled as enabled,
+               ${credentialSharedColumn(transaction)}
+          from connectors c
+          join mcp_connector_profiles p on p.tenant_id = c.tenant_id and p.connector_id = c.id
+         where c.tenant_id = ${tenantId} and c.id = ${input.connectorId}
+           and c.protocol = 'mcp' and c.deleted_at is null
+         for update of c, p
+      `
+      if (!connector) throw notFound('目标不是 MCP Connector')
+      // 状态未变：不更新、不写审计。
+      if (connector.enabled === input.enabled) return false
+      const availability = employeeIdentityAvailability(connector)
+      if (input.enabled && !availability.available) throw stateConflict(availability.unavailableReason!)
+      await transaction`
+        update mcp_connector_profiles set employee_identity_enabled = ${input.enabled}, updated_at = now()
+         where tenant_id = ${tenantId} and connector_id = ${input.connectorId}
+      `
+      return true
+    })
+    if (changed) await this.audit(actor.id, `connector.mcp.employee_identity.${input.enabled ? 'enable' : 'disable'}`, input.connectorId, 'success',
+      input.enabled ? '开启“发送员工身份”：此后新运行向该 MCP 服务附带调用上下文' : '关闭“发送员工身份”')
+    return this.requireConnector(input.connectorId)
   }
 
   async recordMcpInvocation(manifest: RuntimeManifest, input: {
@@ -562,7 +608,7 @@ export class PostgresMcpConnectorService implements McpScopePort {
     await this.database`
       insert into mcp_invocation_audits (
         id, tenant_id, run_id, attempt_id, connector_id, actor_user_id, executor_principal_id,
-        call_id, capability_name, parameter_digest, result
+        call_id, capability_name, parameter_digest, result, call_context
       ) values (
         ${`mcp-audit-${randomUUID()}`}, ${tenantId}, ${manifest.run_id}, ${manifest.attempt_id},
         ${pin.connector_id}, ${manifest.user_context.user_id},
@@ -570,7 +616,9 @@ export class PostgresMcpConnectorService implements McpScopePort {
            on t.tenant_id = r.tenant_id and t.id = r.task_id
           where r.tenant_id = ${tenantId} and r.id = ${manifest.run_id}),
         ${input.callId}, ${input.capabilityName},
-        ${input.parameterDigest}, ${input.result}
+        ${input.parameterDigest}, ${input.result},
+        (select visibility from mcp_attempt_call_contexts
+          where tenant_id = ${tenantId} and attempt_id = ${manifest.attempt_id} and connector_id = ${pin.connector_id})
       )
       on conflict (tenant_id, attempt_id, call_id) do update
         set result = excluded.result, occurred_at = now()
@@ -589,12 +637,39 @@ export class PostgresMcpConnectorService implements McpScopePort {
 
   /* ---------- 内部 ---------- */
 
+  /**
+   * 本次 Attempt 的可见类型与员工标识（方案 5.1）：personal 时员工为披露用户（主动任务为接收人），
+   * 读取其登录账号与有效的钉钉绑定；不适用调用上下文的运行（发布验证、管理端运行）返回 null。
+   */
+  private async loadAttemptCallContext(manifest: RuntimeManifest): Promise<AttemptCallContextSource | null> {
+    const [workspace] = manifest.workspace_id ? await this.database<{ type: 'personal' | 'team' }[]>`
+      select workspace_type as type from workspaces where tenant_id = ${tenantId} and id = ${manifest.workspace_id}
+    ` : []
+    const visibility = mcpCallVisibility({ purpose: manifest.purpose, workspaceType: workspace?.type ?? null })
+    if (!visibility) return null
+    const [agent] = manifest.agent_version_id ? await this.database<{ agentId: string }[]>`
+      select agent_id as "agentId" from agent_versions where tenant_id = ${tenantId} and id = ${manifest.agent_version_id}
+    ` : []
+    const agentId = agent?.agentId ?? null
+    if (visibility === 'shared') return { visibility, agentId }
+    const userId = manifest.principal_context?.disclosure_user_id ?? manifest.user_context.user_id
+    const [identity] = await this.database<{ loginAccount: string | null; dingtalkUserId: string | null }[]>`
+      select (select username from local_user_credentials where tenant_id = ${tenantId} and user_id = ${userId}) as "loginAccount",
+             (select external_user_id from external_account_bindings
+               where tenant_id = ${tenantId} and user_id = ${userId} and channel = 'dingtalk' and status = 'valid'
+               order by bound_at desc limit 1) as "dingtalkUserId"
+    `
+    return { visibility, agentId, viewer: { userId, loginAccount: identity?.loginAccount ?? null, dingtalkUserId: identity?.dingtalkUserId ?? null } }
+  }
+
   private async loadRuntimeRows(connectorIds: readonly string[]): Promise<RuntimeConnectionRow[]> {
     return this.database<RuntimeConnectionRow[]>`
       select c.id as "connectorId", p.server_name as "serverName", c.endpoint, c.auth_type as "authType",
              p.approved_digest as "approvedDigest", p.approved_snapshot as "approvedSnapshot",
              c.status as "connectorStatus", cr.id as "credentialRefId", cr.status as "credentialStatus",
-             cr.backend as "credentialBackend", cs.version as "credentialVersion"
+             cr.backend as "credentialBackend", cs.version as "credentialVersion",
+             p.employee_identity_enabled as "employeeIdentityEnabled",
+             ${credentialSharedColumn(this.database)}
         from connectors c
         join mcp_connector_profiles p on p.tenant_id = c.tenant_id and p.connector_id = c.id
         left join credential_refs cr on cr.tenant_id = c.tenant_id and cr.id = c.credential_ref_id
@@ -605,7 +680,11 @@ export class PostgresMcpConnectorService implements McpScopePort {
     `
   }
 
-  private async resolveRuntimeConnection(connectorId: string, expected?: McpConnectionSnapshot): Promise<McpRuntimeConnection> {
+  private async resolveRuntimeConnection(
+    connectorId: string,
+    expected?: McpConnectionSnapshot,
+    attempt?: { manifest: RuntimeManifest; callContext: () => Promise<AttemptCallContextSource | null> },
+  ): Promise<McpRuntimeConnection> {
     const [row] = await this.loadRuntimeRows([connectorId])
     if (!row) throw notFound(`MCP Connector 不存在：${connectorId}`)
     if (expected && (!isUsable(row) || !sameSnapshot(toSnapshot(row), expected))) {
@@ -616,6 +695,25 @@ export class PostgresMcpConnectorService implements McpScopePort {
       assertRuntimeCredential(row)
       if (!this.credentialSecrets) throw mcpCredentialStoreUnavailable()
       headers['Authorization'] = `Bearer ${await this.credentialSecrets.readBearerToken(tenantId, row.credentialRefId!)}`
+    }
+    // EA-S1：开启且仍满足开启条件时附带调用上下文；凭据被共用等情况下本次不发送员工身份。
+    if (attempt && row.employeeIdentityEnabled && employeeIdentityAvailability(row).available) {
+      const source = await attempt.callContext()
+      if (source) {
+        const { manifest } = attempt
+        Object.assign(headers, mcpCallContextHeaders({
+          visibility: source.visibility,
+          ...(source.viewer ? { viewer: source.viewer } : {}),
+          runId: manifest.run_id,
+          attemptId: manifest.attempt_id,
+          agentId: source.agentId,
+        }))
+        await this.database`
+          insert into mcp_attempt_call_contexts (tenant_id, attempt_id, connector_id, visibility)
+          values (${tenantId}, ${manifest.attempt_id}, ${connectorId}, ${source.visibility})
+          on conflict (tenant_id, attempt_id, connector_id) do update set visibility = excluded.visibility
+        `
+      }
     }
     return {
       snapshot: expected ?? { ...toSnapshot(row), capability_digest: row.approvedDigest ?? '0'.repeat(64) },
@@ -768,8 +866,30 @@ function toConnectorDefinition(row: McpConnectorRow): ConnectorDefinition {
       discoveredAt: row.discoveredAt?.toISOString() ?? null,
       reviewedAt: row.reviewedAt?.toISOString() ?? null,
       reviewedBy: row.reviewedBy,
+      employeeIdentity: {
+        enabled: row.employeeIdentityEnabled,
+        ...employeeIdentityAvailability(row),
+      },
     },
   }
+}
+
+/**
+ * 本 Connector（别名 `c`）的 Bearer 凭据是否与其他 Connector 共用（EA-S1 开启条件）。现有代码不会把一份凭据
+ * 分给新的 Connector，共用只可能来自旧数据。
+ */
+function credentialSharedColumn(sql: DatabaseClient | DatabaseTransaction) {
+  return sql`(c.credential_ref_id is not null and exists (
+    select 1 from connectors other
+     where other.tenant_id = c.tenant_id and other.credential_ref_id = c.credential_ref_id and other.id <> c.id
+  )) as "credentialShared"`
+}
+
+/** EA-S1 开启条件：Bearer 认证且凭据为本 Connector 独占（方案 5.1“开启条件”）。 */
+function employeeIdentityAvailability(row: { authType: string; credentialShared: boolean }): { available: boolean; unavailableReason?: string } {
+  if (row.authType !== 'bearer') return { available: false, unavailableReason: '无认证的连接器任何人都能伪造员工身份，只有 Bearer 认证的连接器可以开启' }
+  if (row.credentialShared) return { available: false, unavailableReason: 'Bearer 凭据与其他连接器共用，其他 MCP 服务也能冒充员工；请先在“更多”中“轮换 Token”，为本连接器换上单独的凭据' }
+  return { available: true }
 }
 
 function createMcpServerName(name: string, connectorId: string) {

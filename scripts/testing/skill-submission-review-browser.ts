@@ -1,9 +1,9 @@
 /**
- * SKC-02 P1 浏览器夹具：管理员审核员工 Skill 提交（docs/design/skill-creator-plan.md 4.4）。
+ * SKC-02 P1 浏览器夹具：管理员审核员工 Skill 提交（功能规则 5.6）。
  *
  * 一次性 PostgreSQL 上运行真实的 Skill 服务、审核服务与发布门禁；两条待审核提交由测试接口准备。
  * 严格试运行是合成证据：名称含“会议纪要”的提交停在运行中（未完成），其余写入激活与 Python 退出码 0
- * 的证据后由真实 packageTestProgress 判定。不调用模型、不运行容器，不连接 OIDC 或生产 DSH。
+ * 的证据后由真实 packageTestProgress 判定。不调用模型、不运行容器，不连接生产 DSH。
  */
 import { randomUUID } from 'node:crypto'
 import { createServer } from 'node:http'
@@ -98,7 +98,7 @@ async function seedSubmission(name: string, description: string, script: boolean
   return { submissionId, versionId }
 }
 
-const router = new Router({ authenticateApi: testApiAuthenticator })
+const router = new Router({ authenticateApi: testApiAuthenticator, testOnlyAdminPaths: path => path.startsWith('/api/admin/v1/test/') })
 const base = '/api/admin/v1'
 router.get(`${base}/session`, (_request, context) => {
   const identity = requireRequestIdentity(context, 'admin')
@@ -138,7 +138,7 @@ await new Promise<void>((resolve, reject) => {
   server.once('error', reject)
   server.listen(port, '127.0.0.1', resolve)
 })
-console.log('SKC-02 admin browser ready; throwaway PostgreSQL and synthetic Skill trial evidence, no model/DSH/OIDC.')
+console.log('SKC-02 admin browser ready; throwaway PostgreSQL and synthetic Skill trial evidence, no model/DSH.')
 
 let closing = false
 async function close() {

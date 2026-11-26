@@ -9,7 +9,6 @@ function loadConfig(ports = {}) {
   const env = {
     ...process.env,
     NODE_ENV: 'production',
-    DSH_WORK_AUTH_MODE: 'oidc',
     DSH_WORK_DATABASE_URL: 'postgresql://example.invalid/development',
     DSH_WORK_SERVER_HOST: 'example.invalid',
     VITE_ADMIN_API_BASE_URL: 'https://example.invalid/api/admin/v1',

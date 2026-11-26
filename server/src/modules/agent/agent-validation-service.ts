@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto'
 
 import type { DatabaseClient, DatabaseTransaction } from '../../infrastructure/postgres/database.ts'
-import { requirePlatformAdminActor } from '../authorization/platform-admin-actor.ts'
+import { requireAdminModuleActor } from '../authorization/admin-actor.ts'
+import { assertAgentCapabilityWithinActor } from './agent-access-service.ts'
 import { resolveAudienceCeiling } from '../authorization/agent-audience-ceiling.ts'
 import type { PostgresSkillService } from '../skill/postgres-skill-service.ts'
 import type { McpScopePort } from '../tool/postgres-mcp-connector-service.ts'
@@ -264,7 +265,7 @@ export class PostgresAgentValidationService {
   /* ---------- Custom test questions ---------- */
 
   async replaceTestCases(agentId: string, userId: string, prompts: unknown): Promise<AgentReleaseOverview> {
-    const actor = await requirePlatformAdminActor(this.database, userId)
+    const actor = await requireAdminModuleActor(this.database, userId, 'agent', 'write')
     if (!Array.isArray(prompts) || prompts.length > MAX_TEST_CASES
       || prompts.some(item => typeof item !== 'string' || !item.trim() || item.length > MAX_TEST_CASE_CHARS)) {
       throw invalidRequest(`自定义测试问题最多 ${MAX_TEST_CASES} 条，每条 1～${MAX_TEST_CASE_CHARS} 字`)
@@ -292,7 +293,7 @@ export class PostgresAgentValidationService {
    * cases and starts them in the background. Returns as soon as the cases are queued.
    */
   async startValidation(agentId: string, userId: string): Promise<AgentReleaseOverview> {
-    const actor = await requirePlatformAdminActor(this.database, userId)
+    const actor = await requireAdminModuleActor(this.database, userId, 'agent', 'write')
     const [agent] = await this.database<{ draftVersionId: string | null }[]>`
       select draft_version_id as "draftVersionId" from agents where tenant_id = ${tenantId} and id = ${agentId}
     `
@@ -368,7 +369,7 @@ export class PostgresAgentValidationService {
   }
 
   async rerunCase(agentId: string, validationId: string, caseId: string, userId: string): Promise<AgentValidation> {
-    const actor = await requirePlatformAdminActor(this.database, userId)
+    const actor = await requireAdminModuleActor(this.database, userId, 'agent', 'write')
     const validation = await this.requireLiveValidation(agentId, validationId)
     await this.reconcile(validation.id)
     const row = (await this.caseRows(validation.id)).find(item => item.id === caseId)
@@ -387,7 +388,7 @@ export class PostgresAgentValidationService {
     agentId: string, validationId: string, caseId: string, userId: string,
     input: { verdict: unknown; note?: unknown },
   ): Promise<AgentValidation> {
-    const actor = await requirePlatformAdminActor(this.database, userId)
+    const actor = await requireAdminModuleActor(this.database, userId, 'agent', 'write')
     if (input.verdict !== 'passed' && input.verdict !== 'failed') throw invalidRequest('判定只能是 passed 或 failed')
     const note = typeof input.note === 'string' ? input.note.trim() : ''
     if (note.length > 2000) throw invalidRequest('判定说明最多 2000 字')
@@ -418,7 +419,9 @@ export class PostgresAgentValidationService {
    * locks; publication moves the current-version pointer and never changes the version.
    */
   async publish(agentId: string, userId: string, input: { validationId: unknown; note?: unknown }): Promise<AgentReleaseOverview> {
-    const actor = await requirePlatformAdminActor(this.database, userId)
+    const actor = await requireAdminModuleActor(this.database, userId, 'agent', 'write')
+    // 发布把 Agent 的能力开放给可见角色：能力不能超过操作人（功能规则第 13 节）。
+    await assertAgentCapabilityWithinActor(this.database, actor.id, agentId)
     if (typeof input.validationId !== 'string' || !input.validationId) throw invalidRequest('缺少验证标识')
     const note = typeof input.note === 'string' ? input.note.trim().slice(0, 2000) : ''
     const validation = await this.requireLiveValidation(agentId, input.validationId)

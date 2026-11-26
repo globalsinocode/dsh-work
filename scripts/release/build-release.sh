@@ -76,11 +76,14 @@ cp "${project_root}/server/config/dsh/dsh-work-remote-subprocess.js" "${bundle}/
 cp "${project_root}/server/config/execution/extract_artifact_text.py" "${bundle}/server/config/execution/"
 # 平台内置 Skill 随代码发布；服务启动时按 versions.lock.json 校验，缺失或不一致时不启动。
 cp -R "${project_root}/server/config/builtin-skills" "${bundle}/server/config/builtin-skills"
-# Agent 预置定义（Skill 创建专家方案 5.1）：服务启动时读取，缺失时服务不启动。
+# Agent 预置定义（功能规则 5.6）：服务启动时读取，缺失时服务不启动。
 cp -R "${project_root}/server/config/agent-presets" "${bundle}/server/config/agent-presets"
 cp -R "${server_stage}/node_modules" "${bundle}/server/node_modules"
 cp -R "${project_root}/apps/workbench-web/dist" "${bundle}/apps/workbench-web/dist"
 cp -R "${project_root}/apps/admin-web/dist" "${bundle}/apps/admin-web/dist"
+# 错误记录（OB7）：源码映射不随前端发布，移到 sourcemaps/<版本>/，只供服务端还原错误堆栈。
+mkdir -p "${bundle}/sourcemaps/${version}"
+find "${bundle}/apps/workbench-web/dist" "${bundle}/apps/admin-web/dist" -name '*.map' -exec mv {} "${bundle}/sourcemaps/${version}/" \;
 
 deployment_scripts=(
   backup.sh
@@ -104,7 +107,7 @@ deployment_scripts=(
 for deployment_script in "${deployment_scripts[@]}"; do
   cp "${project_root}/scripts/deploy/${deployment_script}" "${bundle}/scripts/deploy/"
 done
-# C 档 P2 验收脚本（docs/release/c-tier-p2-acceptance.md），无依赖，在 Mac mini 上直接运行。
+# C 档 P2 验收脚本（2026-10-28 已通过；用法与安全步骤见脚本开头），无依赖，在 Mac mini 上直接运行。
 cp "${project_root}/scripts/acceptance/c-tier-p2.mjs" "${bundle}/scripts/acceptance/"
 
 cp "${project_root}/deploy/compose.yaml" "${bundle}/deploy/compose.yaml"

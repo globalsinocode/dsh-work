@@ -1,7 +1,9 @@
 import { randomUUID } from 'node:crypto'
 
 import type { DatabaseClient, DatabaseTransaction } from '../../infrastructure/postgres/database.ts'
-import { requirePlatformAdminActor } from '../authorization/platform-admin-actor.ts'
+import { assertWithinGrantCeiling, loadGrantCeiling, loadRoleGrants, requireAdminModuleActor } from '../authorization/admin-actor.ts'
+import { isManagementPermission } from '../../domain/admin-permissions.ts'
+import { authorizationDenied } from '../../domain/authorization-errors.ts'
 import { RequestError, invalidRequest, notFound } from '../../domain/request-errors.ts'
 
 const tenantId = 'tenant-dsh-work'
@@ -11,7 +13,7 @@ export interface AgentAccessRoleOption {
   id: string
   name: string
   status: 'active' | 'disabled'
-  /** 角色带有管理端或审计权限（admin:*、audit:*）；授予 Agent 时页面提示风险。 */
+  /** 角色带有管理类权限（`admin:`、`audit:`、`data-protection:` 前缀）；只有平台管理员能授给 Agent。 */
   privileged: boolean
 }
 
@@ -73,7 +75,7 @@ export class PostgresAgentAccessService {
       select id, name, status,
              exists (
                select 1 from jsonb_array_elements_text(coalesce(permissions, '[]'::jsonb)) as permission(code)
-                where permission.code like 'admin:%' or permission.code like 'audit:%'
+                where permission.code like 'admin:%' or permission.code like 'audit:%' or permission.code like 'data-protection:%'
              ) as privileged
         from roles where tenant_id = ${tenantId} order by name, id
     `
@@ -106,7 +108,7 @@ export class PostgresAgentAccessService {
   }
 
   async updateAccess(input: UpdateAgentAccessInput): Promise<AgentAccess> {
-    const actor = await requirePlatformAdminActor(this.database, input.actor)
+    const actor = await requireAdminModuleActor(this.database, input.actor, 'agent', 'write')
     const visibleRoleIds = readList(input.visibleRoleIds, '可见角色')
     const roleIds = readList(input.roleIds, '岗位角色')
     const dataScopes = readList(input.dataScopes, '数据范围')
@@ -148,6 +150,17 @@ export class PostgresAgentAccessService {
         `
         if (known.length !== new Set(added).size) throw invalidRequest('岗位权限包含无效或已停用的角色')
       }
+      const status = input.principalStatus ?? principal.status
+      const visibleChange = diff(current!.visibleRoleIds, visibleRoleIds)
+      await assertAgentAccessWithinActor(transaction, actor.id, {
+        roleIds,
+        dataScopes,
+        // 放宽（新增岗位角色、数据范围、新增可见角色或重新启用执行身份）时才复核；只移除不受影响。
+        widened: roleIds.some(role => !current!.roleIds.includes(role))
+          || dataScopes.some(scope => !current!.dataScopes.includes(scope))
+          || visibleChange.added.length > 0
+          || (principal.status === 'disabled' && status === 'active'),
+      })
       await transaction`
         update agents set visible_role_ids = ${transaction.json(visibleRoleIds)},
                access_revision = access_revision + 1, updated_at = now()
@@ -157,7 +170,6 @@ export class PostgresAgentAccessService {
       await replaceGrants(transaction, 'agent_principal_scope_grants', 'scope_value', principal.id, dataScopes)
       // Grant changes bump the principal's authorization_version through triggers;
       // a status change bumps it here. An audience-only change leaves it untouched.
-      const status = input.principalStatus ?? principal.status
       if (status !== principal.status) {
         await transaction`
           update execution_principals
@@ -166,7 +178,7 @@ export class PostgresAgentAccessService {
         `
       }
       const changes = {
-        visibleRoleIds: diff(current!.visibleRoleIds, visibleRoleIds),
+        visibleRoleIds: visibleChange,
         roleIds: diff(current!.roleIds, roleIds),
         dataScopes: diff(current!.dataScopes, dataScopes),
         ...(status !== principal.status ? { principalStatus: { from: principal.status, to: status } } : {}),
@@ -181,6 +193,40 @@ export class PostgresAgentAccessService {
     })
     return this.getAccess(input.agentId)
   }
+}
+
+/**
+ * 授出不超过自身（功能规则第 13 节）：非平台管理员不能给 Agent 授予管理类角色；
+ * Agent 的全部岗位角色权限与数据范围须是操作人自身的子集。改变可见角色等于把 Agent 的能力
+ * 开放给新的人，同样要求 Agent 当前能力不超过操作人。平台管理员不受约束。
+ */
+export async function assertAgentAccessWithinActor(
+  sql: DatabaseClient | DatabaseTransaction,
+  actorId: string,
+  input: { roleIds: string[]; dataScopes: string[]; widened: boolean },
+) {
+  if (!input.widened) return
+  const ceiling = await loadGrantCeiling(sql, actorId)
+  if (ceiling.platformAdmin) return
+  const roles = await loadRoleGrants(sql, input.roleIds)
+  if (roles.permissions.some(isManagementPermission)) {
+    throw authorizationDenied('含管理类权限的角色只有平台管理员可以授给 Agent')
+  }
+  assertWithinGrantCeiling(ceiling, { permissions: roles.permissions, dataScopes: input.dataScopes }, 'Agent 的岗位权限')
+}
+
+/** Agent 当前岗位角色与数据范围（用于主动任务接收人等开放 Agent 能力的操作复核）。 */
+export async function assertAgentCapabilityWithinActor(sql: DatabaseClient | DatabaseTransaction, actorId: string, agentId: string) {
+  const [row] = await sql<{ roleIds: string[]; dataScopes: string[] }[]>`
+    select coalesce((select jsonb_agg(g.role_id) from agent_principal_role_grants g
+                      where g.tenant_id = ep.tenant_id and g.principal_id = ep.id), '[]'::jsonb) as "roleIds",
+           coalesce((select jsonb_agg(g.scope_value) from agent_principal_scope_grants g
+                      where g.tenant_id = ep.tenant_id and g.principal_id = ep.id), '[]'::jsonb) as "dataScopes"
+      from execution_principals ep
+     where ep.tenant_id = ${tenantId} and ep.kind = 'agent' and ep.agent_id = ${agentId}
+  `
+  if (!row) throw notFound(`Agent 不存在：${agentId}`)
+  await assertAgentAccessWithinActor(sql, actorId, { roleIds: row.roleIds, dataScopes: row.dataScopes, widened: true })
 }
 
 function readList(value: unknown, label: string): string[] {
