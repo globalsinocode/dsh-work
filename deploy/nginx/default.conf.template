@@ -55,6 +55,14 @@ server {
     include /etc/nginx/proxy_params;
   }
 
+  # Container liveness only: the web healthcheck must not depend on the host server's startup
+  # probes (they can legitimately take more than 20 minutes). Deployment readiness is asserted
+  # separately by scripts/deploy/release-wait.mjs through the public /health and /health/ready.
+  location = /nginx-health {
+    access_log off;
+    return 200 "ok\n";
+  }
+
   location /api/ {
     proxy_pass http://dsh_work_server;
     include /etc/nginx/proxy_params;
@@ -103,6 +111,14 @@ server {
   location = /health {
     proxy_pass http://dsh_work_server;
     include /etc/nginx/proxy_params;
+  }
+
+  # Container liveness only: the web healthcheck must not depend on the host server's startup
+  # probes (they can legitimately take more than 20 minutes). Deployment readiness is asserted
+  # separately by scripts/deploy/release-wait.mjs through the public /health and /health/ready.
+  location = /nginx-health {
+    access_log off;
+    return 200 "ok\n";
   }
 
   location /api/ {

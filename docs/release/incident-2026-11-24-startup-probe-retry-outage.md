@@ -38,22 +38,32 @@ DSH 能力探针超时后，**有界重试实际退化为一次尝试**：服务
 ## 4. 修复（`v2026.11.25-01`）
 
 - **重试预算**：启动探针不再使用总 `deadlineMs`，由尝试次数约束（3 次、间隔 2 s）。
-  单次 preflight 仍为 30 s；最坏约 3×30 s + 2×2 s ≈ 94 s。
+  单次 preflight 仍为 30 s；DSH 探针最坏约 3×30 s + 2×2 s ≈ 94 s（仅 DSH，不含
+  execution-container 探针）。
   新增 `onRecovered` 日志（第 2/3 或 3/3 次成功时输出），并补“慢尝试仍会重试”的单测。
-- **健康等待**：`release.sh` 的公网 `/health` 等待从 60 s 提高到 180 s，覆盖最坏启动时间。
-- **部署门禁**：`release.sh` 在 `/health` 之后断言宿主 `/health/ready` 的
+- **健康等待与启动预算**：web 容器 healthcheck 改为静态 `/nginx-health`（Nginx 存活探针，
+  秒级 healthy，不再依赖宿主服务端探针，移除了旧的约 110 s 后端依赖窗口）；`release.sh`
+  改为调用 `scripts/deploy/release-wait.mjs`：公网 `/health` 等待预算 1500 s（25 分钟，
+  覆盖 DSH 约 94 s + execution-container 三次探针约 21–22 分钟），超时输出
+  `release health check failed: …` 并按 `fail_after_migration` 回滚。
+- **部署门禁**：`/health/ready` 返回 200 后一次性断言
   `executionCapabilities.dsh.status` 与 `executionCapabilities.executionContainer.status`
-  均为 `available`；`python` 不可用时只告警（`python_execute` 会被拒绝，核心运行不受影响）。
-  不满足时按现有 `fail_after_migration` 回滚/停止，不再把能力不可用判为部署成功。
-- **CI**：部署配置检查新增 `health/ready`、`executionContainer` 与必选能力清单断言；
-  `release.sh` 继续通过 `bash -n` 与现有部署安全检查。
+  均为 `available`，缺失时立即输出
+  `release readiness check failed: required execution capabilities unavailable (…)` 并回滚，
+  不再把能力不可用判为部署成功；只有 database 检查会重试（30 次 × 2 s、单次 10 s 超时）；
+  `python` 不可用时只告警（`python_execute` 会被拒绝，核心运行不受影响）。
+- **CI**：部署配置检查新增 `release-wait.mjs`、`/nginx-health` 与“web healthcheck 不得依赖
+  宿主服务端”的断言，并运行 `scripts/ci/release-wait.test.mjs`；`release.sh` 继续通过
+  `bash -n` 与现有部署安全检查。
 
 ## 5. 验收
 
 - 首次启动（不人工 kickstart）日志出现 `execution container toolchain: …`；
-- 若能力不可用，部署脚本必须以 `release readiness check failed` 失败并回滚，而不是只写
-  `release activated`；
+- 部署日志出现 `release health check passed after …s` 与 `release readiness check passed`；
+  若启动超时或能力不可用，必须以 `release health check failed` /
+  `release readiness check failed` 失败并回滚，而不是只写 `release activated`；
 - `/health/ready` 的 `dsh` 与 `executionContainer` 为 `available`，`python` 有明确状态；
+- compose web 容器在秒级 healthy（静态 `/nginx-health`），部署记录其从启动到 healthy 的时长；
 - 3 次启动探针均失败时，服务仍 fail-closed（不降级到宿主执行），但部署不得报告成功；
 - 502 验收保持：部署后 Nginx `[fdc…]` 与 `no live upstreams` 均为 0 条。
 

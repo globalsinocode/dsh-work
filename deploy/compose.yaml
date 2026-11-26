@@ -52,7 +52,11 @@ services:
         target: /etc/dsh-work/tls/server.key
         read_only: true
     healthcheck:
-      test: ["CMD-SHELL", "wget --quiet --no-check-certificate --header=\"Host: $${DSH_WORK_HEALTHCHECK_HOST}\" --spider https://127.0.0.1:8443/health/live"]
+      # Liveness of this Nginx container only. The host server runs its execution-capability
+      # probes before it starts listening, so a backend-dependent healthcheck would mark the
+      # container unhealthy during a legitimate cold start. Deployment readiness is asserted by
+      # scripts/deploy/release-wait.mjs through the public /health and /health/ready.
+      test: ["CMD-SHELL", "wget --quiet --no-check-certificate --header=\"Host: $${DSH_WORK_HEALTHCHECK_HOST}\" --spider https://127.0.0.1:8443/nginx-health"]
       interval: 5s
       timeout: 3s
       retries: 20

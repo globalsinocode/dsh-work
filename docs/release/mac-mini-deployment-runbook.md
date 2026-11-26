@@ -627,6 +627,10 @@ docker compose --env-file "${DWP_ROOT}/runtime.env" \
 
 6. **回滚**：无 schema，可回退 `v2026.11.24-01`；注意回退后 502/503 缺陷会回来。
 
+**11-25-01 更新（以上第 2 点与部署健康检查窗口已由 8.4 取代）**：启动探针改为按尝试次数
+重试；web 容器 healthcheck 改为静态 `/nginx-health`，不再依赖宿主探针；公网 `/health`
+等待预算与 `/health/ready` 断言迁入 `scripts/deploy/release-wait.mjs`。
+
 ### 8.4 2026.11.25-01 补充：启动重试与部署就绪门禁
 
 `v2026.11.24-02` 的启动探针“有界重试”因 `deadlineMs=20 s` 小于单次 DSH preflight 的
@@ -635,14 +639,26 @@ docker compose --env-file "${DWP_ROOT}/runtime.env" \
 [启动探针重试失效事件](incident-2026-11-24-startup-probe-retry-outage.md)）。本版本修复：
 
 1. **重试预算**：启动探针不再使用总 `deadlineMs`，由尝试次数约束（3 次、间隔 2 s）；单次
-   preflight 仍为 30 s，最坏约 94 s。第 2/3 或 3/3 次成功会输出
+   preflight 仍为 30 s，DSH 探针最坏约 `3×30 s + 2×2 s ≈ 94 s`（仅 DSH，不含
+   execution-container 探针）。第 2/3 或 3/3 次成功会输出
    `startup probe <capability> recovered on attempt N/3`。
-2. **健康等待**：`release.sh` 的公网 `/health` 等待从 60 s 提高到 180 s，覆盖最坏启动时间。
-3. **部署就绪门禁**：`release.sh` 在 `/health` 之后检查宿主
-   `http://127.0.0.1:${DSH_WORK_SERVER_PORT:-4190}/health/ready`，要求
+2. **健康等待与启动预算**：启动预算分为两段。
+   - **容器存活**：web 容器的 healthcheck 改为静态 `https://127.0.0.1:8443/nginx-health`
+     （`deploy/nginx/default.conf.template` 新增的 Nginx 存活端点），只验证 Nginx 容器本身，
+     秒级 healthy；不再依赖宿主服务端探针，因此不会在合法冷启动期间被判 `unhealthy`。
+     旧的 `/health/live` 后端依赖探针（约 110 s 容忍窗口）已移除。
+   - **服务就绪**：`release.sh` 调用 `scripts/deploy/release-wait.mjs`，公网 `/health` 等待
+     预算为 **1500 s（25 分钟）**，覆盖 DSH 探针（约 94 s）与 execution-container 三次探针
+     （单次上限约 400 s，总上界约 21–22 分钟）；每约 30 s 输出一次
+     `release health check waiting (…s/1500s)`，超时输出
+     `release health check failed: …` 并按 `fail_after_migration` 回滚。
+3. **部署就绪门禁**：`/health/ready` 返回 200 后，`release-wait.mjs` 一次性断言
    `executionCapabilities.dsh.status` 与 `executionCapabilities.executionContainer.status`
-   均为 `available`；`python` 不可用只告警。不满足时按 `fail_after_migration` 回滚/停止，
-   **不再把“能力不可用”判为部署成功**。
+   均为 `available`；缺失时立即输出
+   `release readiness check failed: required execution capabilities unavailable (…)` 并按
+   `fail_after_migration` 回滚，**不再把“能力不可用”判为部署成功**。只有 database 检查
+   （`/health/ready` 返回 503）会重试（最多 30 次、间隔 2 s、单次 10 s 超时）；`python`
+   不可用只告警。能力项状态在服务监听后已固定，重试不会让能力恢复，因此不做能力重试。
 
    **部署脚本注意**：11-24-02 部署用的是 11-24-01 的偏离脚本（`release.sh` 副本），
    因此本版本新增的就绪门禁不会自动生效。部署 11-25-01 前必须从新 release bundle
@@ -650,8 +666,10 @@ docker compose --env-file "${DWP_ROOT}/runtime.env" \
    并在部署日志确认出现 `release readiness check passed`；只覆盖版本号而继续使用旧副本
    会重新失去该门禁。
 4. **验收**：首次启动（不人工 kickstart）日志出现 `execution container toolchain: …`；
-   若能力不可用，部署日志必须出现 `release readiness check failed` 并回滚；
-   `/health/ready` 三项能力状态可见。
+   部署日志出现 `release health check passed after …s` 与 `release readiness check passed`；
+   若启动超时或能力不可用，日志分别出现 `release health check failed` /
+   `release readiness check failed` 并回滚；`/health/ready` 三项能力状态可见。compose web
+   容器应在秒级 healthy（静态 `/nginx-health`），部署记录记录其从启动到 healthy 的时长。
 5. **边界**：启动能力持续不可用时的自动恢复（后台重探或 fail-fast 交给 launchd）仍是 P1，
    本版本不改变“核心 API 保持可用”的现有设计。
 
@@ -724,7 +742,9 @@ dsh-work 数据库、`DSH_WORK_DATA_ROOT` 与发布清单，不覆盖 `runtime.e
 ## 10. 验收后启用自动部署
 
 watcher 只跟随 GitHub 的最新稳定 Release，安装后会立即运行。先确认最新版本就是刚验收
-的版本；若已有新版本，先评估它，不要在未获准时启用自动升级：
+的版本；若已有新版本，先评估它，不要在未获准时启用自动升级。恢复自动部署还要求该版本已完成
+稳定性复核：11-25-01 的最早恢复时刻为 `DEPLOYED_AT + 168h`，不足 168 小时只作中期复核
+（复核安排见 `docs/release/followup-plan-2026-11-25.md` Phase 5）：
 
 ```bash
 DWP_LATEST_TAG="$(gh release view --repo "${DWP_REPOSITORY}" --json tagName --jq .tagName)"

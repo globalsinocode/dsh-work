@@ -62,6 +62,7 @@ rm -rf "${certificate_fixture}"
 trap - EXIT
 
 node scripts/ci/release-watcher.test.mjs
+node --test scripts/ci/release-wait.test.mjs
 node scripts/ci/deployment-safety.test.mjs
 
 endpoint_fixture=$(mktemp -d "${TMPDIR:-/tmp}/dsh-work-endpoints-test.XXXXXX")
@@ -97,9 +98,19 @@ grep -F 'bash "${DWP_BUNDLE}/scripts/deploy/release.sh" "${DWP_VERSION}" "${DWP_
 grep -F 'bash "${DWP_BUNDLE}/scripts/deploy/install-release-watcher.sh" "${DWP_ROOT}"' docs/release/mac-mini-deployment-runbook.md >/dev/null
 grep -F 'PATH=/opt/homebrew/bin:/usr/local/bin:/Applications/Docker.app/Contents/Resources/bin:/usr/bin:/bin:/usr/sbin:/sbin' deploy/runtime.env.example >/dev/null
 grep -F -- '--deny-self-hosted-runners' scripts/deploy/release.sh >/dev/null
-grep -F 'health/ready' scripts/deploy/release.sh >/dev/null
-grep -F 'executionContainer' scripts/deploy/release.sh >/dev/null
-grep -F 'required = ["dsh", "executionContainer"]' scripts/deploy/release.sh >/dev/null
+grep -F 'release-wait.mjs' scripts/deploy/release.sh >/dev/null
+grep -F 'release readiness check passed' scripts/deploy/release.sh >/dev/null
+grep -F 'health/ready' scripts/deploy/release-wait.mjs >/dev/null
+grep -F "REQUIRED_CAPABILITIES = ['dsh', 'executionContainer']" scripts/deploy/release-wait.mjs >/dev/null
+grep -F '/nginx-health' deploy/nginx/default.conf.template >/dev/null
+grep -F '/nginx-health' deploy/compose.yaml >/dev/null
+grep -F 'release-wait.mjs' scripts/release/build-release.sh >/dev/null
+# The web healthcheck must stay a Nginx-only liveness probe: a backend-dependent healthcheck
+# marks the container unhealthy during a legitimate cold start (probes can take >20 minutes).
+if grep -F '/health/live' deploy/compose.yaml >/dev/null; then
+  echo "web healthcheck must not depend on the host server: deploy/compose.yaml" >&2
+  exit 1
+fi
 grep -F '/releases/latest' scripts/deploy/watch-release.sh >/dev/null
 if grep -Eq '^[[:space:]]+push:' .github/workflows/release.yml; then
   echo "manual release workflow must not run on push" >&2
