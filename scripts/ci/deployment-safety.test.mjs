@@ -273,6 +273,43 @@ async function verifyEndpointRenderer(fixture) {
   )
   assert.notEqual(publicAddress.status, 0, 'endpoint renderer accepted a public bind address')
   assert.match(publicAddress.stderr, /RFC1918/)
+
+  const proxiedOrigins = {
+    ...validEnvironment,
+    DSH_WORK_WORKBENCH_ORIGINS: `${validEnvironment.DSH_WORK_WORKBENCH_ORIGINS},https://proxy.example.com`,
+  }
+  const extraPortRejected = spawnSync(
+    process.execPath,
+    [endpointRendererPath, join(fixture, 'extra-port-rejected'), projectRoot],
+    { encoding: 'utf8', env: proxiedOrigins },
+  )
+  assert.notEqual(extraPortRejected.status, 0, 'endpoint renderer accepted a 443 Origin without DSH_WORK_MOBILE_PORT')
+  assert.match(extraPortRejected.stderr, /DSH_WORK_WORKBENCH_ORIGINS 必须是不含路径的端口 4174 之一/)
+
+  const extraPortFixture = join(fixture, 'extra-port')
+  const extraPortAllowed = spawnSync(
+    process.execPath,
+    [endpointRendererPath, extraPortFixture, projectRoot],
+    { encoding: 'utf8', env: { ...proxiedOrigins, DSH_WORK_MOBILE_PORT: '443' } },
+  )
+  assert.equal(extraPortAllowed.status, 0, extraPortAllowed.stderr)
+  const extraPortGenerated = await readFile(join(extraPortFixture, 'generated/compose.endpoints.yaml'), 'utf8')
+  assert.match(extraPortGenerated, /DSH_WORK_WORKBENCH_SERVER_NAMES: .*proxy\.example\.com/)
+  assert.doesNotMatch(extraPortGenerated, /:443:/, 'the extra Origin port must not be published by the web container')
+
+  const adminExtraPort = spawnSync(
+    process.execPath,
+    [endpointRendererPath, join(fixture, 'admin-extra-port'), projectRoot],
+    {
+      encoding: 'utf8',
+      env: {
+        ...validEnvironment,
+        DSH_WORK_MOBILE_PORT: '443',
+        DSH_WORK_ADMIN_ORIGINS: `${validEnvironment.DSH_WORK_ADMIN_ORIGINS},https://proxy.example.com`,
+      },
+    },
+  )
+  assert.notEqual(adminExtraPort.status, 0, 'DSH_WORK_MOBILE_PORT must not widen admin Origins')
 }
 
 async function verifyEndpointConfigurator(fixture) {

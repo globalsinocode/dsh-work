@@ -24,15 +24,21 @@ if (process.env.DSH_WORK_BIND_ADDRESSES && process.env.DSH_WORK_BIND_ADDRESS) {
 
 const workbenchPort = port(process.env.DSH_WORK_WORKBENCH_PORT ?? '4174', 'DSH_WORK_WORKBENCH_PORT')
 const adminPort = port(process.env.DSH_WORK_ADMIN_PORT ?? '4180', 'DSH_WORK_ADMIN_PORT')
+// 下游：员工端可额外放行一个入口端口（如前置反向代理的 443 域名，DSH_WORK_MOBILE_PORT=443）；
+// 未配置时只允许 DSH_WORK_WORKBENCH_PORT。管理端不受影响。
+const workbenchOriginPorts = new Set([workbenchPort])
+if (process.env.DSH_WORK_MOBILE_PORT?.trim()) {
+  workbenchOriginPorts.add(port(process.env.DSH_WORK_MOBILE_PORT, 'DSH_WORK_MOBILE_PORT'))
+}
 const workbenchOrigins = origins(
   process.env.DSH_WORK_WORKBENCH_ORIGINS,
   'DSH_WORK_WORKBENCH_ORIGINS',
-  workbenchPort,
+  workbenchOriginPorts,
 )
 const adminOrigins = origins(
   process.env.DSH_WORK_ADMIN_ORIGINS,
   'DSH_WORK_ADMIN_ORIGINS',
-  adminPort,
+  new Set([adminPort]),
 )
 
 for (const address of bindAddresses) {
@@ -90,7 +96,7 @@ function csv(value, name) {
   return items
 }
 
-function origins(value, name, expectedPort) {
+function origins(value, name, expectedPorts) {
   return csv(value, name).map((item) => {
     let url
     try {
@@ -107,8 +113,9 @@ function origins(value, name, expectedPort) {
     if (item !== item.toLowerCase() || !isAllowedHostname(url.hostname)) {
       throw new Error(`${name} 包含无效或非小写的主机名: ${item}`)
     }
-    if (url.pathname !== '/' || url.search || url.hash || effectivePort(url) !== expectedPort) {
-      throw new Error(`${name} 必须是不含路径的端口 ${expectedPort} Origin: ${item}`)
+    if (url.pathname !== '/' || url.search || url.hash || !expectedPorts.has(effectivePort(url))) {
+      const portList = [...expectedPorts].sort((left, right) => Number(left) - Number(right)).join('、')
+      throw new Error(`${name} 必须是不含路径的端口 ${portList} 之一 Origin: ${item}`)
     }
     return url
   })
